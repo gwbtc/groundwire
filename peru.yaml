@@ -1,0 +1,12 @@
+imports:
+  base-dev: ./dist
+
+git module base-dev:
+  url: https://github.com/urbit/urbit
+  reup: master
+  export: pkg/base-dev
+  pick:
+    - pkg/base-dev/mar
+    - pkg/base-dev/lib
+    - pkg/base-dev/sur
+  rev: bd3973dc97c0f4ac8eae5fddfa15c39d522eb8d0
