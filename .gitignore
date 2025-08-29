@@ -1,4 +1,8 @@
+# build
 .peru
+.tags
 dist
 dist-dev
-.tags
+
+# claude
+.claude
