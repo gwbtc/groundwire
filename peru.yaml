@@ -1,12 +1,39 @@
 imports:
   base-dev: ./dist
+  volt-btc: ./dist
 
 git module base-dev:
-  url: https://github.com/urbit/urbit
-  reup: master
+  url:    https://github.com/urbit/urbit
+  reup:   master
   export: pkg/base-dev
   pick:
-    - pkg/base-dev/mar
-    - pkg/base-dev/lib
-    - pkg/base-dev/sur
-  rev: bd3973dc97c0f4ac8eae5fddfa15c39d522eb8d0
+    - pkg/base-dev/lib/bip32.hoon
+    - pkg/base-dev/lib/dbug.hoon
+    - pkg/base-dev/lib/der.hoon
+    - pkg/base-dev/lib/default-agent.hoon
+    - pkg/base-dev/lib/mip.hoon
+    - pkg/base-dev/lib/skeleton.hoon
+    - pkg/base-dev/lib/strand.hoon
+    - pkg/base-dev/lib/strandio.hoon
+    - pkg/base-dev/lib/verb.hoon
+    - pkg/base-dev/mar/bill.hoon
+    - pkg/base-dev/mar/mime.hoon
+    - pkg/base-dev/sur/asn1.hoon
+    - pkg/base-dev/sur/spider.hoon
+    - pkg/base-dev/sur/verb.hoon
+  rev: 41dd3b5f7c554ac615d0db9eaa5fe46071d47bc8
+
+git module volt-btc:
+  url:    https://github.com/gwbtc/volt
+  reup:   main
+  export: btc-desk
+  pick:
+    - btc-desk/lib/bitcoin-utils.hoon
+    - btc-desk/lib/bip/b173.hoon
+    - btc-desk/lib/bip/b174.hoon
+    - btc-desk/lib/bip/b158.hoon
+    - btc-desk/sur/btc-provider.hoon
+    - btc-desk/sur/resource.hoon
+    - btc-desk/sur/btc-wallet.hoon
+    - btc-desk/sur/json/rpc.hoon
+
