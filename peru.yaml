@@ -1,6 +1,15 @@
 imports:
   base-dev: ./dist
   volt-btc: ./dist
+  tlon-lib: ./dist
+
+git module tlon-lib:
+  url:    https://github.com/tloncorp/tlon-apps
+  reup:   master
+  export: desk
+  pick:
+    - desk/lib/test-agent.hoon
+  rev: 9f0c94771e4773567a2f55a727ffa31b0f6e8e9f
 
 git module base-dev:
   url:    https://github.com/urbit/urbit
