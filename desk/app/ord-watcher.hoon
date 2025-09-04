@@ -175,7 +175,6 @@
 --
 |_  bol=bowl:gall
 +*  cor   .
-    bec   byk.bol(r da+now.bol)
 ::
 ++  get-blocks
   |=  wait=@dr
@@ -205,7 +204,7 @@
   =/  tid=@ta
     (cat 3 'ord-watcher--' (scot %uv eny.bol))
   :_  state(ted `[now.bol tid])
-  =/  args  [~ `tid bec get-blocks]
+  =/  args  [~ `tid [%da now.bol] /btc/get-blocks]
   :~  (watch-spider /watcher-ted our.bol /thread-result/[tid])
       (poke-spider /watcher-ted our.bol %spider-inline !>(args))
   ==
