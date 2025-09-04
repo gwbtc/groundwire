@@ -78,25 +78,16 @@
   %-  eval-mare:tag
   =/  m  (mare:tag ,~)
   ^-  form:m
-  ;<  *  bind:m  (do-init:tag dap mock-agent)
-  ;<  *  bind:m  (jab-bowl:tag |=(b=bowl:gall b(our ~zod)))
-  ;<  *  bind:m  (do-agent:tag /running/get-blocks doc %poke-ack (some ['test tank']~))
-  ::  XX this sigpam bricks ship
-  ::     might be because of a typo =sub=path in
-  ::     %ord-watcher's +watch-spider
-  ::  ~&  >>  caz
-  (pure:m ~)
-  ::  %+  ex-cards:tag
-  ::    caz
-  ::  :~  (ex-poke:tag /running/watcher-ted [~zod %spider] %spider-inline !>([~ (some *@ta) *beak *shed:khan]))
-  ::      (ex-task:tag /running/watcher-ted [~zod %spider] %watch *)
-  ::      (ex-task:tag /running/get-blocks [~zod %spider] %leave ~)
-  ::  ==
+  ;<  *                bind:m  (do-init:tag dap mock-agent)
+  ;<  *                bind:m  (jab-bowl:tag |=(b=bowl:gall b(our ~zod)))
+  ;<  caz=(list card)  bind:m  (do-agent:tag /running/get-blocks doc %poke-ack (some ['test tank']~))
+  %+  ex-cards:tag
+    caz
+  :~  (ex-task:tag /running/get-blocks [~zod %spider] %leave ~)
+      (ex-task:tag /running/watcher-ted [~zod %spider] %watch /thread-result/ord-watcher--0v0)
+      (ex-poke:tag /running/watcher-ted [~zod %spider] %spider-inline !>([~ `~.ord-watcher--0v0 [%da ~2000.1.1] /btc/get-blocks]))
+  ==
 ::
 ::  XX test %watch-ack, %kick, and %fact code branches
-::     need a way to subscribe to threads first, probably
-::     write a %start-thread / %start-spider poke and run
-::     that in here rather than using +jab-bowl:tag to fake
-::     an outgoing subscription
 ::
 --
