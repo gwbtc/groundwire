@@ -1,6 +1,7 @@
 imports:
   base-dev: ./dist
   volt-btc: ./dist
+  volt-urb: ./dist
   tlon-lib: ./dist
 
 git module tlon-lib:
@@ -38,12 +39,25 @@ git module volt-btc:
   reup:   main
   export: btc-desk
   pick:
-    - btc-desk/lib/bitcoin-utils.hoon
-    - btc-desk/lib/bip/b173.hoon
-    - btc-desk/lib/bip/b174.hoon
-    - btc-desk/lib/bip/b158.hoon
-    - btc-desk/sur/btc-provider.hoon
-    - btc-desk/sur/resource.hoon
-    - btc-desk/sur/btc-wallet.hoon
-    - btc-desk/sur/json/rpc.hoon
+    - btc-desk/lib/group.hoon
+    - btc-desk/lib/group-store.hoon
+    - btc-desk/lib/resource.hoon
+    - btc-desk/sur/group.hoon
+    - btc-desk/sur/group-store.hoon
+  rev: 01558898fab366f3da858550c6eabca57727cb89
+
+git module volt-urb:
+  url:    https://github.com/gwbtc/volt
+  reup:   main
+  export: urbit
+  pick:
+    - urbit/lib/bip/b173.hoon
+    - urbit/lib/bip/b174.hoon
+    - urbit/lib/bip/b158.hoon
+    - urbit/lib/bitcoin-utils.hoon
+    - urbit/sur/btc-provider.hoon
+    - urbit/sur/resource.hoon
+    - urbit/sur/btc-wallet.hoon
+    - urbit/sur/json/rpc.hoon
+  rev: 01558898fab366f3da858550c6eabca57727cb89
 
