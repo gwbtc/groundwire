@@ -51,19 +51,19 @@
     !>  ~
     !>  (unv:de:lib ord-0-script)
 ::
-+|  %ord-core
+::  +|  %ord-core
 ::
-++  test-ord-core-handle-tx
-  =/  oc  ord-core:lib
-  ::  =.  oc  oc(cb-tx [123 [2^0xb0b 30]~])
-  =.  oc  oc(cb-tx [123 *tx:bitcoin])
-  =/  =mail:lib  ord-0-mail
-  =/  tx  (make-tx [(make-ord-insc 0x123 0 100 mail(pntr [1 %& 92]) ~) ~] ~[50 40])
-  ::  XX  this crashes in /lib/ord
-  ::  =.  oc  (handle-tx:oc [0x123 tx])
-  %+  expect-eq
-    !>  %.n
-    !>  %.y
+::  ++  test-ord-core-handle-tx
+::    =/  oc  ord-core:lib
+::    ::  =.  oc  oc(cb-tx [123 [2^0xb0b 30]~])
+::    =.  oc  oc(cb-tx [123 *tx:bitcoin])
+::    =/  =mail:lib  ord-0-mail
+::    =/  tx  (make-tx [(make-ord-insc 0x123 0 100 mail(pntr [1 %& 92]) ~) ~] ~[50 40])
+::    ::  XX  this crashes in /lib/ord
+::    ::  =.  oc  (handle-tx:oc [0x123 tx])
+::    %+  expect-eq
+::      !>  %.n
+::      !>  %.y
 --
 ::
 ::  old
