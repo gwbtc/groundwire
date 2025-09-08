@@ -33,12 +33,11 @@
   %+  rpc-action-to-http
   api-url.host-info  ract
 ::
+::  XX should this core even be here?
 ++  rpc
   ~/  %rpc
   =,  dejs:format
   |%
-  ::  XX fix
-  ::     should this even be here?
   ++  parse-result
     |=  res=response:json-rpc
     *result:rpc-types:bp

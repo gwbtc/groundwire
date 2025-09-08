@@ -408,128 +408,133 @@
   =,  dejs:format
   |%
   :: XX fix
-  ::    +tx-vals the problem; need to update type / fix namespacing
+  ::    +tx-vals the problem; need to update type
   ++  parse-result
     |=  res=response:json-rpc
-    *result:rpc-types:bp
-::      |^  ^-  result:rpc-types:bp
-::      ~|  -.res
-::      :: ?.  =(%result -.res)
-::      ::   ?:  =(%error -.res)
-::      ::     [%error id.res code.res message.res]
-::      ::   [%error '' '' '']
-::      ?+  -.res  [%error '' '' '']
-::          %error
-::        [%error id.res code.res message.res]
-::      ::
-::          %result
-::        ?+  id.res  ~&([%unsupported-result id.res] [%error '' '' ''])
-::            %get-address-info
-::          [id.res (address-info res.res)]
-::          ::
-::            %get-tx-vals
-::          [id.res (tx-vals res.res)]
-::          ::
-::            %get-raw-tx
-::          [id.res (raw-tx res.res)]
-::          ::
-::            %broadcast-tx
-::          [%broadcast-tx (broadcast-tx res.res)]
-::          ::
-::            %get-block-count
-::          [id.res (ni res.res)]
-::          ::
-::            %get-block-info
-::          [id.res (block-info res.res)]
-::          ::
-::            %get-histogram
-::          [id.res ((ar (ar ni)) res.res)]
-::          ::
-::            %get-block-headers
-::          [id.res (block-headers res.res)]
-::          ::
-::            %get-tx-from-pos
-::          [id.res (tx-from-pos res.res)]
-::          ::
-::            %get-fee
-::          [id.res (ne res.res)]
-::          ::
-::            %update-psbt
-::          [id.res (so res.res)]
-::          ::
-::            %get-block-txs
-::          [id.res (block-txs res.res)]
-::        ==
-::      ==
-::      ::
-::      ++  address-info
-::        %-  ot
-::        :~  [%address (cu from-cord:adr:bc so)]
-::            [%utxos (as utxo:bc)]
-::            [%used bo]
-::            [%block ni]
-::        ==
-::      ++  utxo
-::        %-  ot
-::        :~  ['tx_pos' ni]
-::            ['tx_hash' (cu from-cord:hxb:bcu so)]
-::            [%height ni]
-::            [%value ni]
-::            [%recvd (cu from-epoch ni)]
-::        ==
-::      ++  tx-vals
-::        %-  ot
-::        :~  [%included bo]
-::            [%txid (cu from-cord:hxb:bcu so)]
-::            [%confs ni]
-::            [%recvd (cu from-epoch ni)]
-::            [%inputs (ar tx-val)]
-::            [%outputs (ar tx-val)]
-::        ==
-::      ++  tx-val
-::        %-  ot
-::        :~  [%txid (cu from-cord:hxb:bcu so)]
-::            [%pos ni]
-::            [%address (cu from-cord:adr:bc so)]
-::            [%value ni]
-::        ==
-::      ++  raw-tx
-::        %-  ot
-::        :~  [%txid (cu from-cord:hxb:bcu so)]
-::            [%rawtx (cu from-cord:hxb:bcu so)]
-::        ==
-::      ++  broadcast-tx
-::        %-  ot
-::        :~  [%txid (cu from-cord:hxb:bcu so)]
-::            [%broadcast bo]
-::            [%included bo]
-::        ==
-::      ++  block-info
-::        %-  ot
-::        :~  [%block ni]
-::            [%fee (mu ni)]
-::            [%blockhash (cu from-cord:hxb:bcu so)]
-::            [%blockfilter (cu from-cord:hxb:bcu so)]
-::        ==
-::      ++  block-headers
-::        %-  ot
-::        :~  [%count ni] 
-::            [%hex (cu from-cord:hxb:bcu so)]
-::            [%max ni]
-::            [%root (cu:dejs-soft:format from-cord:hxb:bcu so:dejs-soft:format)]
-::            [%branch (ar (cu from-cord:hxb:bcu so))]
-::        ==
-::      ++  tx-from-pos
-::        %-  ot
-::        :~  [%tx-hash (cu from-cord:hxb:bcu so)]
-::            [%merkle (ar (cu from-cord:hxb:bcu so))] 
-::        ==
-::      ++  block-txs
-::        %-  ot
-::        :~  [%blockhash (cu from-cord:hxb:bcu so)]
-::            [%txs (ar raw-tx)]
-::        ==
-::      --
+    ::  *result:rpc-types:bp
+    |^  ^-  result:rpc-types:bp
+    ~|  -.res
+    :: ?.  =(%result -.res)
+    ::   ?:  =(%error -.res)
+    ::     [%error id.res code.res message.res]
+    ::   [%error '' '' '']
+    ?+  -.res  [%error '' '' '']
+        %error
+      [%error id.res code.res message.res]
+    ::
+        %result
+      ?+  id.res  ~&([%unsupported-result id.res] [%error '' '' ''])
+          %get-address-info
+        [id.res (address-info res.res)]
+        ::
+          %get-tx-vals
+        ::  XX fix; see +tx-vals
+        ::  [id.res (tx-vals res.res)]
+        [id.res *info:tx:bp]
+        ::
+          %get-raw-tx
+        [id.res (raw-tx res.res)]
+        ::
+          %broadcast-tx
+        [%broadcast-tx (broadcast-tx res.res)]
+        ::
+          %get-block-count
+        [id.res (ni res.res)]
+        ::
+          %get-block-info
+        [id.res (block-info res.res)]
+        ::
+          %get-histogram
+        [id.res ((ar (ar ni)) res.res)]
+        ::
+          %get-block-headers
+        [id.res (block-headers res.res)]
+        ::
+          %get-tx-from-pos
+        [id.res (tx-from-pos res.res)]
+        ::
+          %get-fee
+        [id.res (ne res.res)]
+        ::
+          %update-psbt
+        [id.res (so res.res)]
+        ::
+          %get-block-txs
+        [id.res (block-txs res.res)]
+      ==
+    ==
+    ::
+    ++  address-info
+      %-  ot
+      :~  [%address (cu from-cord:adr:bc so)]
+          [%utxos (as utxo:bc)]
+          [%used bo]
+          [%block ni]
+      ==
+    ++  utxo
+      %-  ot
+      :~  ['tx_pos' ni]
+          ['tx_hash' (cu from-cord:hxb:bcu so)]
+          [%height ni]
+          [%value ni]
+          [%recvd (cu from-epoch ni)]
+      ==
+    ::  XX fix
+    ::     expects a #btc-tx-info in %txid but +from-cord
+    ::     produces a #btc-hexb
+    ++  tx-vals
+      %-  ot
+      :~  [%included bo]
+          [%txid (cu from-cord:hxb:bcu so)]
+          [%confs ni]
+          [%recvd (cu from-epoch ni)]
+          [%inputs (ar tx-val)]
+          [%outputs (ar tx-val)]
+      ==
+    ++  tx-val
+      %-  ot
+      :~  [%txid (cu from-cord:hxb:bcu so)]
+          [%pos ni]
+          [%address (cu from-cord:adr:bc so)]
+          [%value ni]
+      ==
+    ++  raw-tx
+      %-  ot
+      :~  [%txid (cu from-cord:hxb:bcu so)]
+          [%rawtx (cu from-cord:hxb:bcu so)]
+      ==
+    ++  broadcast-tx
+      %-  ot
+      :~  [%txid (cu from-cord:hxb:bcu so)]
+          [%broadcast bo]
+          [%included bo]
+      ==
+    ++  block-info
+      %-  ot
+      :~  [%block ni]
+          [%fee (mu ni)]
+          [%blockhash (cu from-cord:hxb:bcu so)]
+          [%blockfilter (cu from-cord:hxb:bcu so)]
+      ==
+    ++  block-headers
+      %-  ot
+      :~  [%count ni] 
+          [%hex (cu from-cord:hxb:bcu so)]
+          [%max ni]
+          [%root (cu:dejs-soft:format from-cord:hxb:bcu so:dejs-soft:format)]
+          [%branch (ar (cu from-cord:hxb:bcu so))]
+      ==
+    ++  tx-from-pos
+      %-  ot
+      :~  [%tx-hash (cu from-cord:hxb:bcu so)]
+          [%merkle (ar (cu from-cord:hxb:bcu so))] 
+      ==
+    ++  block-txs
+      %-  ot
+      :~  [%blockhash (cu from-cord:hxb:bcu so)]
+          [%txs (ar raw-tx)]
+      ==
+    --
   --
 ::
 ++  rpc-action-to-http
