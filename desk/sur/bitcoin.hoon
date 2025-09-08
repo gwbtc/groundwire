@@ -8,11 +8,11 @@
   ?(%main %testnet %regtest)
 ::
 +$  hexb
-  $+  hexb
+  $+  btc-hexb
   [wid=@ dat=@ux]                :: hex byts
 ::
 +$  bits
-  $+  bits
+  $+  btc-bits
   [wid=@ dat=@ub]
 ::
 +$  xpub  @ta
