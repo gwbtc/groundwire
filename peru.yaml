@@ -1,8 +1,8 @@
 imports:
   base-dev: ./dist
-  volt-btc: ./dist
-  volt-urb: ./dist
+  btc-wall: ./dist
   tlon-lib: ./dist
+  volt-urb: ./dist
 
 git module tlon-lib:
   url:    https://github.com/tloncorp/tlon-apps
@@ -11,6 +11,33 @@ git module tlon-lib:
   pick:
     - desk/lib/test-agent.hoon
   rev: 9f0c94771e4773567a2f55a727ffa31b0f6e8e9f
+
+git module volt-urb:
+  url:    https://github.com/gwbtc/volt
+  reup:   main
+  export: urbit
+  pick:
+    - urbit/lib/bip/b173.hoon
+    - urbit/lib/bip/b174.hoon
+    - urbit/lib/bip/b158.hoon
+    - urbit/lib/bitcoin-utils.hoon
+    - urbit/sur/json/rpc.hoon
+    - urbit/sur/btc-provider.hoon
+  rev: 01558898fab366f3da858550c6eabca57727cb89
+
+git module btc-wall:
+  url:    https://github.com/urbit/bitcoin-wallet
+  reup:   master
+  export: bitcoin
+  pick:
+    - bitcoin/lib/group.hoon
+    - bitcoin/lib/group-store.hoon
+    - bitcoin/lib/resource.hoon
+    - bitcoin/sur/group.hoon
+    - bitcoin/sur/group-store.hoon
+    - bitcoin/sur/resource.hoon
+    - bitcoin/sur/btc-wallet.hoon
+  rev: e112ff06ebaba31f04eba99170fd00cb23d7fee5
 
 git module base-dev:
   url:    https://github.com/urbit/urbit
@@ -33,31 +60,4 @@ git module base-dev:
     - pkg/base-dev/sur/spider.hoon
     - pkg/base-dev/sur/verb.hoon
   rev: 41dd3b5f7c554ac615d0db9eaa5fe46071d47bc8
-
-git module volt-btc:
-  url:    https://github.com/gwbtc/volt
-  reup:   main
-  export: btc-desk
-  pick:
-    - btc-desk/lib/group.hoon
-    - btc-desk/lib/group-store.hoon
-    - btc-desk/lib/resource.hoon
-    - btc-desk/sur/group.hoon
-    - btc-desk/sur/group-store.hoon
-  rev: 01558898fab366f3da858550c6eabca57727cb89
-
-git module volt-urb:
-  url:    https://github.com/gwbtc/volt
-  reup:   main
-  export: urbit
-  pick:
-    - urbit/lib/bip/b173.hoon
-    - urbit/lib/bip/b174.hoon
-    - urbit/lib/bip/b158.hoon
-    - urbit/lib/bitcoin-utils.hoon
-    - urbit/sur/btc-provider.hoon
-    - urbit/sur/resource.hoon
-    - urbit/sur/btc-wallet.hoon
-    - urbit/sur/json/rpc.hoon
-  rev: 01558898fab366f3da858550c6eabca57727cb89
 
