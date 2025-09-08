@@ -68,6 +68,7 @@
 ++  tx
   |%
   +$  in
+    $+  psbt-tx-input
     $:  prevout=outpoint
         script-sig=(unit hexb:bc)
         nsequence=@
@@ -75,11 +76,13 @@
     ==
   ::
   +$  out
+    $+  psbt-tx-output
     $:  value=sats
         script-pubkey=hexb:bc
     ==
   ::
   +$  tx
+    $+  psbt-tx
     $:  vin=(list in)
         vout=(list out)
         nversion=@
@@ -88,6 +91,7 @@
   --
 ::
 +$  script-type
+  $+  psbt-script-type
   $?  %p2pk
       %p2pkh
       %p2sh
@@ -97,6 +101,7 @@
   ==
 ::
 +$  input
+  $+  psbt-input
   $:  in:tx
       ::  TODO: distinguish between larval input and optional input - subgroup according to exclusivity and reason for unit
       ::  TODO: any mutual exclusives type as such
@@ -119,6 +124,7 @@
   ==
 ::
 +$  output
+  $+  psbt-output
   $:  out:tx
       ::  see above mutual exclusivity?
       redeem-script=(unit hexb:bc)
@@ -128,6 +134,7 @@
   ==
 ::
 +$  psbt
+  $+  psbt
   $:  tx:tx
       inputs=(list input)
       outputs=(list output)
