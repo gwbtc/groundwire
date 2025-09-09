@@ -13,6 +13,39 @@
   |=  [n=@ b=hexb:bc]
   ^-  (pair hexb:bc hexb:bc)
   [(take:byt:bcu:bc n b) (drop:byt:bcu:bc n b)]
+::
+++  tx
+  =<  tx
+  |%
+  +$  tx  [id=txid data]
+  ::
+  +$  data
+    $:  is=(list input)
+        os=(list output)
+        locktime=@ud
+        nversion=@ud
+        segwit=(unit @ud)
+    ==
+  ::  included: whether tx is in the mempool or blockchain
+  ::
+  ::
+  +$  input
+    $:  =txid
+        pos=@ud
+        sequence=hexb:bc
+        script-sig=(unit hexb:bc)
+        pubkey=(unit hexb:bc)
+        value=@ud
+    ==
+  ::
+  +$  output
+    $:  script-pubkey=hexb:bc
+        value=sats
+    ==
+  ::
+  +$  witness    (list hexb:bc)
+  --
+
 ::  +read-compact-size: decode CompactSize
 ::    bug in bitcoin-utils
 ::
@@ -251,7 +284,7 @@
 ::  +txid: compute txid for unsigned transaction
 ::
 ++  txid
-  |=  =tx:tx
+  |=  =tx
   ^-  hexb:bc
   =+  ^=  strip-witness
       |=  =in:^tx
@@ -899,12 +932,12 @@
     ~|(%psbt-unknown-script !!)
   ::
   ++  tx-data
-    ^-  data:tx:bc
-    =|  =data:tx:bc
+    ^-  data:tx
+    =|  =data:tx
     =.  is.data
       %+  turn  inputs.tx
       |=  i=input
-      =|  =input:tx:bc
+      =|  =input:tx
       %=  input
         txid        txid.prevout.i
         pos         idx.prevout.i
@@ -915,7 +948,7 @@
     =.  os.data
       %+  turn  outputs.tx
       |=  o=output
-      =|  =output:tx:bc
+      =|  =output:tx
       %=  output
         script-pubkey  script-pubkey.o
         value          value.o

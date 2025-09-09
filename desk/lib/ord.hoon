@@ -673,51 +673,50 @@
   ++  get
     |=  [a=sont-map =txid =pos =off]
     ^-  (unit sont-val)
-    ?~  b=(~(get by a) txid)  ~
-    (~(get bi u.b) pos off)
+    ?~  b=(~(get by a) txid pos)  ~
+    (~(get by sats.u.b) off)
   ::
   ++  get-com
     |=  [a=sont-map =txid =pos =off]
     ^-  (unit @p)
     ?~(b=(get +<) ~ com.u.b)
   ::
-  ++  get-sats
+  ++  get-vout
     |=  [a=sont-map =txid =pos]
-    ^-  (map off sont-val)
-    ?~  b=(~(get by a) txid)  ~
-    (fall (~(get by u.b) pos) ~)
-    ::=/  c=sont-val  (~(gut bi b) pos off [~ ~])
+    ^-  (unit vout-map)
+    (~(get by a) txid pos)
   ::
   ++  put-all
-    |=  [a=sont-map =txid =pos =off com=(unit @p) ins=(set insc)]
+    |=  [a=sont-map =txid =pos =off val=@ud com=(unit @p) ins=(set insc)]
     ^-  sont-map
-    %+  ~(put by a)  txid
-    =/  b  (~(gut by a) txid ~)
-    =/  c=sont-val  (~(gut bi b) pos off [~ ~])
-    (~(put bi b) pos off c(com com, ins (~(uni in ins.c) ins)))
+    %+  ~(put by a)  [txid pos]
+    =/  b=vout-map  (~(gut by a) [txid pos] [0 ~])
+    =/  c=sont-val  (~(gut by sats.b) off [~ ~])
+    val^(~(put by sats.b) off c(com com, ins (~(uni in ins.c) ins)))
   ::
   ++  put-ins
-    |=  [a=sont-map =txid =pos =off ins=(set insc)]
+    |=  [a=sont-map =txid =pos =off val=@ud ins=(set insc)]
     ^-  sont-map
-    %+  ~(put by a)  txid
-    =/  b  (~(gut by a) txid ~)
-    =/  c=sont-val  (~(gut bi b) pos off [~ ~])
-    (~(put bi b) pos off c(ins (~(uni in ins.c) ins)))
+    %+  ~(put by a)  [txid pos]
+    =/  b=vout-map  (~(gut by a) [txid pos] [0 ~])
+    =/  c=sont-val  (~(gut by sats.b) off [~ ~])
+    val^(~(put by sats.b) off c(ins (~(uni in ins.c) ins)))
   ::
   ++  put-com
-    |=  [a=sont-map =txid =pos =off com=@p]
+    |=  [a=sont-map =txid =pos =off val=@ud com=@p]
     ^-  sont-map
-    %+  ~(put by a)  txid
-    =/  b  (~(gut by a) txid ~)
-    =/  c=sont-val  (~(gut bi b) pos off [~ ~])
-    (~(put bi b) pos off c(com `com))
+    %+  ~(put by a)  [txid pos]
+    =/  b=vout-map  (~(gut by a) [txid pos] [0 ~])
+    =/  c=sont-val  (~(gut by sats.b) off [~ ~])
+    val^(~(put by sats.b) off c(com `com))
   ::
   ++  del
     |=  [a=sont-map =txid =pos =off]
     ^-  sont-map
-    ?~  b=(~(get by a) txid)  a
-    ?~  c=(~(del bi u.b) pos off)  (~(del by a) txid)
-    (~(put by a) txid c)
+    ?~  b=(~(get by a) [txid pos])  a
+    =/  c  (~(del by sats.u.b) off)
+    ?:  =(c ~)  (~(del by a) txid off)
+    (~(put by a) [txid pos] u.b(sats c))
   --
 ::++  ming
 ::  |%
@@ -743,7 +742,8 @@
 ::::
 ::+$  mang-map  (map pass [=txid whos=(set @p)])
 +$  sont-val  [com=(unit @p) ins=(set insc)]
-+$  sont-map  (map txid (mip pos off sont-val))
++$  vout-map  [value=@ud sats=(map off sont-val)]
++$  sont-map  (map [txid pos] vout-map)
 +$  insc-ids  (map insc [=sont =mail])
 +$  unv-ids   (map @p point)
 +$  state     $:  block-id=id:block
@@ -787,6 +787,34 @@
       [%xfer from=sont to=sont]
       [%insc =insc sont=$@(~ sont) =mail]
   ==
+++  gw-tx
+  =<  tx
+  |%
+  +$  tx  [id=txid data]
+  +$  p-tx  [id=txid data]
+  +$  data
+    $:  is=(list input)
+        os=(list output:tx:bc)
+        locktime=@ud
+        nversion=@ud
+        segwit=(unit @ud)
+    ==
+  +$  input  [[sots=(list raw-sotx) value=@ud] inputw:tx:bc]
+  --
+::
+++  gw-block
+  =<  block
+  |%
+  +$  id   [=hax =num]
+  +$  hax  @ux
+  +$  num  @ud
+  +$  block
+    $:  =hax
+        reward=@ud
+        height=@ud
+        txs=(list gw-tx)
+    ==
+  --
 ::
 ++  ord-core
   =|  state
@@ -794,7 +822,7 @@
   |_  $:  ::
           :: cards=(list card:agent:gall)
           fx=(list [id:block effect])
-          cb-tx=[val=@ud tx]
+          cb-tx=[val=@ud gw-tx]
           ::n-map=_n-map
       ==
   +*  cor  .
@@ -816,15 +844,72 @@
     ^+  [fx state]
     (flop fx)^state
   ::
+  ++  find-block-deps
+    :: in order to properly fulfill the coinbase transaction, we need to
+    :: keep track of the fee change from skipped tx's
+    |=  [num=@ud block:bc]
+    =*  block  +<
+    =|  deps=(map [txid pos] [sots=(list raw-sotx) value=(unit @ud)])
+    =|  tx-fil=(list tx:bc)
+    ?>  =(num +(num.block-id.state))
+    =>  ?>(?=(^ txs) [cb-tx=i.txs .(txs t.txs)])
+    |-  ^+  [deps block]
+    ?~  txs  [deps block(txs cb-tx^(flop tx-fil))]
+    =/  is  is.i.txs
+    =|  ned=_|
+    |^  ^+  ^$
+    ?~  is  ^$(txs t.txs, tx-fil ?.(ned tx-fil i.txs^tx-fil))
+    =/  value=(unit @ud)
+      ?~  vout=(get-vout:si sont-map [txid pos]:i.is)  ~
+      `value.u.vout
+    =.  ned  |(ned ?=(^ value))
+    =/  raw-script=(unit octs)
+      =/  rwit  (flop witness.i.is)
+      ?.  ?=([* ^] rwit)  ~
+      ?.  =+(i.rwit &(!=(0 wid) =(0x50 (cut 3 [(dec wid) 1] dat))))
+        `i.t.rwit
+      ?~(t.t.rwit ~ `i.t.t.rwit)
+    ?~  raw-script  (add-to-deps ~ value)
+    ?~  dscr=(de:bscr u.raw-script)  (add-to-deps ~ value)
+    ~|  [=+(u.raw-script [p `@ux`q]) =+((en:bscr u.dscr) [p `@ux`q])]
+    ?>  =(u.raw-script (en:bscr u.dscr))
+    =/  unvs=(unit (list @))  (some (unv:de u.dscr))
+    ?~  unvs  (add-to-deps ~ value)
+    =/  sots=(list raw-sotx)  (zing (turn u.unvs parse-roll))
+    (add-to-deps(ned &) sots value)
+    ::
+    ++  add-to-deps
+      |=  [sots=(list raw-sotx) value=(unit @ud)]
+      ^+  ^$
+      ?>  ?=(^ is)
+      ?:  &(=(~ value) =(~ sots))  ^$(is t.is)
+      ^$(is t.is, deps (~(put by deps) [txid pos]:i.is sots value))
+    --
+  ::
+  ++  apply-block-deps
+    |=  [[num=@ud block:bc] deps=(map [txid pos] [sots=(list raw-sotx) value=(unit @ud)])]
+    ^-  [num=@ud gw-block]
+    =*  block  +<-
+    =>  ?>(?=(^ txs) [cb-tx=i.txs .(txs t.txs)])
+    =-  block(txs [cb-tx(is (turn is.cb-tx |=(inputw:tx:bc `input:gw-tx`[[~ 0] +<])))]^-)
+    |-  ^-  (list tx:gw-tx)
+    ?~  txs  ~
+    =/  is  is.i.txs
+    =-  [i.txs(is -) $(txs t.txs)]
+    |-  ^-  (list input:gw-tx)
+    ?~  is  ~
+    =/  dep  (~(got by deps) [txid pos]:i.is)
+    [dep(value (need value.dep)) i.is]^$(is t.is)
+  ::
   ++  handle-block
-    |=  [=num:block block]
+    |=  [=num:block gw-block]
     ^+  cor
     ?>  =(num +(num.block-id.state))
     =.  block-id.state  [hax num]
     ?>  ?=(^ txs)
-    ~!  txs
     =>  .(txs t.txs, cb-tx [reward i.txs])
     |-  ^+  cor
+    :: todo: handle coinbase tx
     ?~  txs  cor
     =.  cor  (handle-tx i.txs)
     $(txs t.txs)
@@ -832,46 +917,29 @@
   ++  handle-tx
     =|  val=@ud
     =|  idx=@ud
-    |=  =tx
+    |=  tx=gw-tx
     ^+  cor
     =/  sum-out  (roll os.tx |=([[* a=@] b=@] (add a b)))
-    =/  sum-in  (roll is.tx |=([a=inputw:^tx b=@] (add value.a b)))
+    =/  sum-in  (roll is.tx |=([a=input:gw-tx b=@] (add value.a b)))
     =/  is  is.tx
     ?~  is  cor
     |^  ^+  cor
     ::  XX: moved check-for-insc before sont-track-input... consider for
     ::  child etc
-    =.  cor  check-for-unv
-    =.  cor  check-for-insc
+    =.  cor  process-unv
+    ::=.  cor  check-for-insc
     =.  cor  sont-track-input
     next-input
     ::
-    ++  check-for-unv
-      :: this arm is not called yet
+    ++  process-unv
       ^+  cor
-      =/  raw-script=(unit octs)
-        =/  rwit  (flop witness.i.is)
-        ?.  ?=([* ^] rwit)  ~
-        ?.  =+(i.rwit &(!=(0 wid) =(0x50 (cut 3 [(dec wid) 1] dat))))
-          `i.t.rwit
-        ?~(t.t.rwit ~ `i.t.t.rwit)
-      ?~  raw-script  cor
-      ?~  dscr=(de:bscr u.raw-script)  cor
-      ~|  [=+(u.raw-script [p `@ux`q]) =+((en:bscr u.dscr) [p `@ux`q])]
-      ?>  =(u.raw-script (en:bscr u.dscr))
-      =/  unvs=(unit (list @))  (some (unv:de u.dscr))
-      ?~  unvs  cor
-      =/  sots=(list raw-sotx)  (zing (turn u.unvs parse-roll))
-      ::=/  in-sats=(list off)
-      ::  %+  murn  ~(tap by (fall (get-sats:si sont-map [txid pos]:i.is) ~))
-      ::  |=([=off sont-val] ?~(com ~ off))
+      =/  sots  sots.i.is
       |-  ^+  cor
       ?~  sots  cor
       =*  raw  raw.i.sots
       =*  who  ship.sot.i.sots
       =*  sig   sig.sot.i.sots
       =-  $.+(cor -, sots t.sots)
-      ~&  outer=[who sot.i.sots]
       =/  sots=(list single:skim-sotx)
         ?:(?=(%batch +<.sot.i.sots) bat.sot.i.sots ~[+.sot.i.sots])
       =/  point  (~(get by unv-ids) who)
@@ -880,32 +948,19 @@
       =.  bat-cnt  +(bat-cnt)
       ?~  sots  cor
       =*  sot  i.sots
-      ~&  inner=[who sot]
       ?:  ?=(%spawn -.sot)
         :: XX: more ordering constraints?
-        ::  todo: actually check pass
-        ~&  spawn-0=who
         ?.  =(1 bat-cnt)  cor
-        ~&  spawn-1=who
         ?~  sig    cor
-        ~&  spawn-2=who
         ?^  point  cor
-        ~&  spawn-3=who
         ?:  (~(has by unv-ids) who)  cor ::$(sots t.sots)
-        ~&  spawn-4=who
         =/  cac  (com:nu:crac pass.sot)
-        ~&  spawn-5=[who `@p`fig:ex:cac]
         ?.  =(who fig:ex:cac)  cor :: $(sots t.sots)
-        ~&  spawn-6=who
         ?~  sat=(get-spawn-sont +>.sot)  cor :: $(sots t.sots)
-        ~&  spawn-7=who
         ?.  ?=(%c suite.+<.cac)  cor
-        ~&  spawn-8=who
         ?.  =(dat.tw.pub:+<:cac (rap 3 ~[lyf=1 %btc %ord %gw %test]))  cor
-        ~&  spawn-9=who
         ?.  (veri-octs:ed u.sig 512^(shal raw.i.^sots) sgn:ded:ex:cac)
           cor
-        ~&  spawn-10=who
         =/  sponsor  `@p`(end 4 who)
         =/  =^point
           :*  own=[u.sat ~]
@@ -916,7 +971,6 @@
               escape=~
               fief=~
           ==
-        ~&  %did-spawn
         =.  cor
           %-  emil
             :~  [%point who %owner u.sat]
@@ -926,7 +980,7 @@
         %_    $
             point    `point
             sots     t.sots
-            sont-map  (put-com:si sont-map txid.u.sat pos.u.sat off.u.sat who)
+            sont-map  (put-com:si sont-map txid.u.sat pos.u.sat off.u.sat value.i.is who)
             unv-ids   (~(put by unv-ids) who point)
         ==
       ::=^  point  cor  (spend-point point)
@@ -1086,41 +1140,41 @@
         $(out-val (add out-val value.i.os), os t.os, out-pos +(out-pos))
       --
     ::
-    ++  check-for-insc
-      ^+  cor
-      =/  raw-script=(unit octs)
-        =/  rwit  (flop witness.i.is)
-        ?.  ?=([* ^] rwit)  ~
-        ?.  =+(,.-.rwit &(!=(0 wid) =(0x50 (rsh [3 (dec wid)] dat))))  `i.t.rwit
-        ?~(t.t.rwit ~ `i.t.rwit)
-      ?~  raw-script  cor
-      ::=/  scr  (mole |.((de:bscr u.raw-script)))
-      :: XX: make crash-proof
-      ::=/  scr  (de:bscr u.raw-script)
-      ?~  scr=(de:bscr u.raw-script)  cor
-      ?>  =(u.raw-script (en:bscr u.scr))
-      =/  mails=(list mail)  (mails:de u.scr)
-      |-  ^+  cor
-      ?~  mails  cor
-      =/  pntr=@ud  ?:(?=([* %& *] pntr.i.mails) p.+.pntr.i.mails 0)
-      =/  =insc  id.tx^idx
-      =/  nsont  (pntr-to-sont pntr)
-      ?~  nsont
-        :: the ordinals docs suggests that if the pointer index is
-        :: invalid, then it is treated normally i.e. on 0 index
-        =.  cor  (emit [%insc insc ~ i.mails])
-        %_  $
-          idx        +(idx)
-          mails      t.mails
-          insc-ids   (~(put by insc-ids) insc [[id.tx 0 0] i.mails])
-        ==
-      =.  cor  (emit [%insc insc nsont i.mails])
-      %_  $
-        idx     +(idx)
-        mails   t.mails
-        sont-map  (put-ins:si sont-map txid.nsont pos.nsont off.nsont insc^~^~)
-        insc-ids   (~(put by insc-ids) insc [nsont i.mails])
-       ==
+    ::++  check-for-insc
+    ::  ^+  cor
+    ::  =/  raw-script=(unit octs)
+    ::    =/  rwit  (flop witness.i.is)
+    ::    ?.  ?=([* ^] rwit)  ~
+    ::    ?.  =+(,.-.rwit &(!=(0 wid) =(0x50 (rsh [3 (dec wid)] dat))))  `i.t.rwit
+    ::    ?~(t.t.rwit ~ `i.t.rwit)
+    ::  ?~  raw-script  cor
+    ::  ::=/  scr  (mole |.((de:bscr u.raw-script)))
+    ::  :: XX: make crash-proof
+    ::  ::=/  scr  (de:bscr u.raw-script)
+    ::  ?~  scr=(de:bscr u.raw-script)  cor
+    ::  ?>  =(u.raw-script (en:bscr u.scr))
+    ::  =/  mails=(list mail)  (mails:de u.scr)
+    ::  |-  ^+  cor
+    ::  ?~  mails  cor
+    ::  =/  pntr=@ud  ?:(?=([* %& *] pntr.i.mails) p.+.pntr.i.mails 0)
+    ::  =/  =insc  id.tx^idx
+    ::  =/  nsont  (pntr-to-sont pntr)
+    ::  ?~  nsont
+    ::    :: the ordinals docs suggests that if the pointer index is
+    ::    :: invalid, then it is treated normally i.e. on 0 index
+    ::    =.  cor  (emit [%insc insc ~ i.mails])
+    ::    %_  $
+    ::      idx        +(idx)
+    ::      mails      t.mails
+    ::      insc-ids   (~(put by insc-ids) insc [[id.tx 0 0] i.mails])
+    ::    ==
+    ::  =.  cor  (emit [%insc insc nsont i.mails])
+    ::  %_  $
+    ::    idx     +(idx)
+    ::    mails   t.mails
+    ::    sont-map  (put-ins:si sont-map txid.nsont pos.nsont off.nsont insc^~^~)
+    ::    insc-ids   (~(put by insc-ids) insc [nsont i.mails])
+    ::   ==
      ::
     ++  pntr-to-sont
       |=  pntr=@ud
@@ -1166,9 +1220,9 @@
     ++  sont-track-input
       :: XX: todo: optimize for updates per-input
       ^+  cor
-      ?~  itxo=(~(get bi sont-map) txid.i.is pos.i.is)  cor
-      =.  sont-map  (~(del bi sont-map) txid.i.is pos.i.is)
-      =/  isonts  ~(tap by u.itxo)
+      ?~  itxo=(~(get by sont-map) txid.i.is pos.i.is)  cor
+      =.  sont-map  (~(del by sont-map) txid.i.is pos.i.is)
+      =/  isonts  ~(tap by sats.u.itxo)
       |-  ^+  cor
       ?~  isonts  cor
       =/  osont=sont  [txid.i.is pos.i.is p.i.isonts] 
@@ -1182,7 +1236,7 @@
       =.  cor  (emit [%xfer osont nsont])
       %_  $
         isonts   t.isonts
-        sont-map  (put-all:si sont-map txid.nsont pos.nsont off.nsont q.i.isonts)
+        sont-map  (put-all:si sont-map txid.nsont pos.nsont off.nsont value.i.is q.i.isonts)
       ==
     ::
     ++  next-input

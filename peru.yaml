@@ -2,7 +2,6 @@ imports:
   base-dev: ./dist
   btc-wall: ./dist
   tlon-lib: ./dist
-  volt-urb: ./dist
 
 git module tlon-lib:
   url:    https://github.com/tloncorp/tlon-apps
@@ -11,19 +10,6 @@ git module tlon-lib:
   pick:
     - desk/lib/test-agent.hoon
   rev: 9f0c94771e4773567a2f55a727ffa31b0f6e8e9f
-
-git module volt-urb:
-  url:    https://github.com/gwbtc/volt
-  reup:   main
-  export: urbit
-  pick:
-    - urbit/lib/bip/b173.hoon
-    - urbit/lib/bip/b174.hoon
-    - urbit/lib/bip/b158.hoon
-    - urbit/lib/bitcoin-utils.hoon
-    - urbit/sur/json/rpc.hoon
-    - urbit/sur/btc-provider.hoon
-  rev: 01558898fab366f3da858550c6eabca57727cb89
 
 git module btc-wall:
   url:    https://github.com/urbit/bitcoin-wallet

@@ -70,8 +70,15 @@
         segwit=(unit @ud)
     ==
   ::
-  +$  val
-    $+  btc-tx-val
+  +$  in-val
+    $+  btc-input-value
+    $:  =txid
+        pos=@ud
+        =address
+    ==
+  ::
+  +$  out-val
+    $+  btc-output-value
     $:  =txid
         pos=@ud
         =address
@@ -85,8 +92,8 @@
         =txid
         confs=@ud
         recvd=(unit @da)
-        inputs=(list val)
-        outputs=(list val)
+        inputs=(list in-val)
+        outputs=(list out-val)
     ==
   ::
   +$  input
@@ -96,7 +103,6 @@
         sequence=hexb
         script-sig=(unit hexb)
         pubkey=(unit hexb)
-        value=sats
     ==
   ::
   +$  inputw

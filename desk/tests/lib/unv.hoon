@@ -1,4 +1,4 @@
-/+  *ord, *test, *mip, lais, crac, gw=groundwire, bip32, b173=bip-b173, rpc=json-rpc, scr=btc-script, strandio, btcio, psbt, bc=bitcoin
+/+  *ord, *test, *mip, lais, crac, gw=groundwire, bip32, b173=bip-b173, rpc=json-rpc, scr=btc-script, strandio, btcio, bc=bitcoin
 =*  raws  raws:gw
 |%
 ++  make-unv-script
@@ -22,19 +22,19 @@
   [[%op-push ~ (flipb:gw 32^int-key)] %op-checksig rest]
 ::
 ++  make-output
-  |=  $:  val=sats:gw
-          int-key=keypair:gw
+  |=  $:  int-key=keypair:gw
+          val=(unit @ud)
           scr=(unit script:scr)
       ==
   ^-  output:tx:gw
-  =?  scr  ?=(^ scr)
+  =|  out=output:tx:gw
+  =?  spend-script.out  ?=(^ scr)
     `(make-spend-script x.pub.int-key u.scr)
-  =|  =output:tx:gw
-  %_  output
+  =.  script-pubkey.out
+    ~(scriptpubkey p2tr:gw `x.pub.int-key spend-script.out ~)
+  =?  value.out  ?=(^ val)  u.val
+  %_  out
     internal-keys      int-key
-    spend-script       scr
-    value              val
-    script-pubkey      ~(scriptpubkey p2tr:gw `x.pub.int-key scr ~)
   ==
 ::
 +$  utxo  [outpoint:gw output:gw]
@@ -55,13 +55,9 @@
   ++  build-output
     |=  scr=(unit script:scr)
     ^-  [output:gw _cor]
-    =/  val
-      ?~  spend-script.utxo  (sub value.utxo 150)
-      (sub value.utxo (add (lent u.spend-script.utxo) 400))
-
     =^  kp  i  derive
     :_  cor
-    (make-output val kp scr)
+    (make-output kp ~ scr)
   ::
   ++  spend
     |=  [out=output:gw]
@@ -70,6 +66,9 @@
     =.  tx  (~(add-input-1 build:gw tx) utxo ~ ~)
         :: by passing ~ we default to SIGHASH_DEFAULT, equivalent to SIGHASH_ALL, so when we sign this input later we'll commit to all and only
         :: the inputs and outputs we've added to the transaction up to that point
+    =.  value.out
+      ?~  spend-script.utxo  (sub value.utxo 150)
+      (sub value.utxo (add (lent u.spend-script.utxo) 400))
     =.  tx  (~(add-output-1 build:gw tx) out)
     =^  tx  eny  (~(finalize build:gw tx) eny)
     =/  raw=octs  (txn:encode:gw tx)
@@ -106,10 +105,19 @@
       |%
       ++  spawn
         |=  $:  ::from=(unit [=pos =off])
-                out=[spkvh=@ux pos=(unit pos) =off tej=off]
+                out=[spk=output:gw pos=(unit pos) =off tej=off]
             ==
+        =/  utxo  utxo:wal
+        =.  value.spk.out
+          ?~  spend-script.utxo  (sub value.utxo 150)
+          (sub value.utxo (add (lent u.spend-script.utxo) 400))
+        =.  value.spk.out
+          ?~  spend-script.spk.out  (sub value.spk.out 150)
+          (sub value.spk.out (add (lent u.spend-script.spk.out) 400))
+        =/  en-out  (can 3 script-pubkey.spk.out 8^value.spk.out ~)
+        =/  hax-out  (shay (add 8 p.script-pubkey.spk.out) en-out)
         ^-  single:skim-sotx
-        [%spawn pub:ex:cac +<]
+        [%spawn pub:ex:cac out(spk hax-out)]
       ::
       ++  keys
         |=  bec=?
@@ -155,7 +163,7 @@
     ::
     ++  spawn
       |=  $:  ::from=(unit [=pos =off])
-              out=[spkvh=@ux pos=(unit pos) =off tej=off]
+              out=[spk=output:gw pos=(unit pos) =off tej=off]
           ==
       ^-  sotx
       =/  sot=skim-sotx  (spawn:skim +<)
@@ -205,6 +213,10 @@
     --
   ++  btc
     |%
+    ++  make-key-out
+      =^  out  wal  (build-output:wal ~)
+      out^cor
+
     ++  spend
       |=  [out=output:gw]
       ^-  [byts _cor]
@@ -213,7 +225,7 @@
     ::
     ++  spawn
       |=  $:  ::from=(unit [=pos =off])
-              out=[spkvh=@ux pos=(unit pos) =off tej=off]
+              out=[spk=output:gw pos=(unit pos) =off tej=off]
           ==
       ^-  [output:gw _cor]
       =^  out  wal
@@ -230,13 +242,13 @@
         `(make-unv-script sot ~)
       out^cor
     ::::
-    ::++  escape
-    ::  |=  her=@p
-    ::  ^-  [output:gw _cor]
-    ::  =^  out  wal
-    ::    %^  build-output:wal  (sub val:wal 150)
-    ::   (make-unv-script (escape:unv-tx +<) ~)
-    ::  out^cor
+    ++  escape
+      |=  her=@p
+      ^-  [output:gw _cor]
+      =^  out  wal
+        %-  build-output:wal
+        `(make-unv-script (escape:unv-tx +<) ~)
+      out^cor
     ::::
     ::++  cancel-escape
     ::  |=  her=@p
@@ -279,7 +291,7 @@
     ::  out^cor
     ::::
     ::++  set-mang
-    ::  |=  man=(unit mang)
+    ::  |=  man=(unit mang-tx)
     ::  ^-  [output:gw _cor]
     ::  =^  out  wal
     ::    %^  build-output:wal  (sub val:wal 150)
@@ -301,13 +313,13 @@
       dav=(nu:walt 0xcafe.babe dav)
   ==
 ::
-++  count-sonts
-  |=  sm=sont-map
-  %-  ~(rep by sm)
-  |=  [[* a=(mip pos off sont-val)] b=@]
-  %-  ~(rep by a)
-  |=  [[* a=(map off sont-val)] =_b]
-  (add ~(wyt by a) b)
+::++  count-sonts
+::  |=  sm=sont-map
+::  %-  ~(rep by sm)
+::  |=  [[* a=(mip pos off sont-val)] b=@]
+::  %-  ~(rep by a)
+::  |=  [[* a=(map off sont-val)] =_b]
+::  (add ~(wyt by a) b)
 ::
 ++  make-batch
   !!
@@ -321,19 +333,40 @@
   ^-  (list byts)
   =+  (make-walz waletz)
   =^  adopt-commit-out-ali  ali  (adopt:btc:ali fig:ali)
-  =/  nadopt-commit-out-ali  (can 3 script-pubkey.adopt-commit-out-ali 8^value.adopt-commit-out-ali ~)
-  =/  hadopt-commit-out-ali  (shay (add 8 p.script-pubkey.adopt-commit-out-ali) nadopt-commit-out-ali)
-  =^  spawn-commit-out-ali  ali  (spawn:btc:ali hadopt-commit-out-ali `0 0 0)
+  =^  spawn-commit-out-ali  ali  (spawn:btc:ali adopt-commit-out-ali `0 0 0)
   =^  spawn-commit-tx-ali  ali  (spend:btc:ali spawn-commit-out-ali)
-  ::=^  adopt-commit-tx-ali  ali  (spend:btc:ali adopt-commit-out-ali)
+  =^  adopt-commit-tx-ali  ali  (spend:btc:ali adopt-commit-out-ali)
+  =^  keys-commit-ali  ali  (keys:btc:ali |)
+  =^  keys-commit-tx-ali  ali  (spend:btc:ali keys-commit-ali)
+  =^  adopt-car-commit-ali  ali  (adopt:btc:ali fig:car)
+  =^  adopt-car-commit-tx-ali  ali  (spend:btc:ali adopt-car-commit-ali)
+
+  =^  escape-commit-out-car  car  (escape:btc:car fig:ali)
+  =^  spawn-commit-out-car  car  (spawn:btc:car escape-commit-out-car `0 0 0)
+  =^  spawn-commit-tx-car  car  (spend:btc:car spawn-commit-out-car)
+  =^  escape-commit-tx-car  car  (spend:btc:car escape-commit-out-car)
+  =^  keyspend-out-0-car   car  make-key-out:btc:car
+  =^  keyspend-tx-0-car       car  (spend:btc:car keyspend-out-0-car)
+
+
+  =^  keyspend-out-0-ali   ali  make-key-out:btc:ali
+  =^  keyspend-tx-0-ali       ali  (spend:btc:ali keyspend-out-0-ali)
+
   ::=^  keys-commit-ali  ali  (keys:btc:ali |)
   ::=/  nkeys-commit-ali  (can 3 script-pubkey.keys-commit-ali
   ::8^value.keys-commit-ali ~)
   ::=/  hkeys-commit-ali  (shay (add 8 p.script-pubkey.keys-commit-ali) nkeys-out-ali)
 
 
-  ::~[spawn-commit-tx-ali adopt-commit-tx-ali]
-  ~[spawn-commit-tx-ali]
+  :~  spawn-commit-tx-ali
+      adopt-commit-tx-ali
+      keys-commit-tx-ali
+      spawn-commit-tx-car
+      escape-commit-tx-car
+      adopt-car-commit-tx-ali
+      keyspend-tx-0-car
+      keyspend-tx-0-ali
+  ==
 
   ::oc
 

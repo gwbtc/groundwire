@@ -241,7 +241,7 @@
         =^  sig=hexb  b  (script-sig (drop:byt 36 b))
         =^  seq=hexb  b  (sequence b)
         :_  b
-        [txid pos seq ?:((gth wid.sig 0) `sig ~) ~ 0]
+        [txid pos seq ?:((gth wid.sig 0) `sig ~) ~]
       --
     ::
     ++  outputs
