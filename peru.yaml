@@ -31,6 +31,8 @@ git module base-dev:
   export: pkg/base-dev
   pick:
     - pkg/base-dev/lib/bip32.hoon
+    - pkg/base-dev/lib/bip39.hoon
+    - pkg/base-dev/lib/bip39/english.hoon
     - pkg/base-dev/lib/dbug.hoon
     - pkg/base-dev/lib/der.hoon
     - pkg/base-dev/lib/default-agent.hoon
