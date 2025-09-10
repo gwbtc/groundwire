@@ -8,8 +8,8 @@
 ::
 ++  input-lte
   |=  [a=in:tx:psbt b=in:tx:psbt]
-  ?.  =(dat.txid.prevout.a dat.txid.prevout.b)
-    (lth dat.txid.prevout.a dat.txid.prevout.b)
+  ?.  =(txid.prevout.a txid.prevout.b)
+    (lth txid.prevout.a txid.prevout.b)
   (lte idx.prevout.a idx.prevout.b)
 ::
 ++  sort-outputs
