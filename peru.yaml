@@ -44,6 +44,7 @@ git module base-dev:
     - pkg/base-dev/lib/verb.hoon
     - pkg/base-dev/mar/bill.hoon
     - pkg/base-dev/mar/mime.hoon
+    - pkg/base-dev/mar/hoon.hoon
     - pkg/base-dev/sur/asn1.hoon
     - pkg/base-dev/sur/spider.hoon
     - pkg/base-dev/sur/verb.hoon
