@@ -174,7 +174,7 @@
   ++  check-tx
     |=  v=tx-vector
     %+  expect-eq
-      !>(txid.v)
+      !>(dat.txid.v)
       !>((get-id:txu (decode:txu (from-cord:hxb hex-cord.v))))
   ::
   ++  check-xpub-parsing
