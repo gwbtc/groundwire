@@ -312,23 +312,21 @@
   $(g (tail g))
 ::  +parse: decode psbt maps from byts
 ::
-::  XX fix, can't find .magic
 ++  parse
   |=  b=hexb:bc
   ^-  (list map)
-  *(list map)
-::    =^  magc=hexb:bc  b  (read-bytes 5 b)
-::    ?.  =(dat.magc magic)
-::      ~|([%psbt-bad-magic dat.magc] !!)
-::    =|  acc=(list map)
-::    =|  m=map
-::    |-
-::    ?:  =(wid.b 0)
-::      (snoc acc m)
-::    =^  kv  b  (next-key-value b)
-::    ?~  kv
-::      $(acc (snoc acc m), m ~)
-::    $(m (snoc m +.kv))
+  =^  gc=hexb:bc  b  (read-bytes 5 b)
+  ?.  =(dat.b magic:pt)
+    ~|([%psbt-bad-magic dat.b] !!)
+  =|  acc=(list map)
+  =|  m=map
+  |-
+  ?:  =(wid.b 0)
+    (snoc acc m)
+  =^  kv  b  (next-key-value b)
+  ?~  kv
+    $(acc (snoc acc m), m ~)
+  $(m (snoc m +.kv))
 ::  +de: decode psbt from byts
 ::
 ++  de
@@ -475,18 +473,17 @@
   ~[(turn map encode-key-value) [1^0x0]~]
 ::  +en: encode psbt to byts
 ::
-::  XX fix, can't find .magic
 ++  en
   |=  =psbt:pt
   |^  ^-  hexb:bc
-  *hexb:bc
-::    %-  cat:byt:bcu:bc
-::    %-  zing
-::    :~  [5^magic]~
-::        [(encode-map global-map)]~
-::        (turn input-maps encode-map)
-::        (turn output-maps encode-map)
-::    ==
+  %-  cat:byt:bcu:bc
+  %-  zing
+  :~  [5^magic:pt]~
+      ::  XX no global-map anywhere
+      ::  [(encode-map global-map)]~
+      (turn input-maps encode-map)
+      (turn output-maps encode-map)
+  ==
   ++  global
     ^-  map
     :-  :*  typ=unsigned-tx:global:pt
@@ -494,7 +491,6 @@
             val=(encode-tx (extract-unsigned psbt))
         ==
     %-  ~(rep by unknown.psbt)
-    ::  XX -find.key
     |=  [[k=key:pt v=value:pt] acc=map]
     =^  t  k  (read-compact-size k)
     [[t k v] acc]
