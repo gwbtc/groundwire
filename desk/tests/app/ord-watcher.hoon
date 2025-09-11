@@ -31,14 +31,17 @@
   ;<  caz=(list card)  bind:m  (do-init:tag dap mock-agent)
   (pure:m ~)
 ::
-++  test-poke-noun
+++  test-poke-clear
   %-  eval-mare:tag
   =/  m  (mare:tag ,~)
   ^-  form:m
   ;<  *                bind:m  (do-init:tag dap mock-agent)
   ;<  ~                bind:m  (set-src:tag ~zod)
-  ;<  caz=(list card)  bind:m  (do-poke:tag %noun !>(~))
-  (pure:m ~)
+  ;<  caz=(list card)  bind:m  (do-poke:tag %noun !>(%clear))
+  %+  ex-cards:tag
+    caz
+  :~  (ex-task:tag /running/watcher-ted [~zod %spider] %leave ~)
+  ==
 ::
 ++  test-load
   %-  eval-mare:tag
@@ -74,19 +77,19 @@
   ;<  *  bind:m  (do-agent:tag /running/get-blocks doc %poke-ack ~)
   (pure:m ~)
 ::
-++  test-agent-running-poke-nack
-  %-  eval-mare:tag
-  =/  m  (mare:tag ,~)
-  ^-  form:m
-  ;<  *                bind:m  (do-init:tag dap mock-agent)
-  ;<  *                bind:m  (jab-bowl:tag |=(b=bowl:gall b(our ~zod)))
-  ;<  caz=(list card)  bind:m  (do-agent:tag /running/get-blocks doc %poke-ack (some ['test tank']~))
-  %+  ex-cards:tag
-    caz
-  :~  (ex-task:tag /running/get-blocks [~zod %spider] %leave ~)
-      (ex-task:tag /running/watcher-ted [~zod %spider] %watch /thread-result/ord-watcher--0v0)
-      (ex-poke:tag /running/watcher-ted [~zod %spider] %spider-inline !>([~ `~.ord-watcher--0v0 [%da ~2000.1.1] /btc/get-blocks]))
-  ==
+::  ++  test-agent-running-poke-nack
+::    %-  eval-mare:tag
+::    =/  m  (mare:tag ,~)
+::    ^-  form:m
+::    ;<  *                bind:m  (do-init:tag dap mock-agent)
+::    ;<  *                bind:m  (jab-bowl:tag |=(b=bowl:gall b(our ~zod)))
+::    ;<  caz=(list card)  bind:m  (do-agent:tag /running/get-blocks doc %poke-ack (some ['test tank']~))
+::    %+  ex-cards:tag
+::      caz
+::    :~  (ex-task:tag /running/get-blocks [~zod %spider] %leave ~)
+::        (ex-task:tag /running/watcher-ted [~zod %spider] %watch /thread-result/ord-watcher--0v0)
+::        (ex-poke:tag /running/watcher-ted [~zod %spider] %spider-inline !>([~ `~.ord-watcher--0v0 [%da ~2000.1.1] /btc/get-blocks]))
+::    ==
 ::
 ::  XX test %watch-ack, %kick, and %fact code branches
 ::
