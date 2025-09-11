@@ -2,7 +2,7 @@
 ::
 ::  V2 notes: better distinguish types, methods for PSBT noun representation, PSBT bytecode, and transaction bytecode
 ::
-/-  *psbt
+/-  pt=psbt
 /+  bc=bitcoin, der
 |%
 +$  key-value  [typ=@ key=hexb:bc val=hexb:bc]
@@ -17,7 +17,7 @@
 ++  tx
   =<  tx
   |%
-  +$  tx  [id=txid data]
+  +$  tx  [id=txid:bc data:tx:bc]
   ::
   +$  data
     $:  is=(list input)
@@ -30,7 +30,7 @@
   ::
   ::
   +$  input
-    $:  =txid
+    $:  =txid:bc
         pos=@ud
         sequence=hexb:bc
         script-sig=(unit hexb:bc)
@@ -40,10 +40,10 @@
   ::
   +$  output
     $:  script-pubkey=hexb:bc
-        value=sats
+        value=sats:bc
     ==
   ::
-  +$  witness    (list hexb:bc)
+  +$  witness    witness:tx:bc
   --
 
 ::  +read-compact-size: decode CompactSize
@@ -105,8 +105,8 @@
 ::
 ++  read-inputs
   |=  [n=@ b=hexb:bc]
-  ^-  (pair (list in:tx) hexb:bc)
-  =|  acc=(list in:tx)
+  ^-  (pair (list in:tx:pt) hexb:bc)
+  =|  acc=(list in:tx:pt)
   |-
   ?:  =(n 0)  [acc b]
   =^  a  b  (read-input b)
@@ -115,8 +115,8 @@
 ::
 ++  read-outputs
   |=  [n=@ b=hexb:bc]
-  ^-  (pair (list out:tx) hexb:bc)
-  =|  acc=(list out:tx)
+  ^-  (pair (list out:tx:pt) hexb:bc)
+  =|  acc=(list out:tx:pt)
   |-
   ?:  =(n 0)  [acc b]
   =^  a  b  (read-output b)
@@ -126,7 +126,7 @@
 ++  parse-witness
   |=  b=hexb:bc
   ^-  (pair (list hexb:bc) hexb:bc)
-  =|  acc=witness
+  =|  acc=witness:tx:bc
   =+  i=0
   =^  n  b  (read-compact-size b)
   |-
@@ -137,8 +137,8 @@
 ::  +read-witness: read witness into input
 ::
 ++  read-witness
-  |=  [input=in:tx b=hexb:bc]
-  ^-  (pair in:tx hexb:bc)
+  |=  [input=in:tx:pt b=hexb:bc]
+  ^-  (pair in:tx:pt hexb:bc)
   =^  witness  b  (parse-witness b)
   :_  b
   input(script-witness ?~(witness ~ `witness))
@@ -146,8 +146,8 @@
 ::
 ++  read-input
   |=  b=hexb:bc
-  ^-  (pair in:tx hexb:bc)
-  =|  input=in:tx
+  ^-  (pair in:tx:pt hexb:bc)
+  =|  input=in:tx:pt
   =^  prevout-hash  b  (read-bytes 32 b)
   =+  prevout-txid=dat:(flip:byt:bcu:bc prevout-hash)
   =^  prevout-n     b  (read-bytes 4 b)
@@ -166,8 +166,8 @@
 ::
 ++  read-output
   |=  b=hexb:bc
-  ^-  (pair out:tx hexb:bc)
-  =|  output=out:tx
+  ^-  (pair out:tx:pt hexb:bc)
+  =|  output=out:tx:pt
   =^  value  b       (read-bytes 8 b)
   =+  amount=dat:(flip:byt:bcu:bc value)
   =^  script-len  b  (read-compact-size b)
@@ -181,8 +181,8 @@
 ::
 ++  decode-tx
   |=  b=hexb:bc
-  ^-  tx:tx
-  =|  =tx:tx
+  ^-  tx:tx:pt
+  =|  =tx:tx:pt
   =^  version  b  (read-bytes 4 b)
   =+  nversion=dat:(flip:byt:bcu:bc version)
   =^  n-vin     b  (read-compact-size b)
@@ -193,7 +193,7 @@
     ~|  %psbt-invalid-marker
     ?<  =(b 1^0x1)
     (read-compact-size b)
-  =^  vin=(list in:^tx)  b
+  =^  vin=(list in:tx:pt)  b
     (read-inputs n-vin b)
   =^  n-vout   b  (read-compact-size b)
   =^  outputs  b  (read-outputs n-vout b)
@@ -213,7 +213,7 @@
 ::  +encode-input: encode input to byts
 ::
 ++  encode-input
-  |=  =in:tx
+  |=  =in:tx:pt
   ^-  hexb:bc
   %-  cat:byt:bcu:bc
   %-  zing
@@ -229,7 +229,7 @@
 ::  +encode-output: encode output to byts
 ::
 ++  encode-output
-  |=  =out:tx
+  |=  =out:tx:pt
   ^-  hexb:bc
   %-  cat:byt:bcu:bc
   :~  (flip:byt:bcu:bc 8^value.out)
@@ -239,7 +239,7 @@
 ::  +encode-witness-script: pack witness script to byts
 ::
 ++  encode-witness-script
-  |=  w=witness
+  |=  w=witness:tx:bc
   ^-  hexb:bc
   %-  cat:byt:bcu:bc
   :-  (encode-compact-size (lent w))
@@ -252,7 +252,7 @@
 ::  +encode-witness: encode input's script-witness
 ::
 ++  encode-witness
-  |=  =in:tx
+  |=  =in:tx:pt
   ^-  hexb:bc
   ?~  script-witness.in
     0^0x0
@@ -260,11 +260,11 @@
 ::  +encode-tx: encode unsigned transaction
 ::
 ++  encode-tx
-  |=  =tx:tx
+  |=  =tx:tx:pt
   ^-  hexb:bc
   =+  ^=  is-segwit
       %+  lien  vin.tx
-      |=  i=in:^tx
+      |=  i=in:tx:pt
       ?=(^ script-witness.i)
   %-  cat:byt:bcu:bc
   %-  zing
@@ -284,17 +284,17 @@
 ::  +txid: compute txid for unsigned transaction
 ::
 ++  txid
-  |=  =tx
+  |=  =tx:tx:pt
   ^-  hexb:bc
   =+  ^=  strip-witness
-      |=  =in:^tx
+      |=  =in:tx:pt
       in(script-witness ~)
   %-  wtxid
   tx(vin (turn vin.tx strip-witness))
 ::  +wtxid: txid including witness data
 ::
 ++  wtxid
-  |=  =tx:tx
+  |=  =tx:tx:pt
   ^-  hexb:bc
   %-  flip:byt:bcu:bc
   %-  dsha256:bcu:bc
@@ -303,35 +303,37 @@
 ::
 ++  unsigned-tx
   |=  g=map
-  ^-  tx:tx
+  ^-  tx:tx:pt
   ~|  %psbt-no-unsigned-tx
   |-
   =+  (head g)
-  ?:  =(dat.key unsigned-tx:global)
+  ?:  =(dat.key unsigned-tx:global:pt)
     (decode-tx val)
   $(g (tail g))
 ::  +parse: decode psbt maps from byts
 ::
+::  XX fix, can't find .magic
 ++  parse
   |=  b=hexb:bc
   ^-  (list map)
-  =^  magc=hexb:bc  b  (read-bytes 5 b)
-  ?.  =(dat.magc magic)
-    ~|([%psbt-bad-magic dat.magc] !!)
-  =|  acc=(list map)
-  =|  m=map
-  |-
-  ?:  =(wid.b 0)
-    (snoc acc m)
-  =^  kv  b  (next-key-value b)
-  ?~  kv
-    $(acc (snoc acc m), m ~)
-  $(m (snoc m +.kv))
+  *(list map)
+::    =^  magc=hexb:bc  b  (read-bytes 5 b)
+::    ?.  =(dat.magc magic)
+::      ~|([%psbt-bad-magic dat.magc] !!)
+::    =|  acc=(list map)
+::    =|  m=map
+::    |-
+::    ?:  =(wid.b 0)
+::      (snoc acc m)
+::    =^  kv  b  (next-key-value b)
+::    ?~  kv
+::      $(acc (snoc acc m), m ~)
+::    $(m (snoc m +.kv))
 ::  +de: decode psbt from byts
 ::
 ++  de
   |=  b=hexb:bc
-  |^  ^-  psbt
+  |^  ^-  psbt:pt
   =+  maps=(parse b)
   =+  globals=(head maps)
   =+  unsigned=(unsigned-tx globals)
@@ -374,50 +376,50 @@
     ==
   ::
   ++  populate-input
-    |=  [kv=key-value i=input]
-    ^-  input
-    =+  kv
-    ?:  =(typ non-witness-utxo:in)
+    |=  [kv=key-value i=input:pt]
+    ^-  input:pt
+    =,  kv
+    ?:  =(typ non-witness-utxo:i)
       ?>  =(wid.key 0)
       i(non-witness-utxo `(decode-tx val))
-    ?:  =(typ witness-utxo:in)
+    ?:  =(typ witness-utxo:i)
       i(witness-utxo `(decode-output val))
-    ?:  =(typ partial-sig:in)
+    ?:  =(typ partial-sigs:i)
       i(partial-sigs (~(put by partial-sigs.i) key val))
-    ?:  =(typ sighash:in)
+    ?:  =(typ sighash:in:pt)
       i(sighash `dat:(flip:byt:bcu:bc val))
-    ?:  =(typ redeemscript:in)
+    ?:  =(typ redeemscript:in:pt)
       i(redeem-script `val)
-    ?:  =(typ witnessscript:in)
+    ?:  =(typ witnessscript:in:pt)
       i(witness-script `val)
-    ?:  =(typ bip32-derivation:in)
+    ?:  =(typ bip32-derivation:in:pt)
       i(hd-keypaths (decode-hd-keypaths hd-keypaths.i key val))
-    ?:  =(typ scriptsig:in)
+    ?:  =(typ scriptsig:in:pt)
       i(final-script-sig `val)
-    ?:  =(typ scriptwitness:in)
+    ?:  =(typ scriptwitness:in:pt)
       i(final-script-witness `-:(parse-witness val))
     i(unknown (~(put by unknown.i) (full-key typ key) val))
   ::
   ++  populate-output
-    |=  [kv=key-value o=output]
-    ^-  output
-    =+  kv
-    ?:  =(typ redeemscript:out)
+    |=  [kv=key-value o=output:pt]
+    ^-  output:pt
+    =,  kv
+    ?:  =(typ redeemscript:out:pt)
       o(redeem-script `val)
-    ?:  =(typ witnessscript:out)
+    ?:  =(typ witnessscript:out:pt)
       o(witness-script `val)
-    ?:  =(typ bip32-derivation:out)
+    ?:  =(typ bip32-derivation:out:pt)
       o(hd-keypaths (decode-hd-keypaths hd-keypaths.o key val))
     o(unknown (~(put by unknown.o) (full-key typ key) val))
   ::
   ++  decode-output
     |=  b=hexb:bc
-    ^-  out:tx
+    ^-  out:tx:pt
     -:(read-output b)
   ::
   ++  decode-hd-keypaths
-    |=  [d=(^map pubkey keyinfo) key=hexb:bc val=hexb:bc]
-    ^-  (^map pubkey keyinfo)
+    |=  [d=(^map pubkey:pt keyinfo:pt) key=hexb:bc val=hexb:bc]
+    ^-  (^map pubkey:pt keyinfo:pt)
     ~|  %psbt-duplicate-key
     ?<  (~(has by d) key)
     =^  fprint  val  (read-bytes 4 val)
@@ -435,10 +437,10 @@
 ::  +encode-hd-keypaths: generate psbt map for bip32-keypaths
 ::
 ++  encode-hd-keypaths
-  |=  [typ=@ d=(^map pubkey keyinfo)]
+  |=  [typ=@ d=(^map pubkey:pt keyinfo:pt)]
   ^-  map
   %-  ~(rep by d)
-  |=  [[=pubkey =keyinfo] acc=map]
+  |=  [[=pubkey:pt =keyinfo:pt] acc=map]
   =+  keyinfo
   :_  acc
   :*  typ=typ
@@ -473,48 +475,51 @@
   ~[(turn map encode-key-value) [1^0x0]~]
 ::  +en: encode psbt to byts
 ::
+::  XX fix, can't find .magic
 ++  en
-  |=  =psbt
+  |=  =psbt:pt
   |^  ^-  hexb:bc
-  %-  cat:byt:bcu:bc
-  %-  zing
-  :~  [5^magic]~
-      [(encode-map global-map)]~
-      (turn input-maps encode-map)
-      (turn output-maps encode-map)
-  ==
-  ++  global-map
+  *hexb:bc
+::    %-  cat:byt:bcu:bc
+::    %-  zing
+::    :~  [5^magic]~
+::        [(encode-map global-map)]~
+::        (turn input-maps encode-map)
+::        (turn output-maps encode-map)
+::    ==
+  ++  global
     ^-  map
-    :-  :*  typ=unsigned-tx:global
+    :-  :*  typ=unsigned-tx:global:pt
             key=0^0x0
             val=(encode-tx (extract-unsigned psbt))
         ==
     %-  ~(rep by unknown.psbt)
-    |=  [[k=key v=value] acc=map]
+    ::  XX -find.key
+    |=  [[k=key:pt v=value:pt] acc=map]
     =^  t  k  (read-compact-size k)
     [[t k v] acc]
   ::
   ++  input-maps
     ^-  (list map)
     %+  turn  inputs.psbt
-    |=  =input
+    |=  =input:pt
     ~(section-map txin input)
   ::
   ++  output-maps
     ^-  (list map)
     %+  turn  outputs.psbt
-    |=  =output
+    |=  =output:pt
     ~(section-map txout output)
   --
 ::  +txin: input-related utilities
 ::
 ++  txin
-  |_  =input
+  |_  =input:pt
   ::
   ++  from-input
-    |=  [i=in:tx strip-witness=?]
-    ^-  ^input
-    =|  r=^input
+    |=  [i=in:tx:pt strip-witness=?]
+    ^-  input:pt
+    =|  r=input:pt
     %=  r
       prevout         prevout.i
       nsequence       nsequence.i
@@ -523,8 +528,8 @@
     ==
   ::
   ++  to-input
-    ^-  in:tx
-    =|  r=in:tx
+    ^-  in:tx:pt
+    =|  r=in:tx:pt
     %=  r
       prevout         prevout.input
       nsequence       nsequence.input
@@ -533,7 +538,7 @@
     ==
   ::
   ++  value
-    ^-  (unit sats)
+    ^-  (unit sats:bc)
     ?^  trusted-value.input
       trusted-value.input
     ?^  non-witness-utxo.input
@@ -584,15 +589,15 @@
     ~
   ::
   ++  signature-list
-    ^-  (list signature)
+    ^-  (list signature:pt)
     %+  reel  pubkeys.input
-    |=  [pub=pubkey sigs=(list signature)]
+    |=  [pub=pubkey:pt sigs=(list signature:pt)]
     =+  sig=(~(get by partial-sigs.input) pub)
     ?~  sig  [0^0x0 sigs]
     [u.sig sigs]
   ::
   ++  script-witness
-    ^-  witness
+    ^-  witness:pt
     ?^  final-script-witness.input
       u.final-script-witness.input
     ?:  is-coinbase-input
@@ -615,7 +620,7 @@
     [(encode-compact-size 0)]~
   ::
   ++  finalize
-    ^-  ^input
+    ^-  input:pt
     ?:  ?&  ?=(^ final-script-sig.input)
             ?=(^ final-script-witness.input)
         ==
@@ -635,7 +640,7 @@
       ?~  witness-utxo.input
         ~
       :_  ~
-      :*  typ=witness-utxo:in
+      :*  typ=witness-utxo:in:pt
           key=0^0x0
           val=(encode-output u.witness-utxo.input)
       ==
@@ -643,20 +648,20 @@
       ?~  non-witness-utxo.input
         ~
       :_  ~
-      :*  typ=non-witness-utxo:in
+      :*  typ=non-witness-utxo:in:pt
           key=0^0x0
           val=(encode-tx u.non-witness-utxo.input)
       ==
       ::
       ^-  (list key-value)
       %-  ~(rep by partial-sigs.input)
-      |=  [[=pubkey =signature] acc=map]
-      [[partial-sig:in pubkey signature] acc]
+      |=  [[=pubkey:pt =signature:pt] acc=map]
+      [[partial-sig:in:pt pubkey signature] acc]
       ::
       ?~  sighash.input
         ~
       :_  ~
-      :*  typ=sighash:in
+      :*  typ=sighash:in:pt
           key=0^0x0
           val=1^u.sighash.input
       ==
@@ -664,7 +669,7 @@
       ?~  redeem-script.input
         ~
       :_  ~
-      :*  typ=redeemscript:in
+      :*  typ=redeemscript:in:pt
           key=0^0x0
           val=u.redeem-script.input
       ==
@@ -672,20 +677,20 @@
       ?~  witness-script.input
         ~
       :_  ~
-      :*  typ=witnessscript:in
+      :*  typ=witnessscript:in:pt
           key=0^0x0
           val=u.witness-script.input
       ==
       ::
       ^-  (list key-value)
       %+  encode-hd-keypaths
-        bip32-derivation:in
+        bip32-derivation:in:pt
       hd-keypaths.input
       ::
       ?~  final-script-sig.input
         ~
       :_  ~
-      :*  typ=scriptsig:in
+      :*  typ=scriptsig:in:pt
           key=0^0x0
           val=u.final-script-sig.input
       ==
@@ -693,7 +698,7 @@
       ?~  final-script-witness.input
         ~
       :_  ~
-      :*  typ=scriptwitness:in
+      :*  typ=scriptwitness:in:pt
           key=0^0x0
           val=(encode-witness-script u.final-script-witness.input)
       ==
@@ -702,20 +707,20 @@
 ::  +txout: output-related utilities
 ::
 ++  txout
-  |_  o=output
+  |_  o=output:pt
   ::
   ++  from-output
-    |=  o=out:tx
-    ^-  output
-    =|  r=output
+    |=  o=out:tx:pt
+    ^-  output:pt
+    =|  r=output:pt
     %=  r
       script-pubkey  script-pubkey.o
       value          value.o
     ==
   ::
   ++  to-output
-    ^-  out:tx
-    =|  r=out:tx
+    ^-  out:tx:pt
+    =|  r=out:tx:pt
     %=  r
       value          value.o
       script-pubkey  script-pubkey.o
@@ -732,7 +737,7 @@
       ?~  redeem-script.o
         ~
       :_  ~
-      :*  typ=redeemscript:out
+      :*  typ=redeemscript:out:pt
           key=0^0x0
           val=u.redeem-script.o
       ==
@@ -740,19 +745,19 @@
       ?~  witness-script.o
         ~
       :_  ~
-      :*  typ=witnessscript:out
+      :*  typ=witnessscript:out:pt
           key=0^0x0
           val=u.witness-script.o
       ==
       ::
       ^-  (list key-value)
       %+  encode-hd-keypaths
-        bip32-derivation:out
+        bip32-derivation:out:pt
       hd-keypaths.o
       ::
       ^-  (list key-value)
       %-  ~(rep by unknown.o)
-      |=  [[=key =value] acc=map]
+      |=  [[=key:pt =value:pt] acc=map]
       =^  typ  key  (read-compact-size key)
       [[typ key value] acc]
     ==
@@ -776,14 +781,14 @@
 ::  +create: creator role
 ::
 ++  create
-  |_  tx=psbt
+  |_  tx=psbt:pt
   ::
   ++  from-byts  de
   ++  to-byts    (en tx)
   ::
   ++  from-base64
     |=  =cord
-    ^-  (unit psbt)
+    ^-  (unit psbt:pt)
     %+  bind  (de:base64:mimes:html cord)
     |=  =byts
     %-  from-byts
@@ -795,20 +800,20 @@
   ::
   ++  from-base16
     |=  =cord
-    ^-  (unit psbt)
+    ^-  (unit psbt:pt)
     %+  bind  (de:base16:mimes:html cord)
     from-byts
   ::
   ++  from-unsigned-tx
-    |=  t=tx:^tx
-    ^-  psbt
+    |=  t=tx:tx:pt
+    ^-  psbt:pt
     =+  ^=  inputs
-        ^-  (list input)
+        ^-  (list input:pt)
         %+  turn  vin.t
-        |=  i=in:^tx
+        |=  i=in:tx:pt
         (from-input:txin i %.y)
     =+  ^=  outputs
-        ^-  (list output)
+        ^-  (list output:pt)
         (turn vout.t from-output:txout)
     %=  tx
       inputs     inputs
@@ -822,48 +827,48 @@
 ::  +update: updater role
 ::
 ++  update
-  |_  tx=psbt
+  |_  tx=psbt:pt
   ::
   ++  add-input
-    |=  =input
-    ^-  psbt
+    |=  =input:pt
+    ^-  psbt:pt
     tx(inputs (snoc inputs.tx input))
   ::
   ++  add-output
-    |=  =output
-    ^-  psbt
+    |=  =output:pt
+    ^-  psbt:pt
     tx(outputs (snoc outputs.tx output))
   ::
   ++  add-non-witness-utxo
-    |=  [i=@u utxo=tx:^tx]
-    ^-  psbt
+    |=  [i=@u utxo=tx:tx:pt]
+    ^-  psbt:pt
     =+  txin=(snag i inputs.tx)
     =.  non-witness-utxo.txin  `utxo
     tx(inputs (snap inputs.tx i txin))
   ::
   ++  add-witness-utxo
-    |=  [i=@u utxo=out:^tx]
-    ^-  psbt
+    |=  [i=@u utxo=out:tx:pt]
+    ^-  psbt:pt
     =+  txin=(snag i inputs.tx)
     =.  witness-utxo.txin  `utxo
     tx(inputs (snap inputs.tx i txin))
   ::
   ++  add-redeem-script
     |=  [i=@u script=hexb:bc]
-    ^-  psbt
+    ^-  psbt:pt
     =+  txin=(snag i inputs.tx)
     =.  redeem-script.txin  `script
     tx(inputs (snap inputs.tx i txin))
   ::
   ++  add-witness-script
     |=  [i=@u script=hexb:bc]
-    ^-  psbt
+    ^-  psbt:pt
     =+  txin=(snag i inputs.tx)
     =.  witness-script.txin  `script
     tx(inputs (snap inputs.tx i txin))
   ::
   ++  add-signature
-    |=  [i=@u =pubkey =signature]
+    |=  [i=@u =pubkey:pt =signature:pt]
     =+  txin=(snag i inputs.tx)
     =.  txin
       %=  txin
@@ -874,7 +879,7 @@
 ::  +sign: signer role
 ::
 ++  sign
-  |_  tx=psbt
+  |_  tx=psbt:pt
   ::
   +$  shared-fields
     $:  hash-prevouts=hexb:bc
@@ -894,7 +899,7 @@
       %-  dsha256:bcu:bc
       %-  cat:byt:bcu:bc
       %+  turn  inputs.tx
-      |=  =input
+      |=  =input:pt
       ^-  hexb:bc
       %-  cat:byt:bcu:bc
       :~  (flip:byt:bcu:bc 256^txid.prevout.input)
@@ -906,7 +911,7 @@
       %-  dsha256:bcu:bc
       %-  cat:byt:bcu:bc
       %+  turn  inputs.tx
-      |=  =input
+      |=  =input:pt
       ^-  hexb:bc
       (flip:byt:bcu:bc 4^nsequence.input)
     ::
@@ -915,13 +920,13 @@
       %-  dsha256:bcu:bc
       %-  cat:byt:bcu:bc
       %+  turn  outputs.tx
-      |=  =output
+      |=  =output:pt
       ^-  hexb:bc
       ~(en txout output)
     --
   ::
   ++  preimage-script
-    |=  i=input
+    |=  i=input:pt
     ^-  hexb:bc
     ?^  witness-script.i
       u.witness-script.i
@@ -932,23 +937,23 @@
     ~|(%psbt-unknown-script !!)
   ::
   ++  tx-data
-    ^-  data:tx
-    =|  =data:tx
+    ^-  data:tx:bc
+    =|  =data:tx:bc
     =.  is.data
       %+  turn  inputs.tx
-      |=  i=input
-      =|  =input:tx
+      |=  i=input:pt
+      =|  =input:tx:bc
       %=  input
         txid        txid.prevout.i
         pos         idx.prevout.i
         sequence    (flip:byt:bcu:bc 4^nsequence.i)
-        value       (need ~(value txin i))
+        ::  value       (need ~(value txin i))
         script-sig  script-sig.i
       ==
     =.  os.data
       %+  turn  outputs.tx
-      |=  o=output
-      =|  =output:tx
+      |=  o=output:pt
+      =|  =output:tx:bc
       %=  output
         script-pubkey  script-pubkey.o
         value          value.o
@@ -962,7 +967,7 @@
     |=  [i=@ud shared=(unit shared-fields)]
     |^  ^-  hexb:bc
     :: missing other sighash flags
-    ?.  =(sig-hash all:sighash)
+    ?.  =(sig-hash all:sighash:pt)
       ~|(%psbt-sighash-unsupported !!)
     =?  shared  ?=(~ shared)  `digest-fields
     ?>  ?=(^ shared)
@@ -980,12 +985,12 @@
     ==
     (cat:byt:bcu:bc hash-values)
     ++  txin
-      ^-  input
+      ^-  input:pt
       (snag i inputs.tx)
     ::
     ++  sig-hash
       ^-  @ux
-      (fall sighash:txin all:sighash)
+      (fall sighash:txin all:sighash:pt)
     ::
     ++  nhashtyp
       ^-  hexb:bc
@@ -1021,8 +1026,8 @@
   ++  non-witness-preimage
     |=  [i=@ud shared=(unit shared-fields)]
     =+  txin=(snag i inputs.tx)
-    =+  sig-hash=(fall sighash.txin all:sighash)
-    ?.  =(sig-hash all:sighash)
+    =+  sig-hash=(fall sighash.txin all:sighash:pt)
+    ?.  =(sig-hash all:sighash:pt)
       ~|(%psbt-sighash-unsupported !!)
     =+  nhashtyp=(flip:byt:bcu:bc 4^sig-hash)
     %-  cat:byt:bcu:bc
@@ -1030,7 +1035,7 @@
   ::
   ++  sign-transaction
     =,  secp256k1:secp:crypto
-    |=  [hash=hexb:bc =privkey]
+    |=  [hash=hexb:bc =privkey:pt]
     ^-  hexb:bc
     =+  (ecdsa-raw-sign `@uvI`dat.hash dat.privkey)
     %-  flip:byt:bcu:bc
@@ -1042,10 +1047,10 @@
   ::  +one:sign: sign one input
   ::
   ++  one
-    |=  [i=@ud =privkey shared=(unit shared-fields)]
+    |=  [i=@ud =privkey:pt shared=(unit shared-fields)]
     ^-  hexb:bc
     =+  input=(snag i inputs.tx)
-    =+  sig-hash=(fall sighash.input all:sighash)
+    =+  sig-hash=(fall sighash.input all:sighash:pt)
     =+  ^=  hash
         %-  dsha256:bcu:bc
         ?:  ~(is-segwit txin input)
@@ -1060,42 +1065,43 @@
   ::  +all:sign: sign all inputs for keys
   ::
   ++  all
-    |=  keys=(^map pubkey privkey)
-    ^-  psbt
+    |=  keys=(^map pubkey:pt privkey:pt)
+    ^-  psbt:pt
     =+  shared=`digest-fields
-    =|  inputs=(list input)
+    =|  inputs=(list input:pt)
     =+  i=0
     =+  n=(lent inputs.tx)
-    |-
+    |-  ^+  tx
     ?:  =(i n)
       tx(inputs inputs)
-    =+  input=(snag i inputs.tx)
+    =/  =input:pt  (snag i inputs.tx)
     =.  input
-      %+  roll  pubkeys.input
-      |:  [pub=*pubkey input=input]
-      ?.  (~(has by keys) pub)
+      %+  roll
+        pubkeys.input
+      |:  [=pubkey:pt =input:pt]
+      ?.  (~(has by keys) pubkey)
         input
-      =+  prv=(~(got by keys) pub)
-      =+  sig=(one i prv shared)
-      input(partial-sigs (~(put by partial-sigs.input) pub sig))
-    $(inputs (snoc inputs input), i +(i))
+      =/  prv  (~(got by keys) pubkey)
+      =/  sig  (one i prv shared)
+      input(partial-sigs (~(put by partial-sigs.input) pubkey sig))
+    $(i +(i), inputs (snoc inputs input))
   --
 ::  +combine: merge multiple PSBTs
 ::
 ++  combine
-  |_  tx=psbt
+  |_  tx=psbt:pt
   ::  +one:combine: merge one PSBT with another
   ::
   ++  one
-    |=  ty=psbt
-    ^-  psbt
+    |=  ty=psbt:pt
+    ^-  psbt:pt
     ?<  =(tx ty)
     ~|(%unimplemented !!)
   ::  +all:combine: merge PSBT with a list of PSBTs
   ::
   ++  all
-    |=  txs=(list psbt)
-    ^-  psbt
+    |=  txs=(list psbt:pt)
+    ^-  psbt:pt
     =+  this=tx
     |-
     ?~  txs  this
@@ -1104,28 +1110,28 @@
 ::  +finalize: finalize all PSBT inputs
 ::
 ++  finalize
-  |=  tx=psbt
-  ^-  psbt
-  tx(inputs (turn inputs.tx |=(=input ~(finalize txin input))))
+  |=  tx=psbt:pt
+  ^-  psbt:pt
+  tx(inputs (turn inputs.tx |=(=input:pt ~(finalize txin input))))
 ::  +is-complete: have all inputs been signed?
 ::
 ++  is-complete
-  |=  =psbt
+  |=  =psbt:pt
   ^-  ?
   %+  levy  inputs.psbt
-  |=  =input
+  |=  =input:pt
   ~(is-complete txin input)
 ::  +extract-unsigned: generate unsigned-transaction from psbt data
 ::
 ++  extract-unsigned
-  |=  =psbt
-  ^-  tx:tx
-  =|  =tx:tx
+  |=  =psbt:pt
+  ^-  tx:tx:pt
+  =|  =tx:tx:pt
   =+  ^=  input-txin
-    |=  =input
+    |=  =input:pt
     ~(to-input txin input)
   =+  ^=  output-txout
-    |=  =output
+    |=  =output:pt
     ~(to-output txout output)
   %=  tx
     vin        (turn inputs.psbt input-txin)
@@ -1136,7 +1142,7 @@
 ::  +extract: create a network-serialized bitcoin transaction
 ::
 ++  extract
-  |=  =psbt
+  |=  =psbt:pt
   ^-  hexb:bc
   =.  psbt  (finalize psbt)
   :: ~&  "FINALIZED PSBT"
@@ -1148,7 +1154,7 @@
 ::  +estimated-size: return an estimated virtual tx size in vbytes
 ::
 ++  estimated-size
-  |=  =psbt
+  |=  =psbt:pt
   ^-  @
   %-  virtual-size-from-weight
   %-  estimated-weight
@@ -1156,7 +1162,7 @@
 ::  +estimated-total-size: return an estimated total transaction size in bytes
 ::
 ++  estimated-total-size
-  |=  =psbt
+  |=  =psbt:pt
   ^-  @
   wid:(encode-tx (extract-unsigned psbt))
 ::
@@ -1168,16 +1174,16 @@
 ::  +estimated-witness-size: return an estimate of witness size in bytes
 ::
 ++  estimated-witness-size
-  |=  =psbt
+  |=  =psbt:pt
   ^-  @
   %+  roll  inputs.psbt
-  |=  [=input acc=@]
+  |=  [=input:pt acc=@]
   %+  add  acc
   wid:(encode-witness ~(to-input txin input))
 ::  +estiamted-base-size: return an estimated base transaction size in bytes
 ::
 ++  estimated-base-size
-  |=  =psbt
+  |=  =psbt:pt
   ^-  @
   %+  sub
     (estimated-total-size psbt)
@@ -1185,7 +1191,7 @@
 ::  +estimated-weight: return an estimate of transaction weight
 ::
 ++  estimated-weight
-  |=  =psbt
+  |=  =psbt:pt
   ^-  @
   =+  total=(estimated-total-size psbt)
   =+  base=(estimated-base-size psbt)
