@@ -1,6 +1,7 @@
 /-  *bitcoin, resource
 |%
 +$  host-info
+  $+  bp-host-info
   $:  api-url=@t
       connected=?
       =network
@@ -8,6 +9,7 @@
       clients=(set ship)
   ==
 +$  host-info-2
+  $+  bp-host-info-2
   $:  api=(unit api-state)
       src=(unit ship)
       connected=?
@@ -15,7 +17,10 @@
       block=@ud
       clients=(set ship)
   ==
-+$  api-state  [url=@t port=@t local=?]
++$  api-state
+  $+  bp-api-state
+  [url=@t port=@t local=?]
+::
 :: +$  api-state
 ::   $%  [%unset ~]
 ::       [%setting-ext targ=ship]
@@ -23,6 +28,7 @@
 ::       [%set-ext src=ship =api-data]
 ::   ==
 +$  whitelist
+  $+  bp-whitelist
   $:  public=?
       kids=?
       users=(set ship)
@@ -30,12 +36,14 @@
   ==
 ::
 +$  whitelist-target
+  $+  bp-whitelist-target
   $%  [%public ~]
       [%kids ~]
       [%users users=(set ship)]
       [%groups groups=(set resource:resource)]
   ==
 +$  command
+  $+  bp-command
   $%  [%set-credentials url=@t port=@t local=? =network]
       [%set-external src=@p =network]
       [%add-whitelist wt=whitelist-target]
@@ -43,6 +51,7 @@
       [%set-interval inte=@dr]
   ==
 +$  action
+  $+  bp-action
   $:  id=@uvH
   $%  [%address-info =address]
       [%tx-info txid=@ux]
@@ -61,6 +70,7 @@
   ==  ==
 ::
 +$  result
+  $+  bp-result
   $:  id=@uvH
   $%  [%address-info =address utxos=(set utxo) used=? block=@ud]
       [%tx-info =info:tx]
@@ -79,6 +89,7 @@
   |%
   ::
   +$  error
+    $+  bp-error
     $:  id=@uvH
     $%  [%not-connected status=@ud]
         [%bad-request status=@ud]
@@ -86,10 +97,16 @@
         [%rpc-error (unit rpc-error)]
     ==  ==
   ::
-  +$  rpc-error  [id=@t code=@t message=@t]
+  +$  rpc-error
+    $+  bp-rpc-error
+    [id=@t code=@t message=@t]
   --
-+$  update  (each result error)
++$  update
+  $+  bp-update
+  (each result error)
+::
 +$  status
+  $+  bp-status
   $%  [%connected =network block=@ud fee=(unit sats)]
       [%new-block =network block=@ud fee=(unit sats) blockhash=hexb blockfilter=hexb]
       [%new-rpc url=@t port=@t =network]
@@ -99,6 +116,7 @@
 ++  rpc-types
   |%
   +$  action
+    $+  bp-rpc-action
     $%  [%get-address-info =address]
         [%get-tx-vals txid=@ux]
         [%get-raw-tx txid=@ux]
@@ -116,6 +134,7 @@
     ==
   ::
   +$  result
+    $+  bp-rpc-result
     $%  [%get-address-info =address utxos=(set utxo) used=? block=@ud]
         [%get-tx-vals =info:tx]
         [%get-raw-tx txid=@ux rawtx=hexb]

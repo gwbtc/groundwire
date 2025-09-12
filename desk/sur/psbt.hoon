@@ -54,16 +54,43 @@
 ++  separator  0x0
 ++  magic      0x70.7362.74ff
 ::
-+$  sats       @
++$  sats
+  $+  psbt-sats
+  @
+::
 :: +$  keyid      @
-+$  key        hexb:bc
-+$  value      hexb:bc
-+$  pubkey     hexb:bc
-+$  privkey    hexb:bc
-+$  signature  hexb:bc
-+$  witness    (list hexb:bc)
-+$  keyinfo    [fprint=hexb:bc path=(list @u)]
-+$  outpoint   [txid=@ux idx=@]
+::
++$  key
+  $+  psbt-key
+  hexb:bc
+::
++$  value
+  $+  psbt-value
+  hexb:bc
+::
++$  pubkey
+  $+  psbt-pubkey
+  hexb:bc
+::
++$  privkey
+  $+  psbt-privkey
+  hexb:bc
+::
++$  signature
+  $+  psbt-signature
+  hexb:bc
+::
++$  witness
+  $+  psbt-witness
+  (list hexb:bc)
+::
++$  keyinfo
+  $+  psbt-keyinfo
+  [fprint=hexb:bc path=(list @u)]
+::
++$  outpoint
+  $+  psbt-outpoint
+  [txid=@ux idx=@]
 ::
 ++  tx
   |%

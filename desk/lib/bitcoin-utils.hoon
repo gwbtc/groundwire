@@ -14,7 +14,10 @@
 ++  blop
   ~/  %blop
   |_  =bloq
-  +$  biyts  [wid=@ud dat=@]
+  +$  biyts
+    $+  bu-biyts
+    [wid=@ud dat=@]
+  ::
   ++  cat
     |=  bs=(list biyts)
     ^-  biyts

@@ -1,9 +1,18 @@
 |%
-+$  revision  @ud
-+$  nodetype  tape
-+$  mnemonic  tape
++$  revision
+  $+  keygen-revision
+  @ud
+::
++$  nodetype
+  $+  keygen-nodetype
+  tape
+::
++$  mnemonic
+  $+  keygen-mnemonic
+  tape
 ::
 +$  vault
+  $+  keygen-vault
   $:  ownership=node
       voting=node
       management=node
@@ -12,12 +21,23 @@
       network=uode
   ==
 ::
-+$  node  [type=nodetype seed=mnemonic keys=wallet]
-+$  uode  [revi=revision seed=@ux keys=edkeys]
++$  node
+  $+  keygen-node
+  [type=nodetype seed=mnemonic keys=wallet]
 ::
-+$  wallet  [keys=[public=@ux private=@ux] addr=@ux chain=@ux]
++$  uode
+  $+  keygen-uode
+  [revi=revision seed=@ux keys=edkeys]
 ::
-+$  edkeys  [auth=keypair crypt=keypair]
++$  wallet
+  $+  keygen-wallet
+  [keys=[public=@ux private=@ux] addr=@ux chain=@ux]
 ::
-+$  keypair  [public=@ux secret=@ux]
++$  edkeys
+  $+  keygen-edkeys
+  [auth=keypair crypt=keypair]
+::
++$  keypair
+  $+  keygen-keypair
+  [public=@ux secret=@ux]
 --

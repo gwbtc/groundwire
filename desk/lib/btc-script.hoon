@@ -10,6 +10,7 @@
   --
 ::
 +$  op
+  $+  bs-op
   $@  $?  %op-nop
           %op-if
           %op-notif

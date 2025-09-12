@@ -28,9 +28,13 @@
 ++  script
   =<  script-label
   |%
-  +$  script  (list op)
-  +$  script-label  $+(script script)
+  +$  script
+    $+  ord-script
+    (list op)
+  ::
+  ::  +$  script-label  $+(script script)
   +$  op
+    $+  ord-script-op
     $@  $?  %op-nop
             %op-if
             %op-notif
@@ -142,20 +146,50 @@
   ::
   --
 +$  address
+  $+  ord-address
   $%  [%base58 @uc]
       [%bech32 @tas]
   ==
-+$  sats  @ud
-+$  txid   @ux   ::  txid
-+$  pos   @ud   ::  index in tx output set
-+$  off   @ud   ::  sat index in single output amount
-+$  pntr  @ud   ::  sat index in total amount of tx outputs
-+$  sont  [=txid =pos =off]
 ::
-+$  insc  [=txid idx=@ud]
-+$  ordi  [p=@ux q=@ud]
-+$  urdi  [p=@ux q=@ud r=@ud]
++$  sats
+  $+  ord-sats
+  @ud
+::
++$  txid
+  $+  ord-txid
+  @ux   ::  txid
+::
++$  pos
+  $+  ord-pos
+  @ud   ::  index in tx output set
+::
++$  off
+  $+  ord-off
+  @ud   ::  sat index in single output amount
+::
++$  pntr
+  $+  ord-pntr
+  @ud   ::  sat index in total amount of tx outputs
+::
++$  sont
+  $+  ord-sont
+  [=txid =pos =off]
+::
+::
++$  insc
+  $+  ord-insc
+  [=txid idx=@ud]
+::
++$  ordi
+  $+  ord-ordi
+  [p=@ux q=@ud]
+::
++$  urdi
+  $+  ord-urdi
+  [p=@ux q=@ud r=@ud]
+::
 +$  mail
+  $+  ord-mail
   $:  mime=$@(~ [p=@ud (each @t @)])    :: tag 1 mimetype
       code=$@(~ [p=@ud (each @t @)])    :: tag 9 content encoding
       pntr=$@(~ [p=@ud (each @ud @)])   :: tag 2 pointer
@@ -165,19 +199,29 @@
       prot=$@(~ octs)                   :: tag 7 meta protocol
       data=$@(~ octs)                   :: tag 0 content (all pushed data after push of 0 tag)
   ==
-+$  draft  (map @ud octs)
-+$  raw-sotx     [raw=octs sot=sotx]
++$  draft
+  $+  ord-draft
+  (map @ud octs)
+::
++$  raw-sotx
+  $+  urb-raw-sotx
+  [raw=octs sot=sotx]
 ::+$  raw-sotx     [sig=@ raw=octs =sotx]
-+$  sotx  [[=ship sig=(unit @)] skim-sotx]
++$  sotx
+  $+  urb-sotx
+  [[=ship sig=(unit @)] skim-sotx]
+::
 ++  skim-sotx
   =<  many
   |%
   +$  many
+    $+  urb-skim-many
     $%  single
         [%batch bat=(list single)]
     ==
   ::
   +$  single
+    $+  urb-skim-single
     $%  $:  %spawn  =pass
             ::from=(unit [=pos =off])
             to=[spkh=@ux pos=(unit pos) =off tej=off]
@@ -194,8 +238,12 @@
   ::
   --
 ::
-+$  mang  $%([%sont =sont] [%pass =pass])
++$  mang
+  $+  urb-mang
+  $%([%sont =sont] [%pass =pass])
+::
 +$  point
+  $+  urb-point
   $:  ::  domain
       ::
       ::=dominion
@@ -219,13 +267,19 @@
       ==
   ==
 ::
-+$  turf  (list @t)                                     ::  domain, tld first
-+$  fief  $%  [%turf p=(list turf) q=@udE]
-              [%if p=@ifF q=@udE]
-              [%is p=@isH q=@udE]
-          ==
++$  turf
+  $+  urb-turf
+  (list @t)                                     ::  domain, tld first
+::
++$  fief
+  $+  urb-fief
+  $%  [%turf p=(list turf) q=@udE]
+      [%if p=@ifF q=@udE]
+      [%is p=@isH q=@udE]
+  ==
 ::
 +$  diff
+  $+  urb-diff
   $%  [%dns domains=(list @t)]
       $:  %point  =ship
           $%  [%rift =rift]
@@ -741,16 +795,33 @@
 ::  --
 ::::
 ::+$  mang-map  (map pass [=txid whos=(set @p)])
-+$  sont-val  [com=(unit @p) ins=(set insc)]
-+$  vout-map  [value=@ud sats=(map off sont-val)]
-+$  sont-map  (map [txid pos] vout-map)
-+$  insc-ids  (map insc [=sont =mail])
-+$  unv-ids   (map @p point)
-+$  state     $:  block-id=id:block
-                  =sont-map
-                  =insc-ids
-                  =unv-ids
-              ==
++$  sont-val
+  $+  ord-sont-val
+  [com=(unit @p) ins=(set insc)]
+::
++$  vout-map
+  $+  ord-vout-map
+  [value=@ud sats=(map off sont-val)]
+::
++$  sont-map
+  $+  ord-sont-map
+  (map [txid pos] vout-map)
+::
++$  insc-ids
+  $+  ord-insc-ids
+  (map insc [=sont =mail])
+::
++$  unv-ids
+  $+  urb-unv-ids
+  (map @p point)
+::
++$  state
+  $+  ord-state
+  $:  block-id=id:block
+      =sont-map
+      =insc-ids
+      =unv-ids
+  ==
 ::
 ++  pointer-to-sont
   =|  pos=@ud
@@ -783,6 +854,7 @@
   (update-com state u.com.old sont)
 ::
 +$  effect
+  $+  ord-effect
   $%  diff
       [%xfer from=sont to=sont]
       [%insc =insc sont=$@(~ sont) =mail]
@@ -790,25 +862,45 @@
 ++  gw-tx
   =<  tx
   |%
-  +$  tx  [id=txid data]
-  +$  p-tx  [id=txid data]
+  +$  tx
+    $+  ord-gw-tx
+    [id=txid data]
+  ::
+  +$  p-tx
+    $+  ord-gw-tx-p-tx
+    [id=txid data]
+  ::
   +$  data
+    $+  ord-gw-tx-data
     $:  is=(list input)
         os=(list output:tx:bc)
         locktime=@ud
         nversion=@ud
         segwit=(unit @ud)
     ==
-  +$  input  [[sots=(list raw-sotx) value=@ud] inputw:tx:bc]
+  ::
+  +$  input
+    $+  ord-gw-tx-input
+    [[sots=(list raw-sotx) value=@ud] inputw:tx:bc]
   --
 ::
 ++  gw-block
   =<  block
   |%
-  +$  id   [=hax =num]
-  +$  hax  @ux
-  +$  num  @ud
+  +$  id
+    $+  ord-gw-block-id
+    [=hax =num]
+  ::
+  +$  hax
+    $+  ord-gw-block-hax
+    @ux
+  ::
+  +$  num
+    $+  ord-gw-block-num
+    @ud
+  ::
   +$  block
+    $+  ord-gw-block
     $:  =hax
         reward=@ud
         height=@ud

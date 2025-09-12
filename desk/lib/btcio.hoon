@@ -3,6 +3,7 @@
 /+  strandio, rpc=json-rpc, bc=bitcoin
 |%
 +$  auth
+  $+  bio-auth
   $@  ~
   [%basic dat=@]
 ::
@@ -14,7 +15,9 @@
   =-  `(cat 3 'Basic ' -)
   (en:base64:mimes:html (met 3 dat.a) dat.a)
 ::
-+$  req-to  [url=@t =auth]
++$  req-to
+  $+  bio-req-to
+  [url=@t =auth]
 ::  +request-rpc: send rpc request, with retry
 ::
 ++  request-rpc
@@ -41,7 +44,9 @@
       attempt-request
   ::
   +$  result   response:rpc
-  +$  results  (list response:rpc)
+  +$  results
+    $+  bio-req-results
+    (list response:rpc)
   ::
   ++  attempt-request
     =/  m  (strand:strandio ,(unit results))

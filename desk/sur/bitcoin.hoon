@@ -5,6 +5,7 @@
 ::  bytc: "btc-byts" with dat cast to @ux
 |%
 +$  network
+  $+  btc-network
   ?(%main %testnet %regtest)
 ::
 +$  hexb
@@ -15,7 +16,9 @@
   $+  btc-bits
   [wid=@ dat=@ub]
 ::
-+$  xpub  @ta
++$  xpub
+  $+  btc-xpub
+  @ta
 ::
 +$  address
   $+  btc-address
@@ -23,18 +26,38 @@
       [%bech32 cord]
   ==
 ::
-+$  fprint  hexb
-+$  bipt  $?(%44 %49 %84)
-+$  chyg  $?(%0 %1)
-+$  idx   @ud
++$  fprint
+  $+  btc-fprint
+  hexb
+::
++$  bipt
+  $+  btc-bipt
+  $?(%44 %49 %84)
+::
++$  chyg
+  $+  btc-chyg
+  $?(%0 %1)
+::
++$  idx
+  $+  btc-idx
+  @ud
 ::
 +$  hdkey
   $+  btc-hdkey
   [=fprint pubkey=hexb =network =bipt =chyg =idx]
 ::
-+$  sats  @ud
-+$  vbytes  @ud
-+$  txid  @ux
++$  sats
+  $+  btc-sats
+  @ud
+::
++$  vbytes
+  $+  btc-vbytes
+  @ud
+::
++$  txid
+  $+  btc-txid
+  @ux
+::
 +$  utxo
   $+  btc-utxo
   [pos=@ =txid height=@ value=sats recvd=(unit @da)]
@@ -45,6 +68,7 @@
       unconfirmed-value=sats
       utxos=(set utxo)
   ==
+::
 ++  tx
   =<  tx
   |%
@@ -125,8 +149,15 @@
   +$  id
     $+  btc-block-id
     [=hax =num]
-  +$  hax  @ux
-  +$  num  @ud
+  ::
+  +$  hax
+    $+  btc-block-hax
+    @ux
+  ::
+  +$  num
+    $+  btc-block-num
+    @ud
+  ::
   +$  block
     $+  btc-block
     $:  =hax
@@ -137,7 +168,10 @@
   --
 ++  psbt
   |%
-  +$  base64  cord
+  +$  base64
+    $+  btc-psbt-base64
+    cord
+  ::
   +$  in
     $+  btc-psbt-input
     [=utxo rawtx=hexb =hdkey]
@@ -146,12 +180,17 @@
     $+  btc-psbt-output
     [=address hk=(unit hdkey)]
   ::
-  +$  target  $?(%input %output)
+  +$  target
+    $+  btc-psbt-target
+    $?(%input %output)
+  ::
   +$  keyval
     $+  btc-psbt-keyval
     [key=hexb val=hexb]
   ::
-  +$  map  (list keyval)
+  +$  map
+    $+  btc-psbt-map
+    (list keyval)
   --
 ++  ops
   |%

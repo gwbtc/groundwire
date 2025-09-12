@@ -5,8 +5,13 @@
 /-  pt=psbt
 /+  bc=bitcoin, der
 |%
-+$  key-value  [typ=@ key=hexb:bc val=hexb:bc]
-+$  map        (list key-value)
++$  key-value
+  $+  psbt-lib-key-value
+  [typ=@ key=hexb:bc val=hexb:bc]
+::
++$  map
+  $+  psbt-lib-map
+  (list key-value)
 ::  +read-bytes: take n bytes, drop n bytes
 ::
 ++  read-bytes
@@ -17,9 +22,12 @@
 ++  tx
   =<  tx
   |%
-  +$  tx  [id=txid:bc data:tx:bc]
+  +$  tx
+    $+  psbt-lib-tx
+    [id=txid:bc data:tx:bc]
   ::
   +$  data
+    $+  psbt-lib-tx-data
     $:  is=(list input)
         os=(list output)
         locktime=@ud
@@ -30,6 +38,7 @@
   ::
   ::
   +$  input
+    $+  psbt-lib-tx-input
     $:  =txid:bc
         pos=@ud
         sequence=hexb:bc
@@ -39,11 +48,14 @@
     ==
   ::
   +$  output
+    $+  psbt-lib-tx-output
     $:  script-pubkey=hexb:bc
         value=sats:bc
     ==
   ::
-  +$  witness    witness:tx:bc
+  +$  witness
+    $+  psbt-lib-witness
+    witness:tx:bc
   --
 
 ::  +read-compact-size: decode CompactSize
@@ -878,6 +890,7 @@
   |_  tx=psbt:pt
   ::
   +$  shared-fields
+    $+  psbt-lib-sign-shared-fields
     $:  hash-prevouts=hexb:bc
         hash-sequence=hexb:bc
         hash-outputs=hexb:bc
