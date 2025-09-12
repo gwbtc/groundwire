@@ -1,7 +1,6 @@
 ::  btcio: Asynchronous Bitcoin input/output functions.
 ::
-/-  bp=btc-provider
-/+  psbt, btc, strandio, rpc=json-rpc, bc=bitcoin
+/+  strandio, rpc=json-rpc, bc=bitcoin
 |%
 +$  auth
   $@  ~
@@ -116,15 +115,20 @@
   (crip ((x-co:co (mul 2 p.a)) q.a))
 ::
 ++  get-raw-transaction
-  |=  [=req-to id=(unit @t) txh=@ux verb=?]
-  =/  m  (strand:strandio response:rpc)
-  %+  request-rpc  req-to
-  ^-  request:rpc
-  :*  ?~(id 'get-raw-transaction' u.id)
-      '2.0'
-      'getrawtransaction'
-      list+[s+(render-hex-bytes 32 txh) b+verb ~]
-  ==
+  |=  [=req-to id=(unit @t) txid=@ux]
+  =/  m  (strand:strandio (unit tx:bc))
+  ^-  form:m
+  ;<  res=response:rpc  bind:m
+    %+  request-rpc  req-to
+    ^-  request:rpc
+    :*  ?~(id 'get-raw-transaction' u.id)
+        '2.0'
+        'getrawtransaction'
+        list+[s+(render-hex-bytes 32 txid) b+| ~]
+    ==
+  ?.  ?=([%result * [%s *]] res)  (pure:m ~)
+  ?~  res=(de:base16:mimes:html p.res.res)  (pure:m ~)
+  (pure:m `[txid (decodew:txu:bc u.res)])
 ::
 ++  get-block-count
   |=  [=req-to id=(unit @t)]

@@ -1,6 +1,29 @@
 imports:
   base-dev: ./dist
-  volt-btc: ./dist
+  btc-wall: ./dist
+  tlon-lib: ./dist
+
+git module tlon-lib:
+  url:    https://github.com/tloncorp/tlon-apps
+  reup:   master
+  export: desk
+  pick:
+    - desk/lib/test-agent.hoon
+  rev: 9f0c94771e4773567a2f55a727ffa31b0f6e8e9f
+
+git module btc-wall:
+  url:    https://github.com/urbit/bitcoin-wallet
+  reup:   master
+  export: bitcoin
+  pick:
+    - bitcoin/lib/group.hoon
+    - bitcoin/lib/group-store.hoon
+    - bitcoin/lib/resource.hoon
+    - bitcoin/sur/group.hoon
+    - bitcoin/sur/group-store.hoon
+    - bitcoin/sur/resource.hoon
+    - bitcoin/sur/btc-wallet.hoon
+  rev: e112ff06ebaba31f04eba99170fd00cb23d7fee5
 
 git module base-dev:
   url:    https://github.com/urbit/urbit
@@ -8,6 +31,8 @@ git module base-dev:
   export: pkg/base-dev
   pick:
     - pkg/base-dev/lib/bip32.hoon
+    - pkg/base-dev/lib/bip39.hoon
+    - pkg/base-dev/lib/bip39/english.hoon
     - pkg/base-dev/lib/dbug.hoon
     - pkg/base-dev/lib/der.hoon
     - pkg/base-dev/lib/default-agent.hoon
@@ -15,25 +40,14 @@ git module base-dev:
     - pkg/base-dev/lib/skeleton.hoon
     - pkg/base-dev/lib/strand.hoon
     - pkg/base-dev/lib/strandio.hoon
+    - pkg/base-dev/lib/test.hoon
     - pkg/base-dev/lib/verb.hoon
     - pkg/base-dev/mar/bill.hoon
+    - pkg/base-dev/mar/noun.hoon
     - pkg/base-dev/mar/mime.hoon
+    - pkg/base-dev/mar/hoon.hoon
     - pkg/base-dev/sur/asn1.hoon
     - pkg/base-dev/sur/spider.hoon
     - pkg/base-dev/sur/verb.hoon
   rev: 41dd3b5f7c554ac615d0db9eaa5fe46071d47bc8
-
-git module volt-btc:
-  url:    https://github.com/gwbtc/volt
-  reup:   main
-  export: btc-desk
-  pick:
-    - btc-desk/lib/bitcoin-utils.hoon
-    - btc-desk/lib/bip/b173.hoon
-    - btc-desk/lib/bip/b174.hoon
-    - btc-desk/lib/bip/b158.hoon
-    - btc-desk/sur/btc-provider.hoon
-    - btc-desk/sur/resource.hoon
-    - btc-desk/sur/btc-wallet.hoon
-    - btc-desk/sur/json/rpc.hoon
 

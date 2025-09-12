@@ -1,4 +1,4 @@
-/+  der, scr=btc-script, bc=bitcoin
+/+  der, scr=btc-script, bc=bitcoin, b173=bip-b173
 |%
 +$  point  point:secp256k1:secp:crypto
 +$  txid  @ux
@@ -87,9 +87,9 @@
     t(inputs (snoc inputs.t n))
   ::
   ++  add-output-1
-    |=  =output
+    |=  out=output
     ^-  tx
-    t(outputs (snoc outputs.t output), vout (snoc vout.t -:output))
+    t(outputs (snoc outputs.t out), vout (snoc vout.t -:out))
   ::
   ++  add-output
     |=  $:  val=sats
@@ -113,12 +113,16 @@
     =/  n=input  (snag i inputs.t)
     ?.  =(~ script-witness.in.n)
       [t eny]
-    =/  tpriv=@
-      ~(tweak-privkey p2tr `x.pub.internal-keys.utxo.n spend-script.utxo.n `priv.internal-keys.utxo.n)
     ?~  spend-script.utxo.n
+      =/  tpriv=@
+        ~(tweak-privkey p2tr `x.pub.internal-keys.utxo.n spend-script.utxo.n `priv.internal-keys.utxo.n)
+      =/  twpub=keypair  ~(tweak-keypair p2tr `x.pub.internal-keys.utxo.n ~ `priv.internal-keys.utxo.n)
+      =/  address=cord  (need (encode-taproot:b173 %regtest 32^x.pub.twpub))
       =^  sig  eny  (sign-input t i tpriv eny 0)
       =.  script-witness.in.n  ~[sig]
       [t(inputs (snap inputs.t i `input`n)) eny]
+
+    =/  address=cord  (need (encode-taproot:b173 %regtest 32^x.pub.internal-keys.utxo.n))
     =.  script-witness.in.n
       ~(scriptspend p2tr `x.pub.internal-keys.utxo.n spend-script.utxo.n ~)
     =^  sig  eny  (sign-input t i priv.internal-keys.utxo.n eny 1)
@@ -360,7 +364,7 @@
     ^-  @
     ?~  sec  !!
     =/  pt=point  (mul-point-scalar g.domain.curve u.sec)
-    ?:  &(=(^ p) !=(p `x.pt))  ~!(%non-matching-keys !!)
+    ?:  &(=(^ p) !=(p `x.pt))  ~|(%non-matching-keys !!)
     =.  p  `x.pt
     =/  t=@I  (tweak pt)
     =/  priv=@

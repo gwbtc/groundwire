@@ -15,6 +15,10 @@
           req-to=(unit req-to:btcio)
       ==
     +$  blocks  (list [=num:block:bc block:bc])
+    +$  poke
+      $@  %clear
+      $%  [%start block=@ud]
+      ==
     --
 ::
 ::  Helpers
@@ -72,10 +76,14 @@
 ++  on-poke
   |=  [=mark =vase]
   ?>  =(our src):bol
-  ?:  ?=(%noun mark)
-    ~&  state
-    `this
-  `this
+  =+  !<(poke vase)
+  ?-  -
+      %clear 
+    :_  this(state *app-state)
+    ~[(leave-spider /watcher-ted our.bol)]
+      [%start *]
+    !!
+  ==
 ::
 ::  +on-watch: subscribe & get initial subscription data
 ::
@@ -159,10 +167,9 @@
         ::`this
         =^  cards  state  (ted-start:cor ~s0)
         [cards this]
-      =+  !<(=blocks q.cage.sign)
+      =+  !<((list id:block:bc effect:ord) q.cage.sign)
       =^  cards-a  state  (ted-start:cor ~m3)
-      =^  cards-b  state  (handle-blocks:cor blocks)
-      [(weld cards-a cards-b) this]
+      [cards-a this]
     ==
   ==
 ::
@@ -183,21 +190,53 @@
   =>  :*  at=block-id.ord.state  wait=wait
           req-to=(need req-to.state)  blocks=blocks
           sio=strandio:btcio  bio=btcio  bc=bc
+          oc=(abed:ord-core:ord ord.state)
+          ord=ord
           ..zuse
       ==
   =|  bocs=blocks
   =/  m  (strand:sio ,vase)
-  |-  ^-  form:m
+  |^  ^-  form:m
   ;<  *  bind:m  (sleep:sio wait)
   ;<  lat=(unit @ud)  bind:m  (get-block-count:bio req-to ~)
   ?~  lat  ~|  %ordw-get-block-count-failed  !!
   =/  to  (sub u.lat 6)
+  =/  num  num.block-id:oc
   |-  ^-  form:m
-  ?.  (lth num.at to)  (pure:m !>((flop bocs)))
+  ?.  (lte num to)  (pure:m !>([fx state]:oc))
   ;<  boc=(unit block:bc)  bind:m
-    (get-block-by-number:bio req-to ~ u.lat)
-  ?~  boc  ~|  %ordw-get-block-by-number-failed  !!
-  $(at [hax.u.boc u.lat], bocs [u.lat u.boc]^bocs)
+    (get-block-by-number:bio req-to ~ num)
+  ?~  boc  !!
+  ;<  boc=[num=@ud gw-block:ord]  bind:m  (elab-block num u.boc)
+  =.  oc  (handle-block:oc boc)
+  $(num +(num))
+  ::
+  ++  elab-block
+    |=  [num=@ud block:bc]
+    =*  boc  +<
+    =/  m  (strand:sio ,[num=@ud gw-block:ord])
+    =^  deps  boc  (find-block-deps:oc boc)
+    =/  txs  (tail txs)
+    |-  ^-  form:m
+    ?~  txs  (pure:m (apply-block-deps:oc boc deps))
+    =/  is  is.i.txs
+    |-  ^-  form:m
+    :: refactor to use gettxout
+    ?~  is  ^$(txs t.txs)
+    =/  dep  (~(get by deps) [txid pos]:i.is)
+    ?:  &(?=(^ dep) ?=(^ value.u.dep))  $(is t.is)
+    ;<  utx=(unit tx:bc)  bind:m
+      (get-raw-transaction:bio req-to ~ txid.i.is)
+    ?~  utx  !!
+    =/  os  os.u.utx
+    =|  pos=@ud
+    |-  ^-  form:m
+    ?~  os  ^$(is t.is)
+    =/  dep  (~(get by deps) [id.u.utx pos])
+    ?:  &(?=(^ dep) ?=(^ value.u.dep))  $(os t.os, pos +(pos))
+    =/  sots=(list raw-sotx:ord)  ?~(dep ~ sots.u.dep)
+    $(os t.os, pos +(pos), deps (~(put by deps) [id.u.utx pos] [sots `value.i.os]))
+  --
 ::
 ++  ted-start
   |=  wait=@dr
@@ -209,14 +248,6 @@
   :~  (watch-spider /watcher-ted our.bol /thread-result/[tid])
       (poke-spider /watcher-ted our.bol %spider-inline !>(args))
   ==
-::
-++  handle-blocks
-  |=  blocks=(list [=num:block:bc block:bc])
-  =/  oc  (abed:ord-core:ord ord.state)
-  |-  ^-  (quip card _state)
-  ?~  blocks  =^(fx ord.state abet:oc (handle-fx fx))
-  =.  oc  (handle-block:oc i.blocks)
-  $(blocks t.blocks)
 ::
 ++  handle-fx
   |=  fx=(list [id:block:bc effect:ord])

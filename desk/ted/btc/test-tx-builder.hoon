@@ -30,7 +30,6 @@
 =/  commit-txid=@ux  (make-txid commit)
 ;<  comres=(unit @ux)  bind:m  (send-raw-transaction:btcio req-to ~ commit-hex)
 ?~  comres  ~|('commit tx failed' !!)
-~&  comres=[res=u.comres txid=commit-txid =(u.comres commit-txid)]
 ;<  fresh2=bowl:spider  bind:m  get-bowl:strandio
 =/  reveal=tx:gw
   %:  build-reveal-tx
@@ -43,6 +42,8 @@
 =/  reveal-txid=@ux  (make-txid reveal)
 ;<  revres=(unit @ux)  bind:m  (send-raw-transaction:btcio req-to ~ reveal-hex)
 ?~  revres  ~|('reveal tx failed' !!)
+~&  comres=[res=u.comres txid=commit-txid =(u.comres commit-txid)]
+~&  revres=[res=u.revres txid=reveal-txid =(u.revres reveal-txid)]
 (pure:m !>([comres revres]))
 ::
 |%
