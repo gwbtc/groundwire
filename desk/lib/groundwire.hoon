@@ -1,12 +1,32 @@
 /+  der, scr=btc-script, bc=bitcoin, b173=bip-b173
 |%
-+$  point  point:secp256k1:secp:crypto
-+$  txid  @ux
-+$  pos  @ud
-+$  sats  @ud
-+$  outpoint  [=txid =pos]
-+$  keypair  [pub=point priv=@]
-+$  pubkey  @
++$  point
+  $+  gw-point
+  point:secp256k1:secp:crypto
+::
++$  txid
+  $+  gw-txid
+  @ux
++$  pos
+  $+  gw-pos
+  @ud
+::
++$  sats
+  $+  gw-sats
+  @ud
+::
++$  outpoint
+  $+  gw-outpoint
+  [=txid =pos]
+::
++$  keypair
+  $+  gw-keypair
+  [pub=point priv=@]
+::
++$  pubkey
+  $+  gw-pubkey
+  @
+::
 ++  sighash
   |%
   ++  default                   0x0
@@ -19,17 +39,20 @@
   =<  tx
   |%
   +$  in
+    $+  gw-tx-in
     $:  prevout=outpoint
         nsequence=$~(0xffff.ffff @ux)
         script-witness=(list octs)
     ==
   ::
   +$  out
+    $+  gw-tx-out
     $:  script-pubkey=octs
         value=sats
     ==
   ::
   +$  tx
+    $+  gw-tx
     $:  vin=(list in)
         vout=(list out)
         nversion=$~(0x2 @)
@@ -39,11 +62,13 @@
     ==
   ::
   +$  input
+    $+  gw-tx-input
     $:  =in
         utxo=output
         sig-hash=$~(0x0 @ux)
     ==
   +$  output
+    $+  gw-tx-output
     $:  out
         spend-script=(unit script:scr)
         internal-keys=keypair
