@@ -1,9 +1,33 @@
 #!/usr/bin/env bash
 
-# Fail if more than one argument
-if [[ $# -gt 1 ]]; then
-  echo "Error: only one argument is allowed" >&2
-  exit 1
+# Parse arguments
+COPY_PATH=""
+COMMAND=""
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -p)
+      if [[ -z "$2" ]]; then
+        echo "Error: -p flag requires a filepath argument" >&2
+        exit 1
+      fi
+      COPY_PATH="$2"
+      shift 2
+      ;;
+    *)
+      if [[ -n "$COMMAND" ]]; then
+        echo "Error: only one command is allowed" >&2
+        exit 1
+      fi
+      COMMAND="$1"
+      shift
+      ;;
+  esac
+done
+
+# Set default command if none provided
+if [[ -z "$COMMAND" ]]; then
+  COMMAND="build"
 fi
 
 check_peru_installed() {
@@ -12,6 +36,28 @@ check_peru_installed() {
     echo "See: https://github.com/buildinspace/peru" >&2
     exit 1
   fi
+}
+
+copy_to_path() {
+  local target_path="$1"
+  
+  if [[ ! -d dist ]]; then
+    echo "Error: dist directory not found. Run build first." >&2
+    exit 1
+  fi
+  
+  if [[ ! -d "$target_path" ]]; then
+    echo "Error: target path '$target_path' does not exist." >&2
+    exit 1
+  fi
+  
+  echo "Cleaning desk at $target_path..."
+  rm -rf "$target_path"/*
+  
+  echo "Copying dist to $target_path..."
+  cp -r dist/* "$target_path"/
+  
+  echo "Copy completed successfully."
 }
 
 build() {
@@ -48,6 +94,11 @@ build() {
   fi
 
   echo "Build completed successfully."
+  
+  # Copy to specified path if -p flag was used
+  if [[ -n "$COPY_PATH" ]]; then
+    copy_to_path "$COPY_PATH"
+  fi
 }
 
 build_dev() {
@@ -92,21 +143,25 @@ clean() {
   fi
 }
 
-case "$1" in
-  "" | build)
+case "$COMMAND" in
+  build)
     build
     ;;
   build-dev)
     build_dev
     ;;
   help)
-    echo "Usage: $0 [build|build-dev|clean|help]"
+    echo "Usage: $0 [-p path] [build|build-dev|clean|help]"
     echo
     echo "  build       : build full desk from desk, desk-dev and dependencies in peru.yaml"
     echo "  build-dev   : build developer desk from desk-dev and dependencies in peru-dev.yaml"
     echo "  clean       : clean up dist and dist-dev"
     echo
-    echo "  If no argument is given, build is the default."
+    echo "Options:"
+    echo "  -p path     : after building, copy dist contents to the desk at this path"
+    echo "                (removes existing contents of the desk)"
+    echo
+    echo "  If no command is given, build is the default."
     echo "  Note: peru must be installed and available in PATH."
     echo "        See: https://github.com/buildinspace/peru"
     ;;
@@ -114,7 +169,7 @@ case "$1" in
     clean
     ;;
   *)
-    echo "Error: unknown argument '$1'" >&2
+    echo "Error: unknown command '$COMMAND'" >&2
     exit 1
     ;;
 esac
