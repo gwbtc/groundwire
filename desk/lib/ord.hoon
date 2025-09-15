@@ -26,13 +26,12 @@
 ::  ==
 ::
 ++  script
-  =<  script-label
+  =<  script
   |%
   +$  script
     $+  ord-script
     (list op)
   ::
-  ::  +$  script-label  $+(script script)
   +$  op
     $+  ord-script-op
     $@  $?  %op-nop
