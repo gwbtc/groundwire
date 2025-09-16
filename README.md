@@ -4,7 +4,7 @@ Bitcoin-based Urbit networking.
 
 ## Getting Started
 
-Run `./build.sh` to build the `/dist` folder with [peru](https://github.com/buildinspace/peru). (See [`urbit/desk-skeleton`](https://github.com/urbit/desk-skeleton) for more usage options.)
+Groundwire uses [peru](https://github.com/buildinspace/peru) for Hoon dependency management.
 
 To run Groundwire on a fake ship, you'll need a pill with Arvo and Vere changes.
 
@@ -18,7 +18,8 @@ To run Groundwire on a fake ship, you'll need a pill with Arvo and Vere changes.
 7. `$ path/to/vere/zig-out/<platform>/urbit -F zod -B path/to/gw-base.pill`
 8. `> |new-desk %groundwire`
 9. `> |mount %groundwire`
-10. `$ cp -rL path/to/groundwire/dist/* path/to/zod/groundwire`
+10. `$ ./build.sh -p path/to/zod/groundwire`
+  - See [`urbit/desk-skeleton`](https://github.com/urbit/desk-skeleton) for more usage options.
 11. `> |commit %groundwire`
 12. `> |install our %groundwire`
 
