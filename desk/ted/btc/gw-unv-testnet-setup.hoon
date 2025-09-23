@@ -1,6 +1,7 @@
 /-  spider
-/+  *ord, *test, gw=groundwire, bip32, b173=bip-b173, rpc=json-rpc, scr=btc-script, strandio, btcio, bc=bitcoin
-/=  unv-tests  /tests/lib/unv
+/+  *ord, *test, gw=groundwire, bip32, b173=bip-b173,
+    rpc=json-rpc, scr=btc-script, strandio, btcio, bc=bitcoin
+/=  unv-tests  /tests/unv
 ^-  thread:spider
 |=  args=vase
 =/  m  (strand:strandio ,vase)
@@ -62,31 +63,31 @@ $(txs t.txs, ret u.res^ret)
   =.  oc  (handle-block:oc boc)
   $(num +(num))
 ::
-++  elab-block
-  |=  [num=@ud block:bc]
-  =*  boc  +<
-  =/  m  (strand:strandio ,[num=@ud gw-block])
-  =^  deps  boc  (find-block-deps:oc boc)
-  =/  txs  (tail txs)
-  |-  ^-  form:m
-  ?~  txs  (pure:m (apply-block-deps:oc boc deps))
-  =/  is  is.i.txs
-  |-  ^-  form:m
-  :: refactor to use gettxout
-  ?~  is  ^$(txs t.txs)
-  =/  dep  (~(get by deps) [txid pos]:i.is)
-  ?:  &(?=(^ dep) ?=(^ value.u.dep))  $(is t.is)
-  ;<  utx=(unit tx:bc)  bind:m
-    (get-raw-transaction:btcio req-to ~ txid.i.is)
-  ?~  utx  !!
-  =/  os  os.u.utx
-  =|  pos=@ud
-  |-  ^-  form:m
-  ?~  os  ^$(is t.is)
-  =/  dep  (~(get by deps) [id.u.utx pos])
-  ?:  &(?=(^ dep) ?=(^ value.u.dep))  $(os t.os, pos +(pos))
-  =/  sots=(list raw-sotx)  ?~(dep ~ sots.u.dep)
-  $(os t.os, pos +(pos), deps (~(put by deps) [id.u.utx pos] [sots `value.i.os]))
+  ++  elab-block
+    |=  [=num:id:block:bc =block:bc]
+    =/  m  (strand:strandio ,[num=@ud gw-block])
+    =/  deps  (find-block-deps:oc num block)
+    =/  txs  (tail txs.block)
+    |-  ^-  form:m
+    ?~  txs
+      (pure:m (apply-block-deps:oc [num +.deps] -.deps))
+    =/  is  is.i.txs
+    |-  ^-  form:m
+    :: refactor to use gettxout
+    ?~  is  ^$(txs t.txs)
+    =/  dep  (~(get by -.deps) [txid pos]:i.is)
+    ?:  &(?=(^ dep) ?=(^ value.u.dep))  $(is t.is)
+    ;<  utx=(unit tx:bc)  bind:m
+      (get-raw-transaction:btcio req-to ~ txid.i.is)
+    ?~  utx  !!
+    =/  os  os.u.utx
+    =|  pos=@ud
+    |-  ^-  form:m
+    ?~  os  ^$(is t.is)
+    =/  dep  (~(get by -.deps) [id.u.utx pos])
+    ?:  &(?=(^ dep) ?=(^ value.u.dep))  $(os t.os, pos +(pos))
+    =/  sots=(list raw-sotx)  ?~(dep ~ sots.u.dep)
+    $(os t.os, pos +(pos), -.deps (~(put by -.deps) [id.u.utx pos] [sots `value.i.os]))
 ::=/  =wallet  (make-wallet bowl)
 ::;<  mined=(unit (list octs))  bind:m  (mine-blocks-to-address:btcio req-to ~ address.ext.wallet 104)
 ::?~  mined  ~|(%mine-block-fail !!)
