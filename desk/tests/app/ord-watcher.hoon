@@ -1,47 +1,60 @@
-/-  spider, bitcoin
-/+  tag=test-agent, btclib=bitcoin, btcio, ord-lib=ord
+/-  spider, bitcoin, urb
+/+  tag=test-agent, btcio, btcl=bitcoin, ol=ord
 /=  mock-agent  /app/ord-watcher
 =>
 ::
 ::  def
 |%
-++  dap   %ord-watcher-test
+++  dap   %mock-ord-watcher
+++  dek   %groundwire
 ++  doc   [~zod dap]
+::
+++  mock-req-to
+  ^-  req-to:btcio
+  :-  'http:localhost:18443'
+  [%basic 'bitcoinrpc:bitcoinrpc']
+::
 +$  card  card:agent:gall
 ::
 ::  XX $app-state-0 should be defined in a /sur/ord-watcher
 ::     so we don't have to define it here a second time
 +$  app-state-0
   $:  %0
-      ord=state:ord-lib
-      start=(unit num:block:btclib)
+      ord-state=state:ol
+      start=num:block:btcl
       whos=(set ship)
-      ted=(unit [since=@da =tid:spider])
       req-to=(unit req-to:btcio)
 ==
-::
 --
 ::
 ::  tests
 |%
-++  test-init
+++  test-init-cards
   %-  eval-mare:tag
   =/  m  (mare:tag ,~)
   ^-  form:m
+::  ;<  *                bind:m  (jab-bowl:tag |=(b=bowl:gall b(our ~zod)))
+::  ;<  =bowl:gall       bind:m  get-bowl:tag
   ;<  caz=(list card)  bind:m  (do-init:tag dap mock-agent)
-  (pure:m ~)
-::
-++  test-poke-clear
-  %-  eval-mare:tag
-  =/  m  (mare:tag ,~)
-  ^-  form:m
-  ;<  *                bind:m  (do-init:tag dap mock-agent)
-  ;<  ~                bind:m  (set-src:tag ~zod)
-  ;<  caz=(list card)  bind:m  (do-poke:tag %noun !>(%clear))
   %+  ex-cards:tag
     caz
-  :~  (ex-task:tag /running/watcher-ted [~zod %spider] %leave ~)
+  :~  (ex-arvo:tag /lo %j %listen *(set ship) [%.n dap])
   ==
+::
+++  test-init-state
+  %-  eval-mare:tag
+  =/  m  (mare:tag ,~)
+  ^-  form:m
+  ;<  *  bind:m  (do-init:tag dap mock-agent)
+  ;<  =vase  bind:m  get-save:tag
+  =/  st=app-state-0  !<(app-state-0 vase)
+  ?.  =(start.st start-height:urb)
+    ~|  'start.state not initializsed to constant'
+    !!
+  ?.  =(block-id.ord-state.st [start-hash:urb start-height:urb])
+    ~|  'block-id.ord-state not initialized to constants'
+    !!
+  (pure:m ~)
 ::
 ++  test-load
   %-  eval-mare:tag
@@ -52,45 +65,74 @@
   ;<  *      bind:m  (do-load:tag mock-agent `vase)
   (pure:m ~)
 ::
-++  test-watch-zod
-  %-  eval-mare:tag
-  =/  m  (mare:tag ,~)
-  ^-  form:m
-  ;<  *                bind:m  (do-init:tag dap mock-agent)
-  ;<  caz=(list card)  bind:m  (do-watch:tag /~zod)
-  ;<  =vase            bind:m  get-save:tag
-  =/  =app-state-0
-    !<(app-state-0 vase)
-  ?.  (~(has in whos.app-state-0) ~zod)
-    ~|  '~zod not added to whos.app-state-0'
-    !!
-  %+  ex-cards:tag
-    caz
-  :~  (ex-fact:tag ~[/] %groundwire-udiffs !>(*udiffs:point:jael))
-  ==
+::  XX can't test without calling +get-blocks
+::     should probably be in /lib/ord's +ord-core
 ::
-++  test-agent-running-poke-ack
+::++  test-poke-action-start
+::  %-  eval-mare:tag
+::  =/  m  (mare:tag ,~)
+::  ^-  form:m
+::  ;<  *                bind:m  (do-init:tag dap mock-agent)
+::  ;<  caz=(list card)  bind:m  (do-poke:tag %action !>([%start start-height:urb]))
+::  ;<  =vase  bind:m  get-save:tag
+::  =/  st=app-state-0  !<(app-state-0 vase)
+::  %+  ex-cards:tag
+::    caz
+::  %-  ex-card:tag
+::  :*  %pass
+::      /got-blocks
+::      %arvo
+::      %k
+::      %lard
+::      dek
+::      %:  get-blocks
+::          req-to.st
+::          ord-state.st
+::          start-height:urb
+::      ==
+::  ==
+::
+++  test-poke-action-config-rpc
   %-  eval-mare:tag
   =/  m  (mare:tag ,~)
   ^-  form:m
-  ;<  *  bind:m  (do-init:tag dap mock-agent)
-  ;<  *  bind:m  (do-agent:tag /running/get-blocks doc %poke-ack ~)
+  ;<  *      bind:m  (do-init:tag dap mock-agent)
+  ;<  *      bind:m  (do-poke:tag %action !>([%config-rpc mock-req-to]))
+  ;<  =vase  bind:m  get-save:tag
+  =/  st=app-state-0  !<(app-state-0 vase)
+  ?>  =(req-to.st `mock-req-to)
   (pure:m ~)
 ::
-::  ++  test-agent-running-poke-nack
-::    %-  eval-mare:tag
-::    =/  m  (mare:tag ,~)
-::    ^-  form:m
-::    ;<  *                bind:m  (do-init:tag dap mock-agent)
-::    ;<  *                bind:m  (jab-bowl:tag |=(b=bowl:gall b(our ~zod)))
-::    ;<  caz=(list card)  bind:m  (do-agent:tag /running/get-blocks doc %poke-ack (some ['test tank']~))
-::    %+  ex-cards:tag
-::      caz
-::    :~  (ex-task:tag /running/get-blocks [~zod %spider] %leave ~)
-::        (ex-task:tag /running/watcher-ted [~zod %spider] %watch /thread-result/ord-watcher--0v0)
-::        (ex-poke:tag /running/watcher-ted [~zod %spider] %spider-inline !>([~ `~.ord-watcher--0v0 [%da ~2000.1.1] /btc/get-blocks]))
-::    ==
+++  test-poke-debug-clear-oc
+  %-  eval-mare:tag
+  =/  m  (mare:tag ,~)
+  ^-  form:m
+  ;<  *      bind:m  (do-init:tag dap mock-agent)
+  ;<  *      bind:m  (do-poke:tag %debug !>([%clear-oc ~]))
+  ;<  =vase  bind:m  get-save:tag
+  =/  st=app-state-0  !<(app-state-0 vase)
+  =/  clear-ord  *state:ol
+  =.  block-id.clear-ord  [start-hash:urb start-height:urb]
+  ?>  =(ord-state.st clear-ord)
+  (pure:m ~)
 ::
-::  XX test %watch-ack, %kick, and %fact code branches
+::  XX +test-on-watch-ship
+++  test-on-watch-ship
+  %-  eval-mare:tag
+  =/  m  (mare:tag ,~)
+  ^-  form:m
+  ;<  *      bind:m  (do-init:tag dap mock-agent)
+  ::  XX could test caz too
+  ::     but need to do a bunch of fake oc stuff
+  ;<  *      bind:m  (do-watch:tag /(scot %p ~zod))
+  ;<  =vase  bind:m  get-save:tag
+  =/  st=app-state-0  !<(app-state-0 vase)
+  ?>  (~(has in whos.st) ~zod)
+  (pure:m ~)
 ::
+::  XX +test-on-arvo-got-blocks
+::     would need to define:
+::       mock blocks
+::       run blocks through mock oc
+::       run mock oc state and fx through +on-arvo
 --
