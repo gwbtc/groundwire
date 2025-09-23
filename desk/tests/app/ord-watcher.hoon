@@ -11,7 +11,7 @@
 ::
 ++  mock-req-to
   ^-  req-to:btcio
-  :-  'http:localhost:18443'
+  :-  'http://localhost:18443'
   [%basic 'bitcoinrpc:bitcoinrpc']
 ::
 +$  card  card:agent:gall
