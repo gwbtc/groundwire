@@ -116,7 +116,6 @@
   ?>  =(ord-state.st clear-ord)
   (pure:m ~)
 ::
-::  XX +test-on-watch-ship
 ++  test-on-watch-ship
   %-  eval-mare:tag
   =/  m  (mare:tag ,~)
