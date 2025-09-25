@@ -1,298 +1,328 @@
-::  btc-watcher: btc block source
+/-  bitcoin, spider, urb
+/+  bc=bitcoin, btcio, dbug, default-agent, ord, strandio, verb
 ::
-/-  spider
-/+  ord, bc=bitcoin, default-agent, verb, dbug, btcio
-=,  jael
+|%
++$  card  card:agent:gall
 ::
-=>  |%
-    +$  card  card:agent:gall
-    +$  app-state
-      $:  %0
-          ord=state:ord
-          start=(unit num:block:bc)
-          whos=(set ship)
-          ted=(unit [since=@da =tid:spider])
-          req-to=(unit req-to:btcio)
-      ==
-    +$  blocks  (list [=num:block:bc block:bc])
-    +$  poke
-      $@  %clear
-      $%  [%start block=@ud]
-      ==
-    --
++$  state-versions
+  $%  state-0
+  ==
 ::
-::  Helpers
++$  state-0
+  $+  state-0
+  $:  %0
+      ord-state=state:ord
+      start=num:block:bc
+      whos=(set ship)
+      req-to=(unit req-to:btcio)
+  ==
 ::
-=>  |%
-    ++  wait
-      |=  [=path now=@da time=@dr]
-      ^-  card
-      [%pass [%timer path] %arvo %b %wait (add now time)]
-    ::
-    ++  wait-shortcut
-      |=  [=path now=@da]
-      ^-  card
-      [%pass [%timer path] %arvo %b %wait now]
-    ::
-    ++  poke-spider
-      |=  [=path our=@p =cage]
-      ^-  card
-      [%pass [%running path] %agent [our %spider] %poke cage]
-    ::
-    ++  watch-spider
-      |=  [=path our=@p =sub=path]
-      ^-  card
-      [%pass [%running path] %agent [our %spider] %watch sub-path]
-    ::
-    ++  leave-spider
-      |=  [=path our=@p]
-      ^-  card
-      [%pass [%running path] %agent [our %spider] %leave ~]
-    --
-::
-::  Main
-::
++$  ord-watcher-action
+  $+  ord-watcher-action
+  ::  XX %start num should be a unit
+  ::     if null, %start poke will run as-is
+  ::     if not, this number will override it
+  $%  [%start =num:block:bc]
+      [%config-rpc =req-to:btcio]
+  ==
++$  ord-watcher-debug-action
+  $+  ord-watcher-debug-action
+  $%  [%clear-oc ~]
+  ==
+--
 %-  agent:dbug
 ^-  agent:gall
-=|  state=app-state
-%+  verb  |
+=|  state-0
+=*  state  -
+%+  verb  &
 =<
-|_  bol=bowl:gall
-+*  this  .
-    def   ~(. (default-agent this %|) bol)
-    cor   ~(. +> bol)
+|_  =bowl:gall
++*  this   .
+    def    ~(. (default-agent this %|) bowl)
+    cor    ~(. +> bowl)
 ::
 ++  on-init
-  ^-  (quip card _this)
-  [~ this]
+  :-  :~  [%pass /lo %arvo %j [%listen *(set ship) [%| dap.bowl]]]
+      ==
+  =,  state
+  %=  this
+    start               start-height:urb
+    block-id.ord-state  [start-hash:urb start-height:urb]
+  ==
 ::
-++  on-save   !>(state)
+++  on-save
+  !>(state)
+::
 ++  on-load
   |=  old=vase
-  ^-  (quip card _this)
-  =+  !<(old=app-state old)
-  `this(state old)
+  ^-  [(list card) _this]
+  :-  ~
+  %=  this
+    state  !<(state-0 old)
+  ==
 ::
 ++  on-poke
   |=  [=mark =vase]
-  ?>  =(our src):bol
-  =+  !<(poke vase)
-  ?-  -
-      %clear 
-    :_  this(state *app-state)
-    ~[(leave-spider /watcher-ted our.bol)]
-      [%start *]
-    !!
+  ^-  [(list card) _this]
+  ?>  =(our src):bowl
+  ?+  mark
+    (on-poke:def mark vase)
+  ::
+      %action
+    =/  act  !<(ord-watcher-action vase)
+    ?-  -.act
+        %start
+      ?~  req-to.state
+        %-  (slog leaf+"no bitcoin rpc node config, use %config-rpc poke" ~)
+        `this
+      :_  this
+      ::  XX should interval be defined here?
+      ::     in state? hardcoded?
+      ::     why have an interval at all?
+      :~  :*  %pass
+              /got-blocks
+              %arvo
+              %k
+              %lard
+              q.byk.bowl
+              %:  get-blocks:cor
+                u.req-to.state
+                ord-state.state
+                ::
+                ::  XX should be a (unit num)
+                ::
+                ::  XX should we clear the ord-state if
+                ::     the start number is specified?
+                ::     /lib/ord arms expect incoming blocks
+                ::     to be contiguous with the most recent
+                ::     block in ord-core state
+                ::
+                num.act
+::                %+  max
+::                  start.state
+::                num.block-id.ord-state.state
+      ==  ==  ==
+    ::
+        %config-rpc
+      :-  ~
+      %=  this
+        req-to.state  `req-to.act
+      ==
+    ==
+  ::
+      %debug
+    =/  act  !<(ord-watcher-debug-action vase)
+    ?-    -.act
+        %clear-oc
+      =/  new-oc           *state:ord
+      =.  block-id.new-oc  [start-hash:urb start-height:urb]
+      :-  ~
+      %=  this
+        ord-state.state  new-oc
+      ==
+    ==
   ==
 ::
-::  +on-watch: subscribe & get initial subscription data
-::
-::    /logs/some-path:
+++  on-peek
+  |=  =(pole knot)
+  ^-  (unit (unit cage))
+  (on-peek:def pole)
 ::
 ++  on-watch
-  |=  =path
-  ^-  (quip card _this)
-  =/  who=(unit ship)
-    ?~  path  ~
-    ?>  ?=([@ ~] path)
-    `(slav %p i.path)
-  =.  whos.state
-    ?~  who
+  |=  =(pole knot)
+  ^-  [(list card) _this]
+  ?+  pole
+    (on-watch:def pole)
+  ::
+  ::  jael subscribes to /, which we receive here
       ~
-    (~(put in whos.state) u.who)
-  ^-  (quip card _this)
-  ::  Slow to recalculate all the diffs, but this is necessary to make
-  ::  sure Jael gets the updates from the snapshot
+    `this
   ::
-  ::%-  %-  slog  :_  ~
-  ::    :-  %leaf
-  ::    "ship: processing azimuth snapshot ({<points>} points)"
-  =/  cards  (jael-update:cor run-state:cor)
-  [cards this]
-::
-++  on-leave  on-leave:def
-::
-::  +on-peek: get diagnostics data
-::
-::    /block/some-path: get next block number to check for /some-path
-::
-++  on-peek
-  |=  =path
-  ^-  (unit (unit cage))
-  ~
-::
-++  on-agent
-  |=  [=wire =sign:agent:gall]
-  ^-  (quip card _this)
-  ?.  ?=([%running *] wire)
-    (on-agent:def wire sign)
-  ?-    -.sign
-      %poke-ack
-    ?~  p.sign
-      [~ this]
-    %-  (slog leaf+"btc-watcher couldn't start thread" u.p.sign)
-    =^  cards  state  (ted-start:cor ~s0)
-    :_  this
-    [(leave-spider t.wire our.bol) cards]
-
-  ::
-      %watch-ack
-    ?~  p.sign
-      [~ this]
-    %-  (slog leaf+"btc-watcher couldn't start listening to thread" u.p.sign)
-    ::  TODO: kill thread that may have started, although it may not
-    ::  have started yet since we get this response before the
-    ::  %start-spider poke is processed
-    ::
-    =^  cards  state  (ted-start:cor ~s0)
-    [cards this]
-  ::
-      %kick
-    =^  cards  state  (ted-start:cor ~s0)
-    [cards this]
-  ::
-      %fact
-    =*  path  t.wire
-    ?+    p.cage.sign  (on-agent:def wire sign)
-        %thread-fail
-      =+  !<([=term =tang] q.cage.sign)
-      %-  (slog leaf+"btc-watcher failed; will retry" leaf+<term> tang)
-      =^  cards  state  (ted-start:cor ~s30)
-      [cards this]
-    ::
-        %thread-done
-      ::  if empty, that means we cancelled this thread
-      ::
-      ?:  =(*vase q.cage.sign)
-        ::`this
-        =^  cards  state  (ted-start:cor ~s0)
-        [cards this]
-      =+  !<((list id:block:bc effect:ord) q.cage.sign)
-      =^  cards-a  state  (ted-start:cor ~m3)
-      [cards-a this]
+      [=ship ~]
+    =/  nu-whos
+      (~(put in whos.state) (slav %p ship.pole))
+    :-  %-  make-jael-update-from-udiffs
+        %+  make-udiffs-from-state
+          nu-whos
+        ord-state.state
+    %=  this
+      whos.state  nu-whos
     ==
   ==
 ::
 ++  on-arvo
   |=  [=wire =sign-arvo]
   ^-  (quip card _this)
-  [~ this]
+  ?+  wire
+    (on-arvo:def wire sign-arvo)
+  ::
+      [%got-blocks ~]
+    ?+  sign-arvo
+      (on-arvo:def wire sign-arvo)
+    ::
+        [%khan %arow *]
+      ?.  -.p.sign-arvo
+        ((slog leaf+<p.p.sign-arvo> ~) `this)
+      ?>  ?=([%khan %arow %.y %noun *] sign-arvo)
+      =/  [%khan %arow %.y %noun =vase]  sign-arvo
+      =/  val
+        !<  (pair (list (pair id:block:bitcoin effect:ord)) state:ord)
+        vase
+      =/  jael-cards
+        (make-jael-cards-from-fx whos.state -.val)
+      :-  jael-cards
+      %=  this
+        ord-state.state  +.val
+      ==
+    ==
+  ==
 ::
+++  on-leave
+  ::  XX check subscriptions for a path
+  on-leave:def
+++  on-agent  on-agent:def
 ++  on-fail   on-fail:def
 --
-|_  bol=bowl:gall
-+*  cor   .
-    bec   byk.bol(r da+now.bol)
+::
+::  helper core
+|_  =bowl:gall
+++  make-jael-cards-from-fx
+  ::  XX do we care about whos?
+  |=  [whos=(set ship) fx=(list (pair id:block:bitcoin effect:ord))]
+  ^-  (list card)
+  (make-jael-update-from-udiffs (ord-core-fx-to-udiffs fx))
+::
+++  make-jael-update-from-udiffs
+  |=  =udiffs:point:jael
+  ^-  (list card)
+  :-  [%give %fact [/]~ %azimuth-udiffs !>(udiffs)]
+  %+  murn
+    udiffs
+  |=  [=ship =udiff:point:jael]
+  ^-  (unit card)
+  `[%give %fact [/(scot %p ship)]~ %azimuth-udiffs !>([udiff]~)]
+::
+++  make-udiffs-from-state
+  |=  [whos=(set ship) ord-state=state:ord]
+  ^-  udiffs:point:jael
+  =/  points=(list [=ship point:ord])
+    ~(tap by unv-ids.ord-state)
+  =/  =id:block:jael
+    block-id:ord-state
+  =/  new-udiffs  *udiffs:point:jael
+  |-  ^+  new-udiffs
+  ?~  points
+    new-udiffs
+  %=  $
+     points      t.points
+     new-udiffs  %+  welp
+                   =,  i.points
+                   ^-  udiffs:point:jael
+                   :~  [ship id %keys [life.net (sub (end 3 pass.net) 'a') pass.net] %.y]
+                       [ship id %rift rift.net %.y]
+                       [ship id %spon ?:(has.sponsor.net `who.sponsor.net ~)]
+                       [ship id %fief fief.net]
+                   ==
+                 new-udiffs
+  ==
+::
+++  ord-core-fx-to-udiffs
+  |=  fx=(list [id:block:bitcoin effect:ord])
+  ^-  udiffs:point:jael
+  %+  murn
+    fx
+  |=  [=id:block:bitcoin eo=effect:ord]
+  ^-  (unit (pair ship udiff:point:jael))
+  ?.  ?=(%point -.eo)
+    ~
+  ::  XX rename
+  =/  foo  (tail (tail eo))
+  ?+  -.foo
+    ~
+      %rift
+    `[ship.eo id %rift rift.foo %.n]
+  ::
+      %sponsor
+    `[ship.eo id %spon sponsor.foo]
+  ::
+      %keys
+    `[ship.eo id %keys [life.foo (sub (end 3 pass.foo) 'a') pass.foo] %.y]
+  ::
+      %fief
+    `[ship.eo id %fief fief.foo]
+  ==
 ::
 ++  get-blocks
-  |=  wait=@dr
+  |=  [=req-to:btcio =state:ord start=@ud]
   ^-  shed:khan
-  =>  :*  at=block-id.ord.state  wait=wait
-          req-to=(need req-to.state)  blocks=blocks
-          sio=strandio:btcio  bio=btcio  bc=bc
-          oc=(abed:ord-core:ord ord.state)
-          ord=ord
-          ..zuse
-      ==
-  =|  bocs=blocks
-  =/  m  (strand:sio ,vase)
+  ::  XX temp state mutation
+  ::  XX better solution to index start issue than (dec start)?
+  ::     this all assumes ord-core state is empty, which
+  ::     won't be true in production
+  ::  =/  oc  (abed:ord-core:ord state)
+  =/  oc
+    (abed:ord-core:ord state(num.block-id (dec start)))
+  =/  m  (strand:strandio ,vase)
   |^  ^-  form:m
-  ;<  *  bind:m  (sleep:sio wait)
-  ;<  lat=(unit @ud)  bind:m  (get-block-count:bio req-to ~)
-  ?~  lat  ~|  %ordw-get-block-count-failed  !!
-  =/  to  (sub u.lat 6)
-  =/  num  num.block-id:oc
-  |-  ^-  form:m
-  ?.  (lte num to)  (pure:m !>([fx state]:oc))
-  ;<  boc=(unit block:bc)  bind:m
-    (get-block-by-number:bio req-to ~ num)
-  ?~  boc  !!
-  ;<  boc=[num=@ud gw-block:ord]  bind:m  (elab-block num u.boc)
-  =.  oc  (handle-block:oc boc)
-  $(num +(num))
+      ::  XX why wait?
+      =/  wait  ~s0
+      ;<  *  bind:m  (sleep:strandio wait)
+      ;<    latest-block=(unit @ud)
+          bind:m
+        (get-block-count:btcio req-to ~)
+      ?~  latest-block
+        ~|  %couldnt-find-latest-block
+        !!
+      ~&  >  "latest block is {<u.latest-block>}"
+      ::  we wait 6 blocks for transactions to finalize
+      =/  last-settled-block
+        (sub u.latest-block 6)
+      ::  start indexing from .start
+      =/  num  start
+      |-  ^-  form:m
+      ?.  (lte num last-settled-block)
+        (pure:m !>([fx state]:oc))
+      ;<    bok=(unit block:bitcoin)
+          bind:m
+        (get-block-by-number:btcio req-to ~ num)
+      ?~  bok
+        ~|  %cant-find-block-by-number
+        !!
+      ;<    nu-bok=(pair num:id:block:bitcoin gw-block:ord)
+          bind:m
+        (elab-block num u.bok)
+      =.  oc  (handle-block:oc nu-bok)
+      ~&  >  "processed block {<num>} of {<last-settled-block>}"
+      $(num +(num))
+    ::
   ::
+  ::  XX rename
+  ::     this arm takes a block:bitcoin and should turn
+  ::     it into something called a block:urb or sth
   ++  elab-block
-    |=  [num=@ud block:bc]
-    =*  boc  +<
-    =/  m  (strand:sio ,[num=@ud gw-block:ord])
-    =^  deps  boc  (find-block-deps:oc boc)
-    =/  txs  (tail txs)
+    |=  [=num:id:block:bitcoin =block:bitcoin]
+    =/  m  (strand:strandio ,[num=@ud gw-block:ord])
+    =/  deps  (find-block-deps:oc num block)
+    =/  txs  (tail txs.block)
     |-  ^-  form:m
-    ?~  txs  (pure:m (apply-block-deps:oc boc deps))
+    ?~  txs
+      (pure:m (apply-block-deps:oc [num +.deps] -.deps))
     =/  is  is.i.txs
     |-  ^-  form:m
-    :: refactor to use gettxout
+    :: XX refactor to use gettxout
     ?~  is  ^$(txs t.txs)
-    =/  dep  (~(get by deps) [txid pos]:i.is)
+    =/  dep  (~(get by -.deps) [txid pos]:i.is)
     ?:  &(?=(^ dep) ?=(^ value.u.dep))  $(is t.is)
     ;<  utx=(unit tx:bc)  bind:m
-      (get-raw-transaction:bio req-to ~ txid.i.is)
+      (get-raw-transaction:btcio req-to ~ txid.i.is)
     ?~  utx  !!
     =/  os  os.u.utx
     =|  pos=@ud
     |-  ^-  form:m
     ?~  os  ^$(is t.is)
-    =/  dep  (~(get by deps) [id.u.utx pos])
+    =/  dep  (~(get by -.deps) [id.u.utx pos])
     ?:  &(?=(^ dep) ?=(^ value.u.dep))  $(os t.os, pos +(pos))
     =/  sots=(list raw-sotx:ord)  ?~(dep ~ sots.u.dep)
-    $(os t.os, pos +(pos), deps (~(put by deps) [id.u.utx pos] [sots `value.i.os]))
+    $(os t.os, pos +(pos), -.deps (~(put by -.deps) [id.u.utx pos] [sots `value.i.os]))
   --
-::
-++  ted-start
-  |=  wait=@dr
-  ^-  (quip card _state)
-  =/  tid=@ta
-    (cat 3 'ord-watcher--' (scot %uv eny.bol))
-  :_  state(ted `[now.bol tid])
-  =/  args  [~ `tid bec get-blocks]
-  :~  (watch-spider /watcher-ted our.bol /thread-result/[tid])
-      (poke-spider /watcher-ted our.bol %spider-inline !>(args))
-  ==
-::
-++  handle-fx
-  |=  fx=(list [id:block:bc effect:ord])
-  ^-  (quip card _state)
-  :_  state
-  (jael-update (fx-to-udiffs fx))
-::
-++  jael-update
-  |=  =udiffs:point
-  ^-  (list card)
-  :-  [%give %fact ~[/] %groundwire-udiffs !>(udiffs)]
-  |-  ^-  (list card)
-  ?~  udiffs
-    ~
-  ?.  (~(has in whos.state) ship.i.udiffs)  ~
-  =/  =path  /(scot %p ship.i.udiffs)
-  ::  Should really give all diffs involving each ship at the same time
-  ::
-  :-  [%give %fact ~[path] %groundwire-udiffs !>(~[i.udiffs])]
-  $(udiffs t.udiffs)
-::
-++  fx-to-udiffs
-  |=  fx=(list [=id:block:bc effect:ord])
-  ^-  udiffs:point
-  ?~  fx  ~
-  ?.  ?=(%point +<.i.fx)  $(fx t.fx)
-  =,  i.fx
-  ?+  +>+<.i.fx  $(fx t.fx)
-    %rift     [ship id %rift rift |]^$(fx t.fx)
-    %sponsor  [ship id %spon sponsor]^$(fx t.fx)
-    %keys     [ship id %keys [life (sub (end 3 pass) 'a') pass] %.y]^$(fx t.fx)
-    %fief     [ship id %fief fief]^$(fx t.fx)
-  ==
-::
-++  run-state
-  =/  points=(list [=ship point:ord])  ~(tap by unv-ids.ord.state)
-  =/  =id:block:jael  block-id:ord.state
-  |-  ^-  udiffs:point
-  ^-  (list [@p udiff:point])
-  ?~  points  ~
-  =,  i.points
-  :*  [ship id %keys [life.net (sub (end 3 pass.net) 'a') pass.net] %.y]
-      [ship id %rift rift.net %.y]
-      [ship id %spon ?:(has.sponsor.net `who.sponsor.net ~)]
-      [ship id %fief fief.net]
-      $(points t.points)
-  ==
 --

@@ -1,7 +1,7 @@
 ::/+  wiry
 ::=>  wiry
 ::/-  bc=bitcoin, bscr=btc-script, *mip, bio=btcio
-/-  bc=bitcoin
+/-  bc=bitcoin, urb
 /+  bscr=btc-script, crac
 /+  *mip
 =*  sha  ..shax
@@ -26,13 +26,12 @@
 ::  ==
 ::
 ++  script
-  =<  script-label
+  =<  script
   |%
   +$  script
     $+  ord-script
     (list op)
   ::
-  ::  +$  script-label  $+(script script)
   +$  op
     $+  ord-script-op
     $@  $?  %op-nop
@@ -939,43 +938,83 @@
   ++  find-block-deps
     :: in order to properly fulfill the coinbase transaction, we need to
     :: keep track of the fee change from skipped tx's
-    |=  [num=@ud block:bc]
-    =*  block  +<
+    |=  [num=@ud =block:bc]
+    ::  =*  block  +<
     =|  deps=(map [txid pos] [sots=(list raw-sotx) value=(unit @ud)])
     =|  tx-fil=(list tx:bc)
-    ?>  =(num +(num.block-id.state))
-    =>  ?>(?=(^ txs) [cb-tx=i.txs .(txs t.txs)])
+    ^+  [deps block]
+    ?.  ?|  =(num start-height:urb)
+            =(num +(num.block-id.state))
+        ==
+      %-  (slog leaf+"can't handle block {<num>}, expected block {<+(num.block-id.state)>}" ~)
+      ::  XX should crash
+      [deps block]
+    =>  ?>  ?=(^ txs.block)
+        :-  cb-tx=i.txs.block
+        %=  .
+          txs.block  t.txs.block
+        ==
     |-  ^+  [deps block]
-    ?~  txs  [deps block(txs cb-tx^(flop tx-fil))]
-    =/  is  is.i.txs
+    ?~  txs.block
+      :-  deps
+      %=  block
+        txs  :-(cb-tx (flop tx-fil))
+      ==
+    =/  is  is.i.txs.block
     =|  ned=_|
     |^  ^+  ^$
-    ?~  is  ^$(txs t.txs, tx-fil ?.(ned tx-fil i.txs^tx-fil))
-    =/  value=(unit @ud)
-      ?~  vout=(get-vout:si sont-map [txid pos]:i.is)  ~
-      `value.u.vout
-    =.  ned  |(ned ?=(^ value))
-    =/  raw-script=(unit octs)
-      =/  rwit  (flop witness.i.is)
-      ?.  ?=([* ^] rwit)  ~
-      ?.  =+(i.rwit &(!=(0 wid) =(0x50 (cut 3 [(dec wid) 1] dat))))
-        `i.t.rwit
-      ?~(t.t.rwit ~ `i.t.t.rwit)
-    ?~  raw-script  (add-to-deps ~ value)
-    ?~  dscr=(de:bscr u.raw-script)  (add-to-deps ~ value)
-    ~|  [=+(u.raw-script [p `@ux`q]) =+((en:bscr u.dscr) [p `@ux`q])]
-    ?>  =(u.raw-script (en:bscr u.dscr))
-    =/  unvs=(unit (list @))  (some (unv:de u.dscr))
-    ?~  unvs  (add-to-deps ~ value)
-    =/  sots=(list raw-sotx)  (zing (turn u.unvs parse-roll))
-    (add-to-deps(ned &) sots value)
-    ::
+        ?~  is
+          %=  ^$
+            txs.block  t.txs.block
+            tx-fil     ?.  ned
+                         tx-fil
+                        [i.txs.block :-(i.txs.block tx-fil)]
+          ==
+        =/  value=(unit @ud)
+          =/  vout  (get-vout:si sont-map [txid pos]:i.is)
+          ?~  vout
+            ~
+          `value.u.vout
+        =.  ned  |(ned ?=(^ value))
+        =/  raw-script=(unit octs)
+          =/  rwit
+            (flop witness.i.is)
+          ?.  ?=([* ^] rwit)
+            ~
+          ?.  =+  i.rwit
+              ?&  !=(0 wid)
+                  =(0x50 (cut 3 [(dec wid) 1] dat))
+              ==
+            `i.t.rwit
+          ?~  t.t.rwit
+            ~
+          `i.t.t.rwit
+        ?~  raw-script
+          (add-to-deps ~ value)
+        =/  descr
+          (de:bscr u.raw-script)
+        ?~  descr
+          (add-to-deps ~ value)
+        ~|  [=+(u.raw-script [p `@ux`q]) =+((en:bscr u.descr) [p `@ux`q])]
+        ?>  =(u.raw-script (en:bscr u.descr))
+        =/  unvs=(unit (list @))  (some (unv:de u.descr))
+        ?~  unvs  (add-to-deps ~ value)
+        =/  sots=(list raw-sotx)
+          (zing (turn u.unvs parse-roll))
+        (add-to-deps(ned &) sots value)
+      ::
     ++  add-to-deps
       |=  [sots=(list raw-sotx) value=(unit @ud)]
       ^+  ^$
       ?>  ?=(^ is)
-      ?:  &(=(~ value) =(~ sots))  ^$(is t.is)
-      ^$(is t.is, deps (~(put by deps) [txid pos]:i.is sots value))
+      ?:  ?&  =(~ sots)
+              =(~ value)
+          ==
+        ^$(is t.is)
+      %=  ^$
+        is  t.is
+        deps  (~(put by deps) [txid pos]:i.is sots value)
+      ==
     --
   ::
   ++  apply-block-deps
@@ -994,17 +1033,33 @@
     [dep(value (need value.dep)) i.is]^$(is t.is)
   ::
   ++  handle-block
-    |=  [=num:block gw-block]
+    |=  [=num:block =gw-block]
     ^+  cor
-    ?>  =(num +(num.block-id.state))
-    =.  block-id.state  [hax num]
-    ?>  ?=(^ txs)
-    =>  .(txs t.txs, cb-tx [reward i.txs])
+    ?.  ?|  =(num start-height:urb)
+            =(num +(num.block-id.state))
+        ==
+      %-  (slog leaf+"can't handle block {<num>}, expected block {<+(num.block-id.state)>}" ~)
+      ::  XX should crash
+      ::     i kinda don't mind a stateful core just
+      ::     returning existing state on error like a
+      ::     gall agent would return `this, but how is
+      ::     the code calling this function supposed to
+      ::     handle that case?
+      cor
+    =.  num.block-id.state  +(num.block-id.state)
+    ?~  txs.gw-block
+      ::  XX should crash?
+      cor
+    =>  %=  .
+          txs.gw-block  t.txs.gw-block
+          cb-tx         [reward.gw-block i.txs.gw-block]
+        ==
     |-  ^+  cor
     :: todo: handle coinbase tx
-    ?~  txs  cor
-    =.  cor  (handle-tx i.txs)
-    $(txs t.txs)
+    ?~  txs.gw-block
+      cor
+    =.  cor  (handle-tx i.txs.gw-block)
+    $(txs.gw-block t.txs.gw-block)
   ::
   ++  handle-tx
     =|  val=@ud
