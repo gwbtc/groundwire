@@ -1,20 +1,21 @@
-/+  der, scr=btc-script, ord
+/-  ord, urb
+/+  der, scr=btc-script
 |%
 ++  encode
   =<  full
   =,  ord
   =<  |%
       ++  full
-        |=  sots=(list sotx)
+        |=  sots=(list sotx:urb)
         p:(fax:plot (^full sots))
       ::
       ++  skim
-        |=  sot=skim-sotx
+        |=  sot=skim-sotx:urb
         p:(fax:plot [0 (^skim sot)])
       --
   |%
   ++  full
-    |=  sots=(list sotx)
+    |=  sots=(list sotx:urb)
     :-  bloq=0
     |-  ^-  (list plat:plot)
     ?~  sots  ~
@@ -27,7 +28,7 @@
      ==
   ::
   ++  skim
-    |=  sot=skim-sotx
+    |=  sot=skim-sotx:urb
     ^-  (list plat:plot)
     ?-    -.sot
         %batch
@@ -98,7 +99,7 @@
     [bloq=0 [2 1] [512 u.sig] ~]
   ::
   ++  en-sont
-    |=  sont
+    |=  sont:ord
     ^-  (list plat:plot)
     =/  mi  (mat pos)
     =/  mo  (mat off)
