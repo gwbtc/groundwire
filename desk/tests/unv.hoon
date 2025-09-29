@@ -1,18 +1,18 @@
 /-  urb
-/+  *ord, *test, *mip, lais, crac, gw=groundwire, bip32, b173=bip-b173, rpc=json-rpc, scr=btc-script, strandio, btcio, bc=bitcoin
+/+  *ord, ul=urb, *test, *mip, lais, crac, gw=groundwire, bip32, b173=bip-b173, rpc=json-rpc, scr=btc-script, strandio, btcio, bc=bitcoin
 =*  raws  raws:gw
 |%
 ++  make-unv-script
   |=  sots=(list sotx:urb)
   ^-  script:scr
   =/  en-sots  (encode:lais sots)
-  =/  tscr  (unv-to-script:en en-sots)
+  =/  tscr  (unv-to-script:en:ul en-sots)
   =/  wit   (en:bscr tscr)
   =/  de-wit  (need (de:bscr wit))
   ?>  =(de-wit tscr)
-  =/  de-unv  (unv:de de-wit)
+  =/  de-unv  (unv:de:ul de-wit)
   ?>  ?=([* ~] de-unv)
-  =/  rol  (parse-roll i.de-unv)
+  =/  rol  (parse-roll:ul i.de-unv)
   ~|  %failed-to-parse-the-same
   ?>  =((turn rol |=([* sotx:urb] +<+)) sots)
   tscr
@@ -303,7 +303,7 @@
   --
 ::
 --
-=/  oc  ord-core
+=/  oc  ord-core:ul
 |%
 +$  waletz  [ali=_wallet bob=_wallet car=_wallet dav=_wallet]
 ++  make-walz
@@ -514,11 +514,11 @@
 ::  |=  [itxid=@ pos=@ud value=@ sots=(list sotx:urb)]
 ::  ^-  inputw:tx
 ::  =/  en-sots  (encode:lais sots)
-::  =/  tscr  (unv-to-script:en en-sots)
+::  =/  tscr  (unv-to-script:en:ul en-sots)
 ::  =/  wit   (en:bscr tscr)
 ::  =/  de-wit  (need (de:bscr wit))
 ::  ?>  =(de-wit tscr)
-::  =/  de-unv  (unv:de de-wit)
+::  =/  de-unv  (unv:de:ul de-wit)
 ::  ?>  ?=([* ~] de-unv)
 ::  =/  rol  (parse-roll i.de-unv)
 ::  ~|  %failed-to-parse-the-same

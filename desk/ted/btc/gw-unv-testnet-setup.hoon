@@ -1,5 +1,5 @@
 /-  spider, urb
-/+  *ord, *test, gw=groundwire, bip32, b173=bip-b173,
+/+  *ord, ul=urb, *test, gw=groundwire, bip32, b173=bip-b173,
     rpc=json-rpc, scr=btc-script, strandio, btcio, bc=bitcoin
 /=  unv-tests  /tests/unv
 ^-  thread:spider
@@ -7,7 +7,7 @@
 =/  m  (strand:strandio ,vase)
 ^-  form:m
 =/  =req-to:btcio  (need !<((unit req-to:btcio) args))
-=/  oc  ord-core
+=/  oc  ord-core:ul
 |^
 ::;<  =bowl:spider  bind:m  get-bowl:strandio
 =/  seds=(list @)

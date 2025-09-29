@@ -1,5 +1,5 @@
 /-  bitcoin, spider, ord, urb, ow=ord-watcher
-/+  bc=bitcoin, btcio, dbug, default-agent, ol=ord, strandio, verb
+/+  bc=bitcoin, btcio, dbug, default-agent, ol=ord, ul=urb, strandio, verb
 ::
 |%
 +$  card  card:agent:gall
@@ -240,7 +240,7 @@
   ::     won't be true in production
   ::  =/  oc  (abed:ord-core:ord state)
   =/  oc
-    (abed:ord-core:ol state(num.block-id (dec start)))
+    (abed:ord-core:ul state(num.block-id (dec start)))
   =/  m  (strand:strandio ,vase)
   |^  ^-  form:m
       ::  XX why wait?
