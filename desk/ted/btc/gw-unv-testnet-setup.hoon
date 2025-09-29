@@ -1,4 +1,4 @@
-/-  spider
+/-  spider, urb
 /+  *ord, *test, gw=groundwire, bip32, b173=bip-b173,
     rpc=json-rpc, scr=btc-script, strandio, btcio, bc=bitcoin
 /=  unv-tests  /tests/unv
@@ -59,13 +59,13 @@ $(txs t.txs, ret u.res^ret)
   ;<  boc=(unit block:bc)  bind:m
     (get-block-by-number:btcio req-to ~ num)
   ?~  boc  !!
-  ;<  boc=[num=@ud urb-block]  bind:m  (elab-block num u.boc)
+  ;<  boc=[num=@ud urb-block:urb]  bind:m  (elab-block num u.boc)
   =.  oc  (handle-block:oc boc)
   $(num +(num))
 ::
   ++  elab-block
     |=  [=num:id:block:bc =block:bc]
-    =/  m  (strand:strandio ,[num=@ud urb-block])
+    =/  m  (strand:strandio ,[num=@ud urb-block:urb])
     =/  deps  (find-block-deps:oc num block)
     =/  txs  (tail txs.block)
     |-  ^-  form:m
@@ -86,7 +86,7 @@ $(txs t.txs, ret u.res^ret)
     ?~  os  ^$(is t.is)
     =/  dep  (~(get by -.deps) [id.u.utx pos])
     ?:  &(?=(^ dep) ?=(^ value.u.dep))  $(os t.os, pos +(pos))
-    =/  sots=(list raw-sotx)  ?~(dep ~ sots.u.dep)
+    =/  sots=(list raw-sotx:urb)  ?~(dep ~ sots.u.dep)
     $(os t.os, pos +(pos), -.deps (~(put by -.deps) [id.u.utx pos] [sots `value.i.os]))
 ::=/  =wallet  (make-wallet bowl)
 ::;<  mined=(unit (list octs))  bind:m  (mine-blocks-to-address:btcio req-to ~ address.ext.wallet 104)
