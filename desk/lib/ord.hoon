@@ -24,7 +24,7 @@
 ::
 ++  parse-roll
   |=  batch=@
-  =|  roll=(list raw-sotx:ord)
+  =|  roll=(list raw-sotx:urb)
   =|  cur=@ud
   =/  las  (met 0 batch)
   =|  num-msgs=@ud
@@ -41,13 +41,13 @@
 ::
 ++  parse-raw-tx
   |=  [cur=@ud batch=@]
-  ^-  (unit [raw-sotx:ord cur=@ud])
-  |^  ^-  (unit [raw-sotx:ord cur=@ud])
+  ^-  (unit [raw-sotx:urb cur=@ud])
+  |^  ^-  (unit [raw-sotx:urb cur=@ud])
   =/  sig  take-sig
   ?~  sig  (debug %no-sig ~)
   =^  sig  cur  u.sig
   =^  from-ship=ship    cur  (take 0 128)
-  =/  res=(unit [tx=skim-sotx:ord cur=@ud])  parse-tx
+  =/  res=(unit [tx=skim-sotx:urb cur=@ud])  parse-tx
   ?~  res  ~
   =/  dif  (sub cur.u.res cur)
   =/  len  =>((dvr dif 8) ?:(=(0 q) p +(p)))
@@ -57,7 +57,7 @@
   [[from-ship sig] tx.u.res]
   ::
   ++  parse-tx
-    |-  ^-  res=(unit [tx=skim-sotx:ord cur=@ud])
+    |-  ^-  res=(unit [tx=skim-sotx:urb cur=@ud])
     =^  op   cur  (take 0 7)
     ?+    op  (debug %strange-opcode ~)
       ::  %0
@@ -114,7 +114,7 @@
         ::%9   =^(res cur take-sont `[[%set-spawn-proxy res] cur])
         %10
       =^  len  cur  take-atom
-      =|  bat=(list single:skim-sotx:ord)
+      =|  bat=(list single:skim-sotx:urb)
       |-  ^+  ^$
       ?:  =(len 0)  ~^[%batch (flop bat)]^cur
       =/  one  ,:^$
@@ -555,7 +555,7 @@
   |_  $:  ::
           :: cards=(list card:agent:gall)
           fx=(list [id:block:bitcoin effect:ord])
-          cb-tx=[val=@ud gw-tx:ord]
+          cb-tx=[val=@ud gw-tx:urb]
           ::n-map=_n-map
       ==
   +*  cor  .
@@ -582,7 +582,7 @@
     :: keep track of the fee change from skipped tx's
     |=  [num=@ud =block:bitcoin]
     ::  =*  block  +<
-    =|  deps=(map [txid:ord pos:ord] [sots=(list raw-sotx:ord) value=(unit @ud)])
+    =|  deps=(map [txid:ord pos:ord] [sots=(list raw-sotx:urb) value=(unit @ud)])
     =|  tx-fil=(list tx:bitcoin)
     ^+  [deps block]
     ?.  ?|  =(num start-height:urb)
@@ -641,12 +641,12 @@
         ?>  =(u.raw-script (en:bscr u.descr))
         =/  unvs=(unit (list @))  (some (unv:de u.descr))
         ?~  unvs  (add-to-deps ~ value)
-        =/  sots=(list raw-sotx:ord)
+        =/  sots=(list raw-sotx:urb)
           (zing (turn u.unvs parse-roll))
         (add-to-deps(ned &) sots value)
       ::
     ++  add-to-deps
-      |=  [sots=(list raw-sotx:ord) value=(unit @ud)]
+      |=  [sots=(list raw-sotx:urb) value=(unit @ud)]
       ^+  ^$
       ?>  ?=(^ is)
       ?:  ?&  =(~ sots)
@@ -660,22 +660,22 @@
     --
   ::
   ++  apply-block-deps
-    |=  [[num=@ud block:bitcoin] deps=(map [txid:ord pos:ord] [sots=(list raw-sotx:ord) value=(unit @ud)])]
-    ^-  [num=@ud gw-block:ord]
+    |=  [[num=@ud block:bitcoin] deps=(map [txid:ord pos:ord] [sots=(list raw-sotx:urb) value=(unit @ud)])]
+    ^-  [num=@ud gw-block:urb]
     =*  block  +<-
     =>  ?>(?=(^ txs) [cb-tx=i.txs .(txs t.txs)])
-    =-  block(txs [cb-tx(is (turn is.cb-tx |=(inputw:tx:bitcoin `input:gw-tx:ord`[[~ 0] +<])))]^-)
-    |-  ^-  (list tx:gw-tx:ord)
+    =-  block(txs [cb-tx(is (turn is.cb-tx |=(inputw:tx:bitcoin `input:gw-tx:urb`[[~ 0] +<])))]^-)
+    |-  ^-  (list tx:gw-tx:urb)
     ?~  txs  ~
     =/  is  is.i.txs
     =-  [i.txs(is -) $(txs t.txs)]
-    |-  ^-  (list input:gw-tx:ord)
+    |-  ^-  (list input:gw-tx:urb)
     ?~  is  ~
     =/  dep  (~(got by deps) [txid pos]:i.is)
     [dep(value (need value.dep)) i.is]^$(is t.is)
   ::
   ++  handle-block
-    |=  [=num:block:bitcoin =gw-block:ord]
+    |=  [=num:block:bitcoin =gw-block:urb]
     ^+  cor
     ?.  ?|  =(num start-height:urb)
             =(num +(num.block-id.state))
@@ -706,10 +706,10 @@
   ++  handle-tx
     =|  val=@ud
     =|  idx=@ud
-    |=  tx=gw-tx:ord
+    |=  tx=gw-tx:urb
     ^+  cor
     =/  sum-out  (roll os.tx |=([[* a=@] b=@] (add a b)))
-    =/  sum-in  (roll is.tx |=([a=input:gw-tx:ord b=@] (add value.a b)))
+    =/  sum-in  (roll is.tx |=([a=input:gw-tx:urb b=@] (add value.a b)))
     =/  is  is.tx
     ?~  is  cor
     |^  ^+  cor
@@ -729,7 +729,7 @@
       =*  who  ship.sot.i.sots
       =*  sig   sig.sot.i.sots
       =-  $.+(cor -, sots t.sots)
-      =/  sots=(list single:skim-sotx:ord)
+      =/  sots=(list single:skim-sotx:urb)
         ?:(?=(%batch +<.sot.i.sots) bat.sot.i.sots ~[+.sot.i.sots])
       =/  point  (~(get by unv-ids) who)
       =|  bat-cnt=@

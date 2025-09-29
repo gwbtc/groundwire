@@ -178,47 +178,25 @@
   $+  ord-draft
   (map @ud octs)
 ::
-+$  raw-sotx
-  $+  urb-raw-sotx
-  [raw=octs sot=sotx]
-::+$  raw-sotx     [sig=@ raw=octs =sotx]
-+$  sotx
-  $+  urb-sotx
-  [[=ship sig=(unit @)] skim-sotx]
 ::
-++  skim-sotx
-  =<  many
-  |%
-  +$  many
-    $+  urb-skim-many
-    $%  single
-        [%batch bat=(list single)]
-    ==
-  ::
-  +$  single
-    $+  urb-skim-single
-    $%  $:  %spawn  =pass
-            ::from=(unit [=pos =off])
-            to=[spkh=@ux pos=(unit pos) =off tej=off]
-        ==
-        [%keys =pass breach=?]
-        [%escape parent=ship]
-        [%cancel-escape parent=ship]
-        [%adopt =ship]
-        [%reject =ship]
-        [%detach =ship]
-        [%fief fief=(unit fief)]
-        [%set-mang mang=(unit mang)]
-    ==
-  ::
-  --
++$  sont-val
+  $+  ord-sont-val
+  [com=(unit @p) ins=(set insc)]
 ::
-+$  mang
-  $+  urb-mang
-  $%([%sont =sont] [%pass =pass])
++$  vout-map
+  $+  ord-vout-map
+  [value=@ud sats=(map off sont-val)]
+::
++$  sont-map
+  $+  ord-sont-map
+  (map [txid pos] vout-map)
+::
++$  insc-ids
+  $+  ord-insc-ids
+  (map insc [=sont =mail])
 ::
 +$  point
-  $+  urb-point
+  $+  ord-point
   $:  ::  domain
       ::
       ::=dominion
@@ -242,19 +220,26 @@
       ==
   ==
 ::
-+$  turf
-  $+  urb-turf
-  (list @t)                                     ::  domain, tld first
++$  unv-ids
+  $+  ord-unv-ids
+  (map @p point)
 ::
-+$  fief
-  $+  urb-fief
-  $%  [%turf p=(list turf) q=@udE]
-      [%if p=@ifF q=@udE]
-      [%is p=@isH q=@udE]
++$  state
+  $+  ord-state
+  $:  block-id=id:block:bc
+      =sont-map
+      =insc-ids
+      ::  XX feels wrong for /sur/ord to build off of /sur/urb
+      ::  =unv-ids:urb
+      =unv-ids
   ==
 ::
++$  mang
+  $+  ord-mang
+  $%([%sont =sont] [%pass =pass])
+::
 +$  diff
-  $+  urb-diff
+  $+  ord-diff
   $%  [%dns domains=(list @t)]
       $:  %point  =ship
           $%  [%rift =rift]
@@ -270,87 +255,13 @@
               [%fief fief=(unit fief)]
   ==  ==  ==
 ::
-+$  sont-val
-  $+  ord-sont-val
-  [com=(unit @p) ins=(set insc)]
-::
-+$  vout-map
-  $+  ord-vout-map
-  [value=@ud sats=(map off sont-val)]
-::
-+$  sont-map
-  $+  ord-sont-map
-  (map [txid pos] vout-map)
-::
-+$  insc-ids
-  $+  ord-insc-ids
-  (map insc [=sont =mail])
-::
-+$  unv-ids
-  $+  urb-unv-ids
-  (map @p point)
-::
-+$  state
-  $+  ord-state
-  $:  block-id=id:block:bc
-      =sont-map
-      =insc-ids
-      =unv-ids
-  ==
-::
 +$  effect
   $+  ord-effect
-  $%  diff
+  ::  XX feels wrong for /sur/ord to build off of /sur/urb
+  $%  ::  diff:urb
+      diff
       [%xfer from=sont to=sont]
       [%insc =insc sont=$@(~ sont) =mail]
   ==
-++  gw-tx
-  =<  tx
-  |%
-  +$  tx
-    $+  ord-gw-tx
-    [id=txid data]
-  ::
-  +$  p-tx
-    $+  ord-gw-tx-p-tx
-    [id=txid data]
-  ::
-  +$  data
-    $+  ord-gw-tx-data
-    $:  is=(list input)
-        os=(list output:tx:bc)
-        locktime=@ud
-        nversion=@ud
-        segwit=(unit @ud)
-    ==
-  ::
-  +$  input
-    $+  ord-gw-tx-input
-    [[sots=(list raw-sotx) value=@ud] inputw:tx:bc]
-  --
-::
-++  gw-block
-  =<  block
-  |%
-  +$  id
-    $+  ord-gw-block-id
-    [=hax =num]
-  ::
-  +$  hax
-    $+  ord-gw-block-hax
-    @ux
-  ::
-  +$  num
-    $+  ord-gw-block-num
-    @ud
-  ::
-  +$  block
-    $+  ord-gw-block
-    $:  =hax
-        reward=@ud
-        height=@ud
-        txs=(list gw-tx)
-    ==
-  --
 ::
 --
