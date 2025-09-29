@@ -125,15 +125,15 @@
   =<  tx
   |%
   +$  tx
-    $+  urb-urb-tx
+    $+  urb-tx
     [id=txid data]
   ::
   +$  p-tx
-    $+  urb-urb-tx-p-tx
+    $+  urb-tx-p-tx
     [id=txid data]
   ::
   +$  data
-    $+  urb-urb-tx-data
+    $+  urb-tx-data
     $:  is=(list input)
         os=(list output:tx:bitcoin)
         locktime=@ud
@@ -142,7 +142,7 @@
     ==
   ::
   +$  input
-    $+  urb-urb-tx-input
+    $+  urb-tx-input
     [[sots=(list raw-sotx) value=@ud] inputw:tx:bitcoin]
   --
 ::
@@ -150,19 +150,19 @@
   =<  block
   |%
   +$  id
-    $+  urb-urb-block-id
+    $+  urb-block-id
     [=hax =num]
   ::
   +$  hax
-    $+  urb-urb-block-hax
+    $+  urb-block-hax
     @ux
   ::
   +$  num
-    $+  urb-urb-block-num
+    $+  urb-block-num
     @ud
   ::
   +$  block
-    $+  urb-urb-block
+    $+  urb-block
     $:  =hax
         reward=@ud
         height=@ud
