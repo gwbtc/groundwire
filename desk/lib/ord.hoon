@@ -1,13 +1,10 @@
+::  XX would we ever use a wiry.hoon here?
 ::/+  wiry
 ::=>  wiry
-::/-  bc=bitcoin, bscr=btc-script, *mip, bio=btcio
-/-  bc=bitcoin, urb, *ord
-/+  bscr=btc-script, crac
-/+  *mip
+/-  bitcoin, urb, ord
+/+  bscr=btc-script, crac, mip
+::  XX remove this tistar
 =*  sha  ..shax
-=*  block  block:bc
-=*  tx  tx:bc
-=,  crypto
 ::=|  lac=_&
 =|  lac=_|
 |%
@@ -22,12 +19,12 @@
 ::  $:  hax=@ux
 ::      reward=@ud
 ::      height=@ud
-::      txs=(list [=txid tx=dataw:tx])
+::      txs=(list [=txid:ord tx=dataw:tx])
 ::  ==
 ::
 ++  parse-roll
   |=  batch=@
-  =|  roll=(list raw-sotx)
+  =|  roll=(list raw-sotx:ord)
   =|  cur=@ud
   =/  las  (met 0 batch)
   =|  num-msgs=@ud
@@ -44,13 +41,13 @@
 ::
 ++  parse-raw-tx
   |=  [cur=@ud batch=@]
-  ^-  (unit [raw-sotx cur=@ud])
-  |^  ^-  (unit [raw-sotx cur=@ud])
+  ^-  (unit [raw-sotx:ord cur=@ud])
+  |^  ^-  (unit [raw-sotx:ord cur=@ud])
   =/  sig  take-sig
   ?~  sig  (debug %no-sig ~)
   =^  sig  cur  u.sig
   =^  from-ship=ship    cur  (take 0 128)
-  =/  res=(unit [tx=skim-sotx cur=@ud])  parse-tx
+  =/  res=(unit [tx=skim-sotx:ord cur=@ud])  parse-tx
   ?~  res  ~
   =/  dif  (sub cur.u.res cur)
   =/  len  =>((dvr dif 8) ?:(=(0 q) p +(p)))
@@ -60,12 +57,12 @@
   [[from-ship sig] tx.u.res]
   ::
   ++  parse-tx
-    |-  ^-  res=(unit [tx=skim-sotx cur=@ud])
+    |-  ^-  res=(unit [tx=skim-sotx:ord cur=@ud])
     =^  op   cur  (take 0 7)
     ?+    op  (debug %strange-opcode ~)
       ::  %0
       ::=^  reset=@         cur  (take 0)
-      ::=^  =sont        cur  (take 3 20)
+      ::=^  =sont:ord        cur  (take 3 20)
       ::`[[%transfer-point sont =(0 reset)] cur]
     ::
         %1
@@ -82,7 +79,7 @@
       `[[%spawn pass to] cur]
       ::
       ++  take-from
-        ^-  (unit [(unit [=pos =off]) cur=@])
+        ^-  (unit [(unit [=pos:ord =off:ord]) cur=@])
         =^  fro-o  cur  (take 0 2)
         ?:  =(fro-o 0)  `[~ cur]
         ?.  =(fro-o 1)   (debug %no-fro ~)
@@ -91,7 +88,7 @@
         `[`[pos off] cur]
       ::
       ++  take-to
-        ^-  (unit [[spkh=@ux pos=(unit pos) =off tej=off] cur=@])
+        ^-  (unit [[spkh=@ux pos=(unit pos:ord) =off:ord tej=off:ord] cur=@])
         =^  spkh  cur  (take 0 256)
         =^  off    cur  take-atom
         =^  tej    cur  take-atom
@@ -117,7 +114,7 @@
         ::%9   =^(res cur take-sont `[[%set-spawn-proxy res] cur])
         %10
       =^  len  cur  take-atom
-      =|  bat=(list single:skim-sotx)
+      =|  bat=(list single:skim-sotx:ord)
       |-  ^+  ^$
       ?:  =(len 0)  ~^[%batch (flop bat)]^cur
       =/  one  ,:^$
@@ -170,7 +167,7 @@
     [(cut 0 [cur step] batch) (add cur step)]
   ::
   ++  take-mang
-    ^-  [(unit (unit mang)) @ud]
+    ^-  [(unit (unit mang:ord)) @ud]
     =^  typ  cur  (take 2)
     ?+    typ  [~ cur]
         %0  [[~ ~] cur]
@@ -190,7 +187,7 @@
   ::  Encode ship and sont
   ::
   ++  take-sont
-    ^-  [(unit sont) @ud]
+    ^-  [(unit sont:ord) @ud]
     =^  pad=@  cur  (take 0)
     ?.  =(pad 0)  ~^cur
     =^  txid    cur  (take 0 256)
@@ -218,7 +215,7 @@
   |%
   ++  unv-to-script
     |=  dat=@
-    ^-  script
+    ^-  script:ord
     =/  len  (met 3 dat)
     :*  [%op-push %num %1 %0]
         %op-if
@@ -227,19 +224,19 @@
      ==
   ::
   ++  mails-to-script
-    |=  mails=(list mail)
-    ^-  script
+    |=  mails=(list mail:ord)
+    ^-  script:ord
     (zing (turn mails mail-to-script))
   ::
   ++  mail-to-script
-    |=  =mail
-    ^-  script
+    |=  =mail:ord
+    ^-  script:ord
     (draft-to-script (mail-to-draft mail))
   ::
   ++  mail-to-draft
-    |=  =mail
-    |^  ^-  draft
-    %-  ~(gas by *draft)
+    |=  =mail:ord
+    |^  ^-  draft:ord
+    %-  ~(gas by *draft:ord)
     %-  zing
     ^-  (list (list (pair @ud octs)))
     :~  ?~(mime.mail ~ [1 p.mime.mail p.+.mime.mail]^~)
@@ -262,7 +259,7 @@
     ::==
     ::
     ++  insc
-      |=  [p=@ud oid=(each ^insc @)]
+      |=  [p=@ud oid=(each insc:ord @)]
       ^-  octs
       :-  p
       ::?.  ?=(%& -.oid)  (rev 3 p p.oid)
@@ -286,7 +283,7 @@
     |=  data=octs
     =/  ripped  (rip-octs data)
     ?:  =(ripped ~)  !! ::~|(%en-draft-push-no-content !!)
-    |-  ^-  script
+    |-  ^-  script:ord
     ?~  ripped  ~
     :-  (push-one-data i.ripped)
     $(ripped t.ripped)
@@ -303,31 +300,31 @@
     op-push+2+p^q
   ::
   ++  draft-to-script
-    |=  =draft
-    ^-  script
+    |=  =draft:ord
+    ^-  script:ord
     =/  data  (~(get by draft) 0)
     =/  meta  (~(get by draft) 5)
     =.  draft  (~(del by (~(del by draft) 0)) 5)
     =/  tags  (sort ~(tap by draft) |=([[a=@ *] [b=@ *]] (lth a b)))
     =-  [op-push+num+1+0 %op-if op-push+~+3+'ord' -]
-    |^  ^-  script
+    |^  ^-  script:ord
     ?~  tags  push-meta
     :+  op-push+num+1+p.i.tags
       (push-one-data q.i.tags)
     $(tags t.tags)
     ::
     ++  push-meta
-      ^-  script
+      ^-  script:ord
       ?~  meta  push-data
       =/  ripped  (rip-octs u.meta)
-      |-  ^-  script
+      |-  ^-  script:ord
       ?~  ripped  push-data
       :+  op-push+num+1+5
         (push-one-data i.ripped)
       $(ripped t.ripped)
     ::
     ++  push-data
-      ^-  script
+      ^-  script:ord
       ?~  data  [%op-endif ~]
       =-  [op-push+num+1+0 -]
       (^push-data u.data)
@@ -337,12 +334,12 @@
 ++  de
   |%
   ++  mails
-    |=  =script
+    |=  =script:ord
     (turn (drafts script) draft-to-mail)
   ::
   ++  draft-to-mail
-    |=  =draft
-    ^-  mail
+    |=  =draft:ord
+    ^-  mail:ord
     :*  (biff (~(get by draft) 1) ascii)  :: tag 1 mimetype 
         (biff (~(get by draft) 9) ascii)  :: tag 9 content encoding
         (biff (~(get by draft) 2) pntr)   :: tag 2 pointer (sat index in outputs of reveal tx)
@@ -369,7 +366,7 @@
   ::
   ++  insc
     |=  octs
-    ^-  [p=@ud (each ^insc @)]
+    ^-  [p=@ud (each insc:ord @)]
     ?.  (lth p 33)  [p |+q]
     ::=/  tx  (rev 3 32 (cut 3 [(sub p 32) 32] q))
     =/  tx  (cut 3 [(sub p 32) 32] q)
@@ -378,17 +375,17 @@
     [p &+[tx (cut 3 [0 ilen] q)]]
   ::
   ++  drafts
-    |=  =script
-    ^-  (list draft)
+    |=  =script:ord
+    ^-  (list draft:ord)
     ?~  script  ~
     ?.  ?=([[%op-push * * %0] %op-if [%op-push * * %'ord'] *] script)  $(script t.script)
     =>  .(script t.t.t.script)
-    |^  ^-  (list draft)
+    |^  ^-  (list draft:ord)
     =^  tags  script  fetch-tags
     ?~  tags  ^$  [u.tags ^$]
     ::
     ++  fetch-tags
-      ^-  [(unit draft) ^script]
+      ^-  [(unit draft:ord) script:ord]
       ?>  ?=(^ script)
       =|  tags=(map @ud (list octs))
       |-  ^+  fetch-tags
@@ -397,7 +394,7 @@
         `(~(run by tags) |=((list octs) (roll +< |=([a=octs b=octs] (add p.a p.b)^(cat 3 q.a q.b)))))
       ?>  ?=(^ t.script)
       ?.  ?=([[%op-push *] [%op-push *] * *] script)
-        =>  .(script `(lest op:^script)`t.script)
+        =>  .(script `(lest op:script:ord)`t.script)
         |-  ^+  fetch-tags
         ?:  ?=(%op-endif -.script)  ~^t.script
         ?>  ?=(^ t.script)
@@ -413,7 +410,7 @@
             (~(put by tags) tag dat^u.d)
         ==
       =|  dats=(list octs)
-      =>  .(script `(lest op:^script)`t.script)
+      =>  .(script `(lest op:script:ord)`t.script)
       |-  ^+  fetch-tags
       ?.  ?=(%op-endif i.script)
         ?>  ?=([[%op-push *] ^] script)
@@ -425,7 +422,7 @@
     --
   ::
   ++  unv
-    |=  =script
+    |=  =script:ord
     ^-  (list @)
     ?~  script  ~
     ?.  ?=([[%op-push * * %0] %op-if [%op-push * * %'urb'] *] script)
@@ -436,9 +433,9 @@
     ?~  unv  ~  [p:(fax:plot bloq=3 u.unv) ^$]
     ::
     ++  fetch-unv
-      ^-  [(unit (list plat:plot)) ^script]
+      ^-  [(unit (list plat:plot)) script:ord]
       ?>  ?=(^ script)
-      |-  ^-  [(unit (list plat:plot)) ^script]
+      |-  ^-  [(unit (list plat:plot)) script:ord]
       ?:  ?=(%op-endif i.script)  [~ ~]^~
       ?.  ?=([[%op-push *] ^] script)  ~^~
       =/  rest  $(script t.script)
@@ -455,48 +452,48 @@
 ++  si
   |%
   ++  get
-    |=  [a=sont-map =txid =pos =off]
-    ^-  (unit sont-val)
+    |=  [a=sont-map:ord =txid:ord =pos:ord =off:ord]
+    ^-  (unit sont-val:ord)
     ?~  b=(~(get by a) txid pos)  ~
     (~(get by sats.u.b) off)
   ::
   ++  get-com
-    |=  [a=sont-map =txid =pos =off]
+    |=  [a=sont-map:ord =txid:ord =pos:ord =off:ord]
     ^-  (unit @p)
     ?~(b=(get +<) ~ com.u.b)
   ::
   ++  get-vout
-    |=  [a=sont-map =txid =pos]
-    ^-  (unit vout-map)
+    |=  [a=sont-map:ord =txid:ord =pos:ord]
+    ^-  (unit vout-map:ord)
     (~(get by a) txid pos)
   ::
   ++  put-all
-    |=  [a=sont-map =txid =pos =off val=@ud com=(unit @p) ins=(set insc)]
-    ^-  sont-map
+    |=  [a=sont-map:ord =txid:ord =pos:ord =off:ord val=@ud com=(unit @p) ins=(set insc:ord)]
+    ^-  sont-map:ord
     %+  ~(put by a)  [txid pos]
-    =/  b=vout-map  (~(gut by a) [txid pos] [0 ~])
-    =/  c=sont-val  (~(gut by sats.b) off [~ ~])
+    =/  b=vout-map:ord  (~(gut by a) [txid pos] [0 ~])
+    =/  c=sont-val:ord  (~(gut by sats.b) off [~ ~])
     val^(~(put by sats.b) off c(com com, ins (~(uni in ins.c) ins)))
   ::
   ++  put-ins
-    |=  [a=sont-map =txid =pos =off val=@ud ins=(set insc)]
-    ^-  sont-map
+    |=  [a=sont-map:ord =txid:ord =pos:ord =off:ord val=@ud ins=(set insc:ord)]
+    ^-  sont-map:ord
     %+  ~(put by a)  [txid pos]
-    =/  b=vout-map  (~(gut by a) [txid pos] [0 ~])
-    =/  c=sont-val  (~(gut by sats.b) off [~ ~])
+    =/  b=vout-map:ord  (~(gut by a) [txid pos] [0 ~])
+    =/  c=sont-val:ord  (~(gut by sats.b) off [~ ~])
     val^(~(put by sats.b) off c(ins (~(uni in ins.c) ins)))
   ::
   ++  put-com
-    |=  [a=sont-map =txid =pos =off val=@ud com=@p]
-    ^-  sont-map
+    |=  [a=sont-map:ord =txid:ord =pos:ord =off:ord val=@ud com=@p]
+    ^-  sont-map:ord
     %+  ~(put by a)  [txid pos]
-    =/  b=vout-map  (~(gut by a) [txid pos] [0 ~])
-    =/  c=sont-val  (~(gut by sats.b) off [~ ~])
+    =/  b=vout-map:ord  (~(gut by a) [txid pos] [0 ~])
+    =/  c=sont-val:ord  (~(gut by sats.b) off [~ ~])
     val^(~(put by sats.b) off c(com `com))
   ::
   ++  del
-    |=  [a=sont-map =txid =pos =off]
-    ^-  sont-map
+    |=  [a=sont-map:ord =txid:ord =pos:ord =off:ord]
+    ^-  sont-map:ord
     ?~  b=(~(get by a) [txid pos])  a
     =/  c  (~(del by sats.u.b) off)
     ?:  =(c ~)  (~(del by a) txid off)
@@ -524,72 +521,69 @@
 ::    =+((~(got by mangs) pass) [txid (~(put in whos) who)])
 ::  --
 ::::
-::+$  mang-map  (map pass [=txid whos=(set @p)])
+::+$  mang-map  (map pass [=txid:ord whos=(set @p)])
 ++  pointer-to-sont
   =|  pos=@ud
-  |=  [pntr=@ud outs=(list output:tx)]
+  |=  [pntr=@ud outs=(list output:tx:bitcoin)]
   ^-  $@(~ [pos=@ud off=@ud])
   ?~  outs  ~
   ?:  (lth pntr value.i.outs)  [pos pntr]
   $(pos +(pos), pntr (sub pntr value.i.outs))
 ::
 ++  update-ins
-  |=  [state oids=(set insc) =sont]
-  =*  state  +<-
+  |=  [=state:ord oids=(set insc:ord) =sont:ord]
   ?:  =(~ oids)  state
   %-  ~(rep in oids)
-  |:  [*=insc state]
+  |:  [*=insc:ord state]
   =/  dat  (~(got by insc-ids) insc)
   state(insc-ids (~(put by insc-ids) insc dat(sont sont)))
 ::
 ++  update-com
-  |=  [state com=@p =sont]
-  =*  state  +<-
-  =/  point  (~(got by unv-ids) com)
-  state(unv-ids (~(put by unv-ids) com point(sont.own sont)))
+  |=  [=state:ord com=@p =sont:ord]
+  =/  point  (~(got by unv-ids:state) com)
+  state(unv-ids (~(put by unv-ids:state) com point(sont.own sont)))
 ::
 ++  update-ids
-  |=  [state old=sont-val =sont]
-  =*  state  +<-
+  |=  [=state:ord old=sont-val:ord =sont:ord]
   =.  state  (update-ins state ins.old sont)
   ?~  com.old  state
   (update-com state u.com.old sont)
 ::
 ++  ord-core
-  =|  state
+  =|  state:ord
   =*  state  -
   |_  $:  ::
           :: cards=(list card:agent:gall)
-          fx=(list [id:block effect])
-          cb-tx=[val=@ud gw-tx]
+          fx=(list [id:block:bitcoin effect:ord])
+          cb-tx=[val=@ud gw-tx:ord]
           ::n-map=_n-map
       ==
   +*  cor  .
   ++  abed
-    |=  =^state
+    |=  =state:ord
     cor(state state)
   ::
   ++  emit
-    |=  fc=effect
+    |=  fc=effect:ord
     cor(fx [block-id fc]^fx)
   ::
   ++  emil
-    |=  fy=(list effect)
+    |=  fy=(list effect:ord)
     ?~  fy  cor
     =.  cor  (emit i.fy)
     $(fy t.fy)
   ::
   ++  abet
     ^+  [fx state]
-    (flop fx)^state
+    [(flop fx) state]
   ::
   ++  find-block-deps
     :: in order to properly fulfill the coinbase transaction, we need to
     :: keep track of the fee change from skipped tx's
-    |=  [num=@ud =block:bc]
+    |=  [num=@ud =block:bitcoin]
     ::  =*  block  +<
-    =|  deps=(map [txid pos] [sots=(list raw-sotx) value=(unit @ud)])
-    =|  tx-fil=(list tx:bc)
+    =|  deps=(map [txid:ord pos:ord] [sots=(list raw-sotx:ord) value=(unit @ud)])
+    =|  tx-fil=(list tx:bitcoin)
     ^+  [deps block]
     ?.  ?|  =(num start-height:urb)
             =(num +(num.block-id.state))
@@ -647,12 +641,12 @@
         ?>  =(u.raw-script (en:bscr u.descr))
         =/  unvs=(unit (list @))  (some (unv:de u.descr))
         ?~  unvs  (add-to-deps ~ value)
-        =/  sots=(list raw-sotx)
+        =/  sots=(list raw-sotx:ord)
           (zing (turn u.unvs parse-roll))
         (add-to-deps(ned &) sots value)
       ::
     ++  add-to-deps
-      |=  [sots=(list raw-sotx) value=(unit @ud)]
+      |=  [sots=(list raw-sotx:ord) value=(unit @ud)]
       ^+  ^$
       ?>  ?=(^ is)
       ?:  ?&  =(~ sots)
@@ -666,22 +660,22 @@
     --
   ::
   ++  apply-block-deps
-    |=  [[num=@ud block:bc] deps=(map [txid pos] [sots=(list raw-sotx) value=(unit @ud)])]
-    ^-  [num=@ud gw-block]
+    |=  [[num=@ud block:bitcoin] deps=(map [txid:ord pos:ord] [sots=(list raw-sotx:ord) value=(unit @ud)])]
+    ^-  [num=@ud gw-block:ord]
     =*  block  +<-
     =>  ?>(?=(^ txs) [cb-tx=i.txs .(txs t.txs)])
-    =-  block(txs [cb-tx(is (turn is.cb-tx |=(inputw:tx:bc `input:gw-tx`[[~ 0] +<])))]^-)
-    |-  ^-  (list tx:gw-tx)
+    =-  block(txs [cb-tx(is (turn is.cb-tx |=(inputw:tx:bitcoin `input:gw-tx:ord`[[~ 0] +<])))]^-)
+    |-  ^-  (list tx:gw-tx:ord)
     ?~  txs  ~
     =/  is  is.i.txs
     =-  [i.txs(is -) $(txs t.txs)]
-    |-  ^-  (list input:gw-tx)
+    |-  ^-  (list input:gw-tx:ord)
     ?~  is  ~
     =/  dep  (~(got by deps) [txid pos]:i.is)
     [dep(value (need value.dep)) i.is]^$(is t.is)
   ::
   ++  handle-block
-    |=  [=num:block =gw-block]
+    |=  [=num:block:bitcoin =gw-block:ord]
     ^+  cor
     ?.  ?|  =(num start-height:urb)
             =(num +(num.block-id.state))
@@ -712,10 +706,10 @@
   ++  handle-tx
     =|  val=@ud
     =|  idx=@ud
-    |=  tx=gw-tx
+    |=  tx=gw-tx:ord
     ^+  cor
     =/  sum-out  (roll os.tx |=([[* a=@] b=@] (add a b)))
-    =/  sum-in  (roll is.tx |=([a=input:gw-tx b=@] (add value.a b)))
+    =/  sum-in  (roll is.tx |=([a=input:gw-tx:ord b=@] (add value.a b)))
     =/  is  is.tx
     ?~  is  cor
     |^  ^+  cor
@@ -735,7 +729,7 @@
       =*  who  ship.sot.i.sots
       =*  sig   sig.sot.i.sots
       =-  $.+(cor -, sots t.sots)
-      =/  sots=(list single:skim-sotx)
+      =/  sots=(list single:skim-sotx:ord)
         ?:(?=(%batch +<.sot.i.sots) bat.sot.i.sots ~[+.sot.i.sots])
       =/  point  (~(get by unv-ids) who)
       =|  bat-cnt=@
@@ -754,10 +748,10 @@
         ?~  sat=(get-spawn-sont +>.sot)  cor :: $(sots t.sots)
         ?.  ?=(%c suite.+<.cac)  cor
         ?.  =(dat.tw.pub:+<:cac (rap 3 ~[lyf=1 %btc %ord %gw %test]))  cor
-        ?.  (veri-octs:ed u.sig 512^(shal raw.i.^sots) sgn:ded:ex:cac)
+        ?.  (veri-octs:ed:crypto u.sig 512^(shal raw.i.^sots) sgn:ded:ex:cac)
           cor
         =/  sponsor  `@p`(end 4 who)
-        =/  =^point
+        =/  =point:ord
           :*  own=[u.sat ~]
               rift=0
               life=1
@@ -867,7 +861,7 @@
         ::?~  sig                  cor
         ::?.  ?=(%c suite.+<.cac)  cor
         ::?.  =(dat.tw.pub:+<:cac (rap 3 ~[+(life.net.u.point) %btc %ord %gw %test]))  cor
-        ::?.  (veri-octs:ed u.sig 512^(shal raw.i.^sots) sgn:ded:ex:cac)
+        ::?.  (veri-octs:ed:crypto u.sig 512^(shal raw.i.^sots) sgn:ded:ex:cac)
         ::  cor
         =.  net.u.point
           net.u.point(pass pass.sot, life +(life.net.u.point))
@@ -895,28 +889,28 @@
       ::  ::?.  ?=([~ %pass *] mang.own.u.point)  [~ cor]
       ::  ::?:  =(txid (cut 8 [1 1] pass.u.mang.own.u.point))  [~ cor]
       ::  ::=/  pub  (end 8 pass.u.mang.own.u.point)
-      ::  ::=/  tw  (scap:ed pub (shax:sha pass.u.mang.own.u.point))
-      ::  ::?.  (veri-octs:ed u.sig raw tw)  [~ cor]
+      ::  ::=/  tw  (scap:ed:crypto pub (shax:sha pass.u.mang.own.u.point))
+      ::  ::?.  (veri-octs:ed:crypto u.sig raw tw)  [~ cor]
       ::  ::=.  pass.u.mang.own.u.point  (can 8 [1 pub] [1 txid] ~)
       ::  ::[point cor(unv-ids (~(put by unv-ids) who u.point))]
       ::  !!
       ::
       ++  spending-sont
-        |=  sot=sont
+        |=  sot=sont:ord
         ~|  [s=sot [txid pos value]:i.is]
         ?.  =([txid pos]:sot [txid pos]:i.is)  |
         ~|  %fatal-tracking-error
         ?>  (lth off.sot value.i.is)  &
       ::
       ++  get-spawn-sont
-        |=  $:  ::from=(unit [=pos =off])
-                out=[spkh=@ux pos=(unit pos) =off tej=off]
+        |=  $:  ::from=(unit [=pos:ord =off:ord])
+                out=[spkh=@ux pos=(unit pos:ord) =off:ord tej=off:ord]
             ==
-        ^-  (unit sont)
+        ^-  (unit sont:ord)
         =|  out-pos=@ud
         =|  out-val=@ud
         =/  os  os.tx
-        |-  ^-  (unit sont)
+        |-  ^-  (unit sont:ord)
         ?~  os  ~
         ?:  &(?=(^ pos.out) (lth u.pos.out out-pos))  ~
         ?:  |((lte (add out-val value.i.os) val) &(?=(^ pos.out) !=(out-pos u.pos.out)))
@@ -924,7 +918,7 @@
         ?:  (lte (add val value.i.is) :(add out-val off.out tej.out))  ~
         ?:  (lte value.i.os (add [off tej]:out))
           $(out-val (add out-val value.i.os), os t.os, out-pos +(out-pos))
-        =/  sat=sont  [txid.i.is pos.i.is (sub (add out-val off.out) val)]
+        =/  sat=sont:ord  [txid.i.is pos.i.is (sub (add out-val off.out) val)]
         ::?.  |(?=(~ from) !=(u.from [pos off]:sat))  ~
         ?^  (get-com:si sont-map sat)
           ?^(pos.out ~ $(out-val (add out-val value.i.os), os t.os, out-pos +(out-pos)))
@@ -973,7 +967,7 @@
      ::
     ++  pntr-to-sont
       |=  pntr=@ud
-      ^-  $@(~ sont)
+      ^-  $@(~ sont:ord)
       ?.  (lth pntr sum-out)
         =/  sont  (pointer-to-sont (add val.cb-tx (sub pntr sum-out)) os.cb-tx)
         ?:  |(=(~ sont) (lte sum-in pntr))  ~
@@ -981,7 +975,7 @@
         [id.cb-tx pos.sont off.sont]
       ?~  sont=(pointer-to-sont pntr os.tx)  !!
       [id.tx pos.sont off.sont]
-      ::=/  =txid  txid.i.is
+      ::=/  =txid:ord  txid.i.is
       ::  check for pointer validity here
       ::?.  &(?=([* %& *] pntr) (lth p.+.pntr sum-outs))
       ::  ?~  tracked=(off-to-sont idx)  ~
@@ -1002,7 +996,7 @@
     ::
     ++  off-to-sont
       |=  off=@ud
-      ^-  $@(~ sont)
+      ^-  $@(~ sont:ord)
       ::  todo: double check this shorter code does what's intended
       (pntr-to-sont (add val off))
     ::  ?.  (lth (add val off) sum-out)
@@ -1020,7 +1014,7 @@
       =/  isonts  ~(tap by sats.u.itxo)
       |-  ^+  cor
       ?~  isonts  cor
-      =/  osont=sont  [txid.i.is pos.i.is p.i.isonts] 
+      =/  osont=sont:ord  [txid.i.is pos.i.is p.i.isonts] 
       ?~  nsont=(off-to-sont p.i.isonts)
         =.  state  (update-ids state q.i.isonts [0x0 0 0])
         =.  cor  (emit [%xfer osont [0x0 0 0]])
