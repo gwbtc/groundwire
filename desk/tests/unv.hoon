@@ -45,7 +45,7 @@
   ++  nu
     |=  [sed=@ i=@ =^utxo]
     ^+  cor
-    cor(sed sed, i i, utxo utxo, eny (shas %gw-test-wal-sed sed))
+    cor(sed sed, i i, utxo utxo, eny (shas %urb-test-wal-sed sed))
   ::
   ++  derive
     ^-  [keypair:gw _i]

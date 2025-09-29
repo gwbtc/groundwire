@@ -59,13 +59,13 @@ $(txs t.txs, ret u.res^ret)
   ;<  boc=(unit block:bc)  bind:m
     (get-block-by-number:btcio req-to ~ num)
   ?~  boc  !!
-  ;<  boc=[num=@ud gw-block]  bind:m  (elab-block num u.boc)
+  ;<  boc=[num=@ud urb-block]  bind:m  (elab-block num u.boc)
   =.  oc  (handle-block:oc boc)
   $(num +(num))
 ::
   ++  elab-block
     |=  [=num:id:block:bc =block:bc]
-    =/  m  (strand:strandio ,[num=@ud gw-block])
+    =/  m  (strand:strandio ,[num=@ud urb-block])
     =/  deps  (find-block-deps:oc num block)
     =/  txs  (tail txs.block)
     |-  ^-  form:m

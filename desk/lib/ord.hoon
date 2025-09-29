@@ -555,7 +555,7 @@
   |_  $:  ::
           :: cards=(list card:agent:gall)
           fx=(list [id:block:bitcoin effect:ord])
-          cb-tx=[val=@ud gw-tx:urb]
+          cb-tx=[val=@ud urb-tx:urb]
           ::n-map=_n-map
       ==
   +*  cor  .
@@ -661,21 +661,21 @@
   ::
   ++  apply-block-deps
     |=  [[num=@ud block:bitcoin] deps=(map [txid:ord pos:ord] [sots=(list raw-sotx:urb) value=(unit @ud)])]
-    ^-  [num=@ud gw-block:urb]
+    ^-  [num=@ud urb-block:urb]
     =*  block  +<-
     =>  ?>(?=(^ txs) [cb-tx=i.txs .(txs t.txs)])
-    =-  block(txs [cb-tx(is (turn is.cb-tx |=(inputw:tx:bitcoin `input:gw-tx:urb`[[~ 0] +<])))]^-)
-    |-  ^-  (list tx:gw-tx:urb)
+    =-  block(txs [cb-tx(is (turn is.cb-tx |=(inputw:tx:bitcoin `input:urb-tx:urb`[[~ 0] +<])))]^-)
+    |-  ^-  (list tx:urb-tx:urb)
     ?~  txs  ~
     =/  is  is.i.txs
     =-  [i.txs(is -) $(txs t.txs)]
-    |-  ^-  (list input:gw-tx:urb)
+    |-  ^-  (list input:urb-tx:urb)
     ?~  is  ~
     =/  dep  (~(got by deps) [txid pos]:i.is)
     [dep(value (need value.dep)) i.is]^$(is t.is)
   ::
   ++  handle-block
-    |=  [=num:block:bitcoin =gw-block:urb]
+    |=  [=num:block:bitcoin =urb-block:urb]
     ^+  cor
     ?.  ?|  =(num start-height:urb)
             =(num +(num.block-id.state))
@@ -689,27 +689,27 @@
       ::     handle that case?
       cor
     =.  num.block-id.state  +(num.block-id.state)
-    ?~  txs.gw-block
+    ?~  txs.urb-block
       ::  XX should crash?
       cor
     =>  %=  .
-          txs.gw-block  t.txs.gw-block
-          cb-tx         [reward.gw-block i.txs.gw-block]
+          txs.urb-block  t.txs.urb-block
+          cb-tx         [reward.urb-block i.txs.urb-block]
         ==
     |-  ^+  cor
     :: todo: handle coinbase tx
-    ?~  txs.gw-block
+    ?~  txs.urb-block
       cor
-    =.  cor  (handle-tx i.txs.gw-block)
-    $(txs.gw-block t.txs.gw-block)
+    =.  cor  (handle-tx i.txs.urb-block)
+    $(txs.urb-block t.txs.urb-block)
   ::
   ++  handle-tx
     =|  val=@ud
     =|  idx=@ud
-    |=  tx=gw-tx:urb
+    |=  tx=urb-tx:urb
     ^+  cor
     =/  sum-out  (roll os.tx |=([[* a=@] b=@] (add a b)))
-    =/  sum-in  (roll is.tx |=([a=input:gw-tx:urb b=@] (add value.a b)))
+    =/  sum-in  (roll is.tx |=([a=input:urb-tx:urb b=@] (add value.a b)))
     =/  is  is.tx
     ?~  is  cor
     |^  ^+  cor

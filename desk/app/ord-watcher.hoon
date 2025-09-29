@@ -288,7 +288,7 @@
       ?~  bok
         ~|  %cant-find-block-by-number
         !!
-      ;<    nu-bok=(pair num:id:block:bitcoin gw-block:urb)
+      ;<    nu-bok=(pair num:id:block:bitcoin urb-block:urb)
           bind:m
         (elab-block num u.bok)
       =.  oc  (handle-block:oc nu-bok)
@@ -301,7 +301,7 @@
   ::     it into something called a block:urb or sth
   ++  elab-block
     |=  [=num:id:block:bitcoin =block:bitcoin]
-    =/  m  (strand:strandio ,[num=@ud gw-block:urb])
+    =/  m  (strand:strandio ,[num=@ud urb-block:urb])
     =/  deps  (find-block-deps:oc num block)
     =/  txs  (tail txs.block)
     |-  ^-  form:m
