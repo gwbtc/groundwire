@@ -1,4 +1,4 @@
-/-  spider, bitcoin, urb
+/-  spider, bitcoin, urb, ord
 /+  tag=test-agent, btcio, btcl=bitcoin, ol=ord
 /=  mock-agent  /app/ord-watcher
 =>
@@ -20,7 +20,7 @@
 ::     so we don't have to define it here a second time
 +$  app-state-0
   $:  %0
-      ord-state=state:ol
+      ord-state=state:ord
       start=num:block:btcl
       whos=(set ship)
       req-to=(unit req-to:btcio)
@@ -111,7 +111,7 @@
   ;<  *      bind:m  (do-poke:tag %debug !>([%clear-oc ~]))
   ;<  =vase  bind:m  get-save:tag
   =/  st=app-state-0  !<(app-state-0 vase)
-  =/  clear-ord  *state:ol
+  =/  clear-ord  *state:ord
   =.  block-id.clear-ord  [start-hash:urb start-height:urb]
   ?>  =(ord-state.st clear-ord)
   (pure:m ~)
