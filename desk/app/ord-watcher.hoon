@@ -1,38 +1,17 @@
-/-  bitcoin, spider, ord, urb
+/-  bitcoin, spider, ord, urb, ow=ord-watcher
 /+  bc=bitcoin, btcio, dbug, default-agent, ol=ord, strandio, verb
 ::
 |%
 +$  card  card:agent:gall
 ::
 +$  state-versions
-  $%  state-0
+  $%  state-0:ow
   ==
 ::
-+$  state-0
-  $+  state-0
-  $:  %0
-      ord-state=state:ord
-      start=num:block:bc
-      whos=(set ship)
-      req-to=(unit req-to:btcio)
-  ==
-::
-+$  ord-watcher-action
-  $+  ord-watcher-action
-  ::  XX %start num should be a unit
-  ::     if null, %start poke will run as-is
-  ::     if not, this number will override it
-  $%  [%start =num:block:bc]
-      [%config-rpc =req-to:btcio]
-  ==
-+$  ord-watcher-debug-action
-  $+  ord-watcher-debug-action
-  $%  [%clear-oc ~]
-  ==
 --
 %-  agent:dbug
 ^-  agent:gall
-=|  state-0
+=|  state-0:ow
 =*  state  -
 %+  verb  &
 =<
@@ -58,7 +37,7 @@
   ^-  [(list card) _this]
   :-  ~
   %=  this
-    state  !<(state-0 old)
+    state  !<(state-0:ow old)
   ==
 ::
 ++  on-poke
@@ -69,7 +48,7 @@
     (on-poke:def mark vase)
   ::
       %action
-    =/  act  !<(ord-watcher-action vase)
+    =/  act  !<(action:ow vase)
     ?-  -.act
         %start
       ?~  req-to.state
@@ -111,7 +90,7 @@
     ==
   ::
       %debug
-    =/  act  !<(ord-watcher-debug-action vase)
+    =/  act  !<(debug:ow vase)
     ?-    -.act
         %clear-oc
       =/  new-oc           *state:ord

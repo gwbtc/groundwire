@@ -1,4 +1,4 @@
-/-  spider, bitcoin, urb, ord
+/-  spider, bitcoin, urb, ord, ow=ord-watcher
 /+  tag=test-agent, btcio, btcl=bitcoin, ol=ord
 /=  mock-agent  /app/ord-watcher
 =>
@@ -15,16 +15,6 @@
   [%basic 'bitcoinrpc:bitcoinrpc']
 ::
 +$  card  card:agent:gall
-::
-::  XX $app-state-0 should be defined in a /sur/ord-watcher
-::     so we don't have to define it here a second time
-+$  app-state-0
-  $:  %0
-      ord-state=state:ord
-      start=num:block:btcl
-      whos=(set ship)
-      req-to=(unit req-to:btcio)
-==
 --
 ::
 ::  tests
@@ -47,7 +37,7 @@
   ^-  form:m
   ;<  *  bind:m  (do-init:tag dap mock-agent)
   ;<  =vase  bind:m  get-save:tag
-  =/  st=app-state-0  !<(app-state-0 vase)
+  =/  st=state-0:ow  !<(state-0:ow vase)
   ?.  =(start.st start-height:urb)
     ~|  'start.state not initializsed to constant'
     !!
@@ -75,7 +65,7 @@
 ::  ;<  *                bind:m  (do-init:tag dap mock-agent)
 ::  ;<  caz=(list card)  bind:m  (do-poke:tag %action !>([%start start-height:urb]))
 ::  ;<  =vase  bind:m  get-save:tag
-::  =/  st=app-state-0  !<(app-state-0 vase)
+::  =/  st=state-0:ow  !<(state-0:ow vase)
 ::  %+  ex-cards:tag
 ::    caz
 ::  %-  ex-card:tag
@@ -99,7 +89,7 @@
   ;<  *      bind:m  (do-init:tag dap mock-agent)
   ;<  *      bind:m  (do-poke:tag %action !>([%config-rpc mock-req-to]))
   ;<  =vase  bind:m  get-save:tag
-  =/  st=app-state-0  !<(app-state-0 vase)
+  =/  st=state-0:ow  !<(state-0:ow vase)
   ?>  =(req-to.st `mock-req-to)
   (pure:m ~)
 ::
@@ -110,7 +100,7 @@
   ;<  *      bind:m  (do-init:tag dap mock-agent)
   ;<  *      bind:m  (do-poke:tag %debug !>([%clear-oc ~]))
   ;<  =vase  bind:m  get-save:tag
-  =/  st=app-state-0  !<(app-state-0 vase)
+  =/  st=state-0:ow  !<(state-0:ow vase)
   =/  clear-ord  *state:ord
   =.  block-id.clear-ord  [start-hash:urb start-height:urb]
   ?>  =(ord-state.st clear-ord)
@@ -125,7 +115,7 @@
   ::     but need to do a bunch of fake oc stuff
   ;<  *      bind:m  (do-watch:tag /(scot %p ~zod))
   ;<  =vase  bind:m  get-save:tag
-  =/  st=app-state-0  !<(app-state-0 vase)
+  =/  st=state-0:ow  !<(state-0:ow vase)
   ?>  (~(has in whos.st) ~zod)
   (pure:m ~)
 ::
