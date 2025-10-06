@@ -1,30 +1,20 @@
+/-  ord, urb
 /+  der, scr=btc-script, bc=bitcoin, b173=bip-b173
 |%
 +$  point
-  $+  gw-point
+  $+  urb-point
   point:secp256k1:secp:crypto
 ::
-+$  txid
-  $+  gw-txid
-  @ux
-+$  pos
-  $+  gw-pos
-  @ud
-::
-+$  sats
-  $+  gw-sats
-  @ud
-::
 +$  outpoint
-  $+  gw-outpoint
-  [=txid =pos]
+  $+  urb-outpoint
+  [=txid:ord =pos:ord]
 ::
 +$  keypair
-  $+  gw-keypair
+  $+  urb-keypair
   [pub=point priv=@]
 ::
 +$  pubkey
-  $+  gw-pubkey
+  $+  urb-pubkey
   @
 ::
 ++  sighash
@@ -39,20 +29,20 @@
   =<  tx
   |%
   +$  in
-    $+  gw-tx-in
+    $+  urb-tx-in
     $:  prevout=outpoint
         nsequence=$~(0xffff.ffff @ux)
         script-witness=(list octs)
     ==
   ::
   +$  out
-    $+  gw-tx-out
+    $+  urb-tx-out
     $:  script-pubkey=octs
-        value=sats
+        value=sats:ord
     ==
   ::
   +$  tx
-    $+  gw-tx
+    $+  urb-tx
     $:  vin=(list in)
         vout=(list out)
         nversion=$~(0x2 @)
@@ -62,13 +52,13 @@
     ==
   ::
   +$  input
-    $+  gw-tx-input
+    $+  urb-tx-input
     $:  =in
         utxo=output
         sig-hash=$~(0x0 @ux)
     ==
   +$  output
-    $+  gw-tx-output
+    $+  urb-tx-output
     $:  out
         spend-script=(unit script:scr)
         internal-keys=keypair
@@ -117,7 +107,7 @@
     t(outputs (snoc outputs.t out), vout (snoc vout.t -:out))
   ::
   ++  add-output
-    |=  $:  val=sats
+    |=  $:  val=sats:ord
             int-key=keypair
             scr=(unit script:scr)
         ==
