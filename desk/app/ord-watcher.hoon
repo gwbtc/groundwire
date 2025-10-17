@@ -18,7 +18,7 @@
 |_  =bowl:gall
 +*  this   .
     def    ~(. (default-agent this %|) bowl)
-    cor    ~(. +> bowl)
+    cor    +>
 ::
 ++  on-init
   :-  :~  [%pass /lo %arvo %j [%listen *(set ship) [%| dap.bowl]]]
@@ -120,13 +120,8 @@
       [=ship ~]
     =/  nu-whos
       (~(put in whos.state) (slav %p ship.pole))
-    :-  %-  make-jael-update-from-udiffs
-        %+  make-udiffs-from-state
-          nu-whos
-        ord-state.state
-    %=  this
-      whos.state  nu-whos
-    ==
+    :_  this(whos.state nu-whos)
+    (udiffs-to-jael-cards (state-to-udiffs ord-state))
   ==
 ::
 ++  on-arvo
@@ -145,14 +140,11 @@
       ?>  ?=([%khan %arow %.y %noun *] sign-arvo)
       =/  [%khan %arow %.y %noun =vase]  sign-arvo
       =/  val
-        !<  (pair (list (pair id:block:bitcoin effect:ord)) state:ord)
+        !<  
+        (pair (list [id:block:bitcoin effect:ord]) state:ord)
         vase
-      =/  jael-cards
-        (make-jael-cards-from-fx whos.state -.val)
-      :-  jael-cards
-      %=  this
-        ord-state.state  +.val
-      ==
+      :_  this(ord-state.state +.val)
+      (udiffs-to-jael-cards (fx-to-udiffs -.val))
     ==
   ==
 ::
@@ -163,15 +155,8 @@
 ++  on-fail   on-fail:def
 --
 ::
-::  helper core
-|_  =bowl:gall
-++  make-jael-cards-from-fx
-  ::  XX do we care about whos?
-  |=  [whos=(set ship) fx=(list (pair id:block:bitcoin effect:ord))]
-  ^-  (list card)
-  (make-jael-update-from-udiffs (ord-core-fx-to-udiffs fx))
-::
-++  make-jael-update-from-udiffs
+|%
+++  udiffs-to-jael-cards
   |=  =udiffs:point:jael
   ^-  (list card)
   :-  [%give %fact [/]~ %azimuth-udiffs !>(udiffs)]
@@ -181,8 +166,32 @@
   ^-  (unit card)
   `[%give %fact [/(scot %p ship)]~ %azimuth-udiffs !>([udiff]~)]
 ::
-++  make-udiffs-from-state
-  |=  [whos=(set ship) ord-state=state:ord]
+++  fx-to-udiffs
+  |=  fx=(list [id:block:bitcoin effect:ord])
+  ^-  udiffs:point:jael
+  %+  murn
+    fx
+  |=  [=id:block:bitcoin eo=effect:ord]
+  ^-  (unit (pair ship udiff:point:jael))
+  ?.  ?=(%point -.eo) :: only if this effect is a %point diff:urb
+    ~
+  =/  pdiff  (tail (tail eo))
+  ?+    -.pdiff   ~
+      %rift
+    `[ship.eo id %rift rift.pdiff %.n]
+  ::
+      %sponsor
+    `[ship.eo id %spon sponsor.pdiff]
+  ::
+      %keys
+    `[ship.eo id %keys [life.pdiff (sub (end 3 pass.pdiff) 'a') pass.pdiff] %.y]
+  ::
+      %fief
+    `[ship.eo id %fief fief.pdiff]
+  ==
+::
+++  state-to-udiffs
+  |=  ord-state=state:ord
   ^-  udiffs:point:jael
   =/  points=(list [=ship point:ord])
     ~(tap by unv-ids.ord-state)
@@ -203,32 +212,6 @@
                        [ship id %fief fief.net]
                    ==
                  new-udiffs
-  ==
-::
-++  ord-core-fx-to-udiffs
-  |=  fx=(list [id:block:bitcoin effect:ord])
-  ^-  udiffs:point:jael
-  %+  murn
-    fx
-  |=  [=id:block:bitcoin eo=effect:ord]
-  ^-  (unit (pair ship udiff:point:jael))
-  ?.  ?=(%point -.eo)
-    ~
-  ::  XX rename
-  =/  foo  (tail (tail eo))
-  ?+  -.foo
-    ~
-      %rift
-    `[ship.eo id %rift rift.foo %.n]
-  ::
-      %sponsor
-    `[ship.eo id %spon sponsor.foo]
-  ::
-      %keys
-    `[ship.eo id %keys [life.foo (sub (end 3 pass.foo) 'a') pass.foo] %.y]
-  ::
-      %fief
-    `[ship.eo id %fief fief.foo]
   ==
 ::
 ++  get-blocks
