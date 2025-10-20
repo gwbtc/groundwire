@@ -23,9 +23,8 @@
 ++  mock-tx
   ^-  tx:bitcoin
   :*  id=0xabc1.2345.6789.def0.1234.5678.9abc.def0.1234.5678.9abc.def0.1234.5678
-      ::  ^-  dataw:tx:bitcoin
       ^=  is
-      ::  ^-  (list inputw:tx:bitcoin)
+      ^-  (list inputw:tx:bitcoin)
       :~  :*  witness=~
               id=0x1234.5678.9abc.def0.1234.5678.9abc.def0.1234.5678.9abc.def0.1234.5678
               pos=0
@@ -108,8 +107,8 @@
       ^-  dataw:tx:bitcoin
       :*  ^=  is
           ^-  (list inputw:tx:bitcoin)
-          :~  :*  witness=~  ::  coinbase usually has empty witness
-                  id=0x0     ::  coinbase input references null hash
+          :~  :-  ~       ::  coinbase usually has no witness
+              :*  id=0x0  ::  coinbase input references null hash
                   pos=4.294.967.295
                   sequence=[wid=4 dat=0xffff.ffff]
                   script-sig=~
@@ -146,7 +145,7 @@
 ++  bunt-deps
   *(map [txid:ord pos:urb] [sots=(list raw-sotx:urb) value=(unit @ud)])
 ::
-++  mock-deps-2
+++  mock-deps
   ^+  bunt-deps
   %-  my
   :~  :-  ^-  [txid:ord pos:urb]
@@ -175,50 +174,80 @@
   [[mock-id mock-effect]]~
 ::
 ++  mock-urb-coinbase-tx
-  ::  ^-  tx:urb-tx:urb
-  :*  id=0x1111.2222.3333.4444.5555.6666.7777.8888.9999.aaaa.bbbb.cccc.dddd.eeee.ffff
-      ::  ^-  data:urb-tx:urb
-      :*  ^=  is
-          ::  ^-  input:urb-tx:urb
-          :-  :_  50.000.000
-              ::  XX fill in
-              *(list raw-sotx:urb)
+  ^-  tx:urb-tx:urb
+  :-  id=0x1111.2222.3333.4444.5555.6666.7777.8888.9999.aaaa.bbbb.cccc.dddd.eeee.ffff
+  :*  ^=  is
+      ^-  (list input:urb-tx:urb)
+      :~  :-  :_  50.000.000
+              ::  only diff. from tx:bitcoin is raw sots
+              ^-  (list raw-sotx:urb)
+              :~  :-  *octs
+                  *sotx:urb
+              ==
           ^-  inputw:tx:bitcoin
-          :-  *witness:tx:bitcoin
-          *input:tx:bitcoin
-::          :~  :*  witness=~  ::  coinbase usually has empty witness
-::                  id=0x0     ::  coinbase input references null hash
-::                  pos=4.294.967.295
-::                  sequence=[wid=4 dat=0xffff.ffff]
-::                  script-sig=~
-::                  pubkey=~
-::              ==
-::          ==
+          :-  ~
+          :*  id=0x0
+              pos=4.294.967.295
+              sequence=[wid=4 dat=0xffff.ffff]
+              script-sig=~
+              pubkey=~
+          ==
+      ==
+      ^=  os
+      ^-  (list output:tx:bitcoin)
+      :~  :*  script-pubkey=[wid=25 dat=0x76.a914.88ac]  ::  output
+              value=50.000.000                           ::  reward
+          ==
+      ==
+      locktime=0
+      nversion=1
+      segwit=~
+  ==
+::
+++  mock-urb-tx-with-urb-witness
+  ^-  tx:urb-tx:urb
+  :*  id=0xdef0.1234.5678.9abc.def0.1234.5678.9abc.def0.1234.5678.9abc.def0.1234.5678
+      ^-  data:urb-tx:urb
+      :*  ^=  is
+          ^-  (list input:urb-tx:urb)
+          :~  :-  :-  :~  :-  mock-urb-en-script
+                          mock-sotx-spawn
+                      ==
+                  50.000.000
+              :-  ~
+              :*  id=0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789
+                  pos=0
+                  sequence=[wid=4 dat=0xffff.ffff]
+                  script-sig=~  ::  empty for P2TR
+                  pubkey=~      ::  empty for P2TR
+              ==
+          ==
           ^=  os
           ^-  (list output:tx:bitcoin)
-          :~  :*  script-pubkey=[wid=25 dat=0x76.a914.88ac]  ::  output
-                  value=50.000.000                           ::  reward
+          :~  :*  script-pubkey=[wid=34 dat=0x5120.1234.5678.9abc.def0]  :: P2TR output
+                  value=5.000
+              ==
+              :*  script-pubkey=[wid=34 dat=0x5120.9876.5432.1fed.cba0]  :: P2TR output
+                  value=50.000.000
               ==
           ==
           locktime=0
-          nversion=1
-          segwit=~
+          nversion=2  ::  version 2 for taproot
+          segwit=`1   ::  segwit version 1 for taproot
       ==
   ==
 ::
-::++  mock-urb-tx-with-urb-witness
-::  !!
-::::
-::++  mock-urb-block
-::  :*  hax=start-hash:urb
-::      reward=0
-::      height=start-height:urb
-::      ^=  txs
-::      :~  mock-coinbase-urb-tx
-::          mock-urb-tx-with-urb-witness
-::          mock-urb-tx-with-urb-witness
-::      ==
-::  ==
+++  mock-urb-block
+  :*  hax=start-hash:urb
+      reward=0
+      height=start-height:urb
+      ^=  txs
+      :~  mock-urb-coinbase-tx
+          ::  XX not 100% sure if/why this needs to be duplicated
+          mock-urb-tx-with-urb-witness
+          mock-urb-tx-with-urb-witness
+      ==
+  ==
 --
 ::
 |%
@@ -268,12 +297,12 @@
         ==
     ==
   %+  expect-eq
-    !>  [mock-deps-2 mock-block-with-urb-deps-output]
+    !>  [mock-deps mock-block-with-urb-deps-output]
     !>  (find-block-deps:oc [start-height:urb input-block])
 ::
 ::++  test-apply-block-deps
 ::  =/  oc  ord-core:ul
 ::  %+  expect-eq
 ::    !>  [start-height:urb mock-urb-block]
-::    !>  (apply-block-deps:oc mock-block mock-deps-2)
+::    !>  (apply-block-deps:oc mock-block mock-deps)
 --
