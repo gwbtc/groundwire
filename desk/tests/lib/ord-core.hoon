@@ -191,12 +191,8 @@
   :-  id=0x1111.2222.3333.4444.5555.6666.7777.8888.9999.aaaa.bbbb.cccc.dddd.eeee.ffff
   :*  ^=  is
       ^-  (list input:urb-tx:urb)
-      :~  :-  :_  50.000.000
-              ::  only diff. from tx:bitcoin is raw sots
-              ^-  (list raw-sotx:urb)
-              :~  :-  *octs
-                  *sotx:urb
-              ==
+      :~  :-  :-  ~  ::  empty sots list - coinbase has no urb data
+              0   ::  value 0 - coinbase has no input value
           ^-  inputw:tx:bitcoin
           :-  ~
           :*  id=0x0
@@ -223,11 +219,13 @@
       ^-  data:urb-tx:urb
       :*  ^=  is
           ^-  (list input:urb-tx:urb)
-          :~  :-  :-  :~  :-  mock-urb-en-script
+          :~  :-  :-  :~  :-  [p=39 q=1.564.443.629.824.885.314.254.166.288.698.402.427.687.527.726.335.439.040.488.555.865.104.164.838.438.377.953.940.116.357.121]
                           mock-sotx-spawn
                       ==
                   50.000.000
-              :-  ~
+              :-  :~  mock-urb-en-script  :: encoded unvelope
+                      [wid=0 dat=0x0]     :: OP_0 (for P2TR structure)
+                  ==
               :*  id=0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789
                   pos=0
                   sequence=[wid=4 dat=0xffff.ffff]
@@ -251,12 +249,13 @@
   ==
 ::
 ++  mock-urb-block
+  ^-  urb-block:urb
   :*  hax=start-hash:urb
       reward=0
       height=start-height:urb
       ^=  txs
+      ^-  (list urb-tx:urb)
       :~  mock-urb-coinbase-tx
-          ::  XX not 100% sure if/why this needs to be duplicated
           mock-urb-tx-with-urb-witness
           mock-urb-tx-with-urb-witness
       ==
@@ -329,17 +328,17 @@
     !>  [mock-deps-no-value mock-block-with-urb-deps-output]
     !>  (find-block-deps:oc [start-height:urb input-block])
 ::
-::++  test-apply-block-deps
-::  =/  oc  ord-core:ul
-::  %+  expect-eq
-::    !>  [start-height:urb mock-urb-block]
-::    !>
-::    %+  apply-block-deps:oc
-::      :-  start-height:urb
-::      mock-block-with-urb-deps-output
-::    mock-deps
+++  test-apply-block-deps
+  =/  oc  ord-core:ul
+  %+  expect-eq
+    !>  [num=start-height:urb mock-urb-block]
+    !>
+    %+  apply-block-deps:oc
+      :-  start-height:urb
+      mock-block-with-urb-deps-output
+    mock-deps
 ::
-++  test-apply-block-deps-no-value
+++  test-apply-block-deps-no-value-fails
   =/  oc  ord-core:ul
   %-  expect-fail
     |.
