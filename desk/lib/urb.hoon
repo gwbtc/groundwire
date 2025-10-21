@@ -355,7 +355,22 @@
     ^-  [num=@ud urb-block:urb]
     =*  block  +<-
     =>  ?>(?=(^ txs) [cb-tx=i.txs .(txs t.txs)])
-    =-  block(txs [cb-tx(is (turn is.cb-tx |=(inputw:tx:bitcoin `input:urb-tx:urb`[[~ 0] +<])))]^-)
+    =-  %=  block
+          txs  ^-  (list urb-tx:urb)
+               %+  welp
+                 ^-  (list urb-tx:urb)
+                 :~  ^-  urb-tx:urb
+                     %=  cb-tx
+                       is  %+  turn
+                             is.cb-tx
+                           |=  inputw:tx:bitcoin
+                           ^-  input:urb-tx:urb
+                           [[~ 0] +<]
+                     ==
+                 ==
+               ^-  (list urb-tx:urb)
+               -
+        ==
     |-  ^-  (list tx:urb-tx:urb)
     ?~  txs  ~
     =/  is  is.i.txs
