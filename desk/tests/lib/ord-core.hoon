@@ -36,7 +36,7 @@
       ^=  os
       ^-  (list output:tx:bitcoin)
       :~  :*  script-pubkey=[wid=25 dat=0x76.a914.88ac]
-              value=5.000
+              value=50.000.000
           ==
           :*  script-pubkey=[wid=25 dat=0x76.a914.99ac]
               value=50.000.000
@@ -89,7 +89,7 @@
           ^=  os
           ^-  (list output:tx:bitcoin)
           :~  :*  script-pubkey=[wid=34 dat=0x5120.1234.5678.9abc.def0]  :: P2TR output
-                  value=5.000
+                  value=50.000.000
               ==
               :*  script-pubkey=[wid=34 dat=0x5120.9876.5432.1fed.cba0]  :: P2TR output
                   value=50.000.000
@@ -146,6 +146,19 @@
   *(map [txid:ord pos:urb] [sots=(list raw-sotx:urb) value=(unit @ud)])
 ::
 ++  mock-deps
+  ^+  bunt-deps
+  %-  my
+  :~  :-  ^-  [txid:ord pos:urb]
+          [0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789 0]
+      :-  ^=  sots
+          ^-  (list raw-sotx:urb)
+          :~  :-  raw=[p=39 q=1.564.443.629.824.885.314.254.166.288.698.402.427.687.527.726.335.439.040.488.555.865.104.164.838.438.377.953.940.116.357.121]
+              sot=mock-sotx-spawn
+          ==
+      value=(some 50.000.000)
+  ==
+::
+++  mock-deps-no-value
   ^+  bunt-deps
   %-  my
   :~  :-  ^-  [txid:ord pos:urb]
@@ -225,7 +238,7 @@
           ^=  os
           ^-  (list output:tx:bitcoin)
           :~  :*  script-pubkey=[wid=34 dat=0x5120.1234.5678.9abc.def0]  :: P2TR output
-                  value=5.000
+                  value=50.000.000
               ==
               :*  script-pubkey=[wid=34 dat=0x5120.9876.5432.1fed.cba0]  :: P2TR output
                   value=50.000.000
@@ -285,7 +298,23 @@
     !>  [bunt-deps mock-block]
     !>  (find-block-deps:oc [start-height:urb mock-block])
 ::
-++  test-find-block-deps-with-deps
+::
+::++  test-find-block-deps-with-deps
+::  =/  oc  ord-core:ul
+::  =/  input-block
+::    :*  hax=0x0
+::        reward=0
+::        height=start-height:urb
+::        ^=  txs
+::        :~  mock-coinbase-tx          ::  first tx must be coinbase
+::            mock-tx-with-urb-witness  ::  second tx with unvelope
+::        ==
+::    ==
+::  %+  expect-eq
+::    !>  [mock-deps mock-block-with-urb-deps-output]
+::    !>  (find-block-deps:oc [start-height:urb input-block])
+::
+++  test-find-block-deps-with-deps-no-value
   =/  oc  ord-core:ul
   =/  input-block
     :*  hax=0x0
@@ -297,12 +326,25 @@
         ==
     ==
   %+  expect-eq
-    !>  [mock-deps mock-block-with-urb-deps-output]
+    !>  [mock-deps-no-value mock-block-with-urb-deps-output]
     !>  (find-block-deps:oc [start-height:urb input-block])
 ::
 ::++  test-apply-block-deps
 ::  =/  oc  ord-core:ul
 ::  %+  expect-eq
 ::    !>  [start-height:urb mock-urb-block]
-::    !>  (apply-block-deps:oc mock-block mock-deps)
+::    !>
+::    %+  apply-block-deps:oc
+::      :-  start-height:urb
+::      mock-block-with-urb-deps-output
+::    mock-deps
+::
+++  test-apply-block-deps-no-value
+  =/  oc  ord-core:ul
+  %-  expect-fail
+    |.
+    %+  apply-block-deps:oc
+      :-  start-height:urb
+      mock-block-with-urb-deps-output
+    mock-deps-no-value
 --
