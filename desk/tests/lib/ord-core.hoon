@@ -347,13 +347,13 @@
       mock-block-with-urb-deps-output
     mock-deps-no-value
 ::
-++  test-handle-block
+++  test-handle-block-state
   =/  oc  ord-core:ul
   =.  oc  (abed:oc mock-state)
-  =/  expected-state  mock-state
-  =.  num.block-id.expected-state  +(start-height:urb)
-  =/  result-oc  (handle-block:oc start-height:urb mock-urb-block)
+  =.  oc  (handle-block:oc start-height:urb mock-urb-block)
+  =/  ex-state  mock-state
+  =.  ex-state  ex-state(num.block-id +(start-height:urb))
   %+  expect-eq
-    !>  expected-state
-    !>  state.result-oc
+    !>  ex-state
+    !>  state.oc
 --
