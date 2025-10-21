@@ -62,7 +62,7 @@
   ^-  skim-sotx:urb
   [%spawn 0xdead.beef [0xbeef ~ 0 0]]
 ::
-++  mock-urb-en-script
+++  mock-raw-sotx-spawn
   ^-  octs
   =/  sots=(list sotx:urb)  [mock-sotx-spawn]~
   =/  en-sots=@  (encode:lais sots)
@@ -76,7 +76,7 @@
       :*  ^=  is
           ^-  (list inputw:tx:bitcoin)
           :~  :*  ^=  witness
-                  :~  mock-urb-en-script  :: encoded unvelope
+                  :~  mock-raw-sotx-spawn  :: encoded unvelope
                       [wid=0 dat=0x0]     :: OP_0 (for P2TR structure)
                   ==
                   id=0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789
@@ -152,7 +152,7 @@
           [0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789 0]
       :-  ^=  sots
           ^-  (list raw-sotx:urb)
-          :~  :-  raw=[p=39 q=1.564.443.629.824.885.314.254.166.288.698.402.427.687.527.726.335.439.040.488.555.865.104.164.838.438.377.953.940.116.357.121]
+          :~  :-  raw=mock-raw-sotx-spawn
               sot=mock-sotx-spawn
           ==
       value=(some 50.000.000)
@@ -165,7 +165,7 @@
           [0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789 0]
       :-  ^=  sots
           ^-  (list raw-sotx:urb)
-          :~  :-  raw=[p=39 q=1.564.443.629.824.885.314.254.166.288.698.402.427.687.527.726.335.439.040.488.555.865.104.164.838.438.377.953.940.116.357.121]
+          :~  :-  raw=mock-raw-sotx-spawn
               sot=mock-sotx-spawn
           ==
       value=~
@@ -219,11 +219,13 @@
       ^-  data:urb-tx:urb
       :*  ^=  is
           ^-  (list input:urb-tx:urb)
-          :~  :-  :-  :~  :-  [p=39 q=1.564.443.629.824.885.314.254.166.288.698.402.427.687.527.726.335.439.040.488.555.865.104.164.838.438.377.953.940.116.357.121]
+          :~  :-  :-  :~  :-  mock-raw-sotx-spawn
                           mock-sotx-spawn
                       ==
                   50.000.000
-              :-  :~  mock-urb-en-script  :: encoded unvelope
+              :-  ^=  witness
+                  ^=  witness
+                      :~  mock-raw-sotx-spawn  :: encoded unvelope
                       [wid=0 dat=0x0]     :: OP_0 (for P2TR structure)
                   ==
               :*  id=0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789
@@ -313,20 +315,20 @@
 ::    !>  [mock-deps mock-block-with-urb-deps-output]
 ::    !>  (find-block-deps:oc [start-height:urb input-block])
 ::
-++  test-find-block-deps-with-deps-no-value
-  =/  oc  ord-core:ul
-  =/  input-block
-    :*  hax=0x0
-        reward=0
-        height=start-height:urb
-        ^=  txs
-        :~  mock-coinbase-tx          ::  first tx must be coinbase
-            mock-tx-with-urb-witness  ::  second tx with unvelope
-        ==
-    ==
-  %+  expect-eq
-    !>  [mock-deps-no-value mock-block-with-urb-deps-output]
-    !>  (find-block-deps:oc [start-height:urb input-block])
+::++  test-find-block-deps-with-deps-no-value
+::  =/  oc  ord-core:ul
+::  =/  input-block
+::    :*  hax=0x0
+::        reward=0
+::        height=start-height:urb
+::        ^=  txs
+::        :~  mock-coinbase-tx          ::  first tx must be coinbase
+::            mock-tx-with-urb-witness  ::  second tx with unvelope
+::        ==
+::    ==
+::  %+  expect-eq
+::    !>  [mock-deps-no-value mock-block-with-urb-deps-output]
+::    !>  (find-block-deps:oc [start-height:urb input-block])
 ::
 ++  test-apply-block-deps
   =/  oc  ord-core:ul
