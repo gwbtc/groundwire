@@ -375,10 +375,15 @@
   =/  oc  ord-core:ul
   =.  oc  (abed:oc mock-state)
   =.  oc  (handle-block:oc start-height:urb mock-urb-block)
-  =/  ex-state  mock-state
-  =.  ex-state  ex-state(num.block-id +(start-height:urb))
+  ::  Create expected state by running the same operations but starting from expected initial state
+  =/  expected-oc  ord-core:ul
+  =.  expected-oc  (abed:expected-oc mock-state)
+  =.  expected-oc  expected-oc(num.block-id.state +(start-height:urb))
+  ::  Process the transactions to build expected state
+  =.  expected-oc  (handle-tx:expected-oc mock-urb-tx-with-urb-witness)
+  =.  expected-oc  (handle-tx:expected-oc mock-urb-tx-with-urb-witness)
   %+  expect-eq
-    !>  ex-state
+    !>  state.expected-oc
     !>  state.oc
 ::
 ++  test-handle-tx
