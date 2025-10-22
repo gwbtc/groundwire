@@ -66,20 +66,32 @@
       xtr
   ==
 ::
+++  mock-output
+  ^-  output:tx:bitcoin
+  :*  script-pubkey=[wid=34 dat=0x5120.1234.5678.9abc.def0]  :: P2TR output
+      value=50.000.000
+  ==
+::
+++  mock-output-hash
+  ^-  @ux
+  =/  out  mock-output
+  =/  en-out  (can 3 script-pubkey.out 8^value.out ~)
+  (shay (add 8 wid.script-pubkey.out) en-out)
+::
 ++  mock-sotx-spawn
   ^-  sotx:urb
   =/  sot  ^-  skim-sotx:urb
-    [%spawn pub:ex:cac [spkh=0xbeef pos=~ off=0 tej=0]]
+    [%spawn pub:ex:cac [spkh=mock-output-hash pos=~ off=0 tej=0]]
   =/  ent  (skim:encode:lais sot)
   =/  sig  (sign-octs-raw:ed:crypto 512^(shaz ent) [sgn.pub sgn.sek]:+<:cac)
   [[`@p`fig:ex:cac [~ sig]] sot]
 ::
 ++  mock-raw-sotx-spawn
   ^-  octs
-  =/  sots=(list sotx:urb)  [mock-sotx-spawn]~
-  =/  en-sots=@  (encode:lais sots)
-  =/  script=script:ord  (unv-to-script:en:ul en-sots)
-  (en:scr script)
+  =/  sot  ^-  skim-sotx:urb
+    [%spawn pub:ex:cac [spkh=mock-output-hash pos=~ off=0 tej=0]]
+  =/  ent  (skim:encode:lais sot)
+  [(met 3 ent) ent]
 ::
 ++  mock-tx-with-urb-witness
   ^-  tx:bitcoin
@@ -231,8 +243,8 @@
       ^-  data:urb-tx:urb
       :*  ^=  is
           ^-  (list input:urb-tx:urb)
-          :~  :-  :-  :~  :-  mock-raw-sotx-spawn
-                          mock-sotx-spawn
+          :~  :-  :-  :~  :-  raw=mock-raw-sotx-spawn
+                          sot=mock-sotx-spawn
                       ==
                   50.000.000
               :-  ^=  witness
@@ -249,9 +261,7 @@
           ==
           ^=  os
           ^-  (list output:tx:bitcoin)
-          :~  :*  script-pubkey=[wid=34 dat=0x5120.1234.5678.9abc.def0]  :: P2TR output
-                  value=50.000.000
-              ==
+          :~  mock-output  :: First output matches the spawn spkh
               :*  script-pubkey=[wid=34 dat=0x5120.9876.5432.1fed.cba0]  :: P2TR output
                   value=50.000.000
               ==
@@ -378,11 +388,13 @@
   =/  expected-effects
     ^-  (list [id:block:bitcoin effect:ord])
     :~  :-  mock-id
-        [%point ~sampel-palnet %owner [0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789 0 50.000.000]]
+        [%xfer [0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789 0 0] [0xdef0.1234.5678.9abc.def0.1234.5678.9abc.def0.1234.5678.9abc.def0.1234.5678 0 0]]
         :-  mock-id
-        [%point ~sampel-palnet %sponsor `~sampel]
+        [%point ~radlyx-lomsev-sorseb-batnyr--nommes-bolseg-hacbyl-todhet %keys 1 518.847.371.617.947.361.520.838.967.418.184.237.645.890.125.796.308.409.702.941.729.937.039.949.187.475.686.862.653.933.909.072.579.455.217.271.195.095.941.577.817.884.171.538.188.583.408.722.515.276.586.322.052.198.175.980.680.778.630.683.042.191.715.939]
         :-  mock-id
-        [%point ~sampel-palnet %keys 1 0xdead.beef]
+        [%point ~radlyx-lomsev-sorseb-batnyr--nommes-bolseg-hacbyl-todhet %sponsor [~ ~todhet]]
+        :-  mock-id
+        [%point ~radlyx-lomsev-sorseb-batnyr--nommes-bolseg-hacbyl-todhet %owner [0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789 0 0]]
     ==
   %+  expect-eq
     !>  expected-effects
