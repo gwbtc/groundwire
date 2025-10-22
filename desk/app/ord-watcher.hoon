@@ -1,32 +1,41 @@
-/-  bitcoin, spider, ord, urb, ow=ord-watcher
+/-  bitcoin, spider, ord, urb
 /+  bc=bitcoin, btcio, dbug, default-agent, ol=ord, ul=urb, strandio, verb
 ::
 |%
 +$  card  card:agent:gall
-+$  versioned-state
-  $%  state-0:ow
++$  versioned-state  $%(state-0)
++$  state-0
+  $:  %0
+      ord-state=state:ord
+      rpc=req-to:btcio
   ==
 --
 ::
 %-  agent:dbug
 ^-  agent:gall
-=|  state-0:ow
+=|  state-0
 =*  state  -
 %+  verb  &
 =<
 |_  =bowl:gall
 +*  this   .
     def    ~(. (default-agent this %|) bowl)
-    cor    +>
 ::
 ++  on-init
   ^-  (quip card _this)
-  :-  :~  [%pass /lo %arvo %j [%listen *(set ship) [%| dap.bowl]]]
+  :_  =,  state
+      %=  this
+        rpc  ['http://localhost:18443' [%basic 'bitcoinrpc:bitcoinrpc']]        
+        block-id.ord-state  [start-hash:urb start-height:urb]
+      ==  
+  :~  :*  %pass  /listen  %arvo  %j 
+          %listen  *(set ship)  [%| dap.bowl]
       ==
-  =,  state
-  %=  this
-    start               start-height:urb
-    block-id.ord-state  [start-hash:urb start-height:urb]
+      :*  %pass  /blocks  %arvo  %k
+          %lard  q.byk.bowl
+          %-  starting-blocks
+          [rpc.state ord-state.state start-height:urb] 
+      ==  
   ==
 ::
 ++  on-save
@@ -46,62 +55,7 @@
   |=  [=mark =vase]
   ^-  (quip card _this)
   ?>  =(our src):bowl
-  ?+    mark  !!
-      %debug
-    =/  act  !<(debug:ow vase)
-    ?-    -.act
-    ::
-    ::  Reset ord-core state.
-        %clear-oc
-      =/  new-oc           *state:ord
-      =.  block-id.new-oc  [start-hash:urb start-height:urb]
-      `this(ord-state.state new-oc)
-    ==
-  ::
-      %action
-    =/  act  !<(action:ow vase)
-    ?-    -.act
-    ::
-    ::  Set the RPC endpoint.
-        %config-rpc
-      `this(req-to.state `req-to.act)
-    ::
-    ::  
-        %start
-      ?~  req-to.state
-        %-  (slog leaf+"no bitcoin rpc node config, use %config-rpc poke" ~)
-        `this
-      :_  this
-      ::  XX should interval be defined here?
-      ::     in state? hardcoded?
-      ::     why have an interval at all?
-      :~  :*  %pass
-             /got-blocks
-             %arvo
-             %k
-             %lard
-             q.byk.bowl
-             %:  starting-blocks:cor
-               u.req-to.state
-               ord-state.state
-               ::
-               ::  XX should be a (unit num)
-               ::
-               ::  XX should we clear the ord-state if
-               ::     the start number is specified?
-               ::     /lib/ord arms expect incoming blocks
-               ::     to be contiguous with the most recent
-               ::     block in ord-core state
-               ::
-               num.act
-               :: %+  max
-               ::   start.state
-               :: num.block-id.ord-state.state
-             ==  
-          ==  
-      == 
-    ==
-  ==
+  (on-poke:def mark vase)
 ::
 ++  on-peek
   |=  =(pole knot)
@@ -118,9 +72,7 @@
     `this
   ::
       [=ship ~]
-    =/  nu-whos
-      (~(put in whos.state) (slav %p ship.pole))
-    :_  this(whos.state nu-whos)
+    :_  this
     (udiffs-to-jael-cards (state-to-udiffs ord-state))
   ==
 ::
@@ -128,7 +80,7 @@
   |=  [=wire =sign-arvo]
   ^-  (quip card _this)
   ?+    wire  !!
-      [%got-blocks ~]
+      [%blocks ~]
     ?+    sign-arvo  !!
         [%khan %arow *]
       ?.  -.p.sign-arvo
@@ -144,9 +96,7 @@
     ==
   ==
 ::
-++  on-leave
-  ::  XX check subscriptions for a path
-  on-leave:def
+++  on-leave  on-leave:def
 ++  on-agent  on-agent:def
 ++  on-fail   on-fail:def
 --
@@ -194,7 +144,8 @@
   =/  =id:block:jael
     block-id:ord-state
   =/  new-udiffs  *udiffs:point:jael
-  |-  ^+  new-udiffs
+  |-  
+  ^+  new-udiffs
   ?~  points
     new-udiffs
   %=  $
@@ -212,7 +163,6 @@
     new-udiffs
   ==
 ::
-::  
 ++  starting-blocks
   |=  [=req-to:btcio =state:ord start=@ud]
   ^-  shed:khan
@@ -272,7 +222,7 @@
     =/  dep  (~(get by -.deps) [txid pos]:i.is)
     ?:  &(?=(^ dep) ?=(^ value.u.dep))  $(is t.is)
     ;<  utx=(unit tx:bc)  bind:m
-      (get-raw-transaction:btcio req-to ~ txid.i.is)
+      (get-raw-transaction:btcio rpc ~ txid.i.is)
     ?~  utx  !!
     =/  os  os.u.utx
     =|  pos=@ud
