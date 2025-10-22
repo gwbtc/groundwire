@@ -15,8 +15,8 @@
   ::  XX %start num should be a unit
   ::     if null, %start poke will run as-is
   ::     if not, this number will override it
-  $%  [%start =num:block:bc]
-      [%config-rpc =req-to:btcio]
+  $%  [%config-rpc =req-to:btcio]
+      [%start =num:block:bc]
   ==
 +$  debug
   $+  ord-watcher-debug-action
