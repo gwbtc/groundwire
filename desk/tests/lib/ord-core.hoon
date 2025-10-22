@@ -13,7 +13,7 @@
 ::  ++  next-input
 ::
 /-  ord, urb, bitcoin
-/+  *test, ul=urb, lais, scr=btc-script
+/+  *test, ul=urb, lais, scr=btc-script, crac
 =>
 |%
 ++  mock-id
@@ -55,12 +55,24 @@
       txs=[mock-tx]~    ::  transactions
   ==
 ::
+++  cac
+  =/  sed  0xdead.beef  ::  test seed
+  =/  lyf  1            ::  $life
+  =/  xtr  0            ::  extra data
+  =<  ?>(&(?=(%c suite.+<) ?=(^ sek.+<)) .)
+  %:  pit:nu:crac
+      512  (shaz (jam sed lyf))
+      %c   (rap 3 ~[lyf %btc %ord %gw %test])
+      xtr
+  ==
+::
 ++  mock-sotx-spawn
   ^-  sotx:urb
-  ::  XX no signaure; we don't check
-  :-  [~sampel-palnet ~]
-  ^-  skim-sotx:urb
-  [%spawn 0xdead.beef [0xbeef ~ 0 0]]
+  =/  sot  ^-  skim-sotx:urb
+    [%spawn pub:ex:cac [spkh=0xbeef pos=~ off=0 tej=0]]
+  =/  ent  (skim:encode:lais sot)
+  =/  sig  (sign-octs-raw:ed:crypto 512^(shaz ent) [sgn.pub sgn.sek]:+<:cac)
+  [[`@p`fig:ex:cac [~ sig]] sot]
 ::
 ++  mock-raw-sotx-spawn
   ^-  octs
@@ -358,4 +370,21 @@
   %+  expect-eq
     !>  ex-state
     !>  state.oc
+::
+++  test-handle-tx
+  =/  oc  ord-core:ul
+  =.  oc  (abed:oc mock-state)
+  =.  oc  (handle-tx:oc mock-urb-tx-with-urb-witness)
+  =/  expected-effects
+    ^-  (list [id:block:bitcoin effect:ord])
+    :~  :-  mock-id
+        [%point ~sampel-palnet %owner [0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789 0 50.000.000]]
+        :-  mock-id
+        [%point ~sampel-palnet %sponsor `~sampel]
+        :-  mock-id
+        [%point ~sampel-palnet %keys 1 0xdead.beef]
+    ==
+  %+  expect-eq
+    !>  expected-effects
+    !>  fx.oc
 --
