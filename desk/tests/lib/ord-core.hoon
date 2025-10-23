@@ -175,23 +175,6 @@
       ==
   ==
 ::
-++  mock-block-with-urb-deps-output
-  ^-  block:bitcoin
-  :*  hax=0x0
-      reward=0
-      height=start-height:urb
-      =/  tx
-        (build-tx-with-urb-witness mock-skim-spawn)
-      ^=  txs
-      ^-  (list tx:bitcoin)
-      :~  mock-coinbase-tx  ::  coinbase tx comes first
-          ::  XX duplicated because ned=&
-          ::       what is ned?
-          tx
-          tx
-      ==
-  ==
-::
 ++  bunt-deps
   *(map [txid:ord pos:urb] [sots=(list raw-sotx:urb) value=(unit @ud)])
 ::
