@@ -249,7 +249,6 @@
                       ==
                   50.000.000
               :-  ^=  witness
-                  ^=  witness
                       :~  mock-raw-sotx-spawn  :: encoded unvelope
                       [wid=0 dat=0x0]     :: OP_0 (for P2TR structure)
                   ==
