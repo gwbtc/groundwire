@@ -389,11 +389,11 @@
     !>  state.expected-oc
     !>  state.oc
 ::
-++  test-handle-tx
+++  test-handle-tx-spawn
   =/  oc  ord-core:ul
   =.  oc  (abed:oc init-state)
   =.  oc  (handle-tx:oc mock-urb-tx-with-urb-witness)
-  =/  expected-effects
+  =/  expected-spawn-fx
     ^-  (list [id:block:bitcoin effect:ord])
     :~  :-  bunt-id
         [%xfer [0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789 0 0] [0xdef0.1234.5678.9abc.def0.1234.5678.9abc.def0.1234.5678.9abc.def0.1234.5678 0 0]]
@@ -405,6 +405,6 @@
         [%point ~radlyx-lomsev-sorseb-batnyr--nommes-bolseg-hacbyl-todhet %owner [0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789 0 0]]
     ==
   %+  expect-eq
-    !>  expected-effects
+    !>  expected-spawn-fx
     !>  fx.oc
 --
