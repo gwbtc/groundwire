@@ -55,7 +55,8 @@
       txs=[mock-tx]~    ::  transactions
   ==
 ::
-++  cac
+::  generate mock keypair
+++  cut
   =/  sed  0xdead.beef  ::  test seed
   =/  lyf  1            ::  $life
   =/  xtr  0            ::  extra data
@@ -81,15 +82,15 @@
 ++  mock-sotx-spawn
   ^-  sotx:urb
   =/  sot  ^-  skim-sotx:urb
-    [%spawn pub:ex:cac [spkh=mock-output-hash pos=~ off=0 tej=0]]
+    [%spawn pub:ex:cut [spkh=mock-output-hash pos=~ off=0 tej=0]]
   =/  ent  (skim:encode:lais sot)
-  =/  sig  (sign-octs-raw:ed:crypto 512^(shaz ent) [sgn.pub sgn.sek]:+<:cac)
-  [[`@p`fig:ex:cac [~ sig]] sot]
+  =/  sig  (sign-octs-raw:ed:crypto 512^(shaz ent) [sgn.pub sgn.sek]:+<:cut)
+  [[`@p`fig:ex:cut [~ sig]] sot]
 ::
 ++  mock-raw-sotx-spawn
   ^-  octs
   =/  sot  ^-  skim-sotx:urb
-    [%spawn pub:ex:cac [spkh=mock-output-hash pos=~ off=0 tej=0]]
+    [%spawn pub:ex:cut [spkh=mock-output-hash pos=~ off=0 tej=0]]
   =/  ent  (skim:encode:lais sot)
   [(met 3 ent) ent]
 ::
