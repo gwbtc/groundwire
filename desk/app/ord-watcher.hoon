@@ -6,8 +6,8 @@
 +$  versioned-state  $%(state-0)
 +$  state-0
   $:  %0
-      ord-state=state:ord
       rpc=req-to:btcio
+      ord-state=state:ord
   ==
 --
 ::
@@ -21,20 +21,25 @@
 +*  this   .
     def    ~(. (default-agent this %|) bowl)
 ::
+::  Tell Jael to subscribe to us for PKI updates,
+::  initialize an ord-core, start a thread to
+::  fetch and process the first batch of blocks,
+::  and start a timer to fetch again.
 ++  on-init
   ^-  (quip card _this)
-  :_  =,  state
-      %=  this
-        rpc  ['http://localhost:18443' [%basic 'bitcoinrpc:bitcoinrpc']]        
-        block-id.ord-state  [start-hash:urb start-height:urb]
-      ==  
+  =/  new-rpc  ['http://localhost:18443' [%basic 'bitcoinrpc:bitcoinrpc']]
+  =/  new-ord-state  [[start-hash:urb start-height:urb] ~ ~ ~]
+  :_  this(rpc new-rpc)
   :~  :*  %pass  /listen  %arvo  %j 
           %listen  *(set ship)  [%| dap.bowl]
       ==
+      :*  %pass  /timer  %arvo  %b 
+          %wait  (add ~s30 now.bowl)
+      ==
       :*  %pass  /blocks  %arvo  %k
           %lard  q.byk.bowl
-          %-  starting-blocks
-          [rpc.state ord-state.state start-height:urb] 
+          %-  get-blocks 
+          [new-rpc new-ord-state]
       ==  
   ==
 ::
@@ -80,6 +85,22 @@
   |=  [=wire =sign-arvo]
   ^-  (quip card _this)
   ?+    wire  !!
+  ::
+  ::  Run +get-blocks at regular intervals.
+      [%timer ~]
+    :_  this
+    :~  :*  %pass  /timer  %arvo  %b 
+            %wait  (add ~s30 now.bowl)
+        ==
+        :*  %pass  /blocks  %arvo  %k
+            %lard  q.byk.bowl
+            %-  get-blocks
+            [rpc ord-state]:state
+        ==  
+    ==
+  ::
+  ::  Our +get-blocks thread returned. Update
+  ::  ord-state and emit udiffs to Jael.
       [%blocks ~]
     ?+    sign-arvo  !!
         [%khan %arow *]
@@ -102,6 +123,78 @@
 --
 ::
 |%
+::
+::  Fetch blocks in range(last-processed + 1, latest - 6)
+::  from the provided RPC endpoint, then use a stateful 
+::  ord-core to process these blocks, returning
+::  a new ord-state and a list of fx in +on-arvo.
+++  get-blocks
+  |=  [rpc=req-to:btcio ord-state=state:ord]
+  ^-  shed:khan
+  =/  i  (add 1 num.block-id.ord-state) :: last processed block index + 1
+  =/  oc
+    %-  abed:ord-core:ul
+    ord-state
+  ::  This barket lets us easily include oc in 
+  ::  +convert-block's context.
+  |^
+  =/  m  (strand:strandio ,vase)
+  ;<    latest-block=(unit @ud)
+      bind:m
+    (get-block-count:btcio rpc ~)
+  ?~  latest-block  ~|  %couldnt-find-latest-block  !!
+  ~&  >  "latest block is {<u.latest-block>}"
+  =/  last-settled-block  (sub u.latest-block 6)
+  |-  
+  ?.  (lte i last-settled-block)
+    (pure:m !>([fx state]:oc))
+  ;<    bluck=(unit block:bitcoin)
+      bind:m
+    (get-block-by-number:btcio rpc ~ i)
+  ?~  bluck  ~|  %cant-find-block-by-number  !!
+  ;<    new=[num:id:block:bitcoin urb-block:urb]
+      bind:m
+    (convert-block i u.bluck)
+  =.  oc  (handle-block:oc new)
+  ~&  >  "processed block {<i>} of {<last-settled-block>}"
+  $(i +(i))
+  ::
+  ::  Convert a block:bitcoin into a urb-block:urb.
+  ::  This requires an async +get-raw-transaction call.
+  ++  convert-block
+    |=  [=num:id:block:bitcoin =block:bitcoin]
+    =/  m  (strand:strandio ,[num=@ud urb-block:urb])
+    =/  deps  (find-block-deps:oc num block)
+    =/  txs  (tail txs.block)
+    |-  
+    ^-  form:m
+    ?~  txs
+      (pure:m (apply-block-deps:oc [num +.deps] -.deps))
+    =/  is  is.i.txs
+    |-  
+    ^-  form:m
+    :: XX refactor to use gettxout
+    ?~  is  ^$(txs t.txs)
+    =/  dep  (~(get by -.deps) [txid pos]:i.is)
+    ?:  &(?=(^ dep) ?=(^ value.u.dep))  $(is t.is)
+    ;<  utx=(unit tx:bc)  bind:m
+      (get-raw-transaction:btcio rpc ~ txid.i.is)
+    ?~  utx  !!
+    =/  os  os.u.utx
+    =|  pos=@ud
+    |-  
+    ^-  form:m
+    ?~  os  ^$(is t.is)
+    =/  dep  (~(get by -.deps) [id.u.utx pos])
+    ?:  &(?=(^ dep) ?=(^ value.u.dep))  $(os t.os, pos +(pos))
+    =/  sots=(list raw-sotx:urb)  ?~(dep ~ sots.u.dep)
+    $(os t.os, pos +(pos), -.deps (~(put by -.deps) [id.u.utx pos] [sots `value.i.os]))
+  --
+::
+::  Conversion arms. 
+::  fx are ord-core's type for urb effects. 
+::  udiffs are Jael's type for PKI updates. 
+::  cards for Jael contain udiffs.
 ++  udiffs-to-jael-cards
   |=  =udiffs:point:jael
   ^-  (list card)
@@ -162,75 +255,4 @@
       ==
     new-udiffs
   ==
-::
-++  starting-blocks
-  |=  [=req-to:btcio =state:ord start=@ud]
-  ^-  shed:khan
-  ::  XX temp state mutation
-  ::  XX better solution to index start issue than (dec start)?
-  ::     this all assumes ord-core state is empty, which
-  ::     won't be true in production
-  ::  =/  oc  (abed:ord-core:ord state)
-  =/  oc
-    (abed:ord-core:ul state(num.block-id (dec start)))
-  =/  m  (strand:strandio ,vase)
-  |^  
-  ^-  form:m
-  ;<    latest-block=(unit @ud)
-      bind:m
-    (get-block-count:btcio req-to ~)
-  ?~  latest-block
-    ~|  %couldnt-find-latest-block
-    !!
-  ~&  >  "latest block is {<u.latest-block>}"
-  ::  we wait 6 blocks for transactions to finalize
-  =/  last-settled-block
-    (sub u.latest-block 6)
-  ::  start indexing from .start
-  =/  num  start
-  |-  
-  ^-  form:m
-  ?.  (lte num last-settled-block)
-    (pure:m !>([fx state]:oc))
-  ;<    bluck=(unit block:bitcoin)
-      bind:m
-    (get-block-by-number:btcio req-to ~ num)
-  ?~  bluck
-    ~|  %cant-find-block-by-number
-    !!
-  ;<    new-block=[num:id:block:bitcoin urb-block:urb]
-      bind:m
-    (convert-block num u.bluck)
-  =.  oc  (handle-block:oc new-block)
-  ~&  >  "processed block {<num>} of {<last-settled-block>}"
-  $(num +(num))
-  ::
-  ::  Convert a block:bitcoin into a urb-block:urb.
-  ++  convert-block
-    |=  [=num:id:block:bitcoin =block:bitcoin]
-    =/  m  (strand:strandio ,[num=@ud urb-block:urb])
-    =/  deps  (find-block-deps:oc num block)
-    =/  txs  (tail txs.block)
-    |-  
-    ^-  form:m
-    ?~  txs
-      (pure:m (apply-block-deps:oc [num +.deps] -.deps))
-    =/  is  is.i.txs
-    |-  ^-  form:m
-    :: XX refactor to use gettxout
-    ?~  is  ^$(txs t.txs)
-    =/  dep  (~(get by -.deps) [txid pos]:i.is)
-    ?:  &(?=(^ dep) ?=(^ value.u.dep))  $(is t.is)
-    ;<  utx=(unit tx:bc)  bind:m
-      (get-raw-transaction:btcio rpc ~ txid.i.is)
-    ?~  utx  !!
-    =/  os  os.u.utx
-    =|  pos=@ud
-    |-  ^-  form:m
-    ?~  os  ^$(is t.is)
-    =/  dep  (~(get by -.deps) [id.u.utx pos])
-    ?:  &(?=(^ dep) ?=(^ value.u.dep))  $(os t.os, pos +(pos))
-    =/  sots=(list raw-sotx:urb)  ?~(dep ~ sots.u.dep)
-    $(os t.os, pos +(pos), -.deps (~(put by -.deps) [id.u.utx pos] [sots `value.i.os]))
-  --
 --
