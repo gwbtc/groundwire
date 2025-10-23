@@ -228,7 +228,7 @@
   ^-  form:m
   ;<  res=(unit @ux)  bind:m
     (get-block-hash req-to ?~(id ~ `(cat 3 'get-block-hash-' u.id)) height)
-  ;<  *  bind:m  (sleep:strandio ~s2)
+  :: ;<  *  bind:m  (sleep:strandio ~s2)
   ?~  res  (pure:m ~)
   (get-block-by-hash req-to id u.res)
 ::
