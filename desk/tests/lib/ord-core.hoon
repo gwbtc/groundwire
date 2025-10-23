@@ -79,13 +79,16 @@
   =/  en-out  (can 3 script-pubkey.out 8^value.out ~)
   (shay (add 8 wid.script-pubkey.out) en-out)
 ::
-++  mock-sotx-spawn
+++  build-sot
+  |=  sot=skim-sotx:urb
   ^-  sotx:urb
-  =/  sot  ^-  skim-sotx:urb
-    [%spawn pub:ex:cut [spkh=mock-output-hash pos=~ off=0 tej=0]]
   =/  ent  (skim:encode:lais sot)
   =/  sig  (sign-octs-raw:ed:crypto 512^(shaz ent) [sgn.pub sgn.sek]:+<:cut)
   [[`@p`fig:ex:cut [~ sig]] sot]
+::
+++  mock-skim-spawn
+  ^-  skim-sotx:urb
+  [%spawn pub:ex:cut [spkh=mock-output-hash pos=~ off=0 tej=0]]
 ::
 ++  mock-raw-sotx-spawn
   ^-  octs
@@ -178,7 +181,7 @@
       :-  ^=  sots
           ^-  (list raw-sotx:urb)
           :~  :-  raw=mock-raw-sotx-spawn
-              sot=mock-sotx-spawn
+              sot=(build-sot mock-skim-spawn)
           ==
       value=(some 50.000.000)
   ==
@@ -191,7 +194,7 @@
       :-  ^=  sots
           ^-  (list raw-sotx:urb)
           :~  :-  raw=mock-raw-sotx-spawn
-              sot=mock-sotx-spawn
+              sot=(build-sot mock-skim-spawn)
           ==
       value=~
   ==
@@ -245,7 +248,7 @@
       :*  ^=  is
           ^-  (list input:urb-tx:urb)
           :~  :-  :-  :~  :-  raw=mock-raw-sotx-spawn
-                          sot=mock-sotx-spawn
+                          sot=(build-sot mock-skim-spawn)
                       ==
                   50.000.000
               :-  ^=  witness
