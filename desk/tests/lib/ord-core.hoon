@@ -86,16 +86,15 @@
   =/  sig  (sign-octs-raw:ed:crypto 512^(shaz ent) [sgn.pub sgn.sek]:+<:cut)
   [[`@p`fig:ex:cut [~ sig]] sot]
 ::
+++  build-raw-sot
+  |=  sot=skim-sotx:urb
+  ^-  octs
+  =/  ent  (skim:encode:lais sot)
+  [(met 3 ent) ent]
+::
 ++  mock-skim-spawn
   ^-  skim-sotx:urb
   [%spawn pub:ex:cut [spkh=mock-output-hash pos=~ off=0 tej=0]]
-::
-++  mock-raw-sotx-spawn
-  ^-  octs
-  =/  sot  ^-  skim-sotx:urb
-    [%spawn pub:ex:cut [spkh=mock-output-hash pos=~ off=0 tej=0]]
-  =/  ent  (skim:encode:lais sot)
-  [(met 3 ent) ent]
 ::
 ++  mock-tx-with-urb-witness
   ^-  tx:bitcoin
@@ -104,8 +103,8 @@
       :*  ^=  is
           ^-  (list inputw:tx:bitcoin)
           :~  :*  ^=  witness
-                  :~  mock-raw-sotx-spawn  :: encoded unvelope
-                      [wid=0 dat=0x0]     :: OP_0 (for P2TR structure)
+                  :~  (build-raw-sot mock-skim-spawn)  :: encoded unvelope
+                      [wid=0 dat=0x0]                  :: OP_0 for P2TR
                   ==
                   id=0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789
                   pos=0
@@ -180,7 +179,7 @@
           [0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789 0]
       :-  ^=  sots
           ^-  (list raw-sotx:urb)
-          :~  :-  raw=mock-raw-sotx-spawn
+          :~  :-  raw=(build-raw-sot mock-skim-spawn)
               sot=(build-sot mock-skim-spawn)
           ==
       value=(some 50.000.000)
@@ -193,7 +192,7 @@
           [0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789 0]
       :-  ^=  sots
           ^-  (list raw-sotx:urb)
-          :~  :-  raw=mock-raw-sotx-spawn
+          :~  :-  raw=(build-raw-sot mock-skim-spawn)
               sot=(build-sot mock-skim-spawn)
           ==
       value=~
@@ -247,12 +246,12 @@
       ^-  data:urb-tx:urb
       :*  ^=  is
           ^-  (list input:urb-tx:urb)
-          :~  :-  :-  :~  :-  raw=mock-raw-sotx-spawn
+          :~  :-  :-  :~  :-  raw=(build-raw-sot mock-skim-spawn)
                           sot=(build-sot mock-skim-spawn)
                       ==
                   50.000.000
               :-  ^=  witness
-                      :~  mock-raw-sotx-spawn  :: encoded unvelope
+                      :~  (build-raw-sot mock-skim-spawn)  :: encoded unvelope
                       [wid=0 dat=0x0]     :: OP_0 (for P2TR structure)
                   ==
               :*  id=0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789
