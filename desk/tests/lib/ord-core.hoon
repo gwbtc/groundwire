@@ -96,15 +96,18 @@
   ^-  skim-sotx:urb
   [%spawn pub:ex:cut [spkh=mock-output-hash pos=~ off=0 tej=0]]
 ::
-++  mock-tx-with-urb-witness
+++  build-tx-with-urb-witness
+  |=  =skim-sotx:urb
   ^-  tx:bitcoin
+  ::  =/  sot  (build-sot skim-sotx)
+  =/  raw  (build-raw-sot skim-sotx)
   :*  id=0xdef0.1234.5678.9abc.def0.1234.5678.9abc.def0.1234.5678.9abc.def0.1234.5678
       ^-  dataw:tx:bitcoin
       :*  ^=  is
           ^-  (list inputw:tx:bitcoin)
           :~  :*  ^=  witness
-                  :~  (build-raw-sot mock-skim-spawn)  :: encoded unvelope
-                      [wid=0 dat=0x0]                  :: OP_0 for P2TR
+                  :~  raw              :: encoded unvelope
+                      [wid=0 dat=0x0]  :: OP_0 for P2TR
                   ==
                   id=0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789
                   pos=0
@@ -154,18 +157,38 @@
       ==
   ==
 ::
+++  build-block-with-urb-deps-output
+  |=  =skim-sotx:urb
+  ^-  block:bitcoin
+  :*  hax=0x0
+      reward=0
+      height=start-height:urb
+      =/  tx
+        (build-tx-with-urb-witness skim-sotx)
+      ^=  txs
+      ^-  (list tx:bitcoin)
+      :~  mock-coinbase-tx  ::  coinbase tx comes first
+          ::  XX duplicated because ned=&
+          ::       what is ned?
+          tx
+          tx
+      ==
+  ==
+::
 ++  mock-block-with-urb-deps-output
   ^-  block:bitcoin
   :*  hax=0x0
       reward=0
       height=start-height:urb
+      =/  tx
+        (build-tx-with-urb-witness mock-skim-spawn)
       ^=  txs
       ^-  (list tx:bitcoin)
-      :~  mock-coinbase-tx              ::  coinbase tx comes first
-          mock-tx-with-urb-witness      ::  transaction with urbit data
+      :~  mock-coinbase-tx  ::  coinbase tx comes first
           ::  XX duplicated because ned=&
           ::       what is ned?
-          mock-tx-with-urb-witness
+          tx
+          tx
       ==
   ==
 ::
@@ -240,19 +263,22 @@
       segwit=~
   ==
 ::
-++  mock-urb-tx-with-urb-witness
+++  build-urb-tx
+  |=  =skim-sotx:urb
   ^-  tx:urb-tx:urb
+  =/  sot  (build-sot skim-sotx)      ::  signed sotx
+  =/  raw  (build-raw-sot skim-sotx)  ::  encoded unvelope
   :*  id=0xdef0.1234.5678.9abc.def0.1234.5678.9abc.def0.1234.5678.9abc.def0.1234.5678
       ^-  data:urb-tx:urb
       :*  ^=  is
           ^-  (list input:urb-tx:urb)
-          :~  :-  :-  :~  :-  raw=(build-raw-sot mock-skim-spawn)
-                          sot=(build-sot mock-skim-spawn)
+          :~  :-  :-  :~  :-  raw
+                          sot
                       ==
                   50.000.000
               :-  ^=  witness
-                      :~  (build-raw-sot mock-skim-spawn)  :: encoded unvelope
-                      [wid=0 dat=0x0]     :: OP_0 (for P2TR structure)
+                      :~  raw
+                      [wid=0 dat=0x0]  :: OP_0 (for P2TR structure)
                   ==
               :*  id=0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789
                   pos=0
@@ -274,18 +300,22 @@
       ==
   ==
 ::
-++  mock-urb-block
+++  build-urb-block
+  |=  =skim-sotx:urb
   ^-  urb-block:urb
+  =/  urb-tx
+    (build-urb-tx skim-sotx)
   :*  hax=start-hash:urb
       reward=0
       height=start-height:urb
       ^=  txs
       ^-  (list urb-tx:urb)
       :~  mock-urb-coinbase-tx
-          mock-urb-tx-with-urb-witness
-          mock-urb-tx-with-urb-witness
+          urb-tx
+          urb-tx
       ==
   ==
+::
 --
 ::
 |%
@@ -357,11 +387,11 @@
 ++  test-apply-block-deps
   =/  oc  ord-core:ul
   %+  expect-eq
-    !>  [num=start-height:urb mock-urb-block]
+    !>  [num=start-height:urb (build-urb-block mock-skim-spawn)]
     !>
     %+  apply-block-deps:oc
       :-  start-height:urb
-      mock-block-with-urb-deps-output
+      (build-block-with-urb-deps-output mock-skim-spawn)
     mock-deps
 ::
 ++  test-apply-block-deps-no-value-fails
@@ -370,20 +400,20 @@
     |.
     %+  apply-block-deps:oc
       :-  start-height:urb
-      mock-block-with-urb-deps-output
+      (build-block-with-urb-deps-output mock-skim-spawn)
     mock-deps-no-value
 ::
 ++  test-handle-block-state
   =/  oc  ord-core:ul
   =.  oc  (abed:oc init-state)
-  =.  oc  (handle-block:oc start-height:urb mock-urb-block)
+  =.  oc  (handle-block:oc start-height:urb (build-urb-block mock-skim-spawn))
   ::  Create expected state by running the same operations but starting from expected initial state
   =/  expected-oc  ord-core:ul
   =.  expected-oc  (abed:expected-oc init-state)
   =.  expected-oc  expected-oc(num.block-id.state +(start-height:urb))
   ::  Process the transactions to build expected state
-  =.  expected-oc  (handle-tx:expected-oc mock-urb-tx-with-urb-witness)
-  =.  expected-oc  (handle-tx:expected-oc mock-urb-tx-with-urb-witness)
+  =.  expected-oc  (handle-tx:expected-oc (build-urb-tx mock-skim-spawn))
+  =.  expected-oc  (handle-tx:expected-oc (build-urb-tx mock-skim-spawn))
   %+  expect-eq
     !>  state.expected-oc
     !>  state.oc
@@ -391,7 +421,7 @@
 ++  test-handle-tx-spawn
   =/  oc  ord-core:ul
   =.  oc  (abed:oc init-state)
-  =.  oc  (handle-tx:oc mock-urb-tx-with-urb-witness)
+  =.  oc  (handle-tx:oc (build-urb-tx mock-skim-spawn))
   =/  expected-spawn-fx
     ^-  (list [id:block:bitcoin effect:ord])
     :~  :-  bunt-id
