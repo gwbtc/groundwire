@@ -16,7 +16,7 @@
 /+  *test, ul=urb, lais, scr=btc-script, crac
 =>
 |%
-++  mock-id
+++  bunt-id
   ^-  id:block:bitcoin
   [start-hash:urb start-height:urb]
 ::
@@ -195,20 +195,20 @@
       value=~
   ==
 ::
-++  mock-effect
+++  bunt-effect
   *effect:ord
 ::
-++  mock-state
+++  init-state
   ^-  state:ord
-  :*  mock-id        ::  last indexed block
+  :*  bunt-id        ::  last indexed block
       *sont-map:ord  ::  known satpoints
       *insc-ids:ord  ::  transactions with inscriptions
       *unv-ids:ord   ::  transactions with unvelopes
   ==
 ::
-++  mock-fx
+++  bunt-fx
   ^-  (list [id:block:bitcoin effect:ord])
-  [[mock-id mock-effect]]~
+  [[bunt-id bunt-effect]]~
 ::
 ++  mock-urb-coinbase-tx
   ^-  tx:urb-tx:urb
@@ -289,28 +289,28 @@
 |%
 ++  test-abed
   =/  oc  ord-core:ul
-  =.  oc  oc(state mock-state)
+  =.  oc  oc(state init-state)
   %+  expect-eq
     !>  oc
-    !>  (abed:oc mock-state)
+    !>  (abed:oc init-state)
 ::
 ++  test-emit
   =/  oc  ord-core:ul
-  =.  oc  oc(block-id.state mock-id)
+  =.  oc  oc(block-id.state bunt-id)
   %+  expect-eq
-    !>  oc(fx :-([mock-id mock-effect] ~))
-    !>  (emit:oc mock-effect)
+    !>  oc(fx :-([bunt-id bunt-effect] ~))
+    !>  (emit:oc bunt-effect)
 ::
 ++  test-emil
   =/  oc  ord-core:ul
   %+  expect-eq
-    !>  (emit:oc mock-effect)
-    !>  (emil:oc [mock-effect]~)
+    !>  (emit:oc bunt-effect)
+    !>  (emil:oc [bunt-effect]~)
 ::
 ++  test-abet
   =/  oc  ord-core:ul
-  =.  oc  (abed:oc mock-state)
-  =.  oc  (emit:oc mock-effect)
+  =.  oc  (abed:oc init-state)
+  =.  oc  (emit:oc bunt-effect)
   %+  expect-eq
     !>  [(flop fx:oc) state:oc]
     !>  abet:oc
@@ -373,11 +373,11 @@
 ::
 ++  test-handle-block-state
   =/  oc  ord-core:ul
-  =.  oc  (abed:oc mock-state)
+  =.  oc  (abed:oc init-state)
   =.  oc  (handle-block:oc start-height:urb mock-urb-block)
   ::  Create expected state by running the same operations but starting from expected initial state
   =/  expected-oc  ord-core:ul
-  =.  expected-oc  (abed:expected-oc mock-state)
+  =.  expected-oc  (abed:expected-oc init-state)
   =.  expected-oc  expected-oc(num.block-id.state +(start-height:urb))
   ::  Process the transactions to build expected state
   =.  expected-oc  (handle-tx:expected-oc mock-urb-tx-with-urb-witness)
@@ -388,17 +388,17 @@
 ::
 ++  test-handle-tx
   =/  oc  ord-core:ul
-  =.  oc  (abed:oc mock-state)
+  =.  oc  (abed:oc init-state)
   =.  oc  (handle-tx:oc mock-urb-tx-with-urb-witness)
   =/  expected-effects
     ^-  (list [id:block:bitcoin effect:ord])
-    :~  :-  mock-id
+    :~  :-  bunt-id
         [%xfer [0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789 0 0] [0xdef0.1234.5678.9abc.def0.1234.5678.9abc.def0.1234.5678.9abc.def0.1234.5678 0 0]]
-        :-  mock-id
+        :-  bunt-id
         [%point ~radlyx-lomsev-sorseb-batnyr--nommes-bolseg-hacbyl-todhet %keys 1 518.847.371.617.947.361.520.838.967.418.184.237.645.890.125.796.308.409.702.941.729.937.039.949.187.475.686.862.653.933.909.072.579.455.217.271.195.095.941.577.817.884.171.538.188.583.408.722.515.276.586.322.052.198.175.980.680.778.630.683.042.191.715.939]
-        :-  mock-id
+        :-  bunt-id
         [%point ~radlyx-lomsev-sorseb-batnyr--nommes-bolseg-hacbyl-todhet %sponsor [~ ~todhet]]
-        :-  mock-id
+        :-  bunt-id
         [%point ~radlyx-lomsev-sorseb-batnyr--nommes-bolseg-hacbyl-todhet %owner [0x2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789.abcd.ef01.2345.6789 0 0]]
     ==
   %+  expect-eq
