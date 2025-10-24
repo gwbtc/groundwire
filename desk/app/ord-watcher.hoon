@@ -28,18 +28,19 @@
 ++  on-init
   ^-  (quip card _this)
   =/  new-rpc  ['http://localhost:18443' [%basic 'bitcoinrpc:bitcoinrpc']]
-  =/  new-ord-state  [[start-hash:urb start-height:urb] ~ ~ ~]
+  =/  new-ord-state
+    :*  [start-hash:urb start-height:urb]
+        *sont-map:ord
+        *insc-ids:ord
+        *unv-ids:ord
+    ==
   :_  this(rpc new-rpc)
   :~  :*  %pass  /listen  %arvo  %j 
           %listen  *(set ship)  [%| dap.bowl]
       ==
-      :*  %pass  /timer  %arvo  %b 
-          %wait  (add ~s30 now.bowl)
-      ==
       :*  %pass  /blocks  %arvo  %k
           %lard  q.byk.bowl
-          %-  get-blocks 
-          [new-rpc new-ord-state]
+          (get-blocks new-rpc new-ord-state)
       ==  
   ==
 ::
@@ -70,50 +71,44 @@
 ++  on-watch
   |=  =(pole knot)
   ^-  (quip card _this)
-  ?+    pole  !!
+  ?+    pole  (on-watch:def pole)
   ::
-  ::  Jael subscribes to / aka ~
+  ::  Jael subscribes to empty wire /, aka ~
       ~
     `this
-  ::
-      [=ship ~]
-    :_  this
-    (udiffs-to-jael-cards (state-to-udiffs ord-state))
   ==
 ::
 ++  on-arvo
   |=  [=wire =sign-arvo]
   ^-  (quip card _this)
-  ?+    wire  !!
+  ?+    wire  (on-arvo:def wire sign-arvo)
   ::
   ::  Run +get-blocks at regular intervals.
       [%timer ~]
     :_  this
-    :~  :*  %pass  /timer  %arvo  %b 
-            %wait  (add ~s30 now.bowl)
-        ==
-        :*  %pass  /blocks  %arvo  %k
+    :~  :*  %pass  /blocks  %arvo  %k
             %lard  q.byk.bowl
-            %-  get-blocks
-            [rpc ord-state]:state
+            (get-blocks [rpc ord-state]:state)
         ==  
     ==
   ::
   ::  Our +get-blocks thread returned. Update
-  ::  ord-state and emit udiffs to Jael.
+  ::  ord-state, emit udiffs to Jael, and set a timer
+  ::  to run the thread again.
       [%blocks ~]
-    ?+    sign-arvo  !!
+    ?+    sign-arvo  (on-arvo:def wire sign-arvo)
         [%khan %arow *]
       ?.  -.p.sign-arvo
         ((slog leaf+<p.p.sign-arvo> ~) `this)
       ?>  ?=([%khan %arow %.y %noun *] sign-arvo)
       =/  [%khan %arow %.y %noun =vase]  sign-arvo
-      =/  val
+      =/  fx-and-state
         !<  
-        (pair (list [id:block:bitcoin effect:ord]) state:ord)
+        [(list [id:block:bitcoin effect:ord]) state:ord]
         vase
-      :_  this(ord-state.state +.val)
-      (udiffs-to-jael-cards (fx-to-udiffs -.val))
+      :_  this(ord-state.state +.fx-and-state)
+      :-  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
+      (udiffs-to-jael-cards (fx-to-udiffs -.fx-and-state))
     ==
   ==
 ::
@@ -131,7 +126,7 @@
 ++  get-blocks
   |=  [rpc=req-to:btcio ord-state=state:ord]
   ^-  shed:khan
-  =/  i  (add 1 num.block-id.ord-state) :: last processed block index + 1
+  =/  i  (add 1 num.block-id.ord-state) :: last processed block height + 1
   =/  oc
     %-  abed:ord-core:ul
     ord-state
@@ -199,11 +194,11 @@
   |=  =udiffs:point:jael
   ^-  (list card)
   :-  [%give %fact [/]~ %azimuth-udiffs !>(udiffs)]
-  %+  murn
+  %+  turn
     udiffs
   |=  [=ship =udiff:point:jael]
-  ^-  (unit card)
-  `[%give %fact [/(scot %p ship)]~ %azimuth-udiffs !>([udiff]~)]
+  ^-  card
+  [%give %fact [/(scot %p ship)]~ %azimuth-udiffs !>([udiff]~)]
 ::
 ++  fx-to-udiffs
   |=  fx=(list [id:block:bitcoin effect:ord])
