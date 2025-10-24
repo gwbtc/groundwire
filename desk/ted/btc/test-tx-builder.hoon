@@ -71,7 +71,7 @@
   =+  owner=(derive-sequence:(from-seed:bip32 32^seed) ~[1.338 0 0])
   =/  k=keypair:gw  [pub=pub.owner priv=prv.owner]
   =/  tweak=keypair:gw  ~(tweak-keypair p2tr:gw `x.pub.k ~ `priv.k)
-  =/  address=cord  (need (encode-taproot:b173 %regtest 32^x.pub.tweaked))
+  =/  address=cord  (need (encode-taproot:b173 %regtest 32^x.pub.tweak))
   [seed ext [k tweak address]]
 ::
 ++  make-spend-script
