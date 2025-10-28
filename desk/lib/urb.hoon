@@ -248,14 +248,17 @@
   +*  cor  .
   ++  abed
     |=  =state:ord
+    ^+  cor
     cor(state state)
   ::
   ++  emit
     |=  fc=effect:ord
-    cor(fx [block-id fc]^fx)
+    ^+  cor
+    cor(fx :-([block-id fc] fx))
   ::
   ++  emil
     |=  fy=(list effect:ord)
+    ^+  cor
     ?~  fy  cor
     =.  cor  (emit i.fy)
     $(fy t.fy)
@@ -351,7 +354,22 @@
     ^-  [num=@ud urb-block:urb]
     =*  block  +<-
     =>  ?>(?=(^ txs) [cb-tx=i.txs .(txs t.txs)])
-    =-  block(txs [cb-tx(is (turn is.cb-tx |=(inputw:tx:bitcoin `input:urb-tx:urb`[[~ 0] +<])))]^-)
+    =-  %=  block
+          txs  ^-  (list urb-tx:urb)
+               %+  welp
+                 ^-  (list urb-tx:urb)
+                 :~  ^-  urb-tx:urb
+                     %=  cb-tx
+                       is  %+  turn
+                             is.cb-tx
+                           |=  inputw:tx:bitcoin
+                           ^-  input:urb-tx:urb
+                           [[~ 0] +<]
+                     ==
+                 ==
+               ^-  (list urb-tx:urb)
+               -
+        ==
     |-  ^-  (list tx:urb-tx:urb)
     ?~  txs  ~
     =/  is  is.i.txs
