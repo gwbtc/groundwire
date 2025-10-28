@@ -239,7 +239,8 @@
 ++  ord-core
   =|  state:ord
   =*  state  -
-  |_  $:  ::
+  |_  $+  ord-core-sample
+      $:  ::
           :: cards=(list card:agent:gall)
           fx=(list [id:block:bitcoin effect:ord])
           cb-tx=[val=@ud urb-tx:urb]
@@ -248,14 +249,17 @@
   +*  cor  .
   ++  abed
     |=  =state:ord
+    ^+  cor
     cor(state state)
   ::
   ++  emit
     |=  fc=effect:ord
-    cor(fx [block-id fc]^fx)
+    ^+  cor
+    cor(fx :-([block-id fc] fx))
   ::
   ++  emil
     |=  fy=(list effect:ord)
+    ^+  cor
     ?~  fy  cor
     =.  cor  (emit i.fy)
     $(fy t.fy)
@@ -351,15 +355,35 @@
     ^-  [num=@ud urb-block:urb]
     =*  block  +<-
     =>  ?>(?=(^ txs) [cb-tx=i.txs .(txs t.txs)])
-    =-  block(txs [cb-tx(is (turn is.cb-tx |=(inputw:tx:bitcoin `input:urb-tx:urb`[[~ 0] +<])))]^-)
+    =-  %=  block
+          txs  ^-  (list urb-tx:urb)
+               %+  welp
+                 ^-  (list urb-tx:urb)
+                 :~  ^-  urb-tx:urb
+                     %=  cb-tx
+                       is  %+  turn
+                             is.cb-tx
+                           |=  inputw:tx:bitcoin
+                           ^-  input:urb-tx:urb
+                           [[~ 0] +<]
+                     ==
+                 ==
+               ^-  (list urb-tx:urb)
+               -
+        ==
     |-  ^-  (list tx:urb-tx:urb)
     ?~  txs  ~
     =/  is  is.i.txs
     =-  [i.txs(is -) $(txs t.txs)]
     |-  ^-  (list input:urb-tx:urb)
-    ?~  is  ~
-    =/  dep  (~(got by deps) [txid pos]:i.is)
-    [dep(value (need value.dep)) i.is]^$(is t.is)
+    ?~  is
+      ~
+    =/  dep
+      (~(get by deps) [txid pos]:i.is)
+    ?~  dep
+      ~
+    :-  [u.dep(value (need value.u.dep)) i.is]
+    $(is t.is)
   ::
   ++  handle-block
     |=  [=num:block:bitcoin =urb-block:urb]
