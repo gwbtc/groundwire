@@ -239,7 +239,8 @@
 ++  ord-core
   =|  state:ord
   =*  state  -
-  |_  $:  ::
+  |_  $+  ord-core-sample
+      $:  ::
           :: cards=(list card:agent:gall)
           fx=(list [id:block:bitcoin effect:ord])
           cb-tx=[val=@ud urb-tx:urb]
