@@ -376,9 +376,14 @@
     =/  is  is.i.txs
     =-  [i.txs(is -) $(txs t.txs)]
     |-  ^-  (list input:urb-tx:urb)
-    ?~  is  ~
-    =/  dep  (~(got by deps) [txid pos]:i.is)
-    [dep(value (need value.dep)) i.is]^$(is t.is)
+    ?~  is
+      ~
+    =/  dep
+      (~(get by deps) [txid pos]:i.is)
+    ?~  dep
+      ~
+    :-  [u.dep(value (need value.u.dep)) i.is]
+    $(is t.is)
   ::
   ++  handle-block
     |=  [=num:block:bitcoin =urb-block:urb]
