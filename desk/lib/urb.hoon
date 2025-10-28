@@ -1,3 +1,31 @@
+::  /lib/urb.hoon
+::
+::  "unv" is short for "urbit envelope."
+::  an unv is an atom that comes from the body
+::  of an ordinal script tagged with "urb" 
+::  (as opposed to "ord"):
+::
+::  OP_PUSH 1 0
+::  OP_IF
+::    "urb"
+::    <len, dat>
+::  OP_ENDIF
+::
+::  an unv is variable-sized and 
+::  gets parsed into a list of "raw-sotx".
+::  an ordinal script can also include multiple
+::  unvs, giving us a (list (list raw-sotx))
+::  that we zing.
+::
+::  a raw-sotx is a [raw=octs sotx].
+::  we keep the raw data around even after parsing
+::  because several proof steps depend on it.
+::
+::  a sotx is similar to a jael udiff, and
+::  indeed gets turned into a jael udiff,
+::  which is what %ord-watcher ultimately
+::  uses this library for.
+::
 /-  bitcoin, ord, urb
 /+  bscr=btc-script, crac, ol=ord
 ::=|  lac=_&
@@ -10,6 +38,7 @@
   ~>  %slog.[0 meg]
   +<+
 ::
+::  Wrap a unv in a no-op urb-tagged Bitcoin script.
 ++  en
   |%
   ++  unv-to-script
@@ -23,23 +52,29 @@
      ==
   --
 ::
+::  Unwrap a script into a list of unvs.
 ++  de
   |%
   ++  unv
     |=  =script:ord
     ^-  (list @)
     ?~  script  ~
+    ::  Strip leading ops until we hit the expected urb envelope format
     ?.  ?=([[%op-push * * %0] %op-if [%op-push * * %'urb'] *] script)
       $(script t.script)
     =>  .(script t.t.t.script)
-    |^  ^-  (list @)
+    |^  
+    ^-  (list @)
     =^  unv  script  fetch-unv
-    ?~  unv  ~  [p:(fax:plot bloq=3 u.unv) ^$]
+    ?~  unv  
+      ~  
+    [p:(fax:plot bloq=3 u.unv) ^$]
     ::
     ++  fetch-unv
       ^-  [(unit (list plat:plot)) script:ord]
       ?>  ?=(^ script)
-      |-  ^-  [(unit (list plat:plot)) script:ord]
+      |-  
+      ^-  [(unit (list plat:plot)) script:ord]
       ?:  ?=(%op-endif i.script)  [~ ~]^~
       ?.  ?=([[%op-push *] ^] script)  ~^~
       =/  rest  $(script t.script)
@@ -47,27 +82,34 @@
       [~ octs.i.script u.-.rest]^+.rest
     --
   --
+::
+::  The following parsing code is adapted from %naive.
+::
+::  Parse a unv encoding multiple
+::  raw-tx into a list of raw-sotx.
 ++  parse-roll
   |=  batch=@
+  ^-  (list raw-sotx:urb)
   =|  roll=(list raw-sotx:urb)
   =|  cur=@ud
   =/  las  (met 0 batch)
   =|  num-msgs=@ud
-  |-  ^+  roll
+  |-  
+  ^+  roll
   ?:  (gte cur las)
     (flop roll)
   =/  parse-result  (parse-raw-tx cur batch)
-  ::  Parsing failed, abort batch
-  ::
   ?~  parse-result
     (debug %parse-failed ~)
   =^  raw-tx  cur  u.parse-result
   $(roll [raw-tx roll], num-msgs +(num-msgs))
 ::
+::  Given an index and a variable-sized atom,
+::  parse the raw-tx at that index into a raw-sotx.
 ++  parse-raw-tx
   |=  [cur=@ud batch=@]
+  |^  
   ^-  (unit [raw-sotx:urb cur=@ud])
-  |^  ^-  (unit [raw-sotx:urb cur=@ud])
   =/  sig  take-sig
   ?~  sig  (debug %no-sig ~)
   =^  sig  cur  u.sig
@@ -237,7 +279,7 @@
   --
 ::
 ++  ord-core
-  =|  state:ord
+  =|  state:ord :: [block-id sont-map insc-ids unv-ids]
   =*  state  -
   |_  $+  ord-core-sample
       $:  ::
@@ -268,75 +310,99 @@
     ^+  [fx state]
     [(flop fx) state]
   ::
-  ++  find-block-deps
+  ::  Given a block, return its "reveals" (aka a map
+  ::  of raw-sotx) and the block filtered down to
+  ::  relevant transactions.
+  ++  find-block-reveals
+    ::
     :: in order to properly fulfill the coinbase transaction, we need to
     :: keep track of the fee change from skipped tx's
-    |=  [num=@ud =block:bitcoin]
-    ::  =*  block  +<
-    =|  deps=(map [txid:ord pos:urb] [sots=(list raw-sotx:urb) value=(unit @ud)])
-    =|  tx-fil=(list tx:bitcoin)
-    ^+  [deps block]
-    ?.  ?|  =(num start-height:urb)
-            =(num +(num.block-id.state))
+    |=  =block:bitcoin
+    =|  reveals=(map [txid:ord pos:urb] [sots=(list raw-sotx:urb) value=(unit @ud)])
+    ^+  [reveals block]
+    ?.  ?|  =(num:block start-height:urb)
+            =(num:block +(num.block-id.state))
         ==
-      %-  (slog leaf+"can't handle block {<num>}, expected block {<+(num.block-id.state)>}" ~)
-      ::  XX should crash
-      [deps block]
+      %-  (slog leaf+"can't handle block {<num:block>}, expected block {<+(num.block-id.state)>}" ~)
+      [reveals block]  ::  XX crash instead?
+    ::
+    ::  Set aside this block's coinbase transaction.
     =>  ?>  ?=(^ txs.block)
         :-  cb-tx=i.txs.block
         %=  .
           txs.block  t.txs.block
         ==
-    |-  ^+  [deps block]
+    ::
+    ::  Filter through this block's transactions
+    ::  for tx containing reveals.
+    =|  tx-done=(list tx:bitcoin)
+    |-  
+    ^+  [reveals block]
     ?~  txs.block
-      :-  deps
+      :-  reveals
       %=  block
-        txs  :-(cb-tx (flop tx-fil))
+        txs  [cb-tx (flop tx-done)]
       ==
-    =/  is  is.i.txs.block
-    =|  ned=_|
-    |^  ^+  ^$
-        ?~  is
-          %=  ^$
-            txs.block  t.txs.block
-            tx-fil     ?.  ned
-                         tx-fil
-                        [i.txs.block :-(i.txs.block tx-fil)]
+    =/  is    is.i.txs.block  :: list of inputs
+    =/  need  %.n             :: whether we need to save this tx
+    ::
+    ::  Loop through this transaction's inputs
+    ::  and, if any contain reveals, save the whole tx.
+    |^  
+    ^+  ^$
+    ?~  is
+      %=  ^$
+        txs.block  t.txs.block
+        tx-done    ?.  need
+                     tx-done
+                   [i.txs.block tx-done]
+      ==
+    ::
+    ::  If this input had been saved as an output in our state,
+    ::  then that means it was relevant to urb, and
+    ::  we for sure need to pay attention to it again.
+    =/  value=(unit @ud)
+      =/  vout  (get-vout:si:ol sont-map [txid pos]:i.is)
+      ?~  vout
+        ~
+      `value.u.vout
+    =.  need  |(need ?=(^ value))
+    ::
+    ::  Parse the witness for sots. If no sots, just 
+    ::  add the value to reveals (in case there are sots
+    ::  in a future input of this block) and recurse.
+    =/  raw-script=(unit octs)
+      =/  rwit
+        (flop witness.i.is)
+      ?.  ?=([* ^] rwit)
+        ~
+      ?.  =+  i.rwit
+          ?&  !=(0 wid)
+              =(0x50 (cut 3 [(dec wid) 1] dat))
           ==
-        =/  value=(unit @ud)
-          =/  vout  (get-vout:si:ol sont-map [txid pos]:i.is)
-          ?~  vout
-            ~
-          `value.u.vout
-        =.  ned  |(ned ?=(^ value))
-        =/  raw-script=(unit octs)
-          =/  rwit
-            (flop witness.i.is)
-          ?.  ?=([* ^] rwit)
-            ~
-          ?.  =+  i.rwit
-              ?&  !=(0 wid)
-                  =(0x50 (cut 3 [(dec wid) 1] dat))
-              ==
-            `i.t.rwit
-          ?~  t.t.rwit
-            ~
-          `i.t.t.rwit
-        ?~  raw-script
-          (add-to-deps ~ value)
-        =/  descr
-          (de:bscr u.raw-script)
-        ?~  descr
-          (add-to-deps ~ value)
-        ~|  [=+(u.raw-script [p `@ux`q]) =+((en:bscr u.descr) [p `@ux`q])]
-        ?>  =(u.raw-script (en:bscr u.descr))
-        =/  unvs=(unit (list @))  (some (unv:de u.descr))
-        ?~  unvs  (add-to-deps ~ value)
-        =/  sots=(list raw-sotx:urb)
-          (zing (turn u.unvs parse-roll))
-        (add-to-deps(ned &) sots value)
-      ::
-    ++  add-to-deps
+        `i.t.rwit
+      ?~  t.t.rwit
+        ~
+      `i.t.t.rwit
+    ?~  raw-script
+      (add-to-reveals ~ value)
+    =/  descr
+      (de:bscr u.raw-script)
+    ?~  descr
+      (add-to-reveals ~ value)
+    ~|  [=+(u.raw-script [p `@ux`q]) =+((en:bscr u.descr) [p `@ux`q])]
+    ?>  =(u.raw-script (en:bscr u.descr))
+    =/  unvs=(unit (list @))  (some (unv:de u.descr))
+    ?~  unvs  (add-to-reveals ~ value)
+    ::
+    ::  If there is sots, get it, add it to reveals, 
+    ::  flag this tx as needed, and recurse.
+    =/  sots=(list raw-sotx:urb)
+      (zing (turn u.unvs parse-roll))
+    (add-to-reveals(need &) sots value)
+    ::
+    ::  ^$ recurses to the input loop.
+    ++  add-to-reveals
       |=  [sots=(list raw-sotx:urb) value=(unit @ud)]
       ^+  ^$
       ?>  ?=(^ is)
@@ -346,7 +412,7 @@
         ^$(is t.is)
       %=  ^$
         is  t.is
-        deps  (~(put by deps) [txid pos]:i.is sots value)
+        reveals  (~(put by reveals) [txid pos]:i.is sots value)
       ==
     --
   ::
@@ -423,7 +489,8 @@
     =/  sum-in  (roll is.tx |=([a=input:urb-tx:urb b=@] (add value.a b)))
     =/  is  is.tx
     ?~  is  cor
-    |^  ^+  cor
+    |^  
+    ^+  cor
     ::  XX: moved check-for-insc before sont-track-input... consider for
     ::  child etc
     =.  cor  process-unv
@@ -434,8 +501,9 @@
     ++  process-unv
       ^+  cor
       =/  sots  sots.i.is
-      |-  ^+  cor
-      ?~  sots  cor
+      |-  
+      ?~  sots  
+        cor
       =*  raw  raw.i.sots
       =*  who  ship.sot.i.sots
       =*  sig   sig.sot.i.sots
@@ -444,7 +512,8 @@
         ?:(?=(%batch +<.sot.i.sots) bat.sot.i.sots ~[+.sot.i.sots])
       =/  point  (~(get by unv-ids) who)
       =|  bat-cnt=@
-      |^  ^+  cor
+      |^  
+      ^+  cor
       =.  bat-cnt  +(bat-cnt)
       ?~  sots  cor
       =*  sot  i.sots
@@ -621,7 +690,8 @@
         =|  out-pos=@ud
         =|  out-val=@ud
         =/  os  os.tx
-        |-  ^-  (unit sont:ord)
+        |-  
+        ^-  (unit sont:ord)
         ?~  os  ~
         ?:  &(?=(^ pos.out) (lth u.pos.out out-pos))  ~
         ?:  |((lte (add out-val value.i.os) val) &(?=(^ pos.out) !=(out-pos u.pos.out)))
