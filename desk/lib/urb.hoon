@@ -11,24 +11,38 @@
 ::    <len, dat>
 ::  OP_ENDIF
 ::
-::  an unv is variable-sized and 
+::  An unv is variable-sized and 
 ::  gets parsed into a list of "raw-sotx".
 ::  an ordinal script can also include multiple
 ::  unvs, giving us a (list (list raw-sotx))
 ::  that we zing.
 ::
-::  a raw-sotx is a [raw=octs sotx].
+::  A raw-sotx is a [raw=octs sotx].
 ::  we keep the raw data around even after parsing
 ::  because several proof steps depend on it.
 ::
-::  a sotx is similar to a jael udiff, and
+::  A sotx is similar to a jael udiff, and
 ::  indeed gets turned into a jael udiff,
 ::  which is what %ord-watcher ultimately
 ::  uses this library for.
 ::
+::  The logic flow here is:
+::  1. %ord-watcher receives a block from RPC and then
+::     calls ++find-block-reveals, which filters it
+::     down to txs containing urb reveals.
+::  2. %ord-watcher asynchronously backfills the
+::     block's txs with missing input values.
+::  3. %ord-watcher calls ++apply-values-and-urbify
+::     on the block with the new tx set. This converts
+::     it to an urb-block.
+::  4. %ord-watcher calls ++handle-block on the
+::     urb-block, which processes its txs for sotx and
+::     returns an updated state and a list of fx.
+::  5. %ord-watcher turns these fx into udiffs and
+::     gives them to Jael.
+::
 /-  bitcoin, ord, urb
 /+  bscr=btc-script, crac, ol=ord
-::=|  lac=_&
 =|  lac=_|
 |%
 ++  debug
@@ -47,7 +61,7 @@
     =/  len  (met 3 dat)
     :*  [%op-push %num %1 %0]
         %op-if
-        op-push+~+3+'urb'
+        [%op-push ~ %3 'urb']
         (snoc (push-data:en:ol len dat) %op-endif)
      ==
   --
@@ -282,11 +296,8 @@
   =|  state:ord :: [block-id sont-map insc-ids unv-ids]
   =*  state  -
   |_  $+  ord-core-sample
-      $:  ::
-          :: cards=(list card:agent:gall)
-          fx=(list [id:block:bitcoin effect:ord])
+      $:  fx=(list [id:block:bitcoin effect:ord])
           cb-tx=[val=@ud urb-tx:urb]
-          ::n-map=_n-map
       ==
   +*  cor  .
   ++  abed
@@ -312,7 +323,9 @@
   ::
   ::  Given a block, return its "reveals" (aka a map
   ::  of raw-sotx) and the block filtered down to
-  ::  relevant transactions.
+  ::  urb-relevant txs. A tx is relevant either if
+  ::  we had saved one of its inputs previously,
+  ::  or if its witness contains an urb reveal.
   ++  find-block-reveals
     ::
     :: in order to properly fulfill the coinbase transaction, we need to
@@ -401,7 +414,7 @@
       (zing (turn u.unvs parse-roll))
     (add-to-reveals(need &) sots value)
     ::
-    ::  ^$ recurses to the input loop.
+    ::  ^$ recurses to the inputs loop.
     ++  add-to-reveals
       |=  [sots=(list raw-sotx:urb) value=(unit @ud)]
       ^+  ^$
@@ -416,9 +429,14 @@
       ==
     --
   ::
-  ++  apply-block-deps
-    |=  [[num=@ud block:bitcoin] deps=(map [txid:ord pos:urb] [sots=(list raw-sotx:urb) value=(unit @ud)])]
-    ^-  [num=@ud urb-block:urb]
+  ::  Fill in a block's txs with input values
+  ::  given in a reveals map and restructure it
+  ::  to a urb-block.
+  ++  apply-values-and-urbify
+    |=  $:  block:bitcoin 
+            reveals=(map [txid:ord pos:urb] [sots=(list raw-sotx:urb) value=(unit @ud)])
+        ==
+    ^-  urb-block:urb
     =*  block  +<-
     =>  ?>(?=(^ txs) [cb-tx=i.txs .(txs t.txs)])
     =-  %=  block
@@ -437,44 +455,41 @@
                ^-  (list urb-tx:urb)
                -
         ==
-    |-  ^-  (list tx:urb-tx:urb)
+    |-  
+    ^-  (list tx:urb-tx:urb)
     ?~  txs  ~
     =/  is  is.i.txs
     =-  [i.txs(is -) $(txs t.txs)]
-    |-  ^-  (list input:urb-tx:urb)
+    |-  
+    ^-  (list input:urb-tx:urb)
     ?~  is
       ~
-    =/  dep
-      (~(get by deps) [txid pos]:i.is)
-    ?~  dep
+    =/  rev
+      (~(get by reveals) [txid pos]:i.is)
+    ?~  rev
       ~
-    :-  [u.dep(value (need value.u.dep)) i.is]
+    :-  [u.rev(value (need value.u.rev)) i.is]
     $(is t.is)
   ::
+  ::  Given an urb-block, update state and emit fx.
   ++  handle-block
-    |=  [=num:block:bitcoin =urb-block:urb]
+    |=  =urb-block:urb
     ^+  cor
-    ?.  ?|  =(num start-height:urb)
-            =(num +(num.block-id.state))
+    ?.  ?|  =(num:urb-block start-height:urb)
+            =(num:urb-block +(num.block-id.state))
         ==
-      %-  (slog leaf+"can't handle block {<num>}, expected block {<+(num.block-id.state)>}" ~)
-      ::  XX should crash
-      ::     i kinda don't mind a stateful core just
-      ::     returning existing state on error like a
-      ::     gall agent would return `this, but how is
-      ::     the code calling this function supposed to
-      ::     handle that case?
-      cor
+      %-  (slog leaf+"can't handle block {<num:block>}, expected block {<+(num.block-id.state)>}" ~)
+      cor  ::  XX crash instead?
     =.  num.block-id.state  +(num.block-id.state)
     ?~  txs.urb-block
-      ::  XX should crash?
-      cor
+      cor  ::  XX crash instead?
     =>  %=  .
           txs.urb-block  t.txs.urb-block
           cb-tx         [reward.urb-block i.txs.urb-block]
         ==
-    |-  ^+  cor
-    :: todo: handle coinbase tx
+    |-  
+    ^+  cor
+    :: XX handle coinbase tx
     ?~  txs.urb-block
       cor
     =.  cor  (handle-tx i.txs.urb-block)
