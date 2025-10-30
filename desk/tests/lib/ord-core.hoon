@@ -1,5 +1,5 @@
 /-  ord, urb, bitcoin
-/+  *test, ul=urb, lais, scr=btc-script, crac
+/+  *test, ul=urb, lais, scr=btc-script
 =>
 |%
 ++  bunt-id
@@ -47,7 +47,7 @@
   =/  lyf  1  ::  $life
   =/  xtr  0  ::  extra data
   =<  ?>(&(?=(%c suite.+<) ?=(^ sek.+<)) .)
-  %:  pit:nu:crac
+  %:  pit:nu:cric:crypto
       512  (shaz (jam sed lyf))
       %c   (rap 3 ~[lyf %btc %ord %gw %test])
       xtr

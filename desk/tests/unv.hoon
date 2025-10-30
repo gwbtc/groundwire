@@ -1,5 +1,5 @@
 /-  urb
-/+  *ord, ul=urb, *test, *mip, lais, crac, gw=groundwire, bip32, b173=bip-b173, rpc=json-rpc, scr=btc-script, strandio, btcio, bc=bitcoin
+/+  *ord, ul=urb, *test, *mip, lais, gw=groundwire, bip32, b173=bip-b173, rpc=json-rpc, scr=btc-script, strandio, btcio, bc=bitcoin
 =*  raws  raws:gw
 |%
 ++  make-unv-script
@@ -93,7 +93,7 @@
   ::
   ++  cac
     =<  ?>(&(?=(%c suite.+<) ?=(^ sek.+<)) .)
-    %:  pit:nu:crac
+    %:  pit:nu:cric:crypto
         512  (shaz (jam sed lyf))
         %c   (rap 3 ~[lyf %btc %ord %gw %test])
         xtr
