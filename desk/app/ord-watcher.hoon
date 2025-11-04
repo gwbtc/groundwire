@@ -147,7 +147,7 @@
       bind:m
     (get-block-by-number:btcio rpc ~ i)
   ?~  bluck  ~|  %cant-find-block-by-number  !!
-  ;<    new=[num:id:block:bitcoin urb-block:urb]
+  ;<    new=urb-block:urb
       bind:m
     (convert-block i u.bluck)
   =.  oc  (handle-block:oc new)
@@ -159,31 +159,49 @@
   ++  convert-block
     |=  [=num:id:block:bitcoin =block:bitcoin]
     =/  m  (strand:strandio ,[num=@ud urb-block:urb])
-    =/  deps  (find-block-deps:oc num block)
-    =/  txs  (tail txs.block)
+    ?.  =(num num:block)
+      ~&  >>  "error: %ord-watcher's num != num:block"
+      !!
+    ::  Filter block to urb-relevant txs.
+    =/  revs-and-block  (find-block-reveals:oc block)
+    =/  reveals   -.revs-and-block
+    =/  block  +.revs-and-block
+    =/  txs    (tail txs.block)  :: cb has no prevouts
+    ::  Backfill missing prevout values in our block's
+    ::  filtered transaction set. Unlike an urb-block,
+    ::  the block:bitcoin we have here doesn't include
+    ::  prevouts in its txs' inputs, so we fetch them. 
     |-  
     ^-  form:m
     ?~  txs
-      (pure:m (apply-block-deps:oc [num +.deps] -.deps))
-    =/  is  is.i.txs
+      (pure:m (apply-values-and-urbify:oc block reveals))
+    =/  is  is.i.txs  :: inputs
     |-  
     ^-  form:m
     :: XX refactor to use gettxout
-    ?~  is  ^$(txs t.txs)
-    =/  dep  (~(get by -.deps) [txid pos]:i.is)
-    ?:  &(?=(^ dep) ?=(^ value.u.dep))  $(is t.is)
+    ?~  is  
+      ^$(txs t.txs)
+    =/  rev  (~(get by reveals) [txid pos]:i.is)
+    ?:  &(?=(^ rev) ?=(^ value.u.rev))
+      $(is t.is)
     ;<  utx=(unit tx:bc)  bind:m
       (get-raw-transaction:btcio rpc ~ txid.i.is)
-    ?~  utx  !!
-    =/  os  os.u.utx
+    ?~  utx  ~|  %couldnt-fetch-tx  !!
+    =/  os  os.u.utx  :: outputs
     =|  pos=@ud
     |-  
     ^-  form:m
-    ?~  os  ^$(is t.is)
-    =/  dep  (~(get by -.deps) [id.u.utx pos])
-    ?:  &(?=(^ dep) ?=(^ value.u.dep))  $(os t.os, pos +(pos))
-    =/  sots=(list raw-sotx:urb)  ?~(dep ~ sots.u.dep)
-    $(os t.os, pos +(pos), -.deps (~(put by -.deps) [id.u.utx pos] [sots `value.i.os]))
+    ?~  os  
+      ^$(is t.is)
+    =/  rev  (~(get by reveals) [id.u.utx pos])
+    ?:  &(?=(^ rev) ?=(^ value.u.rev))  
+      $(os t.os, pos +(pos))
+    =/  sots=(list raw-sotx:urb)  ?~(rev ~ sots.u.rev)
+    $=  $
+      os  t.os
+      pos  +(pos)
+      reveals  (~(put by reveals) [id.u.utx pos] [sots `value.i.os])
+    ==
   --
 ::
 ::  Conversion arms. 

@@ -3,7 +3,7 @@
 ::
 +|  %constants
 ::
-++  start-height  1
+++  start-height  0  :: ?>  =(num:block +(num.block-id.state))
 ++  start-hash    0x0
 ::
 +|  %types
