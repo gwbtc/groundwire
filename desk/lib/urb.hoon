@@ -26,15 +26,18 @@
 ::  which is what %ord-watcher ultimately
 ::  uses this library for.
 ::
+::  The state of "ord-core" (the main driver of this
+::  library) is an index of urb-relevant transactions
+::  including the associated prevouts and inscriptions.
+::
 ::  The logic flow here is:
 ::  1. %ord-watcher receives a block from RPC and then
 ::     calls ++find-block-reveals, which filters it
 ::     down to txs containing urb reveals.
-::  2. %ord-watcher asynchronously backfills the
-::     block's txs with missing input values.
-::  3. %ord-watcher calls ++apply-values-and-urbify
-::     on the block with the new tx set. This converts
-::     it to an urb-block.
+::  2. %ord-watcher asynchronously fetches the prevout 
+::     values for each tx in the filtered block.
+::  3. %ord-watcher calls ++apply-prevouts-and-urbify
+::     on the block. This converts it to an urb-block.
 ::  4. %ord-watcher calls ++handle-block on the
 ::     urb-block, which processes its txs for sotx and
 ::     returns an updated state and a list of fx.
@@ -333,9 +336,7 @@
     |=  =block:bitcoin
     =|  reveals=(map [txid:ord pos:urb] [sots=(list raw-sotx:urb) value=(unit @ud)])
     ^+  [reveals block]
-    ?.  ?|  =(num:block start-height:urb)
-            =(num:block +(num.block-id.state))
-        ==
+    ?.  =(num:block +(num.block-id.state))
       %-  (slog leaf+"can't handle block {<num:block>}, expected block {<+(num.block-id.state)>}" ~)
       [reveals block]  ::  XX crash instead?
     ::
@@ -382,8 +383,7 @@
     =.  need  |(need ?=(^ value))
     ::
     ::  Parse the witness for sots. If no sots, just 
-    ::  add the value to reveals (in case there are sots
-    ::  in a future input of this block) and recurse.
+    ::  preserve our potential saved value and recurse.
     =/  raw-script=(unit octs)
       =/  rwit
         (flop witness.i.is)
@@ -429,10 +429,12 @@
       ==
     --
   ::
-  ::  Fill in a block's txs with input values
+  ::  Fill in a block's txs with prevouts
   ::  given in a reveals map and restructure it
-  ::  to a urb-block.
-  ++  apply-values-and-urbify
+  ::  to a urb-block. Unlike a block:bitcoin, an
+  ::  urb-block tracks prevout values within inputs,
+  ::  because we aren't indexing every previous block.
+  ++  apply-prevouts-and-urbify
     |=  $:  block:bitcoin 
             reveals=(map [txid:ord pos:urb] [sots=(list raw-sotx:urb) value=(unit @ud)])
         ==
@@ -475,9 +477,7 @@
   ++  handle-block
     |=  =urb-block:urb
     ^+  cor
-    ?.  ?|  =(num:urb-block start-height:urb)
-            =(num:urb-block +(num.block-id.state))
-        ==
+    ?.  =(num:urb-block +(num.block-id.state))
       %-  (slog leaf+"can't handle block {<num:block>}, expected block {<+(num.block-id.state)>}" ~)
       cor  ::  XX crash instead?
     =.  num.block-id.state  +(num.block-id.state)

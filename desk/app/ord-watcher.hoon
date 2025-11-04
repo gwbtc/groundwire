@@ -164,22 +164,24 @@
       !!
     ::  Filter block to urb-relevant txs.
     =/  revs-and-block  (find-block-reveals:oc block)
-    =/  revs   -.revs-and-block
+    =/  reveals   -.revs-and-block
     =/  block  +.revs-and-block
     =/  txs    (tail txs.block)  :: cb has no prevouts
-    ::  Backfill missing input values in our block's
-    ::  filtered transaction set.      
+    ::  Backfill missing prevout values in our block's
+    ::  filtered transaction set. Unlike an urb-block,
+    ::  the block:bitcoin we have here doesn't include
+    ::  prevouts in its txs' inputs, so we fetch them. 
     |-  
     ^-  form:m
     ?~  txs
-      (pure:m (apply-values-and-urbify:oc block revs))
+      (pure:m (apply-values-and-urbify:oc block reveals))
     =/  is  is.i.txs  :: inputs
     |-  
     ^-  form:m
     :: XX refactor to use gettxout
     ?~  is  
       ^$(txs t.txs)
-    =/  rev  (~(get by revs) [txid pos]:i.is)
+    =/  rev  (~(get by reveals) [txid pos]:i.is)
     ?:  &(?=(^ rev) ?=(^ value.u.rev))
       $(is t.is)
     ;<  utx=(unit tx:bc)  bind:m
@@ -191,14 +193,14 @@
     ^-  form:m
     ?~  os  
       ^$(is t.is)
-    =/  rev  (~(get by revs) [id.u.utx pos])
+    =/  rev  (~(get by reveals) [id.u.utx pos])
     ?:  &(?=(^ rev) ?=(^ value.u.rev))  
       $(os t.os, pos +(pos))
     =/  sots=(list raw-sotx:urb)  ?~(rev ~ sots.u.rev)
     $=  $
       os  t.os
       pos  +(pos)
-      revs  (~(put by revs) [id.u.utx pos] [sots `value.i.os])
+      reveals  (~(put by reveals) [id.u.utx pos] [sots `value.i.os])
     ==
   --
 ::
