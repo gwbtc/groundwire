@@ -67,9 +67,10 @@
     =.  tx  (~(add-input-1 build:gw tx) utxo ~ ~)
         :: by passing ~ we default to SIGHASH_DEFAULT, equivalent to SIGHASH_ALL, so when we sign this input later we'll commit to all and only
         :: the inputs and outputs we've added to the transaction up to that point
-    =.  value.out
+    =/  new-value
       ?~  spend-script.utxo  (sub value.utxo 150)
       (sub value.utxo (add (lent u.spend-script.utxo) 400))
+    =.  value.out  new-value
     =.  tx  (~(add-output-1 build:gw tx) out)
     =^  tx  eny  (~(finalize build:gw tx) eny)
     =/  raw=octs  (txn:encode:gw tx)
@@ -309,13 +310,11 @@
 --
 =/  oc  ord-core:ul
 |%
-+$  waletz  [ali=_wallet bob=_wallet car=_wallet dav=_wallet]
++$  waletz  [ali=_wallet car=_wallet]
 ++  make-walz
   |=  waletz
   :*  ali=(nu:walt 0 ali)
-      bob=(nu:walt 0 bob)
       car=(nu:walt 0 car)
-      dav=(nu:walt 0 dav)
   ==
 ::
 ::++  count-sonts
@@ -334,35 +333,33 @@
   ::oc
 ::
 ++  test-0
-  |=  =waletz
+  |=  [ali=_wallet car=_wallet]
   ^-  (list byts)
-  =+  (make-walz waletz)
-  =^  adopt-commit-out-ali  ali  (adopt:btc:ali fig:ali)
-  =^  spawn-commit-out-ali  ali  (spawn:btc:ali adopt-commit-out-ali `0 0 0)
-  =^  spawn-commit-tx-ali  ali  (spend:btc:ali spawn-commit-out-ali)
-  =^  adopt-commit-tx-ali  ali  (spend:btc:ali adopt-commit-out-ali)
-  =^  keys-commit-ali  ali  (keys:btc:ali |)
-  =^  keys-commit-tx-ali  ali  (spend:btc:ali keys-commit-ali)
-  =^  adopt-car-commit-ali  ali  (adopt:btc:ali fig:car)
+  =+  [ali=(nu:walt 0 ali) car=(nu:walt 0 car)]
+  =^  adopt-commit-out-ali     ali  (adopt:btc:ali fig:ali)
+  =^  spawn-commit-out-ali     ali  (spawn:btc:ali adopt-commit-out-ali `0 0 0)
+  =^  spawn-commit-tx-ali      ali  (spend:btc:ali spawn-commit-out-ali)
+  =^  adopt-commit-tx-ali      ali  (spend:btc:ali adopt-commit-out-ali)
+  =^  keys-commit-ali          ali  (keys:btc:ali |)
+  =^  keys-commit-tx-ali       ali  (spend:btc:ali keys-commit-ali)
+  =^  adopt-car-commit-ali     ali  (adopt:btc:ali fig:car)
   =^  adopt-car-commit-tx-ali  ali  (spend:btc:ali adopt-car-commit-ali)
-
+  ::
   =^  escape-commit-out-car  car  (escape:btc:car fig:ali)
-  =^  spawn-commit-out-car  car  (spawn:btc:car escape-commit-out-car `0 0 0)
-  =^  spawn-commit-tx-car  car  (spend:btc:car spawn-commit-out-car)
-  =^  escape-commit-tx-car  car  (spend:btc:car escape-commit-out-car)
-  =^  keyspend-out-0-car   car  make-key-out:btc:car
-  =^  keyspend-tx-0-car       car  (spend:btc:car keyspend-out-0-car)
-
-
-  =^  keyspend-out-0-ali   ali  make-key-out:btc:ali
-  =^  keyspend-tx-0-ali       ali  (spend:btc:ali keyspend-out-0-ali)
-
+  =^  spawn-commit-out-car   car  (spawn:btc:car escape-commit-out-car `0 0 0)
+  =^  spawn-commit-tx-car    car  (spend:btc:car spawn-commit-out-car)
+  =^  escape-commit-tx-car   car  (spend:btc:car escape-commit-out-car)
+  =^  keyspend-out-0-car     car  make-key-out:btc:car
+  =^  keyspend-tx-0-car      car  (spend:btc:car keyspend-out-0-car)
+  ::
+  =^  keyspend-out-0-ali  ali  make-key-out:btc:ali
+  =^  keyspend-tx-0-ali   ali  (spend:btc:ali keyspend-out-0-ali)
+  ::
   ::=^  keys-commit-ali  ali  (keys:btc:ali |)
   ::=/  nkeys-commit-ali  (can 3 script-pubkey.keys-commit-ali
   ::8^value.keys-commit-ali ~)
   ::=/  hkeys-commit-ali  (shay (add 8 p.script-pubkey.keys-commit-ali) nkeys-out-ali)
-
-
+  ::
   :~  spawn-commit-tx-ali
       adopt-commit-tx-ali
       keys-commit-tx-ali

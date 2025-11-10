@@ -6,25 +6,30 @@
 |=  args=vase
 =/  m  (strand:strandio ,vase)
 ^-  form:m
-=/  =req-to:btcio  (need !<((unit req-to:btcio) args))
+=/  [=req-to:btcio seds=(list @uw)]  (need !<((unit [req-to:btcio (list @uw)]) args))
 =/  oc  ord-core:ul
 |^
-::;<  =bowl:spider  bind:m  get-bowl:strandio
-=/  seds=(list @)
-  :~  (shax 'ali')
-      (shax 'bob')
-      (shax 'car')
-      (shax 'dav')
-  ==
+?~  seds
+  ~|  %no-seeds
+  !!
+?.  =(2 (lent seds))
+  ~|  %need-exactly-two-seeds
+  !!
 ;<  malz=(list mal)  bind:m  (min-malz seds)
+?~  malz
+  ~|  %no-malz
+  !!
 =/  walz=(list _wallet:unv-tests)
   %+  turn  malz
   |=  mal=_+<:nu:wallet:unv-tests
   ^+  wallet:unv-tests
-  (nu:wallet:unv-tests mal)
-?>  ?=([* * * * ~] walz)
-=/  waz=waletz:unv-tests  [i i.t i.t.t i.t.t.t]:walz
-=/  txs  (test-0:unv-tests waz)
+  =/  wal  (nu:wallet:unv-tests mal)
+  wal
+?~  walz
+  ~|  %no-walz
+  !!
+=+  [ali=i.walz car=(head (tail walz))]
+=/  txs  (test-0:unv-tests [ali car])
 ;<  *  bind:m
   (mine-blocks-to-address:btcio req-to ~ dumb-wal 1)
 =|  ret=(list @ux)
