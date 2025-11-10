@@ -308,10 +308,10 @@
 +$  waletz  [ali=_wallet bob=_wallet car=_wallet dav=_wallet]
 ++  make-walz
   |=  waletz
-  :*  ali=(nu:walt 0xcafe.babe ali)
-      bob=(nu:walt 0xcafe.babe bob)
-      car=(nu:walt 0xcafe.babe car)
-      dav=(nu:walt 0xcafe.babe dav)
+  :*  ali=(nu:walt 0 ali)
+      bob=(nu:walt 0 bob)
+      car=(nu:walt 0 car)
+      dav=(nu:walt 0 dav)
   ==
 ::
 ::++  count-sonts
