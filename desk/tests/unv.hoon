@@ -93,9 +93,13 @@
   ::
   ++  cac
     =<  ?>(&(?=(%c suite.+<) ?=(^ sek.+<)) .)
+    =.  lyf  1
+    =.  xtr  0
     %:  pit:nu:cric:crypto
-        512  (shaz (jam sed lyf))
-        %c   (rap 3 ~[lyf %btc %ord %gw %test])
+        512
+        sed
+        %c
+        (rap 3 ~[lyf %btc %ord %gw %test])
         xtr
     ==
   ::
