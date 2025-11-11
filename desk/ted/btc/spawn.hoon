@@ -1,4 +1,4 @@
-/-  spider
+/-  spider, bitcoin
 /+  gw=groundwire, b173=bip-b173,
     scr=btc-script, strandio, btcio, bl=bitcoin
 /=  unv-tests  /tests/unv
@@ -25,11 +25,11 @@
   (get-block-by-hash:btcio req-to ~ i.u.mined)
 ?~  boc
   !!
-=/  tx      (head txs.u.boc)
-=/  out     (head os.tx)
-=/  output  (make-output:unv-tests kp `value.out ~)
-=/  utxo    [[id.tx 0] output]
-=/  wal     (nu:wallet:unv-tests sed i utxo)
+=/  tx=tx:bitcoin          (head txs.u.boc)
+=/  out=output:tx:bitcoin  (head os.tx)
+=/  output=output:gw       (make-output:unv-tests kp `value.out ~)
+=/  utxo=utxo:unv-tests    [[id.tx 0] output]
+=/  wal                    (nu:wallet:unv-tests sed i utxo)
 =/  txs
   ^-  (list byts)
   =+  walt=(nu:walt:unv-tests 0 wal)
