@@ -7,7 +7,6 @@
 =/  m  (strand:strandio ,vase)
 ^-  form:m
 =/  [=req-to:btcio sed=@uw]  (need !<((unit [req-to:btcio @uw]) args))
-|^
 ::  derive the wallet from the sed
 =+  [kp i]=%*(derive wallet:unv-tests sed sed)
 =/  tw=keypair:gw  ~(tweak-keypair p2tr:gw `x.pub.kp ~ `priv.kp)
@@ -20,7 +19,7 @@
 ::  mature the coinbase tx
 ;<    *
     bind:m
-  (mine-blocks-to-address:btcio req-to ~ dumb-wal 100)
+  (mine-blocks-to-address:btcio req-to ~ address 100)
 ;<    boc=(unit block:bl)
     bind:m
   (get-block-by-hash:btcio req-to ~ i.u.mined)
@@ -31,32 +30,7 @@
 =/  output  (make-output:unv-tests kp `value.out ~)
 =/  utxo    [[id.tx 0] output]
 =/  wal     (nu:wallet:unv-tests sed i utxo)
-=/  txs     (mini-test-0 wal)
-;<    *
-    bind:m
-  (mine-blocks-to-address:btcio req-to ~ dumb-wal 1)
-=|  ret=(list @ux)
-|-  ^-  form:m
-?~  txs
-  ::  finish by mining 8 blocks to finalize the spawn tx
-  ;<  *  bind:m
-    (mine-blocks-to-address:btcio req-to ~ dumb-wal 8)
-  ::  return list of sent txs
-  (pure:m !>(ret))
-::  send txs to testnet
-;<    *
-    bind:m
-  (mine-blocks-to-address:btcio req-to ~ dumb-wal 1)
-;<    res=(unit @ux)
-    bind:m
-  (send-raw-transaction:btcio req-to ~ i.txs)
-?~  res
-  ~|  'tx failed'
-  !!
-$(txs t.txs, ret u.res^ret)
-::
-++  mini-test-0
-  |=  wal=_wallet:unv-tests
+=/  txs
   ^-  (list byts)
   =+  walt=(nu:walt:unv-tests 0 wal)
   =^  escape-commit-out  walt  (escape:btc:walt fig:walt)
@@ -67,9 +41,25 @@ $(txs t.txs, ret u.res^ret)
   :~  spawn-commit-tx
       escape-commit-tx
   ==
-::
-++  dumb-wal
-  ^-  @t
-  =+  [kp i]=%*(derive wallet:unv-tests sed (shax 'dumb-wall'))
-  (need (encode-taproot:b173 %regtest 32^x.pub.kp))
---
+;<    *
+    bind:m
+  (mine-blocks-to-address:btcio req-to ~ address 1)
+=|  ret=(list @ux)
+|-  ^-  form:m
+?~  txs
+  ::  finish by mining 8 blocks to finalize the spawn tx
+  ;<  *  bind:m
+    (mine-blocks-to-address:btcio req-to ~ address 8)
+  ::  return list of sent txs
+  (pure:m !>(ret))
+::  send txs to testnet
+;<    *
+    bind:m
+  (mine-blocks-to-address:btcio req-to ~ address 1)
+;<    res=(unit @ux)
+    bind:m
+  (send-raw-transaction:btcio req-to ~ i.txs)
+?~  res
+  ~|  'tx failed'
+  !!
+$(txs t.txs, ret u.res^ret)
