@@ -34,14 +34,16 @@
         *insc-ids:ord
         *unv-ids:ord
     ==
-  :_  this(rpc new-rpc)
-  :~  :*  %pass  /listen  %arvo  %j 
+  :_  %=  this
+        rpc        new-rpc
+        ord-state  new-ord-state
+      ==
+  :~  :*  %pass  /timer  %arvo  %b
+          %wait  now.bowl
+      ==
+      :*  %pass  /listen  %arvo  %j 
           %listen  *(set ship)  [%| dap.bowl]
       ==
-      :*  %pass  /blocks  %arvo  %k
-          %lard  q.byk.bowl
-          (get-blocks new-rpc new-ord-state)
-      ==  
   ==
 ::
 ++  on-save
@@ -86,7 +88,10 @@
   ::  Run +get-blocks at regular intervals.
       [%timer ~]
     :_  this
-    :~  :*  %pass  /blocks  %arvo  %k
+    :~  :*  %pass  /timer  %arvo  %b
+            %wait  (add ~s30 now.bowl)
+        ==
+        :*  %pass  /blocks  %arvo  %k
             %lard  q.byk.bowl
             (get-blocks [rpc ord-state]:state)
         ==  
@@ -107,7 +112,6 @@
         [(list [id:block:bitcoin effect:ord]) state:ord]
         vase
       :_  this(ord-state.state +.fx-and-state)
-      :-  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
       (udiffs-to-jael-cards (fx-to-udiffs -.fx-and-state))
     ==
   ==
