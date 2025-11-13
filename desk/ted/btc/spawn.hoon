@@ -30,36 +30,32 @@
 =/  output=output:gw       (make-output:unv-tests kp `value.out ~)
 =/  utxo=utxo:unv-tests    [[id.tx 0] output]
 =/  wal                    (nu:wallet:unv-tests sed i utxo)
-=/  txs
-  ^-  (list byts)
-  =+  walt=(nu:walt:unv-tests 0 wal)
-  =^  escape-commit-out  walt  (escape:btc:walt fig:walt)
-  =^  spawn-commit-out   walt  (spawn:btc:walt [spk=escape-commit-out pos=`0 off=0 tej=0])
-  =^  spawn-commit-tx    walt  (spend:btc:walt spawn-commit-out)
-  =^  escape-commit-tx   walt  (spend:btc:walt escape-commit-out)
-  ::
-  :~  spawn-commit-tx
-      escape-commit-tx
-  ==
-;<    *
+=+  walt=(nu:walt:unv-tests 0 wal)
+=^  escape-commit-out  walt  (escape:btc:walt fig:walt)
+=^  spawn-commit-out   walt  (spawn:btc:walt [spk=escape-commit-out pos=`0 off=0 tej=0])
+=^  spawn-commit-tx    walt  (spend:btc:walt spawn-commit-out)
+=^  escape-commit-tx   walt  (spend:btc:walt escape-commit-out)
+=/  txs  :~  spawn-commit-tx
+             escape-commit-tx
+         ==
+=/  final-utxo  utxo:wal:walt
+::  send spawn-commit-tx
+;<    spawn-res=(unit @ux)
     bind:m
-  (mine-blocks-to-address:btcio req-to ~ address 1)
-=|  ret=(list @ux)
-|-  ^-  form:m
-?~  txs
-  ::  finish by mining 8 blocks to finalize the spawn tx
-  ;<  *  bind:m
-    (mine-blocks-to-address:btcio req-to ~ address 8)
-  ::  return list of sent txs
-  (pure:m !>(ret))
-::  send txs to testnet
-;<    *
-    bind:m
-  (mine-blocks-to-address:btcio req-to ~ address 1)
-;<    res=(unit @ux)
-    bind:m
-  (send-raw-transaction:btcio req-to ~ i.txs)
-?~  res
-  ~|  'tx failed'
+  (send-raw-transaction:btcio req-to ~ spawn-commit-tx)
+?~  spawn-res
+  ~|  'spawn tx failed'
   !!
-$(txs t.txs, ret u.res^ret)
+::  send escape-commit-tx  
+;<    escape-res=(unit @ux)
+    bind:m
+  (send-raw-transaction:btcio req-to ~ escape-commit-tx)
+?~  escape-res
+  ~|  'escape tx failed'
+  !!
+::  finish by mining 8 blocks to finalize the transactions
+;<  *  bind:m
+  (mine-blocks-to-address:btcio req-to ~ address 8)
+::  return ship ID and outpoint
+=/  outpoint  -.final-utxo  :: Extract [txid pos] from UTXO  
+(pure:m !>([fig:walt outpoint]))
