@@ -56,5 +56,4 @@
 ::  finish by mining 8 blocks to finalize the transactions
 ;<  *  bind:m
   (mine-blocks-to-address:btcio req-to ~ address 8)
-::  return ship ID and complete UTXO
-(pure:m !>([fig:walt final-utxo]))
+(pure:m !>(final-utxo))
