@@ -15,11 +15,17 @@
 ?~  utxo-data
   ~|  'UTXO not found or already spent'
   !!
-::  reconstruct UTXO from outpoint and seed
+::  reconstruct UTXO from outpoint and seed  
 =+  [kp i]=%*(derive wallet:unv-tests sed sed)  :: Get the keypair info
 =/  tw=keypair:gw  ~(tweak-keypair p2tr:gw `x.pub.kp ~ `priv.kp)
 =/  address=@t  (need (encode-taproot:b173 %regtest 32^x.pub.tw))
-=/  output=output:gw  (make-output:unv-tests kp ~ ~)  :: Reconstruct output
+::  extract value from blockchain UTXO data and convert to satoshis  
+=/  utxo-value=@ud
+  %-  |=  [whole=@ud frac=@ud]
+      ^-  @ud
+      (add (mul whole 100.000.000) frac)
+  (scan `tape`(slag 2 (scow %ta ((ot:dejs:format ~[value+no:dejs:format]) u.utxo-data))) ;~((glue dot) dem dem))
+=/  output=output:gw  (make-output:unv-tests kp `utxo-value ~)  :: Reconstruct output with actual value
 =/  current-utxo=utxo:unv-tests  [[txid pos] output]
 =/  wal  (nu:wallet:unv-tests sed i current-utxo)
 =+  walt=(nu:walt:unv-tests 0 wal)

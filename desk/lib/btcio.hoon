@@ -135,6 +135,26 @@
   ?~  res=(de:base16:mimes:html p.res.res)  (pure:m ~)
   (pure:m `[txid (decodew:txu:bc u.res)])
 ::
+++  get-tx-out
+  |=  [=req-to id=(unit @t) txid=@ux pos=@ud include-mempool=?]
+  =/  m  (strand:strandio (unit json))
+  ^-  form:m
+  ;<    res=response:rpc
+      bind:m
+    %+  request-rpc
+      req-to
+    ^-  request:rpc
+    :*  ?~(id 'get-tx-out' u.id)
+        '2.0'
+        'gettxout'
+        list+[s+(render-hex-bytes 32 txid) (numb:enjs:format pos) b+include-mempool ~]
+    ==
+  ?.  ?=([%result *] res)
+    (pure:m ~)
+  ~&  >>  %gettxout-response
+  ~&  >>  res.res
+  (pure:m `res.res)
+::
 ++  get-block-count
   |=  [=req-to id=(unit @t)]
   =/  m  (strand:strandio (unit @ud))
