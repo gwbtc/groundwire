@@ -142,9 +142,9 @@
         [%adopt her]
       ::
       ++  fief
-        |=  fief=(unit ^^fief)
+        |=  fef=(unit ^^fief)
         ^-  single:skim-sotx:urb
-        [%fief fief]
+        [%fief fef]
       ::
       ++  batch
         |=  sots=(list single:skim-sotx:urb)
@@ -288,13 +288,13 @@
     ::   (make-unv-script (detach:unv-tx +<) ~)
     ::  out^cor
     ::::
-    ::++  fief
-    ::  |=  fef=(unit ^fief)
-    ::  ^-  [output:gw _cor]
-    ::  =^  out  wal
-    ::    %^  build-output:wal  (sub val:wal 150)
-    ::   (make-unv-script (fief:unv-tx +<) ~)
-    ::  out^cor
+    ++  fief
+      |=  fef=(unit ^fief)
+      ^-  [output:gw _cor]
+      =^  out  wal
+        %-  build-output:wal
+        `(make-unv-script (fief:unv-tx +<) ~)
+      out^cor
     ::::
     ::++  set-mang
     ::  |=  man=(unit mang-tx)
