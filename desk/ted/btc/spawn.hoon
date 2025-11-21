@@ -1,4 +1,4 @@
-/-  spider, bitcoin
+/-  spider, bitcoin, urb
 /+  gw=groundwire, b173=bip-b173,
     scr=btc-script, strandio, btcio, bl=bitcoin
 /=  unv-tests  /tests/unv
@@ -6,7 +6,11 @@
 |=  args=vase
 =/  m  (strand:strandio ,vase)
 ^-  form:m
-=/  [=req-to:btcio sed=@uw]  (need !<((unit [req-to:btcio @uw]) args))
+=/  [=req-to:btcio sed=@uw =single:skim-sotx:urb]
+  (need !<((unit [req-to:btcio @uw single:skim-sotx:urb]) args))
+?.  =(%spawn -.single)
+  ~|  %wrong-sotx
+  !!
 ::  derive the wallet from the sed
 =+  ^=  [kp i]
     %*(derive wallet:unv-tests sed sed)
@@ -40,6 +44,7 @@
 =/  utxo=utxo:unv-tests    [[id.tx 0] output]
 =/  wal
   (nu:walt:unv-tests 0 (nu:wallet:unv-tests sed i utxo))
+::  XX should use inputs given in the args to spawn
 =^  adopt-commit-out     wal  (adopt:btc:wal fig:wal)
 =^  spawn-commit-out     wal  (spawn:btc:wal adopt-commit-out `0 0 0)
 =^  spawn-reveal-tx      wal  (spend:btc:wal spawn-commit-out)
