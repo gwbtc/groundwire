@@ -17,8 +17,6 @@
   ~|  %wrong-sotx
   !!
 ?>  ?=([%fief *] single)
-~&  >>  %fief-single
-~&  >>  fief.single
 ::  derive the wallet from the sed
 =+  [kp i]=%*(derive wallet:unv-tests sed sed)
 =/  tw=keypair:gw  ~(tweak-keypair p2tr:gw `x.pub.kp ~ `priv.kp)
