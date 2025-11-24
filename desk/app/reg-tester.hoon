@@ -3,32 +3,17 @@
 /=  unv-tests  /tests/unv
 |%
 +$  card  card:agent:gall
-+$  state-0
-  $:  rpc=req-to:btcio
-  ==
+++  rpc
+  ['http://localhost:18443' [%basic 'bitcoinrpc:bitcoinrpc']]
 --
 %-  agent:dbug
 ^-  agent:gall
-=|  state-0
-=*  state  -
 %+  verb  &
 |_  =bowl:gall
 +*  this   .
     def    ~(. (default-agent this %|) bowl)
 ::
 ++  on-init
-  ^-  (quip card _this)
-  :-  ~
-  %=  this
-    rpc  ['http://localhost:18443' [%basic 'bitcoinrpc:bitcoinrpc']]
-  ==
-::
-++  on-save
-  ^-  vase
-  !>(state)
-::
-++  on-load
-  |=  =vase
   ^-  (quip card _this)
   `this
 ::
@@ -45,8 +30,6 @@
     !<([@uw (unit utxo:unv-tests) many:skim-sotx:urb] vase)
     ?-    -.many
         %batch
-      ::  XX why can't it find rpc.state??
-      =*  rpc  ['http://localhost:18443' [%basic 'bitcoinrpc:bitcoinrpc']]
       ?>  ?=([%batch *] many)
       ?~  bat.many
         ~|  %empty-batch
@@ -82,8 +65,6 @@
     ::
         %spawn
       :_  this
-      ::  XX why can't it find rpc.state??
-      =*  rpc  ['http://localhost:18443' [%basic 'bitcoinrpc:bitcoinrpc']]
       :~  :*  %pass
               /res/spawn/(scot %uw sed)/(scot %uv (jam many))
               %arvo
@@ -95,8 +76,6 @@
     ::
         ?(%adopt %escape %fief %keys)
       :_  this
-      ::  XX why can't it find rpc.state??
-      =*  rpc  ['http://localhost:18443' [%basic 'bitcoinrpc:bitcoinrpc']]
       :~  :*  %pass
               /res/(scot %tas -.many)/(scot %uw sed)/(scot %uv (jam many))
               %arvo
@@ -154,8 +133,6 @@
         (oust [0 1] bat.cued-many)
       ?~  new-batch
         `this
-      ::  XX why can't it find rpc.state??
-      =*  rpc  ['http://localhost:18443' [%basic 'bitcoinrpc:bitcoinrpc']]
       :_  this
       :~  :*  %pass
               /res/batch/(scot %uw sed.pole)/(scot %uv (jam [%batch new-batch]))
@@ -176,6 +153,8 @@
     ==
   ==
 ::
+++  on-save   on-save:def
+++  on-load   on-load:def
 ++  on-leave  on-leave:def
 ++  on-agent  on-agent:def
 ++  on-fail   on-fail:def
