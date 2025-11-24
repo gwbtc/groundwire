@@ -6,18 +6,12 @@
 |=  args=vase
 =/  m  (strand:strandio ,vase)
 ^-  form:m
-::+$  fief
-::  $%  [%turf p=(list turf) q=@udE]
-::      [%if p=@ifF q=@udE]
-::      [%is p=@isH q=@udE]
-::  ==
 =/  [=req-to:btcio sed=@uw =utxo:unv-tests =single:skim-sotx:urb]
   (need !<((unit [req-to:btcio @uw utxo:unv-tests single:skim-sotx:urb]) args))
 ?.  =(%fief -.single)
   ~|  %wrong-sotx
   !!
 ?>  ?=([%fief *] single)
-::  derive the wallet from the sed
 =+  [kp i]=%*(derive wallet:unv-tests sed sed)
 =/  tw=keypair:gw  ~(tweak-keypair p2tr:gw `x.pub.kp ~ `priv.kp)
 =/  address=@t  (need (encode-taproot:b173 %regtest 32^x.pub.tw))
