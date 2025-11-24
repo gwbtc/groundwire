@@ -94,10 +94,21 @@
       ==
     ::
         ?(%adopt %escape %fief %keys)
-      ::  XX extract utxo from act
-      ::  XX run relevant thread with utxo
-      ~&  %not-implemented-yet
-      `this
+      :_  this
+      ::  XX why can't it find rpc.state??
+      =*  rpc  ['http://localhost:18443' [%basic 'bitcoinrpc:bitcoinrpc']]
+      :~  :*  %pass
+              /res/(scot %tas -.many)/(scot %uw sed)/(scot %uv (jam many))
+              %arvo
+              %k
+              %fard
+              :*  %groundwire
+                  `term`(rap 3 ~[%btc- -.many])
+                  [%noun !>(`[rpc sed utxo many])]
+              ==
+          ==
+      ==
+
     ::
       ?(%cancel-escape %detach %reject %set-mang)
       ~|  %not-supported-by-wallet-core
