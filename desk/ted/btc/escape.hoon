@@ -1,4 +1,4 @@
-/-  spider, bitcoin
+/-  spider, bitcoin, urb
 /+  gw=groundwire, b173=bip-b173,
     scr=btc-script, strandio, btcio, bl=bitcoin
 /=  unv-tests  /tests/unv
@@ -6,15 +6,18 @@
 |=  args=vase
 =/  m  (strand:strandio ,vase)
 ^-  form:m
-=/  [=req-to:btcio her=@p sed=@uw =utxo:unv-tests]
-  (need !<((unit [req-to:btcio @p @uw utxo:unv-tests]) args))
-::  derive the wallet from the sed
+=/  [=req-to:btcio sed=@uw =utxo:unv-tests =single:skim-sotx:urb]
+  (need !<((unit [req-to:btcio @uw utxo:unv-tests single:skim-sotx:urb]) args))
+?.  =(%escape -.single)
+  ~|  %wrong-sotx
+  !!
+?>  ?=([%escape *] single)
 =+  [kp i]=%*(derive wallet:unv-tests sed sed)
 =/  tw=keypair:gw  ~(tweak-keypair p2tr:gw `x.pub.kp ~ `priv.kp)
 =/  address=@t  (need (encode-taproot:b173 %regtest 32^x.pub.tw))
 =/  wal
   (nu:walt:unv-tests 0 (nu:wallet:unv-tests sed i utxo))
-=^  escape-commit-out    wal  (escape:btc:wal her)
+=^  escape-commit-out    wal  (escape:btc:wal parent.single)
 =^  escape-reveal-tx     wal  (spend:btc:wal escape-commit-out)
 =^  keyspend-commit-out  wal  make-key-out:btc:wal
 =^  keyspend-reveal-tx   wal  (spend:btc:wal keyspend-commit-out)
