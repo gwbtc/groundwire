@@ -27,6 +27,7 @@
 ::  and start a timer to fetch again.
 ++  on-init
   ^-  (quip card _this)
+  ~&  >  'Initializing %ord-watcher.'
   =/  new-rpc  ['http://localhost:18443' [%basic 'bitcoinrpc:bitcoinrpc']]
   =/  new-ord-state
     :*  [start-hash:urb start-height:urb]
@@ -83,8 +84,9 @@
   ^-  (quip card _this)
   ?+    wire  (on-arvo:def wire sign-arvo)
   ::
-  ::  Run +get-blocks at regular intervals.
+  ::  Run ++get-blocks at regular intervals.
       [%timer ~]
+    ~&  'Fetching blocks...'
     :_  this
     :~  :*  %pass  /blocks  %arvo  %k
             %lard  q.byk.bowl
@@ -92,10 +94,11 @@
         ==  
     ==
   ::
-  ::  Our +get-blocks thread returned. Update
+  ::  Our ++get-blocks thread returned. Update
   ::  ord-state, emit udiffs to Jael, and set a timer
   ::  to run the thread again.
       [%blocks ~]
+    ~&  'Done processing blocks.'
     ?+    sign-arvo  (on-arvo:def wire sign-arvo)
         [%khan %arow *]
       ?.  -.p.sign-arvo
@@ -122,7 +125,7 @@
 ::  Fetch blocks in range(last-processed + 1, latest - 6)
 ::  from the provided RPC endpoint, then use a stateful 
 ::  ord-core to process these blocks, returning
-::  a new ord-state and a list of fx in +on-arvo.
+::  a new ord-state and a list of fx in ++on-arvo.
 ++  get-blocks
   |=  [rpc=req-to:btcio ord-state=state:ord]
   ^-  shed:khan
@@ -130,15 +133,14 @@
   =/  oc
     %-  abed:ord-core:ul
     ord-state
-  ::  This barket lets us easily include oc in 
-  ::  +convert-block's context.
-  |^
+  |^  ::  Include oc in ++convert-block's context.
   =/  m  (strand:strandio ,vase)
   ;<    latest-block=(unit @ud)
       bind:m
     (get-block-count:btcio rpc ~)
   ?~  latest-block  ~|  %couldnt-find-latest-block  !!
-  ~&  >  "latest block is {<u.latest-block>}"
+  ~&  "Last processed block is {<num.block-id.ord-state>}"
+  ~&  "Latest known block is {<u.latest-block>}"
   =/  last-settled-block  (sub u.latest-block 6)
   |-  
   ?.  (lte i last-settled-block)
@@ -150,22 +152,27 @@
   ;<    new=urb-block:urb
       bind:m
     (convert-block i u.bluck)
+  ~&  >>  "Processing block {<i>}"
   =.  oc  (handle-block:oc new)
-  ~&  >  "processed block {<i>} of {<last-settled-block>}"
   $(i +(i))
   ::
   ::  Convert a block:bitcoin into a urb-block:urb.
   ::  This requires an async +get-raw-transaction call.
   ++  convert-block
     |=  [=num:id:block:bitcoin =block:bitcoin]
-    =/  m  (strand:strandio ,[num=@ud urb-block:urb])
-    ?.  =(num num:block)
-      ~&  >>  "error: %ord-watcher's num != num:block"
-      !!
+    =/  m  (strand:strandio ,urb-block:urb)
+    ::  XX Like urb-block, block:bitcoin apparently doesn't actually
+    ::     include its num yet either
+    :: ?.  =(num num:block)
+    ::   ~&  >>  "error: %ord-watcher's num != num:block"
+    ::   !!
     ::  Filter block to urb-relevant txs.
+    ~&  >>  "Filtering block {<i>}"
     =/  revs-and-block  (find-block-reveals:oc block)
     =/  reveals   -.revs-and-block
+    ~&  [%reveals reveals]
     =/  block  +.revs-and-block
+    ~&  [%block block]
     =/  txs    (tail txs.block)  :: cb has no prevouts
     ::  Backfill missing prevout values in our block's
     ::  filtered transaction set. Unlike an urb-block,
@@ -174,7 +181,8 @@
     |-  
     ^-  form:m
     ?~  txs
-      (pure:m (apply-values-and-urbify:oc block reveals))
+      ~&  >>  "Applying prevouts to block {<i>}"
+      (pure:m (apply-prevouts-and-urbify:oc block reveals))
     =/  is  is.i.txs  :: inputs
     |-  
     ^-  form:m
@@ -197,7 +205,7 @@
     ?:  &(?=(^ rev) ?=(^ value.u.rev))  
       $(os t.os, pos +(pos))
     =/  sots=(list raw-sotx:urb)  ?~(rev ~ sots.u.rev)
-    $=  $
+    %=  $
       os  t.os
       pos  +(pos)
       reveals  (~(put by reveals) [id.u.utx pos] [sots `value.i.os])

@@ -1,3 +1,7 @@
+::  XX ~hanfel: this file's redundancies with sur/ord seem like they need to be
+::              deleted. I wonder if ord-watcher and sender should even just be
+::              renamed to urb-watcher and sender. sur/ord containing the ord-core
+::              type, which contains unvs, seems incorrect to me.
 /-  bitcoin, ord
 |%
 ::
@@ -20,7 +24,7 @@
   $+  urb-off
   @ud   ::  sat index in single output amount
 ::
-+$  sont
++$  sont  :: satpoint
   $+  urb-sont
   [=txid =pos =off]
 ::
@@ -34,7 +38,7 @@
 ::
 +$  sotx
   $+  urb-sotx
-  [[=ship sig=(unit @)] skim-sotx]
+  [[=ship sig=(unit @)] skim-sotx] :: XX don't remove sig, we want it for adoptions
 ::
 +$  mang
   $+  urb-mang
@@ -108,7 +112,7 @@
     $+  urb-skim-single
     $%  $:  %spawn  =pass
             ::from=(unit [=pos =off])
-            to=[spkh=@ux pos=(unit pos) =off tej=off]
+            to=[spkh=@ux pos=(unit pos) =off tej=off] :: which ordinal will control this @p (why a slice though?)
         ==
         [%keys =pass breach=?]
         [%escape parent=ship]

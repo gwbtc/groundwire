@@ -1,9 +1,9 @@
-::  /lib/urb.hoon
+::  /lib/urb.hoon is now /lib/ord-watcher.hoon
 ::
 ::  "unv" is short for "urbit envelope."
 ::  an unv is an atom that comes from the body
-::  of an ordinal script tagged with "urb" 
-::  (as opposed to "ord"):
+::  of an ordinal-style Taproot script tagged 
+::  with "urb" instead of "ord":
 ::
 ::  OP_PUSH 1 0
 ::  OP_IF
@@ -15,7 +15,7 @@
 ::  gets parsed into a list of "raw-sotx".
 ::  an ordinal script can also include multiple
 ::  unvs, giving us a (list (list raw-sotx))
-::  that we zing.
+::  that we flatten.
 ::
 ::  A raw-sotx is a [raw=octs sotx].
 ::  we keep the raw data around even after parsing
@@ -28,7 +28,7 @@
 ::
 ::  The state of "ord-core" (the main driver of this
 ::  library) is an index of urb-relevant transactions
-::  including the associated prevouts and inscriptions.
+::  with their associated prevouts and inscriptions.
 ::
 ::  The logic flow here is:
 ::  1. %ord-watcher receives a block from RPC and then
@@ -44,6 +44,20 @@
 ::  5. %ord-watcher turns these fx into udiffs and
 ::     gives them to Jael.
 ::
+::  XX Assume you submit a %spawn transaction and then spend the sont
+::  in a second transaction within the same block, but without 
+::  associating an attestation with it. Have we included that second
+::  transaction in our ++handle-block loop? No, we filtered it out
+::  on the basis that it didn't include an attestation or a known
+::  utxo.
+::
+::  Probably the next step here is to decrease the surface area by
+::  removing all references to the old bitcoin codebase and instead
+::  turning everything into urb-blocks immediately, and organizing
+::  the urb and ord libraries and inscription code correctly.
+::  (Probably the urb-block type should be "lower" than the urb/ord
+::  distinction, and they should both use it.)
+::
 /-  bitcoin, ord, urb
 /+  bscr=btc-script, crac, ol=ord
 =|  lac=_|
@@ -55,7 +69,7 @@
   ~>  %slog.[0 meg]
   +<+
 ::
-::  Wrap a unv in a no-op urb-tagged Bitcoin script.
+::  Wrap a unv in a no-op urb-tagged Taproot script.
 ++  en
   |%
   ++  unv-to-script
@@ -271,7 +285,7 @@
   ::  Encode ship and sont
   ::
   ++  take-sont
-    ^-  [(unit sont:urb) @ud]
+    ^-  [(unit sont:ord) @ud]
     =^  pad=@  cur  (take 0)
     ?.  =(pad 0)  ~^cur
     =^  txid    cur  (take 0 256)
@@ -331,18 +345,20 @@
   ::  or if its witness contains an urb reveal.
   ++  find-block-reveals
     ::
-    :: in order to properly fulfill the coinbase transaction, we need to
+    :: XX in order to properly fulfill the coinbase transaction, we need to
     :: keep track of the fee change from skipped tx's
     |=  =block:bitcoin
     =|  reveals=(map [txid:ord pos:urb] [sots=(list raw-sotx:urb) value=(unit @ud)])
     ^+  [reveals block]
-    ?.  =(num:block +(num.block-id.state))
-      %-  (slog leaf+"can't handle block {<num:block>}, expected block {<+(num.block-id.state)>}" ~)
-      [reveals block]  ::  XX crash instead?
+    :: XX num isn't in urb-block type yet, see other num.block comment
+    :: ?.  =(num.block +(num.block-id.state))
+    ::   %-  (slog leaf+"can't handle block {<num:block>}, expected block {<+(num.block-id.state)>}" ~)
+    ::   [reveals block]  ::  XX crash instead?
     ::
     ::  Set aside this block's coinbase transaction.
     =>  ?>  ?=(^ txs.block)
         :-  cb-tx=i.txs.block
+        ~&  [%coinbase-tx cb-tx]
         %=  .
           txs.block  t.txs.block
         ==
@@ -351,6 +367,7 @@
     ::  for tx containing reveals.
     =|  tx-done=(list tx:bitcoin)
     |-  
+    ~&  'Looping through transactions...'
     ^+  [reveals block]
     ?~  txs.block
       :-  reveals
@@ -358,19 +375,21 @@
         txs  [cb-tx (flop tx-done)]
       ==
     =/  is    is.i.txs.block  :: list of inputs
-    =/  need  %.n             :: whether we need to save this tx
+    =|  need-tx=_|            :: whether we need to save this tx
     ::
     ::  Loop through this transaction's inputs
-    ::  and, if any contain reveals, save the whole tx.
+    ::  and, if any contain sots, save the whole tx.
     |^  
+    ~&  '--Looping through inputs...'
     ^+  ^$
     ?~  is
       %=  ^$
         txs.block  t.txs.block
-        tx-done    ?.  need
+        tx-done    ?.  need-tx
                      tx-done
                    [i.txs.block tx-done]
       ==
+    ~&  '---New input...'
     ::
     ::  If this input had been saved as an output in our state,
     ::  then that means it was relevant to urb, and
@@ -379,8 +398,9 @@
       =/  vout  (get-vout:si:ol sont-map [txid pos]:i.is)
       ?~  vout
         ~
+      ~&  '----An outpoint in this input had been saved. Saving transaction.'
       `value.u.vout
-    =.  need  |(need ?=(^ value))
+    =.  need-tx  |(need-tx ?=(^ value))
     ::
     ::  Parse the witness for sots. If no sots, just 
     ::  preserve our potential saved value and recurse.
@@ -398,7 +418,9 @@
         ~
       `i.t.t.rwit
     ?~  raw-script
+      ~&  '----No sots in this input.'
       (add-to-reveals ~ value)
+    ~&  '----sots were found in this input. Saving transaction.'
     =/  descr
       (de:bscr u.raw-script)
     ?~  descr
@@ -412,7 +434,7 @@
     ::  flag this tx as needed, and recurse.
     =/  sots=(list raw-sotx:urb)
       (zing (turn u.unvs parse-roll))
-    (add-to-reveals(need &) sots value)
+    (add-to-reveals(need-tx &) sots value)
     ::
     ::  ^$ recurses to the inputs loop.
     ++  add-to-reveals
@@ -431,7 +453,7 @@
   ::
   ::  Fill in a block's txs with prevouts
   ::  given in a reveals map and restructure it
-  ::  to a urb-block. Unlike a block:bitcoin, an
+  ::  to an urb-block. Unlike a block:bitcoin, an
   ::  urb-block tracks prevout values within inputs,
   ::  because we aren't indexing every previous block.
   ++  apply-prevouts-and-urbify
@@ -477,9 +499,12 @@
   ++  handle-block
     |=  =urb-block:urb
     ^+  cor
-    ?.  =(num:urb-block +(num.block-id.state))
-      %-  (slog leaf+"can't handle block {<num:block>}, expected block {<+(num.block-id.state)>}" ~)
-      cor  ::  XX crash instead?
+    :: XX num is actually not included in the urb-block type,
+    :: despite being defined in that core; use id instead of hax?
+    :: what is hax; just use that instead of num?
+    :: ?.  =(num.urb-block +(num.block-id.state))
+    ::   %-  (slog leaf+"can't handle block {<num:block>}, expected block {<+(num.block-id.state)>}" ~)
+    ::   cor  ::  XX crash instead?
     =.  num.block-id.state  +(num.block-id.state)
     ?~  txs.urb-block
       cor  ::  XX crash instead?
@@ -499,6 +524,7 @@
     =|  val=@ud
     =|  idx=@ud
     |=  tx=urb-tx:urb
+    ~&  [%handling-trasaction tx]
     ^+  cor
     =/  sum-out  (roll os.tx |=([[* a=@] b=@] (add a b)))
     =/  sum-in  (roll is.tx |=([a=input:urb-tx:urb b=@] (add value.a b)))
@@ -506,45 +532,67 @@
     ?~  is  cor
     |^  
     ^+  cor
-    ::  XX: moved check-for-insc before sont-track-input... consider for
-    ::  child etc
     =.  cor  process-unv
-    ::=.  cor  check-for-insc
-    =.  cor  sont-track-input
-    next-input
+    ::  =.  cor  check-for-insc
+    =.  cor  calc-output-sont
+    =<  ?~(t.is cor $(is t.is))
+    ::  Excess inputs get added to coinbase fee,
+    ::  which we calculate iteratively because we need
+    ::  its per-input value for sont math.
+    =/  new-val  (add val value.i.is)
+    ?:  (lth new-val sum-out)
+      .(val new-val)
+    %=  .
+      val        sum-out
+      val.cb-tx  (add val.cb-tx (sub new-val sum-out))
+    ==
     ::
+    ::  XX For all failures in this arm figure out when 
+    ::  to loop and when to quit. Do we ever need to rewind?
     ++  process-unv
       ^+  cor
       =/  sots  sots.i.is
       |-  
-      ?~  sots  
+      ~&  'Processing potential unv...'
+      ?~  sots
+        ~&  'Finished processing unv.'
         cor
       =*  raw  raw.i.sots
+      ~&  [%sot -.sot.i.sots]
       =*  who  ship.sot.i.sots
-      =*  sig   sig.sot.i.sots
+      ::  =*  sig   sig.sot.i.sots :: XX check networking key signature?
       =-  $.+(cor -, sots t.sots)
       =/  sots=(list single:skim-sotx:urb)
-        ?:(?=(%batch +<.sot.i.sots) bat.sot.i.sots ~[+.sot.i.sots])
+        ?:  ?=(%batch +<.sot.i.sots) 
+          bat.sot.i.sots 
+        ~[+.sot.i.sots]
       =/  point  (~(get by unv-ids) who)
+      ~&  [%existing-point point]
       =|  bat-cnt=@
       |^  
       ^+  cor
       =.  bat-cnt  +(bat-cnt)
       ?~  sots  cor
       =*  sot  i.sots
+      ::  XX more ordering constraints?
       ?:  ?=(%spawn -.sot)
-        :: XX: more ordering constraints?
-        ?.  =(1 bat-cnt)  cor
-        ?~  sig    cor
-        ?^  point  cor
-        ?:  (~(has by unv-ids) who)  cor ::$(sots t.sots)
+        ?.  =(1 bat-cnt)  cor                   :: first sot in batch
+        ?^  point  cor                          :: no data for @p yet
+        ?:  (~(has by unv-ids) who)  cor        :: no data for @p yet
         =/  cac  (com:nu:crac pass.sot)
-        ?.  =(who fig:ex:cac)  cor :: $(sots t.sots)
-        ?~  sat=(get-spawn-sont +>.sot)  cor :: $(sots t.sots)
-        ?.  ?=(%c suite.+<.cac)  cor
-        ?.  =(dat.tw.pub:+<:cac (rap 3 ~[lyf=1 %btc %ord %gw %test]))  cor
-        ?.  (veri-octs:ed:crypto u.sig 512^(shal raw.i.^sots) sgn:ded:ex:cac)
-          cor
+        ?.  =(who fig:ex:cac)  cor              :: initial comet @p = hash of public key
+        ?~  sat=(calc-spawn-sont +>.sot)  cor   :: valid spawn sont
+        ?.  ?=(%c suite.+<.cac)  cor            :: uses suite c encoded pass
+        =/  tweak  
+          (rap 3 ~[%btc %gw txid=txid.u.sat pos=pos.u.sat off=off.u.sat])
+        ?.  =(dat.tw.pub:+<:cac tweak)  cor     :: correct tweak, including spawn sat
+        :: ?~  sig  cor                         :: verify networking key signature XX remove this?
+        :: ?.  %:  veri-octs:ed:crypto 
+        ::         u.sig 
+        ::         512^(shal raw.i.^sots) 
+        ::         sgn:ded:ex:cac
+        ::     ==
+        ::   cor
         =/  sponsor  `@p`(end 4 who)
         =/  =point:ord
           :*  own=[u.sat ~]
@@ -561,6 +609,7 @@
                 [%point who %sponsor `sponsor]
                 [%point who %keys 1 pass.sot]
             ==
+        ~&  >  [%spawn-succeeded point]
         %_    $
             point    `point
             sots     t.sots
@@ -569,7 +618,9 @@
         ==
       ::=^  point  cor  (spend-point point)
       ?~  point  cor
-      ?.  (spending-sont sont.own.u.point)  cor
+      ?.  (is-sont-in-input sont.own.u.point)
+        ~&  >>>  'Input to this tx did not include the owner sont. Rejecting.' 
+        cor
       ?-    -.sot
           %set-mang
         !!
@@ -622,6 +673,9 @@
             unv-ids   (~(put by unv-ids) ship.sot u.child)
         ==
       ::
+      ::  XX It would be nice to have an escapee's pending sponsor
+      ::     sign their %escape transaction out-of-band with their networking key
+      ::     so that they can auto-accept it when the %escape comes in.
           %adopt
         ?:  =(ship.sot who)
           =.  sponsor.net.u.point  &/who
@@ -670,34 +724,19 @@
             sots     t.sots
             unv-ids   (~(put by unv-ids) who u.point)
         ==
-      ::
       ==
       ::
-      ::++  spend-point
-      ::  |=  point=(unit ^point)
-      ::  ^+  [point cor]
-      ::  ?~  point  ~^cor
-      ::  ?:  &(?=(~ sig) (spending-sont sont.own.u.point))
-      ::    point^cor
-      ::  ?~  sig  [~ cor]
-      ::  :: todo: rethink
-      ::  ::?.  ?=([~ %pass *] mang.own.u.point)  [~ cor]
-      ::  ::?:  =(txid (cut 8 [1 1] pass.u.mang.own.u.point))  [~ cor]
-      ::  ::=/  pub  (end 8 pass.u.mang.own.u.point)
-      ::  ::=/  tw  (scap:ed:crypto pub (shax:sha pass.u.mang.own.u.point))
-      ::  ::?.  (veri-octs:ed:crypto u.sig raw tw)  [~ cor]
-      ::  ::=.  pass.u.mang.own.u.point  (can 8 [1 pub] [1 txid] ~)
-      ::  ::[point cor(unv-ids (~(put by unv-ids) who u.point))]
-      ::  !!
-      ::
-      ++  spending-sont
+      ::  Is this sont in the input that's being processed? 
+      ++  is-sont-in-input
         |=  sot=sont:ord
         ~|  [s=sot [txid pos value]:i.is]
         ?.  =([txid pos]:sot [txid pos]:i.is)  |
         ~|  %fatal-tracking-error
         ?>  (lth off.sot value.i.is)  &
       ::
-      ++  get-spawn-sont
+      ::  Return a spawner's ordinal claim as a sont.
+      ::  Return null if invalid.
+      ++  calc-spawn-sont
         |=  $:  ::from=(unit [=pos:urb =off:urb])
                 out=[spkh=@ux pos=(unit pos:urb) =off:urb tej=off:urb]
             ==
@@ -723,44 +762,53 @@
         ?:  =(hax-out spkh.out)  `sat
         ?.  =(~ pos.out)  ~
         $(out-val (add out-val value.i.os), os t.os, out-pos +(out-pos))
+      ::
+      ::  Experimental arm for allowing both the sat owner and the networking 
+      ::  key controller to make attestations. Probably delete this along with
+      ::  the sig stuff up above.
+      ::  ++  spend-point
+      ::    |=  point=(unit ^point)
+      ::    ^+  [point cor]
+      ::    ?~  point  [~ cor]
+      ::    ?:  ?&  ?=(~ sig) 
+      ::            (is-sont-in-input sont.own.u.point)
+      ::        ==
+      ::      [point cor]
+      ::    ?~  sig  [~ cor]
+      ::    XX rethink
+      ::    ?.  ?=([~ %pass *] mang.own.u.point)  [~ cor]
+      ::    ?:  =(txid (cut 8 [1 1] pass.u.mang.own.u.point))  [~ cor]
+      ::    =/  pub  (end 8 pass.u.mang.own.u.point)
+      ::    =/  tw  (scap:ed:crypto pub (shax:sha pass.u.mang.own.u.point))
+      ::    ?.  (veri-octs:ed:crypto u.sig raw tw)  [~ cor]
+      ::    =.  pass.u.mang.own.u.point  (can 8 [1 pub] [1 txid] ~)
+      ::    [point cor(unv-ids (~(put by unv-ids) who u.point))]
       --
     ::
-    ::++  check-for-insc
-    ::  ^+  cor
-    ::  =/  raw-script=(unit octs)
-    ::    =/  rwit  (flop witness.i.is)
-    ::    ?.  ?=([* ^] rwit)  ~
-    ::    ?.  =+(,.-.rwit &(!=(0 wid) =(0x50 (rsh [3 (dec wid)] dat))))  `i.t.rwit
-    ::    ?~(t.t.rwit ~ `i.t.rwit)
-    ::  ?~  raw-script  cor
-    ::  ::=/  scr  (mole |.((de:bscr u.raw-script)))
-    ::  :: XX: make crash-proof
-    ::  ::=/  scr  (de:bscr u.raw-script)
-    ::  ?~  scr=(de:bscr u.raw-script)  cor
-    ::  ?>  =(u.raw-script (en:bscr u.scr))
-    ::  =/  mails=(list mail)  (mails:de:ol u.scr)
-    ::  |-  ^+  cor
-    ::  ?~  mails  cor
-    ::  =/  pntr=@ud  ?:(?=([* %& *] pntr.i.mails) p.+.pntr.i.mails 0)
-    ::  =/  =insc  id.tx^idx
-    ::  =/  nsont  (pntr-to-sont pntr)
-    ::  ?~  nsont
-    ::    :: the ordinals docs suggests that if the pointer index is
-    ::    :: invalid, then it is treated normally i.e. on 0 index
-    ::    =.  cor  (emit [%insc insc ~ i.mails])
-    ::    %_  $
-    ::      idx        +(idx)
-    ::      mails      t.mails
-    ::      insc-ids   (~(put by insc-ids) insc [[id.tx 0 0] i.mails])
-    ::    ==
-    ::  =.  cor  (emit [%insc insc nsont i.mails])
-    ::  %_  $
-    ::    idx     +(idx)
-    ::    mails   t.mails
-    ::    sont-map  (put-ins:si:ol sont-map txid.nsont pos.nsont off.nsont insc^~^~)
-    ::    insc-ids   (~(put by insc-ids) insc [nsont i.mails])
-    ::   ==
-     ::
+    ::  Calculate output sonts for all input sonts.
+    ++  calc-output-sont
+      :: XX: todo: optimize for updates per-input
+      ^+  cor
+      ?~  itxo=(~(get by sont-map) txid.i.is pos.i.is)  cor
+      =.  sont-map  (~(del by sont-map) txid.i.is pos.i.is)
+      =/  isonts  ~(tap by sats.u.itxo)
+      |-  
+      ^+  cor
+      ?~  isonts  cor
+      =/  osont=sont:ord  [txid.i.is pos.i.is p.i.isonts] 
+      ?~  nsont=(off-to-sont p.i.isonts)
+        =.  state  (update-ids:ol state q.i.isonts [0x0 0 0])
+        =.  cor  (emit [%xfer osont [0x0 0 0]])
+        %_  $
+          isonts  t.isonts
+        ==
+      =.  state  (update-ids:ol state q.i.isonts nsont)
+      =.  cor  (emit [%xfer osont nsont])
+      %_  $
+        isonts   t.isonts
+        sont-map  (put-all:si:ol sont-map txid.nsont pos.nsont off.nsont value.i.is q.i.isonts)
+      ==
+    ::
     ++  pntr-to-sont
       |=  pntr=@ud
       ^-  $@(~ sont:ord)
@@ -779,17 +827,6 @@
       ::?~  tagged=(pointer-to-sont:ol p.+.pntr os.tx)  !!
       ::[txid tagged]
     ::
-    ::++  inscription-to-sont
-    ::  |=  mail
-    ::  ^-  $@(~ sont)
-    ::  =/  =txidash  txid.i.is
-    ::  ::  check for pointer validity here
-    ::  ?.  &(?=([* %& *] pntr) (lth p.+.pntr sum-outs))
-    ::    ?~  tracked=(off-to-sont idx)  ~
-    ::    [txidash tracked]
-    ::  ?~  tagged=(pointer-to-sont:ol p.+.pntr os.tx)  !!
-    ::  [txidash tagged]
-    ::
     ++  off-to-sont
       |=  off=@ud
       ^-  $@(~ sont:ord)
@@ -802,33 +839,53 @@
     ::  ?~  sont=(pointer-to-sont:ol (add val off) os.tx)  !!
     ::  [txid pos.sont off.sont]
     ::
-    ++  sont-track-input
-      :: XX: todo: optimize for updates per-input
-      ^+  cor
-      ?~  itxo=(~(get by sont-map) txid.i.is pos.i.is)  cor
-      =.  sont-map  (~(del by sont-map) txid.i.is pos.i.is)
-      =/  isonts  ~(tap by sats.u.itxo)
-      |-  ^+  cor
-      ?~  isonts  cor
-      =/  osont=sont:ord  [txid.i.is pos.i.is p.i.isonts] 
-      ?~  nsont=(off-to-sont p.i.isonts)
-        =.  state  (update-ids:ol state q.i.isonts [0x0 0 0])
-        =.  cor  (emit [%xfer osont [0x0 0 0]])
-        %_  $
-          isonts  t.isonts
-        ==
-      =.  state  (update-ids:ol state q.i.isonts nsont)
-      =.  cor  (emit [%xfer osont nsont])
-      %_  $
-        isonts   t.isonts
-        sont-map  (put-all:si:ol sont-map txid.nsont pos.nsont off.nsont value.i.is q.i.isonts)
-      ==
+    :: ++  inscription-to-sont
+    ::   |=  mail
+    ::   ^-  $@(~ sont)
+    ::   =/  =txidash  txid.i.is
+    ::   ::  check for pointer validity here
+    ::   ?.  &(?=([* %& *] pntr) (lth p.+.pntr sum-outs))
+    ::     ?~  tracked=(off-to-sont idx)  ~
+    ::     [txidash tracked]
+    ::   ?~  tagged=(pointer-to-sont:ol p.+.pntr os.tx)  !!
+    ::   [txidash tagged]
+    :: 
+    :: ++  check-for-insc
+    ::   ^+  cor
+    ::   =/  raw-script=(unit octs)
+    ::     =/  rwit  (flop witness.i.is)
+    ::     ?.  ?=([* ^] rwit)  ~
+    ::     ?.  =+(,.-.rwit &(!=(0 wid) =(0x50 (rsh [3 (dec wid)] dat))))  `i.t.rwit
+    ::     ?~(t.t.rwit ~ `i.t.rwit)
+    ::   ?~  raw-script  cor
+    ::   ::=/  scr  (mole |.((de:bscr u.raw-script)))
+    ::   :: XX: make crash-proof
+    ::   ::=/  scr  (de:bscr u.raw-script)
+    ::   ?~  scr=(de:bscr u.raw-script)  cor
+    ::   ?>  =(u.raw-script (en:bscr u.scr))
+    ::   =/  mails=(list mail)  (mails:de:ol u.scr)
+    ::   |-  ^+  cor
+    ::   ?~  mails  cor
+    ::   =/  pntr=@ud  ?:(?=([* %& *] pntr.i.mails) p.+.pntr.i.mails 0)
+    ::   =/  =insc  id.tx^idx
+    ::   =/  nsont  (pntr-to-sont pntr)
+    ::   ?~  nsont
+    ::     :: the ordinals docs suggests that if the pointer index is
+    ::     :: invalid, then it is treated normally i.e. on 0 index
+    ::     =.  cor  (emit [%insc insc ~ i.mails])
+    ::     %_  $
+    ::       idx        +(idx)
+    ::       mails      t.mails
+    ::       insc-ids   (~(put by insc-ids) insc [[id.tx 0 0] i.mails])
+    ::     ==
+    ::   =.  cor  (emit [%insc insc nsont i.mails])
+    ::   %_  $
+    ::     idx     +(idx)
+    ::     mails   t.mails
+    ::     sont-map  (put-ins:si:ol sont-map txid.nsont pos.nsont off.nsont insc^~^~)
+    ::     insc-ids   (~(put by insc-ids) insc [nsont i.mails])
+    ::    ==
     ::
-    ++  next-input
-      ^+  cor
-      =<  ?~(t.is cor $(is t.is)) 
-      ?.  (lth sum-out (add val value.i.is))  .(val (add val value.i.is))
-      .(val.cb-tx (add val.cb-tx (sub (add val value.i.is) sum-out)), val sum-out)
     --
   --
 --

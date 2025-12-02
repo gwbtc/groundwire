@@ -23,7 +23,7 @@
       ::                                                ::  ++fig:ex:crub:crypto
       ++  fig                                           ::  fingerprint
         ^-  @uvH
-        ?:  ?=(%b suite)  (shaf %bfig pub)
+        ?:  ?=(%b suite)  (shaf %bfig pub)  :: XX ^pub here too?
         (shaf %cfig sgn.^pub)
       ::                                                ::  ++pac:ex:crub:crypto
       ++  pac                                           ::  private fingerprint

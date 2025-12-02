@@ -1,7 +1,8 @@
 /-  spider, urb
 /+  *ord, ul=urb, *test, gw=groundwire, bip32, b173=bip-b173,
-    rpc=json-rpc, scr=btc-script, strandio, btcio, bc=bitcoin
-/=  unv-tests  /tests/unv
+    rpc=json-rpc, scr=btc-script, strandio, btcio, bc=bitcoin,
+    unv-tests=ord-sender
+::  /=  unv-tests  /tests/unv
 ^-  thread:spider
 |=  args=vase
 =/  m  (strand:strandio ,vase)
