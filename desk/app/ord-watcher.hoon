@@ -35,10 +35,7 @@
         *unv-ids:ord
     ==
   :_  this(rpc new-rpc)
-  :~  :*  %pass  /listen  %arvo  %j 
-          %listen  *(set ship)  [%| dap.bowl]
-      ==
-      :*  %pass  /blocks  %arvo  %k
+  :~  :*  %pass  /blocks  %arvo  %k
           %lard  q.byk.bowl
           (get-blocks new-rpc new-ord-state)
       ==  
@@ -73,9 +70,29 @@
   ^-  (quip card _this)
   ?+    pole  (on-watch:def pole)
   ::
-  ::  Jael subscribes to empty wire /, aka ~
+  ::  Jael subscribes to / (aka ~) if it hears
+  ::  that this agent is the default PKI source
       ~
     `this
+  ::
+  ::  Jael subcribes to /ship when it hears about a new ship
+      [=ship ~]
+    :_  this
+    :~  :*  %give
+            %fact
+            ~
+            %azimuth-udiffs
+            !>  ^-  udiffs:point:jael
+            %+  murn
+              (state-to-udiffs ord-state.state)
+            |=  [=ship =udiff:point:jael]
+            ^-  (unit [^ship udiff:point:jael])
+            ::  ignore all ships but /ship
+            ?.  =(ship (slav %p ship.pole))
+              ~
+            `[ship udiff]
+        ==
+    ==
   ==
 ::
 ++  on-arvo
@@ -106,9 +123,53 @@
         !<  
         [(list [id:block:bitcoin effect:ord]) state:ord]
         vase
+      =/  fx-ships=(set ship)
+        %.  -.fx-and-state
+        |=  fx=(list [id:block:bitcoin effect:ord])
+        ^-  (set ship)
+        %-  silt
+        %+  murn
+          fx
+        |=  [id:block:bitcoin eo=effect:ord]
+        ^-  (unit ship)
+        ::  ignore %dns, %insc, %xfer effects
+        ?.  ?=(%point -.eo)
+          ~
+        `ship.eo
+      ::
+      =/  tracked-ships=(set ship)
+        %-  silt
+        %+  murn
+          ~(val by sup.bowl)
+        |=  [ship =path]
+        ^-  (unit ship)
+        ::  ignore subscriptions that aren't to a /ship
+        ?.  ?=([@p ~] path)
+          ~
+        `i.path
+      ::
+      =/  filtered-udiffs=udiffs:point:jael
+        %+  murn
+          (fx-to-udiffs -.fx-and-state)
+        |=  [=ship =udiff:point:jael]
+        ^-  (unit [^ship udiff:point:jael])
+        ::  ignore ships Jael hasn't subscribed to yet
+        ?.  (~(has in tracked-ships) ship)
+          ~
+        `[ship udiff]
+      ::
       :_  this(ord-state.state +.fx-and-state)
+      %+  welp
+        ?.  =(~ fx-ships)
+          ::  don't send a %listen task for ships
+          ::  that Jael is already subscribed to
+          :~  %+  listen-to-ord
+                (~(dif in fx-ships) tracked-ships)
+              [%| dap.bowl]
+          ==
+        ~
       :-  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
-      (udiffs-to-jael-cards (fx-to-udiffs -.fx-and-state))
+      (jael-update filtered-udiffs)
     ==
   ==
 ::
@@ -190,9 +251,20 @@
 ::  fx are ord-core's type for urb effects. 
 ::  udiffs are Jael's type for PKI updates. 
 ::  cards for Jael contain udiffs.
-++  udiffs-to-jael-cards
+++  listen-to-ord
+  |=  [ships=(set ship) =source:point:jael]
+  ^-  card
+  [%pass /lo %arvo %j %listen ships source]
+::
+++  jael-update
   |=  =udiffs:point:jael
   ^-  (list card)
+  :-  [%give %fact ~[/] %azimuth-udiffs !>(udiffs)]
+  ?~  udiffs
+    ~
+  ::
+  ::  XX comment from %azimuth:
+  ::     "Should really give all diffs involving each ship at the same time"
   %+  turn
     udiffs
   |=  [=ship =udiff:point:jael]
