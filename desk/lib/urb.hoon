@@ -1,5 +1,5 @@
 /-  bitcoin, ord, urb
-/+  bscr=btc-script, crac, ol=ord
+/+  bscr=btc-script, ol=ord
 ::=|  lac=_&
 =|  lac=_|
 |%
@@ -454,7 +454,7 @@
         ?~  sig    cor
         ?^  point  cor
         ?:  (~(has by unv-ids) who)  cor ::$(sots t.sots)
-        =/  cac  (com:nu:crac pass.sot)
+        =/  cac  (com:nu:cric:crypto pass.sot)
         ?.  =(who fig:ex:cac)  cor :: $(sots t.sots)
         ?~  sat=(get-spawn-sont +>.sot)  cor :: $(sots t.sots)
         ?.  ?=(%c suite.+<.cac)  cor
@@ -568,7 +568,7 @@
         ==
       ::
           %keys
-        ::=/  cac  (com:nu:crac pass.sot)
+        ::=/  cac  (com:nu:cric:crypto pass.sot)
         ::?~  sig                  cor
         ::?.  ?=(%c suite.+<.cac)  cor
         ::?.  =(dat.tw.pub:+<:cac (rap 3 ~[+(life.net.u.point) %btc %ord %gw %test]))  cor
