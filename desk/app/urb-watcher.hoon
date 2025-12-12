@@ -1,5 +1,5 @@
 /-  bitcoin, spider, ord, urb
-/+  bc=bitcoin, btcio, dbug, default-agent, ul=urb, strandio, verb
+/+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb
 ::
 |%
 +$  card  card:agent:gall
@@ -189,7 +189,7 @@
   ^-  shed:khan
   =/  i  (add 1 num.block-id.urb-state) :: last processed block height + 1
   =/  oc
-    %-  abed:urb-core:ul
+    %-  abed:urb-core:uc
     urb-state
   ::  This barket lets us easily include oc in 
   ::  +convert-block's context.

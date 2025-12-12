@@ -1,5 +1,5 @@
 /-  spider, urb, bitcoin
-/+  *ord, ul=urb, strandio, btcio, bc=bitcoin
+/+  *ord, ul=urb-core, strandio, btcio, bc=bitcoin
 /=  test-urb-core  /tests/lib/urb-core
 ^-  thread:spider
 |=  args=vase
