@@ -1,5 +1,10 @@
+::  lib/urb-encoder.hoon
+::
+::  encode urb actions (sotx:urb) into pushdata
+::  for Taproot scripts, sometimes called an "unv"
+::  XX maybe move unv-to-script here
+::
 /-  ord, urb
-/+  der, scr=btc-script
 |%
 ++  encode
   =<  full
@@ -59,13 +64,13 @@
         :+  s+~  0
         :*  [256 spkh.to.sot]
             (mat off.to.sot)  (mat tej.to.sot)
-            ?~(pos.to.sot [2 0]^~ [2 1]^(mat u.pos.to.sot)^~)
-            ::?~(pos.to.sot ~ [(mat u.pos.to.sot) ~])
+            ?~(vout.to.sot [2 0]^~ [2 1]^(mat u.vout.to.sot)^~)
+            ::?~(vout.to.sot ~ [(mat u.vout.to.sot) ~])
         ==
       ::  ++  en-from
       ::    ^-  plat:plot
       ::    ?~  from.sot  [2 0]
-      ::    [%s 0 ~[[2 1] (mat pos.from) (mat sat.from)]]
+      ::    [%s 0 ~[[2 1] (mat vout.from) (mat sat.from)]]
       --
     ::
         %keys
@@ -101,7 +106,7 @@
   ++  en-sont
     |=  sont:ord
     ^-  (list plat:plot)
-    =/  mi  (mat pos)
+    =/  mi  (mat vout)
     =/  mo  (mat off)
     [[1 0] [256 txid] mi mo ~]
   --

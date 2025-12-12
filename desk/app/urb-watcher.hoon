@@ -1,5 +1,5 @@
 /-  bitcoin, spider, ord, urb
-/+  bc=bitcoin, btcio, dbug, default-agent, ol=ord, ul=urb, strandio, verb
+/+  bc=bitcoin, btcio, dbug, default-agent, ul=urb, strandio, verb
 ::
 |%
 +$  card  card:agent:gall
@@ -7,7 +7,7 @@
 +$  state-0
   $:  %0
       rpc=req-to:btcio
-      ord-state=state:ord
+      urb-state=state:urb
   ==
 --
 ::
@@ -22,22 +22,22 @@
     def    ~(. (default-agent this %|) bowl)
 ::
 ::  Tell Jael to subscribe to us for PKI updates,
-::  initialize an ord-core, start a thread to
+::  initialize an urb-core, start a thread to
 ::  fetch and process the first batch of blocks,
 ::  and start a timer to fetch again.
 ++  on-init
   ^-  (quip card _this)
   =/  new-rpc  ['http://localhost:18443' [%basic 'bitcoinrpc:bitcoinrpc']]
-  =/  new-ord-state
+  =/  new-urb-state
     :*  [start-hash:urb start-height:urb]
         *sont-map:ord
         *insc-ids:ord
-        *unv-ids:ord
+        *unv-ids:urb
     ==
   :_  this(rpc new-rpc)
   :~  :*  %pass  /blocks  %arvo  %k
           %lard  q.byk.bowl
-          (get-blocks new-rpc new-ord-state)
+          (get-blocks new-rpc new-urb-state)
       ==  
   ==
 ::
@@ -84,7 +84,7 @@
             %azimuth-udiffs
             !>  ^-  udiffs:point:jael
             %+  murn
-              (state-to-udiffs ord-state.state)
+              (state-to-udiffs urb-state.state)
             |=  [=ship =udiff:point:jael]
             ^-  (unit [^ship udiff:point:jael])
             ::  ignore all ships but /ship
@@ -105,12 +105,12 @@
     :_  this
     :~  :*  %pass  /blocks  %arvo  %k
             %lard  q.byk.bowl
-            (get-blocks [rpc ord-state]:state)
+            (get-blocks [rpc urb-state]:state)
         ==  
     ==
   ::
   ::  Our +get-blocks thread returned. Update
-  ::  ord-state, emit udiffs to Jael, and set a timer
+  ::  urb-state, emit udiffs to Jael, and set a timer
   ::  to run the thread again.
       [%blocks ~]
     ?+    sign-arvo  (on-arvo:def wire sign-arvo)
@@ -121,21 +121,21 @@
       =/  [%khan %arow %.y %noun =vase]  sign-arvo
       =/  fx-and-state
         !<  
-        [(list [id:block:bitcoin effect:ord]) state:ord]
+        [(list [id:block:bitcoin effect:urb]) state:urb]
         vase
       =/  fx-ships=(set ship)
         %.  -.fx-and-state
-        |=  fx=(list [id:block:bitcoin effect:ord])
+        |=  fx=(list [id:block:bitcoin effect:urb])
         ^-  (set ship)
         %-  silt
         %+  murn
           fx
-        |=  [id:block:bitcoin eo=effect:ord]
+        |=  [id:block:bitcoin eu=effect:urb]
         ^-  (unit ship)
         ::  ignore %dns, %insc, %xfer effects
-        ?.  ?=(%point -.eo)
+        ?.  ?=(%point -.eu)
           ~
-        `ship.eo
+        `ship.eu
       ::
       =/  tracked-ships=(set ship)
         %-  silt
@@ -158,7 +158,7 @@
           ~
         `[ship udiff]
       ::
-      :_  this(ord-state.state +.fx-and-state)
+      :_  this(urb-state.state +.fx-and-state)
       %+  welp
         ?.  =(~ fx-ships)
           ::  don't send a %listen task for ships
@@ -182,15 +182,15 @@
 ::
 ::  Fetch blocks in range(last-processed + 1, latest - 6)
 ::  from the provided RPC endpoint, then use a stateful 
-::  ord-core to process these blocks, returning
-::  a new ord-state and a list of fx in +on-arvo.
+::  urb-core to process these blocks, returning
+::  a new urb-state and a list of fx in +on-arvo.
 ++  get-blocks
-  |=  [rpc=req-to:btcio ord-state=state:ord]
+  |=  [rpc=req-to:btcio urb-state=state:urb]
   ^-  shed:khan
-  =/  i  (add 1 num.block-id.ord-state) :: last processed block height + 1
+  =/  i  (add 1 num.block-id.urb-state) :: last processed block height + 1
   =/  oc
-    %-  abed:ord-core:ul
-    ord-state
+    %-  abed:urb-core:ul
+    urb-state
   ::  This barket lets us easily include oc in 
   ::  +convert-block's context.
   |^
@@ -248,7 +248,7 @@
   --
 ::
 ::  Conversion arms. 
-::  fx are ord-core's type for urb effects. 
+::  fx are urb-core's type for urb effects. 
 ::  udiffs are Jael's type for PKI updates. 
 ::  cards for Jael contain udiffs.
 ++  listen-to-ord
@@ -272,36 +272,36 @@
   [%give %fact [/(scot %p ship)]~ %azimuth-udiffs !>([udiff]~)]
 ::
 ++  fx-to-udiffs
-  |=  fx=(list [id:block:bitcoin effect:ord])
+  |=  fx=(list [id:block:bitcoin effect:urb])
   ^-  udiffs:point:jael
   %+  murn
     fx
-  |=  [=id:block:bitcoin eo=effect:ord]
+  |=  [=id:block:bitcoin eu=effect:urb]
   ^-  (unit (pair ship udiff:point:jael))
-  ?.  ?=(%point -.eo) :: only if this effect is a %point diff:urb
+  ?.  ?=(%point -.eu) :: only if this effect is a %point diff:urb
     ~
-  =/  pdiff  (tail (tail eo))
+  =/  pdiff  (tail (tail eu))
   ?+    -.pdiff   ~
       %rift
-    `[ship.eo id %rift rift.pdiff %.n]
+    `[ship.eu id %rift rift.pdiff %.n]
   ::
       %sponsor
-    `[ship.eo id %spon sponsor.pdiff]
+    `[ship.eu id %spon sponsor.pdiff]
   ::
       %keys
-    `[ship.eo id %keys [life.pdiff (sub (end 3 pass.pdiff) 'a') pass.pdiff] %.y]
+    `[ship.eu id %keys [life.pdiff (sub (end 3 pass.pdiff) 'a') pass.pdiff] %.y]
   ::
       %fief
-    `[ship.eo id %fief fief.pdiff]
+    `[ship.eu id %fief fief.pdiff]
   ==
 ::
 ++  state-to-udiffs
-  |=  ord-state=state:ord
+  |=  urb-state=state:urb
   ^-  udiffs:point:jael
-  =/  points=(list [=ship point:ord])
-    ~(tap by unv-ids.ord-state)
+  =/  points=(list [=ship point:urb])
+    ~(tap by unv-ids.urb-state)
   =/  =id:block:jael
-    block-id:ord-state
+    block-id:urb-state
   =/  new-udiffs  *udiffs:point:jael
   |-  
   ^+  new-udiffs

@@ -7,7 +7,7 @@
 ::
 +$  outpoint
   $+  urb-outpoint
-  [=txid:ord =pos:ord]
+  [=txid:ord =vout:ord]
 ::
 +$  keypair
   $+  urb-keypair
@@ -197,7 +197,7 @@
     ^-  octs
     %-  catb
     :~  (flipb (to-octs txid.prevout.in))
-        (flipb 4^pos.prevout.in)
+        (flipb 4^vout.prevout.in)
         1^0x0
         (flipb 4^nsequence.in)
     ==
@@ -486,7 +486,7 @@
   ^-  octs
   %-  catb
   :~  (flipb 32^txid.o)
-      (flipb 4^pos.o)
+      (flipb 4^vout.o)
   ==
 ::
 ++  encode-scriptpubkey

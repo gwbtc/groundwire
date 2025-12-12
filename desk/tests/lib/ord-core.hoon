@@ -1,5 +1,5 @@
 /-  ord, urb, bitcoin
-/+  *test, ul=urb, lais, scr=btc-script
+/+  *test, ul=urb, urb-encoder, scr=btc-script
 =>
 |%
 ++  bunt-id
@@ -47,7 +47,7 @@
   =/  lyf  1  ::  $life
   =/  xtr  0  ::  extra data
   =<  ?>(&(?=(%c suite.+<) ?=(^ sek.+<)) .)
-  %:  pit:nu:cric:crypto
+  %:  pit:nu:cryc:crypto
       512  (shaz (jam sed lyf))
       %c   (rap 3 ~[lyf %btc %ord %gw %test])
       xtr
@@ -71,14 +71,14 @@
 ++  mk-sot
   |=  [sot=skim-sotx:urb sed=pass]
   ^-  sotx:urb
-  =/  ent  (skim:encode:lais sot)
+  =/  ent  (skim:encode:urb-encoder sot)
   =/  sig  (sign-octs-raw:ed:crypto [512 (shaz ent)] [sgn.pub sgn.sek]:+<:(cut sed))
   [[`@p`fig:ex:(cut sed) [~ sig]] sot]
 ::
 ++  mk-raw-sot
   |=  [sot=skim-sotx:urb sed=pass]
   ^-  octs
-  =/  ent  (skim:encode:lais sot)
+  =/  ent  (skim:encode:urb-encoder sot)
   [(met 3 ent) ent]
 ::
 ++  mk-skim-spawn
@@ -188,13 +188,13 @@
   ==
 ::
 ++  bunt-deps
-  *(map [txid:ord pos:urb] [sots=(list raw-sotx:urb) value=(unit @ud)])
+  *(map [txid:ord vout:ord] [sots=(list raw-sotx:urb) value=(unit @ud)])
 ::
 ++  mock-deps
   |=  sed=pass
   ^+  bunt-deps
   %-  my
-  :~  :-  ^-  [txid:ord pos:urb]
+  :~  :-  ^-  [txid:ord vout:ord]
           [(shax sed) 0]
       :-  ^=  sots
           ^-  (list raw-sotx:urb)
@@ -208,7 +208,7 @@
   |=  sed=pass
   ^+  bunt-deps
   %-  my
-  :~  :-  ^-  [txid:ord pos:urb]
+  :~  :-  ^-  [txid:ord vout:ord]
           [(shax sed) 0]
       :-  ^=  sots
           ^-  (list raw-sotx:urb)
@@ -219,18 +219,18 @@
   ==
 ::
 ++  bunt-effect
-  *effect:ord
+  *effect:urb
 ::
 ++  init-state
-  ^-  state:ord
+  ^-  state:urb
   :*  bunt-id        ::  last indexed block
       *sont-map:ord  ::  known satpoints
       *insc-ids:ord  ::  transactions with inscriptions
-      *unv-ids:ord   ::  transactions with unvelopes
+      *unv-ids:urb   ::  transactions with unvelopes
   ==
 ::
 ++  bunt-fx
-  ^-  (list [id:block:bitcoin effect:ord])
+  ^-  (list [id:block:bitcoin effect:urb])
   [[bunt-id bunt-effect]]~
 ::
 ++  mock-urb-coinbase-tx
@@ -306,7 +306,7 @@
       ^=  txs
       ^-  (list urb-tx:urb)
       :~  mock-urb-coinbase-tx
-          ::  XX duplicated for .ned in +ord-core
+          ::  XX duplicated for .ned in +urb-core
           urb-tx
           urb-tx
       ==
@@ -324,27 +324,27 @@
 ::
 |%
 ++  test-abed
-  =/  oc  ord-core:ul
+  =/  oc  urb-core:ul
   =.  oc  oc(state init-state)
   %+  expect-eq
     !>  oc
     !>  (abed:oc init-state)
 ::
 ++  test-emit
-  =/  oc  ord-core:ul
+  =/  oc  urb-core:ul
   =.  oc  oc(block-id.state bunt-id)
   %+  expect-eq
     !>  oc(fx :-([bunt-id bunt-effect] ~))
     !>  (emit:oc bunt-effect)
 ::
 ++  test-emil
-  =/  oc  ord-core:ul
+  =/  oc  urb-core:ul
   %+  expect-eq
     !>  (emit:oc bunt-effect)
     !>  (emil:oc [bunt-effect]~)
 ::
 ++  test-abet
-  =/  oc  ord-core:ul
+  =/  oc  urb-core:ul
   =.  oc  (abed:oc init-state)
   =.  oc  (emit:oc bunt-effect)
   %+  expect-eq
@@ -352,13 +352,13 @@
     !>  abet:oc
 ::
 ++  test-find-block-deps-no-deps
-  =/  oc  ord-core:ul
+  =/  oc  urb-core:ul
   %+  expect-eq
     !>  [bunt-deps mock-block]
     !>  (find-block-deps:oc [start-height:urb mock-block])
 ::
 ++  test-find-block-deps-with-deps
-  =/  oc  ord-core:ul
+  =/  oc  urb-core:ul
   =/  input-block
     :*  hax=0x0
         reward=0
@@ -382,7 +382,7 @@
     !>  (find-block-deps:oc [start-height:urb input-block])
 ::
 ++  test-find-block-deps-with-deps-no-value
-  =/  oc  ord-core:ul
+  =/  oc  urb-core:ul
   =/  input-block
     :*  hax=0x0
         reward=0
@@ -403,7 +403,7 @@
     !>  (find-block-deps:oc [start-height:urb input-block])
 ::
 ++  test-apply-block-deps-with-value
-  =/  oc  ord-core:ul
+  =/  oc  urb-core:ul
   %+  expect-eq
     !>  [num=start-height:urb (mk-urb-block (mk-skim-spawn 0xdead.beef))]
     !>
@@ -415,7 +415,7 @@
 ++  test-apply-block-deps-no-value-fails
   ::
   ::  +apply-block-deps fails with ~ rather than [~ value]
-  =/  oc  ord-core:ul
+  =/  oc  urb-core:ul
   %-  expect-fail
     |.
     %+  apply-block-deps:oc
@@ -424,12 +424,12 @@
     (mock-deps-no-value 0xdead.beef)
 ::
 ++  test-handle-block-state
-  =/  oc     ord-core:ul
+  =/  oc     urb-core:ul
   =.  oc     (abed:oc init-state)
   =.  oc     %+  handle-block:oc
                start-height:urb
              (mk-urb-block (mk-skim-spawn 0xdead.beef))
-  =/  ex-oc  ord-core:ul
+  =/  ex-oc  urb-core:ul
   =.  ex-oc  (abed:ex-oc init-state)
   =.  ex-oc  ex-oc(num.block-id.state +(start-height:urb))
   =.  ex-oc  %-  handle-tx:ex-oc
@@ -439,12 +439,12 @@
     !>  state.oc
 ::
 ++  test-handle-tx-spawn
-  =/  oc  ord-core:ul
+  =/  oc  urb-core:ul
   =.  oc  (abed:oc init-state)
   =.  oc  %-  handle-tx:oc
           (mk-urb-tx (mk-skim-spawn 0xdead.beef) 0xdead.beef)
   =/  ex-spawn-fx
-    ^-  (list [id:block:bitcoin effect:ord])
+    ^-  (list [id:block:bitcoin effect:urb])
     :~  :-  bunt-id
         [%xfer [(shax 0xdead.beef) 0 0] [(shax 0xdead.beef) 0 0]]
         :-  bunt-id
@@ -459,7 +459,7 @@
     !>  fx.oc
 ::
 ++  test-handle-tx-adopt
-  =/  oc  ord-core:ul
+  =/  oc  urb-core:ul
   =.  oc  (abed:oc init-state)
   =.  oc  %-  handle-tx:oc
           (mk-urb-tx (mk-skim-spawn 0xdead.beef) 0xdead.beef)
@@ -470,7 +470,7 @@
   =.  oc  %-  handle-tx:oc
           (mk-urb-tx (mk-skim-adopt 0xdead.beef) 0xcafe.babe)
   =/  ex-adopt-fx
-    ^-  (list [id:block:bitcoin effect:ord])
+    ^-  (list [id:block:bitcoin effect:urb])
     :~  :-  bunt-id
         [%xfer [(shax 0xcafe.babe) 0 0] [(shax 0xcafe.babe) 0 0]]
         :-  bunt-id
@@ -481,7 +481,7 @@
     !>  fx.oc
 ::
 ++  test-handle-tx-escape
-  =/  oc  ord-core:ul
+  =/  oc  urb-core:ul
   =.  oc  (abed:oc init-state)
   =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xdead.beef) 0xdead.beef))
   =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xcafe.babe) 0xcafe.babe))
@@ -489,7 +489,7 @@
   =.  fx.oc  ~
   =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-escape 0xfeed.face) 0xcafe.babe))
   =/  ex-escape-fx
-    ^-  (list [id:block:bitcoin effect:ord])
+    ^-  (list [id:block:bitcoin effect:urb])
     :~  :-  bunt-id
         [%xfer [(shax 0xcafe.babe) 0 0] [(shax 0xcafe.babe) 0 0]]
         :-  bunt-id
@@ -500,7 +500,7 @@
     !>  fx.oc
 ::
 ++  test-handle-tx-cancel-escape
-  =/  oc  ord-core:ul
+  =/  oc  urb-core:ul
   =.  oc  (abed:oc init-state)
   =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xdead.beef) 0xdead.beef))
   =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xcafe.babe) 0xcafe.babe))
@@ -509,7 +509,7 @@
   =.  fx.oc  ~
   =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-cancel-escape 0xfeed.face) 0xcafe.babe))
   =/  ex-cancel-escape-fx
-    ^-  (list [id:block:bitcoin effect:ord])
+    ^-  (list [id:block:bitcoin effect:urb])
     :~  :-  bunt-id
         [%xfer [(shax 0xcafe.babe) 0 0] [(shax 0xcafe.babe) 0 0]]
         :-  bunt-id
@@ -520,7 +520,7 @@
     !>  fx.oc
 ::
 ++  test-handle-tx-reject
-  =/  oc  ord-core:ul
+  =/  oc  urb-core:ul
   =.  oc  (abed:oc init-state)
   =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xdead.beef) 0xdead.beef))
   =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xcafe.babe) 0xcafe.babe))
@@ -529,7 +529,7 @@
   =.  fx.oc  ~
   =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-reject 0xcafe.babe) 0xfeed.face))
   =/  ex-reject-fx
-    ^-  (list [id:block:bitcoin effect:ord])
+    ^-  (list [id:block:bitcoin effect:urb])
     :~  :-  bunt-id
         [%xfer [(shax 0xfeed.face) 0 0] [(shax 0xfeed.face) 0 0]]
         :-  bunt-id
@@ -540,7 +540,7 @@
     !>  fx.oc
 ::
 ++  test-handle-tx-detach
-  =/  oc  ord-core:ul
+  =/  oc  urb-core:ul
   =.  oc  (abed:oc init-state)
   =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xdead.beef) 0xdead.beef))
   =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xcafe.babe) 0xcafe.babe))
@@ -549,7 +549,7 @@
   =.  fx.oc  ~
   =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-detach 0xcafe.babe) 0xdead.beef))
   =/  ex-detach-fx
-    ^-  (list [id:block:bitcoin effect:ord])
+    ^-  (list [id:block:bitcoin effect:urb])
     :~  :-  bunt-id
         [%xfer [(shax 0xdead.beef) 0 0] [(shax 0xdead.beef) 0 0]]
         :-  bunt-id
@@ -560,13 +560,13 @@
     !>  fx.oc
 ::
 ++  test-handle-tx-fief
-  =/  oc  ord-core:ul
+  =/  oc  urb-core:ul
   =.  oc  (abed:oc init-state)
   =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xdead.beef) 0xdead.beef))
   =.  fx.oc  ~
   =.  oc  (handle-tx:oc (mk-urb-tx mock-skim-fief 0xdead.beef))
   =/  ex-fief-fx
-    ^-  (list [id:block:bitcoin effect:ord])
+    ^-  (list [id:block:bitcoin effect:urb])
     :~  :-  bunt-id
         [%xfer [(shax 0xdead.beef) 0 0] [(shax 0xdead.beef) 0 0]]
         :-  bunt-id
@@ -577,13 +577,13 @@
     !>  fx.oc
 ::
 ++  test-handle-tx-batch
-  =/  oc  ord-core:ul
+  =/  oc  urb-core:ul
   =.  oc  (abed:oc init-state)
   =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xdead.beef) 0xdead.beef))
   =.  fx.oc  ~
   =.  oc  (handle-tx:oc (mk-urb-tx mock-skim-batch 0xdead.beef))
   =/  ex-batch-fx
-    ^-  (list [id:block:bitcoin effect:ord])
+    ^-  (list [id:block:bitcoin effect:urb])
     :~  :-  bunt-id
         [%xfer [(shax 0xdead.beef) 0 0] [(shax 0xdead.beef) 0 0]]
         :-  bunt-id

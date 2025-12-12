@@ -1,16 +1,14 @@
-::  script.hoon
+::  Bitcoin Script definition, encoders, and decoders
 ::
 /+  bc=bitcoin-utils
 |%
 ++  script
-  =<  script-label
+  =<  script
   |%
   +$  script  (list op)
-  +$  script-label  $+(script script)
   --
 ::
 +$  op
-  $+  bs-op
   $@  $?  %op-nop
           %op-if
           %op-notif

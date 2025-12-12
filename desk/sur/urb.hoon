@@ -1,114 +1,37 @@
+::  sur/urb.hoon
+::
+::  Type definitions for the urb bitcoin metaprotocol,
+::  based on the ord metaprotocol, along with state
+::  for lib/urb and %urb-watcher
+::
 /-  bitcoin, ord
 |%
 ::
-+|  %constants
-::
 ++  start-height  1
 ++  start-hash    0x0
-::
-+|  %types
-::
-+$  txid
-  $+  urb-txid
-  @ux   ::  txid
-::
-+$  pos
-  $+  urb-pos
-  @ud   ::  index in tx output set
-::
-+$  off
-  $+  urb-off
-  @ud   ::  sat index in single output amount
-::
-+$  sont
-  $+  urb-sont
-  [=txid =pos =off]
-::
-+$  unv-ids
-  $+  urb-unv-ids
-  (map @p point)
-::
-+$  raw-sotx
-  $+  urb-raw-sotx
-  [raw=octs sot=sotx]
-::
-+$  sotx
-  $+  urb-sotx
-  [[=ship sig=(unit @)] skim-sotx]
-::
-+$  mang
-  $+  urb-mang
-  $%([%sont =sont] [%pass =pass])
-::
-+$  point
-  $+  urb-point
-  $:  ::  domain
-      ::
-      ::=dominion
-      ::
-      ::  ownership
-      ::
-      $=  own
-      $:  =sont
-          mang=(unit mang)
-      ==
-      ::
-      ::  networking
-      ::
-      $=  net
-      $:  rift=@ud
-          =life
-          =pass
-          sponsor=[has=? who=@p]
-          escape=(unit @p)
-          fief=(unit fief)
-      ==
++$  unv-ids       (map @p point)
++$  state
+  $:  block-id=id:block:bitcoin
+      =sont-map:ord
+      =insc-ids:ord
+      =unv-ids
   ==
 ::
-+$  turf
-  $+  urb-turf
-  (list @t)                                     ::  domain, tld first
-::
-+$  fief
-  $+  urb-fief
-  $%  [%turf p=(list turf) q=@udE]
-      [%if p=@ifF q=@udE]
-      [%is p=@isH q=@udE]
-  ==
-::
-+$  diff
-  $+  urb-diff
-  $%  [%dns domains=(list @t)]
-      $:  %point  =ship
-          $%  [%rift =rift]
-              [%keys =life =pass]
-              [%sponsor sponsor=(unit @p)]
-              [%escape to=(unit @p)]
-              [%owner =sont]
-              ::[%spawn-proxy =sont]
-              [%mang mang=(unit mang)]
-              ::[%voting-proxy =sont]
-              ::[%transfer-proxy =sont]
-              ::[%dominion =dominion]
-              [%fief fief=(unit fief)]
-  ==  ==  ==
-::
-+|  %batteries
-::
+::  sotx = signed ord tx (?)
++$  sotx      [[=ship sig=(unit @)] skim-sotx]
++$  raw-sotx  [raw=octs sot=sotx]
 ++  skim-sotx
   =<  many
   |%
   +$  many
-    $+  urb-skim-many
     $%  single
         [%batch bat=(list single)]
     ==
   ::
   +$  single
-    $+  urb-skim-single
     $%  $:  %spawn  =pass
-            ::from=(unit [=pos =off])
-            to=[spkh=@ux pos=(unit pos) =off tej=off]
+            ::from=(unit [=vout =off])
+            to=[spkh=@ux vout=(unit vout:ord) =off:ord tej=off:ord]
         ==
         [%keys =pass breach=?]
         [%escape parent=ship]
@@ -119,19 +42,62 @@
         [%fief fief=(unit fief)]
         [%set-mang mang=(unit mang)]
     ==
-  ::
   --
+::
++$  mang  $%([%sont =sont:ord] [%pass =pass])
+::
+::  Ownership and networking info for a @p
++$  point
+  $:  $=  own
+      $:  =sont:ord
+          mang=(unit mang)
+      ==
+  ::
+      $=  net
+      $:  rift=@ud
+          =life
+          =pass
+          sponsor=[has=? who=@p]
+          escape=(unit @p)
+          fief=(unit fief)
+      ==
+  ==
+::
++$  turf  (list @t)  ::  domain, tld first
+::
++$  fief
+  $%  [%turf p=(list turf) q=@udE]
+      [%if p=@ifF q=@udE]
+      [%is p=@isH q=@udE]
+  ==
+::
+::  effects are an intermediate type that gets
+::  converted to jael udiffs
++$  effect
+  $%  diff
+      [%xfer from=sont:ord to=sont:ord]
+      [%insc =insc:ord sont=$@(~ sont:ord) =mail:ord]
+  ==
++$  diff
+  $%  [%dns domains=(list @t)]
+      $:  %point  =ship
+          $%  [%rift =rift]
+              [%keys =life =pass]
+              [%sponsor sponsor=(unit @p)]
+              [%escape to=(unit @p)]
+              [%owner =sont:ord]
+              ::[%spawn-proxy =sont:ord]
+              [%mang mang=(unit mang)]
+              ::[%voting-proxy =sont:ord]
+              ::[%transfer-proxy =sont:ord]
+              ::[%dominion =dominion]
+              [%fief fief=(unit fief)]
+  ==  ==  ==
+::
 ++  urb-tx
   =<  tx
   |%
-  +$  tx
-    $+  urb-tx
-    [id=txid data]
-  ::
-  +$  p-tx
-    $+  urb-tx-p-tx
-    [id=txid data]
-  ::
+  +$  tx    [id=txid:ord data]
   +$  data
     $+  urb-tx-data
     $:  is=(list input)
@@ -140,29 +106,17 @@
         nversion=@ud
         segwit=(unit @ud)
     ==
-  ::
   +$  input
-    $+  urb-tx-input
     [[sots=(list raw-sotx) value=@ud] inputw:tx:bitcoin]
   --
 ::
 ++  urb-block
   =<  block
   |%
-  +$  id
-    $+  urb-block-id
-    [=hax =num]
-  ::
-  +$  hax
-    $+  urb-block-hax
-    @ux
-  ::
-  +$  num
-    $+  urb-block-num
-    @ud
-  ::
+  +$  hax   @ux
+  +$  num   @ud
+  +$  id    [=hax =num]
   +$  block
-    $+  urb-block
     $:  =hax
         reward=@ud
         height=@ud

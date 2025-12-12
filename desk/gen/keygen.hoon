@@ -4,7 +4,7 @@
     ==
 :-  %noun
 =/  keypair
-  %:  pit:nu:cric:crypto
+  %:  pit:nu:cryc:crypto
     512
     sed
     :*  %c
