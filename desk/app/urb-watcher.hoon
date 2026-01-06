@@ -163,7 +163,7 @@
         ?.  =(~ fx-ships)
           ::  don't send a %listen task for ships
           ::  that Jael is already subscribed to
-          :~  %+  listen-to-ord
+          :~  %+  listen-to-urb
                 (~(dif in fx-ships) tracked-ships)
               [%| dap.bowl]
           ==
@@ -188,10 +188,10 @@
   |=  [rpc=req-to:btcio urb-state=state:urb]
   ^-  shed:khan
   =/  i  (add 1 num.block-id.urb-state) :: last processed block height + 1
-  =/  oc
+  =/  uc
     %-  abed:urb-core:uc
     urb-state
-  ::  This barket lets us easily include oc in 
+  ::  This barket lets us easily include uc in 
   ::  +convert-block's context.
   |^
   =/  m  (strand:strandio ,vase)
@@ -203,55 +203,80 @@
   =/  last-settled-block  (sub u.latest-block 6)
   |-  
   ?.  (lte i last-settled-block)
-    (pure:m !>([fx state]:oc))
+    (pure:m !>([fx state]:uc))
   ;<    bluck=(unit block:bitcoin)
       bind:m
     (get-block-by-number:btcio rpc ~ i)
   ?~  bluck  ~|  %cant-find-block-by-number  !!
-  ;<    new=[num:id:block:bitcoin urb-block:urb]
+  ;<    new=urb-block:urb
       bind:m
     (convert-block i u.bluck)
-  =.  oc  (handle-block:oc new)
+  =.  uc  (handle-block:uc new)
   ~&  >  "processed block {<i>} of {<last-settled-block>}"
   $(i +(i))
+  ::
   ::
   ::  Convert a block:bitcoin into a urb-block:urb.
   ::  This requires an async +get-raw-transaction call.
   ++  convert-block
     |=  [=num:id:block:bitcoin =block:bitcoin]
-    =/  m  (strand:strandio ,[num=@ud urb-block:urb])
-    =/  deps  (find-block-deps:oc num block)
-    =/  txs  (tail txs.block)
+    =/  m  (strand:strandio ,urb-block:urb)
+    ::  XX Like urb-block, block:bitcoin apparently doesn't actually
+    ::     include its num yet either
+    :: ?.  =(num num:block)
+    ::   ~&  >>  "error: %ord-watcher's num != num:block"
+    ::   !!
+    ::  Filter block to urb-relevant txs.
+    ~&  >>  "Filtering block {<i>}"
+    =/  revs-and-block  (find-block-reveals:uc block)
+    =/  reveals   -.revs-and-block
+    ~&  [%reveals reveals]
+    =/  block  +.revs-and-block
+    ~&  [%block block]
+    =/  txs    (tail txs.block)  :: cb has no prevouts
+    ::  Backfill missing prevout values in our block's
+    ::  filtered transaction set. Unlike an urb-block,
+    ::  the block:bitcoin we have here doesn't include
+    ::  prevouts in its txs' inputs, so we fetch them. 
     |-  
     ^-  form:m
     ?~  txs
-      (pure:m (apply-block-deps:oc [num +.deps] -.deps))
-    =/  is  is.i.txs
+      ~&  >>  "Applying prevouts to block {<i>}"
+      (pure:m (apply-prevouts-and-urbify:uc block reveals))
+    =/  is  is.i.txs  :: inputs
     |-  
     ^-  form:m
     :: XX refactor to use gettxout
-    ?~  is  ^$(txs t.txs)
-    =/  dep  (~(get by -.deps) [txid pos]:i.is)
-    ?:  &(?=(^ dep) ?=(^ value.u.dep))  $(is t.is)
+    ?~  is  
+      ^$(txs t.txs)
+    =/  rev  (~(get by reveals) [txid pos]:i.is)
+    ?:  &(?=(^ rev) ?=(^ value.u.rev))
+      $(is t.is)
     ;<  utx=(unit tx:bc)  bind:m
       (get-raw-transaction:btcio rpc ~ txid.i.is)
-    ?~  utx  !!
-    =/  os  os.u.utx
+    ?~  utx  ~|  %couldnt-fetch-tx  !!
+    =/  os  os.u.utx  :: outputs
     =|  pos=@ud
     |-  
     ^-  form:m
-    ?~  os  ^$(is t.is)
-    =/  dep  (~(get by -.deps) [id.u.utx pos])
-    ?:  &(?=(^ dep) ?=(^ value.u.dep))  $(os t.os, pos +(pos))
-    =/  sots=(list raw-sotx:urb)  ?~(dep ~ sots.u.dep)
-    $(os t.os, pos +(pos), -.deps (~(put by -.deps) [id.u.utx pos] [sots `value.i.os]))
+    ?~  os  
+      ^$(is t.is)
+    =/  rev  (~(get by reveals) [id.u.utx pos])
+    ?:  &(?=(^ rev) ?=(^ value.u.rev))  
+      $(os t.os, pos +(pos))
+    =/  sots=(list raw-sotx:urb)  ?~(rev ~ sots.u.rev)
+    %=  $
+      os  t.os
+      pos  +(pos)
+      reveals  (~(put by reveals) [id.u.utx pos] [sots `value.i.os])
+    ==
   --
 ::
 ::  Conversion arms. 
 ::  fx are urb-core's type for urb effects. 
 ::  udiffs are Jael's type for PKI updates. 
 ::  cards for Jael contain udiffs.
-++  listen-to-ord
+++  listen-to-urb
   |=  [ships=(set ship) =source:point:jael]
   ^-  card
   [%pass /lo %arvo %j %listen ships source]

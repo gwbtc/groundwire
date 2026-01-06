@@ -115,6 +115,8 @@
 ::
 ::  The remaining code in this library was 
 ::  moved here from lib/urb.hoon:
+::
+::  Wrap a unv in a no-op urb-tagged Taproot script.
 ++  en
   |%
   ++  unv-to-script
@@ -123,17 +125,19 @@
     =/  len  (met 3 dat)
     :*  [%op-push %num %1 %0]
         %op-if
-        op-push+~+3+'urb'
+        [%op-push ~ %3 'urb']
         (snoc (push-data:en:ol len dat) %op-endif)
      ==
   --
 ::
+:: Unwrap a script into a list of unvs.
 ++  de
   |%
   ++  unv
     |=  =script:bscr
     ^-  (list @)
     ?~  script  ~
+    :: Strip leading ops until we hit the expected urb envelope format
     ?.  ?=([[%op-push * * %0] %op-if [%op-push * * %'urb'] *] script)
       $(script t.script)
     =>  .(script t.t.t.script)
@@ -152,6 +156,11 @@
       [~ octs.i.script u.-.rest]^+.rest
     --
   --
+::
+::  The following parsing code is adapted from %naive.
+::
+::  Parse a unv encoding multiple
+::  raw-tx into a list of raw-sotx.
 ++  parse-roll
   |=  batch=@
   =|  roll=(list raw-sotx:urb)
@@ -169,6 +178,8 @@
   =^  raw-tx  cur  u.parse-result
   $(roll [raw-tx roll], num-msgs +(num-msgs))
 ::
+::  Given an index and a variable-sized atom,
+::  parse the raw-tx at that index into a raw-sotx.
 ++  parse-raw-tx
   |=  [cur=@ud batch=@]
   ^-  (unit [raw-sotx:urb cur=@ud])
