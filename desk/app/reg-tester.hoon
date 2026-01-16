@@ -2,16 +2,44 @@
 /+  btcio, dbug, default-agent, strandio, verb
 /=  unv-tests  /tests/unv
 |%
++$  versioned-state
+  $%  state-0
+  ==
+::
++$  state-0
+  $:  %0
+      utxos=(map @uw utxo:unv-tests)
+  ==
+::
 +$  card  card:agent:gall
+::
 ++  rpc
   ['http://localhost:18443' [%basic 'bitcoinrpc:bitcoinrpc']]
 --
 %-  agent:dbug
 ^-  agent:gall
+=|  state-0
+=*  state  -
 %+  verb  &
 |_  =bowl:gall
 +*  this   .
     def    ~(. (default-agent this %|) bowl)
+::
+++  on-leave  on-leave:def
+++  on-agent  on-agent:def
+++  on-fail   on-fail:def
+++  on-save
+  ^-  vase
+  !>(state)
+::
+++  on-load
+  |=  =vase
+  ^-  (quip card _this)
+  =/  old  !<(versioned-state vase)
+  ?-    -.old
+      %0
+    `this(state old)
+  ==
 ::
 ++  on-init
   ^-  (quip card _this)
@@ -48,6 +76,8 @@
             ==
         ==
       ?~  utxo
+        ::  XX try to get utxo for this ship from .utxos
+        ::       error if there's no utxo for this ship in state
         ~|  %need-utxo-to-start-with-non-spawn-sotx
         !!
       :_  this
@@ -75,6 +105,9 @@
       ==
     ::
         ?(%adopt %escape %fief %keys)
+      ::  XX change poke type to (unit utxo)
+      ::       if there's not a utxo in the poke, look for it in .utxos
+      ::       crash if there's no utxo in state
       :_  this
       :~  :*  %pass
               /res/(scot %tas -.many)/(scot %uw sed)/(scot %uv (jam many))
@@ -122,27 +155,33 @@
       =/  [%khan %arow %.y %noun =vase]  sign-arvo
       =/  =utxo:walt:unv-tests
         !<(utxo:walt:unv-tests vase)
-      ~&  >>  %utxo
-      ~&  >>  utxo
       ?.  =(%batch tag.pole)
-        `this
+        ::  done, no more sots to process
+        :-  ~
+        %=  this
+          utxos  (~(put by utxos) [`@uw`(slav %uw sed.pole) utxo])
+        ==
       =/  cued-many
         (many:skim-sotx:urb (cue `@uv`(slav %uv hax.pole)))
       ?>  ?=([%batch *] cued-many)
       =/  new-batch
         (oust [0 1] bat.cued-many)
       ?~  new-batch
-        `this
+        ::  done, no more sots to process
+        :-  ~
+        %=  this
+          utxos  (~(put by utxos) [`@uw`(slav %uw sed.pole) utxo])
+        ==
       :_  this
       :~  :*  %pass
-              /res/batch/(scot %uw sed.pole)/(scot %uv (jam [%batch new-batch]))
+              /res/batch/[sed.pole]/(scot %uv (jam [%batch new-batch]))
               %arvo
               %k
               %fard
               ?:  =(%spawn -.i.new-batch)
                 :*  %groundwire
                     %btc-spawn
-                    [%noun !>(`[rpc sed.pole i.new-batch])]
+                    [%noun !>(`[rpc `@uw`sed.pole i.new-batch])]
                 ==
               :*  %groundwire
                   `term`(rap 3 ~[%btc- (head i.new-batch)])
@@ -152,10 +191,4 @@
       ==
     ==
   ==
-::
-++  on-save   on-save:def
-++  on-load   on-load:def
-++  on-leave  on-leave:def
-++  on-agent  on-agent:def
-++  on-fail   on-fail:def
 --
