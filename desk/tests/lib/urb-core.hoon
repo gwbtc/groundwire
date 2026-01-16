@@ -1,5 +1,5 @@
 /-  ord, urb, bitcoin
-/+  *test, ul=-core, urb-encoder, scr=btc-script
+/+  *test, ul=urb-core, urb-encoder, scr=btc-script
 =>
 |%
 ++  bunt-id
