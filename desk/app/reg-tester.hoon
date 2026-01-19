@@ -62,6 +62,9 @@
       ?~  bat.many
         ~|  %empty-batch
         !!
+      ::
+      ::  XX it might be useful to %spawn a comet with a given UTXO
+      ::     but this would require work in /ted/btc/spawn
       ?:  =(%spawn -.i.bat.many)
         :_  this
         :~  :*  %pass
@@ -75,10 +78,22 @@
                 ==
             ==
         ==
-      ?~  utxo
-        ::  XX try to get utxo for this ship from .utxos
-        ::       error if there's no utxo for this ship in state
-        ~|  %need-utxo-to-start-with-non-spawn-sotx
+      ::  utxo in poke is ignored if there's one in state
+      ?:  (~(has by utxos) sed)
+        :_  this
+        :~  :*  %pass
+                /res/batch/(scot %uw sed)/(scot %uv (jam many))
+                %arvo
+                %k
+                %fard
+                :*  %groundwire
+                    `term`(rap 3 ~[%btc- (head i.bat.many)])
+                    [%noun !>(`[rpc sed (~(got by utxos) sed) i.bat.many])]
+                ==
+            ==
+        ==
+      ?:  ?=(~ utxo)
+        ~|  %no-utxo-in-poke-or-state
         !!
       :_  this
       :~  :*  %pass
@@ -88,7 +103,7 @@
               %fard
               :*  %groundwire
                   `term`(rap 3 ~[%btc- (head i.bat.many)])
-                  [%noun !>(`[rpc sed utxo i.bat.many])]
+                  [%noun !>(`[rpc sed u.utxo i.bat.many])]
               ==
           ==
       ==
@@ -105,9 +120,23 @@
       ==
     ::
         ?(%adopt %escape %fief %keys)
-      ::  XX change poke type to (unit utxo)
-      ::       if there's not a utxo in the poke, look for it in .utxos
-      ::       crash if there's no utxo in state
+      ::  utxo in poke is ignored if there's one in state
+      ?:  (~(has by utxos) sed)
+        :_  this
+        :~  :*  %pass
+                /res/(scot %tas -.many)/(scot %uw sed)/(scot %uv (jam many))
+                %arvo
+                %k
+                %fard
+                :*  %groundwire
+                    `term`(rap 3 ~[%btc- (head many)])
+                    [%noun !>(`[rpc sed (~(got by utxos) sed) many])]
+                ==
+            ==
+        ==
+      ?:  ?=(~ utxo)
+        ~|  %no-utxo-in-poke-or-state
+        !!
       :_  this
       :~  :*  %pass
               /res/(scot %tas -.many)/(scot %uw sed)/(scot %uv (jam many))
@@ -115,12 +144,11 @@
               %k
               %fard
               :*  %groundwire
-                  `term`(rap 3 ~[%btc- -.many])
-                  [%noun !>(`[rpc sed utxo many])]
+                  `term`(rap 3 ~[%btc- (head many)])
+                  [%noun !>(`[rpc sed u.utxo many])]
               ==
           ==
       ==
-
     ::
       ?(%cancel-escape %detach %reject %set-mang)
       ~|  %not-supported-by-wallet-core
