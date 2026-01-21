@@ -199,7 +199,7 @@
       bind:m
     (get-block-count:btcio rpc ~)
   ?~  latest-block  ~|  %couldnt-find-latest-block  !!
-  ~&  >  "latest block is {<u.latest-block>}"
+  ~&  >  "last indexed block is {<num.block-id.ord-state>} of {<u.latest-block>}"
   =/  last-settled-block  (sub u.latest-block 6)
   |-  
   ?.  (lte i last-settled-block)
@@ -212,7 +212,6 @@
       bind:m
     (convert-block i u.bluck)
   =.  oc  (handle-block:oc new)
-  ~&  >  "processed block {<i>} of {<last-settled-block>}"
   $(i +(i))
   ::
   ::  Convert a block:bitcoin into a urb-block:urb.
