@@ -96,7 +96,7 @@
     =<  ?>(&(?=(%c suite.+<) ?=(^ sek.+<)) .)
     =.  lyf  1
     =.  xtr  0
-    %:  pit:nu:cric:crypto
+    %:  pit:nu:cryc:crypto
         512
         sed
         %c

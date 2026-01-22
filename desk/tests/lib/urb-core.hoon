@@ -47,7 +47,7 @@
   =/  lyf  1  ::  $life
   =/  xtr  0  ::  extra data
   =<  ?>(&(?=(%c suite.+<) ?=(^ sek.+<)) .)
-  %:  pit:nu:cric:crypto
+  %:  pit:nu:cryc:crypto
       512  (shaz (jam sed lyf))
       %c   (rap 3 ~[lyf %btc %ord %gw %test])
       xtr

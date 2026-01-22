@@ -33,9 +33,9 @@
 +$  draft
   (map @ud octs)
 ::
-+$  sont-val  [com=(unit @p) ins=(set insc)]
-+$  vout-map  [value=@ud sats=(map off sont-val)]
 +$  sont-map  (map [txid vout] vout-map)
++$  vout-map  [value=@ud sats=(map off sont-val)]
++$  sont-val  [com=(unit @p) ins=(set insc)]
 ::
 +$  insc-ids  (map insc [=sont =mail])
 --

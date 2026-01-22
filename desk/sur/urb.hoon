@@ -18,6 +18,8 @@
   ==
 ::
 ::  sotx = signed ord tx (?)
+::  We often call a list of sotx, raw-sotx, 
+::  or skim-sotx a "sots".
 +$  sotx      [[=ship sig=(unit @)] skim-sotx]
 +$  raw-sotx  [raw=octs sot=sotx]
 ++  skim-sotx
@@ -29,9 +31,10 @@
     ==
   ::
   +$  single
+        ::  spkh may be redundant here; we could make vout not be a unit
     $%  $:  %spawn  =pass
             ::from=(unit [=vout =off])
-            to=[spkh=@ux vout=(unit vout:ord) =off:ord tej=off:ord]
+            to=[spkh=@ux vout=(unit vout:ord) =off:ord tej=off:ord] 
         ==
         [%keys =pass breach=?]
         [%escape parent=ship]

@@ -191,8 +191,6 @@
   =/  uc
     %-  abed:urb-core:uc
     urb-state
-  ::  This barket lets us easily include uc in 
-  ::  +convert-block's context.
   |^
   =/  m  (strand:strandio ,vase)
   ;<    latest-block=(unit @ud)
@@ -237,7 +235,9 @@
     ::  Backfill missing prevout values in our block's
     ::  filtered transaction set. Unlike an urb-block,
     ::  the block:bitcoin we have here doesn't include
-    ::  prevouts in its txs' inputs, so we fetch them. 
+    ::  values in its txs' inputs, so we fetch them,
+    ::  because we need both input values and output
+    ::  values to do sont math.
     |-  
     ^-  form:m
     ?~  txs

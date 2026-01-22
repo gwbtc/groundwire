@@ -297,4 +297,54 @@
 ::::
 ::+$  mang-map  (map pass [=txid:ord whos=(set @p)])
 ::
+::  The following code was moved from lib/urb-core.hoon.
+::  If it's worth preserving, it'll need to have references
+::  to global state from that core removed.
+:: ++  inscription-to-sont
+::   |=  mail
+::   ^-  $@(~ sont)
+::   =/  =txidash  txid.i.is
+::   ::  check for index validity here
+::   ?.  &(?=([* %& *] pntr) (lth p.+.pntr sum-outs))
+::     ?~  tracked=(off-to-sont idx)  ~
+::     [txidash tracked]
+::   ?~  tagged=(index-to-sont p.+.pntr os.tx)  !!
+::   [txidash tagged]
+:: 
+:: ++  check-for-insc
+::   ^+  cor
+::   =/  raw-script=(unit octs)
+::     =/  rwit  (flop witness.i.is)
+::     ?.  ?=([* ^] rwit)  ~
+::     ?.  =+(,.-.rwit &(!=(0 wid) =(0x50 (rsh [3 (dec wid)] dat))))  `i.t.rwit
+::     ?~(t.t.rwit ~ `i.t.rwit)
+::   ?~  raw-script  cor
+::   ::=/  scr  (mole |.((de:bscr u.raw-script)))
+::   :: XX: make crash-proof
+::   ::=/  scr  (de:bscr u.raw-script)
+::   ?~  scr=(de:bscr u.raw-script)  cor
+::   ?>  =(u.raw-script (en:bscr u.scr))
+::   =/  mails=(list mail)  (mails:de:ol u.scr)
+::   |-  ^+  cor
+::   ?~  mails  cor
+::   =/  pntr=@ud  ?:(?=([* %& *] pntr.i.mails) p.+.pntr.i.mails 0)
+::   =/  =insc  id.tx^idx
+::   =/  nsont  (pntr-to-sont pntr)
+::   ?~  nsont
+::     :: the ordinals docs suggests that if the index index is
+::     :: invalid, then it is treated normally i.e. on 0 index
+::     =.  cor  (emit [%insc insc ~ i.mails])
+::     %_  $
+::       idx        +(idx)
+::       mails      t.mails
+::       insc-ids   (~(put by insc-ids) insc [[id.tx 0 0] i.mails])
+::     ==
+::   =.  cor  (emit [%insc insc nsont i.mails])
+::   %_  $
+::     idx     +(idx)
+::     mails   t.mails
+::     sont-map  (put-ins:si:ol sont-map txid.nsont vout.nsont off.nsont insc^~^~)
+::     insc-ids   (~(put by insc-ids) insc [nsont i.mails])
+::    ==
+::
 --
