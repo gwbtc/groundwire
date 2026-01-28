@@ -49,8 +49,6 @@
 =^  spawn-commit-out     wal  (spawn:btc:wal adopt-commit-out `0 0 0)
 =^  spawn-reveal-tx      wal  (spend:btc:wal spawn-commit-out)
 =^  adopt-reveal-tx      wal  (spend:btc:wal adopt-commit-out)
-=^  keyspend-commit-out  wal  make-key-out:btc:wal
-=^  keyspend-reveal-tx   wal  (spend:btc:wal keyspend-commit-out)
 =/  final-utxo  utxo:wal:wal
 ;<    spawn-res=(unit @ux)
     bind:m
@@ -63,12 +61,6 @@
   (send-raw-transaction:btcio req-to ~ adopt-reveal-tx)
 ?~  adopt-res
   ~|  %failed-to-send-adopt-tx
-  !!
-;<    keyspend-res=(unit @ux)
-    bind:m
-  (send-raw-transaction:btcio req-to ~ keyspend-reveal-tx)
-?~  keyspend-res
-  ~|  %failed-to-send-keyspend-tx
   !!
 ::  mine buffer to finalize tx
 ;<    *

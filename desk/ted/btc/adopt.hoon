@@ -19,20 +19,12 @@
   (nu:walt:unv-tests 0 (nu:wallet:unv-tests sed i utxo))
 =^  adopt-commit-out     wal  (adopt:btc:wal ship.single)
 =^  adopt-reveal-tx      wal  (spend:btc:wal adopt-commit-out)
-=^  keyspend-commit-out  wal  make-key-out:btc:wal
-=^  keyspend-reveal-tx   wal  (spend:btc:wal keyspend-commit-out)
 =/  final-utxo  utxo:wal:wal
 ;<    tx-res=(unit @ux)
     bind:m
   (send-raw-transaction:btcio req-to ~ adopt-reveal-tx)
 ?~  tx-res
   ~|  %send-tx-failed
-  !!
-;<    keyspend-res=(unit @ux)
-    bind:m
-  (send-raw-transaction:btcio req-to ~ keyspend-reveal-tx)
-?~  keyspend-res
-  ~|  %failed-to-send-keyspend-tx
   !!
 ;<    *
     bind:m
