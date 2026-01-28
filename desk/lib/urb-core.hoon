@@ -102,12 +102,12 @@
     ::
     ::  Loop through this block's transactions
     ::  and filter down to tx containing reveals.
-    =|  tx-saved=(list tx:bitcoin)
+    =|  saved-txs=(list tx:bitcoin)
     |-  
     ^+  [reveals block]
     ?~  txs
       :-  reveals
-      block(txs [cb-tx (flop tx-saved)])
+      block(txs [cb-tx (flop saved-txs)])
     ::
     ::  Loop through this transaction's inputs
     ::  and, if any contain sots, save the whole tx.
@@ -118,9 +118,9 @@
     ?~  is
       %=  ^$
         txs        t.txs
-        tx-saved   ?.  need-tx
-                     tx-saved
-                   [i.txs.block tx-saved]
+        saved-txs  ?.  need-tx
+                     saved-txs
+                   [i.txs.block saved-txs]
       ==
     ::
     ::  If this input had been saved as an output in our state,
@@ -137,7 +137,7 @@
     =.  need-tx
       ?|  need-tx
           %+  lien
-            tx-saved
+            saved-txs
           |=  =tx:bitcoin
           =(id.tx txid.i.is)
       ==
@@ -257,8 +257,8 @@
     ^+  cor
     =/  sum-out  (roll os.tx |=([[* a=@] b=@] (add a b)))
     =/  sum-in  (roll is.tx |=([a=input:urb-tx:urb b=@] (add value.a b)))
-    =/  is  is.tx
-    ?~  is  cor
+    =/  inputs  is.tx
+    ?~  inputs  cor
     |^  
     ^+  cor
     =.  cor  process-unv
@@ -267,8 +267,8 @@
     ::  Excess inputs get added to coinbase fee,
     ::  which we calculate iteratively because we need
     ::  its per-input value for math in ++update-sonts.
-    =<  ?~(t.is cor $(is t.is))
-    =/  new-val  (add running-value value.i.is)
+    =<  ?~(t.inputs cor $(inputs t.inputs))
+    =/  new-val  (add running-value value.i.inputs)
     ?:  (lth new-val sum-out)
       .(running-value new-val)
     %=  .
@@ -280,7 +280,7 @@
     ::  to loop and when to quit. Do we ever need to rewind?
     ++  process-unv
       ^+  cor
-      =/  sots  sots.i.is
+      =/  sots  sots.i.inputs
       |-  
       ?~  sots
         cor
@@ -308,30 +308,78 @@
         =/  cac  (com:nu:cryc:crypto pass.sot)
         ?.  ?=(%c suite.+<.cac)  cor            :: uses suite c encoded pass
         ?.  =(who fig:ex:cac)  cor              :: initial comet @p = hash of public key
-        ::  XX Refactor
-        ?~  sat=(calc-spawn-sont to.sot)  cor   :: valid spawn sont
-        =/  tweak  
-          (rap 3 ~[%btc %gw txid=txid.u.sat vout=vout.u.sat off=off.u.sat])
-        ::  XX Rather than checking that these literal values are equal,
-        ::     we need to check that the satpoints point to the same sat.
-
-        ?.  ?|  =(dat.tw.pub:+<:cac tweak)  :: in case the satpoint somehow matches the tweak
-                ::  (get-raw-transaction:btcio txid.u.sat)
-                ::  and then see if its outputs contain id.tx.
-            ==
+        ::  The %spawn sotx includes a supposed satpoint from 
+        ::  the precommit transaction: [precommit-spkh vout off]
+        ::  We call ++calc-precommit-sont to determine whether this
+        ::  sotx-attested satpoint is indeed valid given the
+        ::  precommit transaction's outputs. If so, we'll grab this sat,
+        ::  and then check that it's also equal to the tweak of this
+        ::  comet's networking key.
+        ::=/  precommit-tx  (~(get by precommits) [txid pos].i.inputs)
+        ::  XX Next step is to actually pass in precommits
+        =/  precommit-tx  *urb-tx:urb
+        ?~  precommit-sat=(calc-precommit-sont precommit-tx to.sot)  
+          cor
+        =/  tweak
+          %+  rap 
+            3 
+          :~  %btc 
+              %gw 
+              txid=txid.u.precommit-sat 
+              vout=vout.u.precommit-sat 
+              off=off.u.precommit-sat
+          ==
+        ?.  =(dat.tw.pub:+<:cac tweak)
           cor
         ::
-        :: ?.  =(dat.tw.pub:+<:cac tweak)  cor     :: correct tweak, including spawn sat
-        :: ?~  sig  cor                         :: verify networking key signature XX remove this?
-        :: ?.  %:  veri-octs:ed:crypto 
-        ::         u.sig 
-        ::         512^(shal raw.i.^sots) 
-        ::         sgn:ded:ex:cac
-        ::     ==
-        ::   cor
+        ::  We then transition the sat to [commit-txid vout off].
+        ?.  ?&  =(txid.u.precommit-sat txid.i.inputs)
+                =(vout.u.precommit-sat pos.i.inputs)
+            ==
+          cor
+        ::  We now know that the attestation sat to.sot was a valid spend of the
+        ::  precommit transaction AND that the output of that transaction which
+        ::  the sat landed in was indeed an input to the commit transaction, and
+        ::  we know which input it was.
+        =/  commit-sat=sont:ord
+            ::  XX Assume for now that the commit tx only has one input and one output.
+            ::  (Just to get the code compiling and testable.)
+            ::  So we map from [txid.precommit-sat vout.precommit-sat off.precommit-sat]
+            ::              to [txid.commit-tx 0 off.precommit-sat]
+            ::   which would also be [txid.i.inputs pos.i.inputs off.precommit-sat].
+            ::  We need to remove this assumption to allow for batching and to
+            ::  ensure that a malicious spender doesn't duplicate the sat by
+            ::  sending it to the second output when we assume it's in the first.
+            ::  This will require a similar loop to ++update-sonts and will require
+            ::  %urb-watcher to pass in the commit transaction itself in precommits
+            ::  so we can access all of its inputs and outputs.
+            ::  (See ++calc-precommit-sont actually. In fact I can maybe just reuse it.)
+            ::  (I think I just need a ++sont-to-sont arm that takes a sont and a urb-tx. 
+            ::  LLM can probably write that.)
+            [txid.i.inputs pos.i.inputs off.u.precommit-sat]
+        ::
+        ::  Now that we've validated the commit tx's movement
+        ::  of the sat, we can provisionally update sont-map and unv-ids
+        ::  with everything we know so far and call ++update-sonts, which will
+        ::  read the satpoint from sont-map, transition the satpoint to
+        ::  [txid.reveal-tx vout off] automatically since we're currently
+        ::  processing the reveal transaction and its commit input, and update
+        ::  sont-map and unv-ids appropriately.
+        ::  (When the ++update-sonts call happens in the outer loop
+        ::  after ++process-unv finishes, it will simply do nothing
+        ::  because the get:by check for this input will return null.)
+        =.  sont-map  
+          %:  put-com:si:ol 
+              sont-map 
+              txid.commit-sat 
+              vout.commit-sat  
+              off.commit-sat  
+              value.i.inputs :: value of this input to reveal tx
+              who
+          ==
         =/  sponsor  `@p`(end 4 who)
         =/  =point:urb
-          :*  own=[u.sat ~]
+          :*  own=[commit-sat ~]
               rift=0
               life=1
               pass=pass.sot
@@ -339,19 +387,16 @@
               escape=~
               fief=~
           ==
+        =.  unv-ids  (~(put by unv-ids) who point)
+        =.  cor  update-sonts
+        =/  reveal-sat  sont:own:(~(got by unv-ids) who)
         =.  cor
           %-  emil
-            :~  [%point who %owner u.sat]
-                [%point who %sponsor `sponsor]
-                [%point who %keys 1 pass.sot]
-            ==
-        ~&  >  [%spawn-succeeded point]
-        %_    $
-            point    `point
-            sots     t.sots
-            sont-map  (put-com:si:ol sont-map txid.u.sat vout.u.sat off.u.sat value.i.is who)
-            unv-ids   (~(put by unv-ids) who point)
-        ==
+          :~  [%point who %owner reveal-sat]
+              [%point who %sponsor `sponsor]
+              [%point who %keys 1 pass.sot]
+          ==
+        $(sots t.sots)
       ::
       ::  =^  point  cor  (spend-point point)
       ?~  point  cor
@@ -466,44 +511,55 @@
       ::  Is this sont in the input that's being processed? 
       ++  is-sont-in-input
         |=  sot=sont:ord
-        ~|  [s=sot [txid pos value]:i.is]
-        ?.  =([txid vout]:sot [txid pos]:i.is)  |
+        ~|  [s=sot [txid pos value]:i.inputs]
+        ?.  =([txid vout]:sot [txid pos]:i.inputs)  |
         ~|  %fatal-tracking-error
-        ?>  (lth off.sot value.i.is)  &
+        ?>  (lth off.sot value.i.inputs)  &
       ::
-      ::  The caller of this arm will have a current tx
-      ::  in its context. Given that tx and [vout off tej],
-      ::  check if the implied satpoint is a valid landing
-      ::  location given the tx inputs. Additionally,
-      ::  check that the scriptPubkey hash of the valid
+      ::  Given a precommit tx and a [vout off tej],
+      ::  check if the implied satpoint [txid vout off]
+      ::  is a valid landing location within the tx outputs
+      ::  and that off+tej doesn't exceed that output's value.
+      ::  Additionally, check that the scriptPubkey hash of the
       ::  landing output matches the given spkh.
-      ++  calc-spawn-sont
-        |=  $:  ::from=(unit [=vout:ord =off:ord])
+      ::  If both are true, return the implied satpoint,
+      ::  otherwise return null.
+      ++  calc-precommit-sont
+        |=  $:  precommit=urb-tx:urb
                 out=[spkh=@ux pos=(unit vout:ord) =off:ord tej=off:ord]
             ==
         ^-  (unit sont:ord)
         =|  out-pos=@ud
         =|  out-val=@ud
-        =/  os  os.tx
+        =/  in-val
+          (roll is.precommit |=([a=input:urb-tx:urb b=@] (add value.a b)))
+        =/  outputs  os.precommit
         |-  
         ^-  (unit sont:ord)
-        ?~  os  ~
-        ?:  &(?=(^ pos.out) (lth u.pos.out out-pos))  ~
-        ?:  |((lte (add out-val value.i.os) running-value) &(?=(^ pos.out) !=(out-pos u.pos.out)))
-          $(out-val (add out-val value.i.os), os t.os, out-pos +(out-pos))
-        ?:  (lte (add running-value value.i.is) :(add out-val off.out tej.out))  ~
-        ?:  (lte value.i.os (add [off tej]:out))
-          $(out-val (add out-val value.i.os), os t.os, out-pos +(out-pos))
-        =/  sat=sont:ord  [txid.i.is pos.i.is (sub (add out-val off.out) running-value)]
-        ::?.  |(?=(~ from) !=(u.from [pos off]:sat))  ~
-        ?^  (get-com:si:ol sont-map sat)
-          ?^(pos.out ~ $(out-val (add out-val value.i.os), os t.os, out-pos +(out-pos)))
+        ?~  outputs  ~
+        ::  Null pos.out is undefined behavior for now, fail
+        ?~  pos.out
+          ~
+        ::  If we passed vout, fail
+        ?:  (lth u.pos.out out-pos)  
+          ~
+        ::  If satpoint would exceed total available input value, fail
+        ?:  (gth :(add out-val off.out tej.out) in-val)
+          ~
+        ::  If this isn't the correct output index, loop
+        ?:  !=(out-pos u.pos.out)
+          $(out-val (add out-val value.i.outputs), outputs t.outputs, out-pos +(out-pos))
+        ::  Last check: this is the correct output index, but is it big enough?
+        ?:  (gth (add off:out tej:out) value.i.outputs)
+          ~
+        ::  The satpoint is legit, we build it
+        =/  sat=sont:ord  [id.precommit u.pos.out off.out]
         ::  Rebuild the hash of this output and check if it matches the given hash
-        =/  en-out  (can 3 script-pubkey.i.os 8^value.i.os ~)
-        =/  hax-out  (shay (add 8 wid.script-pubkey.i.os) en-out)
-        ?:  =(hax-out spkh.out)  `sat
-        ?.  =(~ pos.out)  ~
-        $(out-val (add out-val value.i.os), os t.os, out-pos +(out-pos))
+        =/  en-out  (can 3 script-pubkey.i.outputs 8^value.i.outputs ~)
+        =/  hax-out  (shay (add 8 wid.script-pubkey.i.outputs) en-out)
+        ?:  =(hax-out spkh.out)  
+          `sat
+        ~
       ::
       ::  Experimental arm for allowing both the sat owner and the networking 
       ::  key controller to make attestations.
@@ -536,14 +592,14 @@
     ::  - Emit %xfer event signalling point transfer to new owner sont
     ++  update-sonts
       ^+  cor
-      ?~  itxo=(~(get by sont-map) txid.i.is pos.i.is)  
+      ?~  input=(~(get by sont-map) [txid pos]:i.inputs)
         cor
-      =.  sont-map  (~(del by sont-map) txid.i.is pos.i.is)
-      =/  input-sonts  ~(tap by sats.u.itxo)
+      =.  sont-map  (~(del by sont-map) [txid pos]:i.inputs)
+      =/  input-sonts  ~(tap by sats.u.input)
       |-  
       ^+  cor
       ?~  input-sonts  cor
-      =/  old-sont=sont:ord  [txid.i.is pos.i.is p.i.input-sonts] 
+      =/  old-sont=sont:ord  [txid.i.inputs pos.i.inputs p.i.input-sonts] 
       =/  new-sunt  
         %-  index-to-sont-with-coinbase 
         (add running-value p.i.input-sonts)
@@ -562,7 +618,7 @@
                       txid.new-sont 
                       vout.new-sont 
                       off.new-sont 
-                      value.i.is 
+                      value.i.inputs  :: XX this is wrong, it should be the output value
                       q.i.input-sonts
                   ==
       ==

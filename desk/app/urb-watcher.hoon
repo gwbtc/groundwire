@@ -209,6 +209,14 @@
   ;<    new=urb-block:urb
       bind:m
     (convert-block i u.bluck)
+
+  ::  Find %spawn sotx in the urb-block. For each %spawn, grab the associated
+  ::  [txid vout] and then get-raw-transaction that txid. Then get-raw-transaction
+  ::  its FIRST input (we'll assume only one for now) and put that in a struct
+  ::  containing spawns.
+  ::  =/  precommits  (map [txid vout] [commit=tx precommit=tx])
+
+
   =.  uc  (handle-block:uc new)
   ~&  >  "processed block {<i>} of {<last-settled-block>}"
   $(i +(i))
