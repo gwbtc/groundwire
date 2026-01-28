@@ -38,8 +38,6 @@
       !>
       :*  sed
           ~
-          :-  %batch
-          :~  [%spawn pub:ex:wal [*@ux `0 0 0]]
-              [%keys pub:ex:wal %.n]
-  ==  ==  ==
+          [%spawn pub:ex:wal [*@ux `0 0 0]]
+  ==  ==
 (pure:m !>(~))
