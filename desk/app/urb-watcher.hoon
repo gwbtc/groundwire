@@ -1,3 +1,9 @@
+::  %urb-watcher
+::
+::  This agent is the Groundwire equivalent of %azimuth and %eth-watcher.
+::  It fetches Bitcoin blocks on a timer and parses them for Jael events.
+::  Its helper core at the bottom works in conjunction with lib/urb-core.
+::
 /-  bitcoin, spider, ord, urb
 /+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb
 ::
@@ -209,18 +215,72 @@
   ;<    new=urb-block:urb
       bind:m
     (convert-block i u.bluck)
-
-  ::  Find %spawn sotx in the urb-block. For each %spawn, grab the associated
-  ::  [txid vout] and then get-raw-transaction that txid. Then get-raw-transaction
-  ::  its FIRST input (we'll assume only one for now) and put that in a struct
-  ::  containing spawns.
-  ::  =/  precommits  (map [txid vout] [commit=tx precommit=tx])
-
-
-  =.  uc  (handle-block:uc new)
-  ~&  >  "processed block {<i>} of {<last-settled-block>}"
-  $(i +(i))
   ::
+  ::  Find all %spawn sotx in the urb-block. For each %spawn, ++get-raw-transaction 
+  ::  the commit tx and the precommit tx, which are needed to accurately track the sat.
+  ::  (This assumes one %spawn per reveal transaction.)
+  =|  precommits=(map [txid:ord vout:ord] [commit=urb-tx:urb precommit=urb-tx:urb])
+  =/  txs  txs.new
+  ::  Check all txs for %spawns
+  |-
+  ?~  txs
+    =.  uc  (handle-block:uc new precommits)
+    ~&  >  "processed block {<i>} of {<last-settled-block>}"
+    ^$(i +(i))
+  =/  tx-inputs  is.i.txs
+  ::  Check all inputs for a %spawn. There could be multiple spawning
+  ::  commit inputs to a single reveal tx
+  |-  
+  ?~  tx-inputs
+    ^$(txs t.txs)
+  =/  sots  sots.i.tx-inputs
+  ?~  sots
+    $(tx-inputs t.tx-inputs)
+  =/  sots=(list single:skim-sotx:urb)  :: bad name shadowing
+    ?:  ?=(%batch +<.sot.i.sots) 
+      bat.sot.i.sots 
+    ~[+.sot.i.sots]
+  |-
+  ?~  sots  
+    ^$(tx-inputs t.tx-inputs)
+  ?.  ?=(%spawn -.i.sots)
+    $(sots t.sots)
+  ::  If we found an input with a %spawn, get the tx that generated it
+  ;<  commit-tx=(unit tx:bc)  bind:m
+    (get-raw-transaction:btcio rpc ~ txid.i.tx-inputs)
+  ?~  commit-tx  ~|  %couldnt-fetch-tx  !!
+  ;<    commit-urb-tx=urb-tx:urb  
+      bind:m
+    (convert-tx u.commit-tx)
+  ::  Now find the commit tx input that matches attested spkh to get precommit tx.
+  ::  (There could technically be multiple that match; we assume the first.)
+  ::  To do this, we need one more inner loop to get the values of all outputs
+  ::  of the precommit tx, to calculate the potential spkhs.
+  =/  spkh  spkh.to.i.sots
+  =/  inputs  is.commit-urb-tx
+  |-
+  ?~  inputs
+    ~&  >>>  "%urb-watcher: Couldn't find precommit tx."
+    ^$(sots t.sots)
+  ;<  precommit-tx=(unit tx:bc)  bind:m
+    (get-raw-transaction:btcio rpc ~ txid.i.inputs)
+  ?~  precommit-tx  ~|  %couldnt-fetch-tx  !!
+  =/  outputs  os.u.precommit-tx
+  |- 
+  ?~  outputs
+    ^$(inputs t.inputs)
+  =/  en-out  (can 3 script-pubkey.i.outputs 8^value.i.outputs ~)  :: value as 8 bytes
+  ?.  =(spkh (shay (add 8 wid.script-pubkey.i.outputs) en-out))
+    $(outputs t.outputs)
+  ;<    precommit-urb-tx=urb-tx:urb  
+      bind:m
+    (convert-tx u.precommit-tx)
+  %=  ^^^$
+    tx-inputs   t.tx-inputs
+    precommits  %+  ~(put by precommits) 
+                  [txid.i.tx-inputs pos.i.tx-inputs]
+                [commit-urb-tx precommit-urb-tx]
+  ==  
   ::
   ::  Convert a block:bitcoin into a urb-block:urb.
   ::  This requires an async +get-raw-transaction call.
@@ -240,43 +300,82 @@
     =/  block  +.revs-and-block
     ~&  [%block block]
     =/  txs    (tail txs.block)  :: cb has no prevouts
-    ::  Backfill missing prevout values in our block's
-    ::  filtered transaction set. Unlike an urb-block,
-    ::  the block:bitcoin we have here doesn't include
-    ::  values in its txs' inputs, so we fetch them,
-    ::  because we need both input values and output
-    ::  values to do sont math.
+    ::
+    ::  A block:btc does not include input values, but we need those for sont
+    ::  math, so for every remaining tx in our filtered block:btc, fetch the
+    ::  prev-tx that generated each of its inputs, get all outputs of
+    ::  that prev-tx, and associate it with that utxo in the reveals map.
+    ::  
+    ::  ("deps" probably was a better name, then)
     |-  
     ^-  form:m
     ?~  txs
       ~&  >>  "Applying prevouts to block {<i>}"
       (pure:m (apply-prevouts-and-urbify:uc block reveals))
-    =/  is  is.i.txs  :: inputs
+    =/  inputs  is.i.txs
     |-  
     ^-  form:m
     :: XX refactor to use gettxout
-    ?~  is  
+    ?~  inputs  
       ^$(txs t.txs)
-    =/  rev  (~(get by reveals) [txid pos]:i.is)
+    =/  rev  (~(get by reveals) [txid pos]:i.inputs)
     ?:  &(?=(^ rev) ?=(^ value.u.rev))
-      $(is t.is)
-    ;<  utx=(unit tx:bc)  bind:m
-      (get-raw-transaction:btcio rpc ~ txid.i.is)
-    ?~  utx  ~|  %couldnt-fetch-tx  !!
-    =/  os  os.u.utx  :: outputs
+      $(inputs t.inputs)
+    ;<  prev-tx=(unit tx:bc)  bind:m
+      (get-raw-transaction:btcio rpc ~ txid.i.inputs)
+    ?~  prev-tx  ~|  %couldnt-fetch-tx  !!
+    =/  prev-outputs  os.u.prev-tx
     =|  pos=@ud
     |-  
     ^-  form:m
-    ?~  os  
-      ^$(is t.is)
-    =/  rev  (~(get by reveals) [id.u.utx pos])
+    ?~  prev-outputs  
+      ^$(inputs t.inputs)
+    =/  rev  (~(get by reveals) [id.u.prev-tx pos])
     ?:  &(?=(^ rev) ?=(^ value.u.rev))  
-      $(os t.os, pos +(pos))
+      $(prev-outputs t.prev-outputs, pos +(pos))
     =/  sots=(list raw-sotx:urb)  ?~(rev ~ sots.u.rev)
     %=  $
-      os  t.os
+      prev-outputs  t.prev-outputs
       pos  +(pos)
-      reveals  (~(put by reveals) [id.u.utx pos] [sots `value.i.os])
+      reveals  (~(put by reveals) [id.u.prev-tx pos] [sots `value.i.prev-outputs])
+    ==
+  ::
+  ::  Use a similar loop to ++convert-block to convert
+  ::  a single tx:bitcoin to urb-tx:urb, but without regard
+  ::  for sots, only values.
+  ++  convert-tx
+    |=  old-tx=tx:bc
+    =/  m  (strand:strandio ,urb-tx:urb)
+    =/  old-inputs  is.old-tx
+    =|  new-inputs=(list [[sots=(list raw-sotx:urb) value=@ud] inputw:tx:bitcoin])
+    |-  
+    ^-  form:m
+    ?~  old-inputs  
+      %-  pure:m
+      :*  id.old-tx
+          new-inputs
+          os.old-tx
+          locktime.old-tx
+          nversion.old-tx
+          segwit.old-tx
+      ==
+    ;<  prev-tx=(unit tx:bc)  bind:m
+      (get-raw-transaction:btcio rpc ~ txid.i.old-inputs)
+    ?~  prev-tx  ~|  %couldnt-fetch-tx  !!
+    =/  prev-outputs  os.u.prev-tx
+    =|  pos=@ud
+    |-  
+    ^-  form:m
+    ?~  prev-outputs  
+      ^$(old-inputs t.old-inputs)
+    ?.  ?&  =(id.u.prev-tx txid.i.old-inputs) 
+            =(pos pos.i.old-inputs)
+        ==
+      $(prev-outputs t.prev-outputs, pos +(pos))
+    =/  new-input  [[~ value.i.prev-outputs] i.old-inputs]
+    %=  ^$
+      old-inputs  t.old-inputs
+      new-inputs  [new-input new-inputs]
     ==
   --
 ::

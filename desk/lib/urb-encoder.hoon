@@ -5,6 +5,32 @@
 ::  - pushdata for Taproot scripts, sometimes called an "unv"
 ::  - bitcoin scripts
 ::
+::  "unv" is short for "urbit envelope."
+::  an unv is an atom that comes from the body
+::  of an ordinal-style Taproot script tagged 
+::  with "urb" instead of "ord":
+::
+::  OP_PUSH 1 0
+::  OP_IF
+::    "urb"
+::    <len, dat>
+::  OP_ENDIF
+::
+::  An unv is variable-sized and 
+::  gets parsed into a list of "raw-sotx".
+::  an ordinal script can also include multiple
+::  unvs, giving us a (list (list raw-sotx))
+::  that we flatten.
+::
+::  A raw-sotx is a [raw=octs sotx].
+::  we keep the raw data around even after parsing
+::  because several proof steps depend on it.
+::
+::  A sotx is similar to a jael udiff, and
+::  indeed gets turned into a jael udiff,
+::  which is what %urb-core ultimately
+::  uses this library for.
+::
 /-  ord, urb
 /+  bscr=btc-script, ol=ord
 |%

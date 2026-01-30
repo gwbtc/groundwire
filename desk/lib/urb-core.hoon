@@ -1,28 +1,14 @@
-::  "unv" is short for "urbit envelope."
-::  an unv is an atom that comes from the body
-::  of an ordinal-style Taproot script tagged 
-::  with "urb" instead of "ord":
+::  %urb-core
 ::
-::  OP_PUSH 1 0
-::  OP_IF
-::    "urb"
-::    <len, dat>
-::  OP_ENDIF
-::
-::  An unv is variable-sized and 
-::  gets parsed into a list of "raw-sotx".
-::  an ordinal script can also include multiple
-::  unvs, giving us a (list (list raw-sotx))
-::  that we flatten.
-::
-::  A raw-sotx is a [raw=octs sotx].
-::  we keep the raw data around even after parsing
-::  because several proof steps depend on it.
-::
-::  A sotx is similar to a jael udiff, and
-::  indeed gets turned into a jael udiff,
-::  which is what %ord-watcher ultimately
-::  uses this library for.
+::  This is where most of the heavy block processing in %urb-watcher happens.
+::  Before engaging with this codebase, make sure that you understand
+::  Taproot script-path spends and ordinal inscriptions.
+::  See sur/urb and lib/urb-encoder for more details on the types at play here.
+::  The main ones to be aware of are:
+::  - sont, a satpoint
+::  - sotx, a comet attestation
+::  - a list of sotx is often called a "sots." be warned that
+::    this same name can appear on multiple parsing layers.
 ::
 ::  The state of urb-core is an index 
 ::  of urb-relevant transactions with their 
@@ -34,12 +20,17 @@
 ::     down to txs containing urb reveals.
 ::  2. %urb-watcher asynchronously fetches the prevout 
 ::     values for each tx in the filtered block.
-::  3. %urb-watcher calls ++apply-prevouts-and-urbify
+::  3. %urb-watcher checks each tx for %spawn sotx.
+::     If it finds one, it fetches a commit and
+::     precommit transaction. See the %spawn case
+::     down below for extensive detail on how and why
+::     we do this.
+::  4. %urb-watcher calls ++apply-prevouts-and-urbify
 ::     on the block. This converts it to an urb-block.
-::  4. %urb-watcher calls ++handle-block on the
+::  5. %urb-watcher calls ++handle-block on the
 ::     urb-block, which processes its txs for sotx and
 ::     returns an updated state and a list of fx.
-::  5. %urb-watcher turns these fx into udiffs and
+::  6. %urb-watcher turns these fx into udiffs and
 ::     gives them to Jael.
 ::
 /-  bitcoin, ord, urb
@@ -230,7 +221,9 @@
   ::
   ::  Given an urb-block, update state and emit fx.
   ++  handle-block
-    |=  =urb-block:urb
+    |=  $:  =urb-block:urb
+            precommits=(map [txid:ord vout:ord] [commit=urb-tx:urb precommit=urb-tx:urb])
+        ==
     ^+  cor
     :: XX num is actually not included in the urb-block type
     :: ?.  =(num.urb-block +(num.block-id.state))
@@ -248,12 +241,14 @@
     :: XX handle coinbase tx
     ?~  txs.urb-block
       cor
-    =.  cor  (handle-tx i.txs.urb-block)
+    =.  cor  (handle-tx i.txs.urb-block precommits)
     $(txs.urb-block t.txs.urb-block)
   ::
   ++  handle-tx
     =|  running-value=@ud
-    |=  tx=urb-tx:urb
+    |=  $:  tx=urb-tx:urb
+            precommits=(map [txid:ord vout:ord] [commit=urb-tx:urb precommit=urb-tx:urb])
+        ==
     ^+  cor
     =/  sum-out  (roll os.tx |=([[* a=@] b=@] (add a b)))
     =/  sum-in  (roll is.tx |=([a=input:urb-tx:urb b=@] (add value.a b)))
@@ -285,7 +280,6 @@
       ?~  sots
         cor
       =*  raw  raw.i.sots
-      ~&  [%sot -.sot.i.sots]
       =*  who  ship.sot.i.sots
       ::  =*  sig   sig.sot.i.sots :: XX check networking key signature?
       =-  $.+(cor -, sots t.sots)
@@ -308,16 +302,37 @@
         =/  cac  (com:nu:cryc:crypto pass.sot)
         ?.  ?=(%c suite.+<.cac)  cor            :: uses suite c encoded pass
         ?.  =(who fig:ex:cac)  cor              :: initial comet @p = hash of public key
-        ::  The %spawn sotx includes a supposed satpoint from 
-        ::  the precommit transaction: [precommit-spkh vout off]
+        ::
+        ::  A Groundwire user must choose the sat they want to own their comet
+        ::  prior to boot-time and pass in its satpoint to Vere on first boot.
+        ::  However, within their commit attestation, they must include their
+        ::  ship's networking key, which is only knowable after boot.
+        ::  Because of this, we have an additional "pre-commit" transaction
+        ::  in addition to the typical ordinal protocol. A client will:
+        ::
+        ::  1. Pre-commit to a sat inside a precommit transaction.
+        ::  2. Boot their comet using a satpoint within the precommit transaction.
+        ::  3. Submit the commit transaction containing their precommit satpoint and ship networking key.
+        ::  4. Submit the reveal transaction.
+        ::
+        ::  When processing a %spawn sotx then, rather than just checking
+        ::  whether the sont is in this input, we need to check if it carried
+        ::  through from *two* transactions back.
+        ::
+        ::  The %spawn sotx includes a supposed satpoint and spkh from 
+        ::  the precommit transaction: [precommit-spkh vout off] 
+        ::  (We know the txid by virtue of the %spawn being associated with this input.)
         ::  We call ++calc-precommit-sont to determine whether this
-        ::  sotx-attested satpoint is indeed valid given the
+        ::  sotx-attested satpoint does indeed exist given the
         ::  precommit transaction's outputs. If so, we'll grab this sat,
         ::  and then check that it's also equal to the tweak of this
         ::  comet's networking key.
-        ::=/  precommit-tx  (~(get by precommits) [txid pos].i.inputs)
-        ::  XX Next step is to actually pass in precommits
-        =/  precommit-tx  *urb-tx:urb
+        ::
+        =/  pcmtx  (~(get by precommits) [txid.i.inputs pos.i.inputs])
+        ?~  pcmtx
+          ~&  >>  "%urb-core: Couldn't find precommit tx."  cor
+        =/  precommit-tx  precommit.u.pcmtx
+        =/  commit-tx  commit.u.pcmtx
         ?~  precommit-sat=(calc-precommit-sont precommit-tx to.sot)  
           cor
         =/  tweak
@@ -329,57 +344,65 @@
               vout=vout.u.precommit-sat 
               off=off.u.precommit-sat
           ==
+        ::
+        ::  Check that the given comet networking key encodes the tweak 
+        ::  that corresponds to the attestation.
         ?.  =(dat.tw.pub:+<:cac tweak)
           cor
         ::
-        ::  We then transition the sat to [commit-txid vout off].
-        ?.  ?&  =(txid.u.precommit-sat txid.i.inputs)
-                =(vout.u.precommit-sat pos.i.inputs)
-            ==
-          cor
-        ::  We now know that the attestation sat to.sot was a valid spend of the
-        ::  precommit transaction AND that the output of that transaction which
-        ::  the sat landed in was indeed an input to the commit transaction, and
-        ::  we know which input it was.
-        =/  commit-sat=sont:ord
-            ::  XX Assume for now that the commit tx only has one input and one output.
-            ::  (Just to get the code compiling and testable.)
-            ::  So we map from [txid.precommit-sat vout.precommit-sat off.precommit-sat]
-            ::              to [txid.commit-tx 0 off.precommit-sat]
-            ::   which would also be [txid.i.inputs pos.i.inputs off.precommit-sat].
-            ::  We need to remove this assumption to allow for batching and to
-            ::  ensure that a malicious spender doesn't duplicate the sat by
-            ::  sending it to the second output when we assume it's in the first.
-            ::  This will require a similar loop to ++update-sonts and will require
-            ::  %urb-watcher to pass in the commit transaction itself in precommits
-            ::  so we can access all of its inputs and outputs.
-            ::  (See ++calc-precommit-sont actually. In fact I can maybe just reuse it.)
-            ::  (I think I just need a ++sont-to-sont arm that takes a sont and a urb-tx. 
-            ::  LLM can probably write that.)
-            [txid.i.inputs pos.i.inputs off.u.precommit-sat]
+        ::  We now know that:
+        ::  - the attested satpoint exists
+        ::  - the attested satpoint is encoded in the attested comet's networking key
+        ::  - the attested satpoint was in an input to the commit transaction
+        ::    (because we found and verified the satpoint by fetching the commit
+        ::    transaction's input), and therefore the precommit and commit transactions
+        ::    share a controller
         ::
-        ::  Now that we've validated the commit tx's movement
-        ::  of the sat, we can provisionally update sont-map and unv-ids
+        ::  This proves ownership. All that's left is to find where the sat ultimately
+        ::  ended up so we can track it appropriately. We thus transition 
+        ::  the sat to [commit-txid vout off] to see where it landed afterwards.
+        ::
+        =/  commit-sat=(unit sont:ord)
+          (apply-tx-to-sont commit-tx u.precommit-sat)
+        ?~  commit-sat
+          cor
+        ::
+        ::  We check to make sure that the sat was indeed spent in the reveal transaction.
+        ::  You could argue that this isn't strictly necessary here, since
+        ::  we know that the creator of the commit tx controlled the sat at that time,
+        ::  so this is a valid reveal regardless and ++update-sonts will still track it 
+        ::  correctly, but in all other cases our security model is to check
+        ::  (is-sont-in-input sont.own.u.point), so we enforce that here as well.
+        ::
+        ?.  (is-sont-in-input u.commit-sat)
+          ~&  >>>  'The commit sat did not get spent in the reveal tx. Rejecting.' 
+          cor
+        ::
+        ::  Now that we know where the sat ended up after the commit tx,
+        ::  we can provisionally update sont-map and unv-ids
         ::  with everything we know so far and call ++update-sonts, which will
         ::  read the satpoint from sont-map, transition the satpoint to
         ::  [txid.reveal-tx vout off] automatically since we're currently
         ::  processing the reveal transaction and its commit input, and update
         ::  sont-map and unv-ids appropriately.
+        ::
         ::  (When the ++update-sonts call happens in the outer loop
         ::  after ++process-unv finishes, it will simply do nothing
-        ::  because the get:by check for this input will return null.)
+        ::  because the get:by check for this input will return null, as we've
+        ::  already processed it and moved the comet correctly.)
+        ::
         =.  sont-map  
           %:  put-com:si:ol 
               sont-map 
-              txid.commit-sat 
-              vout.commit-sat  
-              off.commit-sat  
-              value.i.inputs :: value of this input to reveal tx
+              txid.u.commit-sat 
+              vout.u.commit-sat  
+              off.u.commit-sat  
+              value.i.inputs :: value of this input to the reveal tx, aka the commit utxo
               who
           ==
         =/  sponsor  `@p`(end 4 who)
         =/  =point:urb
-          :*  own=[commit-sat ~]
+          :*  own=[u.commit-sat ~]
               rift=0
               life=1
               pass=pass.sot
@@ -666,6 +689,36 @@
       |=  [=state:urb com=@p =sont:ord]
       =/  point  (~(got by unv-ids:state) com)
       state(unv-ids (~(put by unv-ids:state) com point(sont.own sont)))
+    ::
+    ::
+    ::  Given a transaction and a satpoint that refers to one of its inputs,
+    ::  compute where that same sat ends up in this tx’s outputs.
+    ::  XX  This arm is LLM-generated and needs to be vetted.
+    ::      Also reason about how the caller should interpret a null returns.
+    ++  apply-tx-to-sont
+      |=  [tx=urb-tx:urb sot=sont:ord]
+      ^-  (unit sont:ord)
+      =/  inputs  is.tx
+      =|  in-sum=@ud
+      |-  
+      ^-  (unit sont:ord)
+      ?~  inputs
+        ~
+      =/  inp  i.inputs
+      ::  Is this the input spending the sat’s prevout?
+      ?:  =([txid vout]:sot [txid pos]:inp)
+        ::  Off must be within that prevout’s value.
+        ?.  (lth off.sot value.inp)
+          ~
+        =/  index=@ud
+          (add in-sum off.sot)
+        =/  out  (index-to-sont index os.tx)
+        ?~  out
+          ~
+        ::  Landed in output vout.out at offset off.out (relative to that output).
+        `[[id.tx vout.out off.out]]
+      ::  Otherwise keep scanning; add this input’s value to the running sum.
+      $(inputs t.inputs, in-sum (add in-sum value.inp))
     --
   --
 ::
