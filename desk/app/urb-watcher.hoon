@@ -4,6 +4,9 @@
 ::  It fetches Bitcoin blocks on a timer and parses them for Jael events.
 ::  Its helper core at the bottom works in conjunction with lib/urb-core.
 ::
+::  This currently assumes a local Bitcoin Core node running testnet3.
+::  Change  =/  new-rpc to change this.
+::
 /-  bitcoin, spider, ord, urb
 /+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb
 ::
@@ -33,7 +36,7 @@
 ::  and start a timer to fetch again.
 ++  on-init
   ^-  (quip card _this)
-  =/  new-rpc  ['http://localhost:18443' [%basic 'bitcoinrpc:bitcoinrpc']]
+  =/  new-rpc  ['http://localhost:18332' [%basic 'bitcoinrpc:bitcoinrpc']]
   =/  new-urb-state
     :*  [start-hash:urb start-height:urb]
         *sont-map:ord

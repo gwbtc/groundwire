@@ -299,7 +299,7 @@
         ?.  =(1 bat-cnt)  cor                   :: first sot in batch
         ?^  point  cor                          :: no data for @p yet
         ?:  (~(has by unv-ids) who)  cor        :: no data for @p yet
-        =/  cac  (com:nu:cryc:crypto pass.sot)
+        =/  cac  (com:nu:cric:crypto pass.sot)
         ?.  ?=(%c suite.+<.cac)  cor            :: uses suite c encoded pass
         ?.  =(who fig:ex:cac)  cor              :: initial comet @p = hash of public key
         ::
@@ -511,7 +511,7 @@
         ==
       ::
           %keys
-        ::=/  cac  (com:nu:cryc:crypto pass.sot)
+        ::=/  cac  (com:nu:cric:crypto pass.sot)
         ::?~  sig                  cor
         ::?.  ?=(%c suite.+<.cac)  cor
         ::?.  =(dat.tw.pub:+<:cac (rap 3 ~[+(life.net.u.point) %btc %ord %gw %test]))  cor
