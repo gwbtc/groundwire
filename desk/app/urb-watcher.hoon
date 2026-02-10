@@ -4,8 +4,10 @@
 ::  It fetches Bitcoin blocks on a timer and parses them for Jael events.
 ::  Its helper core at the bottom works in conjunction with lib/urb-core.
 ::
-::  This currently assumes a local Bitcoin Core node running testnet3.
-::  Change  =/  new-rpc to change this.
+::  This code assumes a Bitcoin Core node running testnet3.
+::  Change  =/  new-rpc and ++start-height:urb to change this.
+::  This node must have -txindex enabled for ++get-raw-transaction to succeed,
+::  which means it can't be pruned.
 ::
 /-  bitcoin, spider, ord, urb
 /+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb
@@ -36,7 +38,8 @@
 ::  and start a timer to fetch again.
 ++  on-init
   ^-  (quip card _this)
-  =/  new-rpc  ['http://localhost:18332' [%basic 'bitcoinrpc:bitcoinrpc']]
+  :: =/  new-rpc  ['http://localhost:18332' [%basic 'bitcoinrpc:bitcoinrpc']]
+  =/  new-rpc  ['https://bitcoin-testnet-rpc.publicnode.com' ~]
   =/  new-urb-state
     :*  [start-hash:urb start-height:urb]
         *sont-map:ord
@@ -207,7 +210,8 @@
     (get-block-count:btcio rpc ~)
   ?~  latest-block  ~|  %couldnt-find-latest-block  !!
   ~&  >  "latest block is {<u.latest-block>}"
-  =/  last-settled-block  (sub u.latest-block 6)
+  ::  XX CHANGE THE 1 BACK TO 6
+  =/  last-settled-block  (sub u.latest-block 1)
   |-  
   ?.  (lte i last-settled-block)
     (pure:m !>([fx state]:uc))
@@ -218,6 +222,7 @@
   ;<    new=urb-block:urb
       bind:m
     (convert-block i u.bluck)
+  ~&  >>  [%new new]
   ::
   ::  Find all %spawn sotx in the urb-block. For each %spawn, ++get-raw-transaction 
   ::  the commit tx and the precommit tx, which are needed to accurately track the sat.
@@ -248,6 +253,7 @@
     ^$(tx-inputs t.tx-inputs)
   ?.  ?=(%spawn -.i.sots)
     $(sots t.sots)
+  ~&  >>  "%urb-watcher found a spawn!"
   ::  If we found an input with a %spawn, get the tx that generated it
   ;<  commit-tx=(unit tx:bc)  bind:m
     (get-raw-transaction:btcio rpc ~ txid.i.tx-inputs)
@@ -255,6 +261,7 @@
   ;<    commit-urb-tx=urb-tx:urb  
       bind:m
     (convert-tx u.commit-tx)
+  ~&  >>  [%commit-tx id.commit-urb-tx]
   ::  Now find the commit tx input that matches attested spkh to get precommit tx.
   ::  (There could technically be multiple that match; we assume the first.)
   ::  To do this, we need one more inner loop to get the values of all outputs
@@ -278,6 +285,7 @@
   ;<    precommit-urb-tx=urb-tx:urb  
       bind:m
     (convert-tx u.precommit-tx)
+  ~&  >>  [%precommit-tx id.precommit-urb-tx]
   %=  ^^^$
     tx-inputs   t.tx-inputs
     precommits  %+  ~(put by precommits) 
@@ -296,7 +304,7 @@
     ::   ~&  >>  "error: %ord-watcher's num != num:block"
     ::   !!
     ::  Filter block to urb-relevant txs.
-    ~&  >>  "Filtering block {<i>}"
+    ::  ~&  >>  "Filtering block {<i>}"
     =/  revs-and-block  (find-block-reveals:uc block)
     =/  reveals   -.revs-and-block
     ~&  [%reveals reveals]
@@ -316,16 +324,20 @@
       ~&  >>  "Applying prevouts to block {<i>}"
       (pure:m (apply-prevouts-and-urbify:uc block reveals))
     =/  inputs  is.i.txs
+    :: ~&  [%inputs inputs]
     |-  
     ^-  form:m
     :: XX refactor to use gettxout
     ?~  inputs  
       ^$(txs t.txs)
     =/  rev  (~(get by reveals) [txid pos]:i.inputs)
+    :: ~&  [%rev rev]
     ?:  &(?=(^ rev) ?=(^ value.u.rev))
       $(inputs t.inputs)
+    :: ~&  'fetching prev-tx'
     ;<  prev-tx=(unit tx:bc)  bind:m
       (get-raw-transaction:btcio rpc ~ txid.i.inputs)
+    :: ~&  [%prev-tx prev-tx]
     ?~  prev-tx  ~|  %couldnt-fetch-tx  !!
     =/  prev-outputs  os.u.prev-tx
     =|  pos=@ud
