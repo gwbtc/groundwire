@@ -7,7 +7,6 @@
 /-  bitcoin, ord
 |%
 ::
-++  start-height  4.841.010  :: a recent testnet3 block
 ++  start-hash    0x0
 +$  unv-ids       (map @p point)
 +$  state

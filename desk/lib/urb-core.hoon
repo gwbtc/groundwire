@@ -156,10 +156,10 @@
     ::
     ::  If there is sots, get it, add it to reveals, 
     ::  flag this tx as needed, and recurse.
-    ~&  >>  unvs
+    ::  ~&  >>  unvs
     =/  sots=(list raw-sotx:urb)
       (zing (turn u.unvs parse-roll:urb-encoder))
-    ~&  >>  sots
+    ::  ~&  >>  sots
     (add-to-reveals(need-tx &) sots value)
     ::
     ::  ^$ recurses to the inputs loop.
@@ -281,7 +281,7 @@
       |-  
       ?~  sots
         cor
-      ~&  >>  "%urb-core: processing sots"
+      ::  ~&  >>  "%urb-core: processing sots"
       =*  raw  raw.i.sots
       =*  who  ship.sot.i.sots
       ::  =*  sig   sig.sot.i.sots :: XX check networking key signature?
@@ -299,7 +299,7 @@
       =*  sot  i.sots
       ::  XX more ordering constraints?
       ?:  ?=(%spawn -.sot)
-        ~&  >>  "%urb-core: processing %spawn"
+        ::  ~&  >>  "%urb-core: processing %spawn"
         ?.  =(1 bat-cnt)  cor                   :: first sot in batch
         ?^  point  cor                          :: no data for @p yet
         ?:  (~(has by unv-ids) who)  cor        :: no data for @p yet
@@ -348,15 +348,15 @@
               vout=vout.u.precommit-sat 
               off=off.u.precommit-sat
           ==
-        ~&  >>  ["%urb-core: based on the precommit sat we found, we're expecting this tweak data: " %btc %gw [txid vout off]:u.precommit-sat]
-        ~&  >>  ["%urb-core: this tweak data as an atom is: " tweak]
+        ::  ~&  >>  ["%urb-core: based on the precommit sat we found, we're expecting this tweak data: " %btc %gw [txid vout off]:u.precommit-sat]
+        ::  ~&  >>  ["%urb-core: this tweak data as an atom is: " tweak]
         ::
         ::  Check that the given comet networking key encodes the tweak 
         ::  that corresponds to the attestation.
         ?.  =(dat.tw.pub:+<:cac tweak)
           ~&  >>>  ["%urb-core: provided pass's networking key does not match tweak: " dat.tw.pub:+<:cac]
           cor
-        ~&  >>  "%urb-core: provided pass encodes the correct tweaked networking key!"
+        ::  ~&  >>  "%urb-core: provided pass encodes the correct tweaked networking key!"
         ::
         ::  We now know that:
         ::  - the attested satpoint exists
@@ -372,7 +372,7 @@
         ::
         =/  commit-sat=(unit sont:ord)
           (apply-tx-to-sont commit-tx u.precommit-sat)
-        ~&  >>  commit-sat
+        ::  ~&  >>  commit-sat
         ?~  commit-sat
           cor
         ::
@@ -420,10 +420,10 @@
               fief=~
           ==
         =.  unv-ids  (~(put by unv-ids) who point)
-        ~&  >>  "%urb-core: final step"
+        ::  ~&  >>  "%urb-core: final step"
         =.  cor  update-sonts
         =/  reveal-sat  sont:own:(~(got by unv-ids) who)
-        ~&  >  ["%urb-core: FOUND COMET" reveal-sat who]
+        ~&  >  ["%urb-watcher found comet: " who]
         =.  cor
           %-  emil
           :~  [%point who %owner reveal-sat]
