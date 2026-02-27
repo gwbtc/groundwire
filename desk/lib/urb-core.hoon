@@ -409,7 +409,7 @@
               value.i.inputs :: value of this input to the reveal tx, aka the commit utxo
               who
           ==
-        =/  sponsor  `@p`(end 4 who)
+        =/  sponsor  `@p`(end 4 who) :: XX hardcode to default
         =/  =point:urb
           :*  own=[u.commit-sat ~]
               rift=0
@@ -417,7 +417,7 @@
               pass=pass.sot
               sponsor=[& sponsor]
               escape=~
-              fief=~
+              fief=fief.sot
           ==
         =.  unv-ids  (~(put by unv-ids) who point)
         ::  ~&  >>  "%urb-core: final step"
@@ -455,6 +455,7 @@
         ==
       ::
           %escape
+        ::  sponsoring self, update now
         ?:  =(parent.sot who)
           =.  sponsor.net.u.point  &/who
           =.  escape.net.u.point   ~
@@ -463,6 +464,30 @@
               sots     t.sots
               unv-ids   (~(put by unv-ids) who u.point)
           ==
+        ::  sponsor already signed the request off-chain, update now
+        ::  LLM: verify escape sig against sponsor's stored pass.
+        ::  Message is (shaz (jam [sponsee height])), with a 10 block buffer
+        ?^  sig.sot
+          =/  sponsor  (~(get by unv-ids) parent.sot)
+          ?~  sponsor  cor
+          =/  cac  (com:nu:cric:crypto pass.net.u.sponsor)
+          =/  lower-bound
+            ?:  (lth num.block-id.state 10) 
+              0
+            (sub num.block-id.state 10)
+          ?.  %+  lien
+                (gulf lower-bound (add num.block-id.state 1))
+              |=(h=@ud (veri-octs:ed:crypto u.sig.sot 512^(shaz (jam [who h])) sgn:ded:ex:cac))
+            ~&  >>>  "%urb-core: sponsor's signature is bad"
+            cor
+          =.  sponsor.net.u.point  &/parent.sot
+          =.  escape.net.u.point   ~
+          =.  cor  (emit [%point who %sponsor `parent.sot])
+          %_    $
+              sots     t.sots
+              unv-ids   (~(put by unv-ids) who u.point)
+          ==
+        ::  no signature, flag sponsorship as pending
         =.  escape.net.u.point  `parent.sot
         =.  cor  (emit [%point who %escape `parent.sot])
         %_    $

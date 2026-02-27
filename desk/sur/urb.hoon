@@ -33,10 +33,11 @@
         ::  spkh may be redundant here; we could make vout not be a unit
     $%  $:  %spawn  =pass
             ::from=(unit [=vout =off])
+            fief=(unit fief)
             to=[spkh=@ux vout=(unit vout:ord) =off:ord tej=off:ord] 
         ==
         [%keys =pass breach=?]
-        [%escape parent=ship]
+        [%escape parent=ship sig=(unit @)]
         [%cancel-escape parent=ship]
         [%adopt =ship]
         [%reject =ship]

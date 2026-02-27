@@ -85,7 +85,21 @@
       |^  ^+  ^$
       =+  m=(mat pass.sot)
       ::[[7 1] [1 0] m en-to en-from]
-      [[7 1] [1 0] m en-to ~]
+      ::  LLM: added en-fief to encode inline (unit fief) for spawn
+      [[7 1] [1 0] m en-fief en-to ~]
+      ::
+      ::  LLM: reuses the fief encoding format from standalone %fief (opcode 11)
+      ::  but without the opcode/pad prefix, since spawn has its own
+      ++  en-fief
+        ^-  plat:plot
+        :+  s+~  0
+        ?~  fief.sot  ~[[2 0]]
+        =*  fef  u.fief.sot
+        ?-  -.fef
+          %turf  !!
+          %if  ~[[2 2] [32 p.fef] [16 q.fef]]
+          %is  ~[[2 3] [128 p.fef] [16 q.fef]]
+        ==
       ::
       ++  en-to
         ^-  plat:plot
@@ -115,10 +129,13 @@
         %is  ~[[2 3] [128 p.fef] [16 q.fef]]
       ==
     ::
-        ?(%escape %cancel-escape %adopt %reject %detach)
+    ::  LLM: separated %escape to encode new sig=(unit @) field
+        %escape
+      [[7 3] [1 0] [128 parent.sot] [s+~ (en-sig sig.sot)] ~]
+    ::
+        ?(%cancel-escape %adopt %reject %detach)
       =-  [[7 -] [1 0] [128 +.sot] ~]
       ?-  -.sot
-        %escape         3
         %cancel-escape  4
         %adopt          5
         %reject         6
@@ -236,14 +253,12 @@
       |^  ^+  ^$
       =^  pad=@     cur  (take 0)
       =^  =pass     cur  take-atom
+      ::  LLM: added take-fief to decode inline (unit fief) for spawn
+      =^  fief=(unit fief:urb)  cur  take-fief
       =/  to            take-to
       ?~  to  ~&  >>>  %no-to  !!
       =^  to        cur  u.to
-      ::=/  fom            take-from
-      ::?~  fom  ~
-      ::=^  fom       cur  u.fom
-      ::`[[%spawn pass fom to] cur]
-      `[[%spawn pass to] cur]
+      `[[%spawn pass fief to] cur]
       ::
       ++  take-from
         ^-  (unit [(unit [=vout:ord =off:ord]) cur=@])
@@ -272,7 +287,13 @@
       =^  =pass     cur  take-atom
       `[[%keys pass =(0 breach)] cur]
     ::
-        %3   =^(res cur take-ship `[[%escape res] cur])
+    ::  LLM: %escape now takes sig=(unit @) after parent ship
+        %3
+      =^  res=ship  cur  take-ship
+      =/  sig  take-sig
+      ?~  sig  ~
+      =^  sig  cur  u.sig
+      `[[%escape res sig] cur]
         %4   =^(res cur take-ship `[[%cancel-escape res] cur])
         %5   =^(res cur take-ship `[[%adopt res] cur])
         %6   =^(res cur take-ship `[[%reject res] cur])
@@ -290,37 +311,11 @@
       =^  one  cur  u.one
       $(len (dec len), bat one^bat)
     ::
+    ::  LLM: refactored to use shared ++take-fief arm
         %11
-      =^  pad=@   cur   (take 0)
-      =^  typ     cur   (take 0 2)
-      ?+  typ  ~
-          %0
-        `[fief/~ cur]
-          %1
-        !!
-        ::=^  len  cur  (take 0 2)
-        ::?:  (lth 3 len)  ~
-        ::=|  tufs=(list turf)
-        ::|-  ^+  ^$
-        ::?:  =(len 0)  `[fief/[%turf tufs]]
-        ::=^  let  cur  take-atom
-        ::=;  tuf
-        ::  =^
-        ::=|  i=@ud
-        ::|-  @ud
-        ::=^  car  cur  (take 3)
-        ::?.  |(=('-' car) =('.' car) (gte 'a'
-      ::
-          %2
-        =^  pip  cur  (take 3 4)
-        =^  por  cur  (take 3 2)
-        `[fief/`[%if pip por] cur]
-      ::
-          %3
-        =^  pip  cur  (take 0 128)
-        =^  por  cur  (take 3 2)
-        `[fief/`[%is pip por] cur]
-      ==
+      =^  pad=@  cur  (take 0)
+      =^  fief=(unit fief:urb)  cur  take-fief
+      `[[%fief fief] cur]
     ==
   ::
   ::  Take a bite
@@ -361,6 +356,22 @@
     =^  vout    cur   take-atom
     =^  off    cur   take-atom
     [`[txid vout off] cur]
+  ::  LLM: decode inline (unit fief), same format as standalone %fief
+  ::  (opcode 11) but without the pad bit
+  ++  take-fief
+    ^-  [(unit fief:urb) @ud]
+    =^  typ  cur  (take 0 2)
+    ?+  typ  [~ cur]
+        %0  [~ cur]
+        %2
+      =^  pip  cur  (take 3 4)
+      =^  por  cur  (take 3 2)
+      [`[%if pip por] cur]
+        %3
+      =^  pip  cur  (take 0 128)
+      =^  por  cur  (take 3 2)
+      [`[%is pip por] cur]
+    ==
   ::  Encode escape-related txs
   ::
   ++  take-ship
