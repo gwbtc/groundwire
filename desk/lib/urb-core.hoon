@@ -671,12 +671,16 @@
         input-sonts    t.input-sonts
         sont-map  ?~  new-sunt
                     sont-map
-                  %-  put-all:si:ol 
-                  :*  sont-map 
-                      txid.new-sont 
-                      vout.new-sont 
-                      off.new-sont 
-                      value.i.inputs  :: XX this is wrong, it should be the output value
+                  =/  out-value
+                    ?:  =(txid.new-sont id.tx)
+                      value:(snag vout.new-sont os.tx)
+                    value:(snag vout.new-sont os.cb-tx)
+                  %-  put-all:si:ol
+                  :*  sont-map
+                      txid.new-sont
+                      vout.new-sont
+                      off.new-sont
+                      out-value  :: XX This is an LLM fix for the incorrect output value from the og codebase. Verify this.
                       q.i.input-sonts
                   ==
       ==
