@@ -409,13 +409,12 @@
               value.i.inputs :: value of this input to the reveal tx, aka the commit utxo
               who
           ==
-        =/  sponsor  `@p`(end 4 who) :: XX hardcode to default
         =/  =point:urb
           :*  own=[u.commit-sat ~]
               rift=0
               life=1
               pass=pass.sot
-              sponsor=[& sponsor]
+              sponsor=[| who] :: no sponsor on spawn
               escape=~
               fief=fief.sot
           ==
@@ -427,7 +426,7 @@
         =.  cor
           %-  emil
           :~  [%point who %owner reveal-sat]
-              [%point who %sponsor `sponsor]
+              [%point who %sponsor ~]
               [%point who %keys 1 pass.sot]
           ==
         $(sots t.sots)
