@@ -290,10 +290,10 @@
         ?:  ?=(%batch +<.sot.i.sots) 
           bat.sot.i.sots 
         ~[+.sot.i.sots]
-      =/  point  (~(get by unv-ids) who)
-      =|  bat-cnt=@
       |^  
       ^+  cor
+      =/  point  (~(get by unv-ids) who)
+      =|  bat-cnt=@
       =.  bat-cnt  +(bat-cnt)
       ?~  sots  cor
       =*  sot  i.sots
