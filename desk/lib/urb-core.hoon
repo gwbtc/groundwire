@@ -428,6 +428,7 @@
           :~  [%point who %owner reveal-sat]
               [%point who %sponsor ~]
               [%point who %keys 1 pass.sot]
+              [%point who %fief fief.sot]
           ==
         $(sots t.sots)
       ::
