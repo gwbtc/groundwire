@@ -388,24 +388,20 @@
           cor
         ::
         ::  Now that we know where the sat ended up after the commit tx,
-        ::  we can provisionally update sont-map and unv-ids
-        ::  with everything we know so far and call ++update-sonts, which will
-        ::  read the satpoint from sont-map, transition the satpoint to
-        ::  [txid.reveal-tx vout off] automatically since we're currently
-        ::  processing the reveal transaction and its commit input, and update
-        ::  sont-map and unv-ids appropriately.
+        ::  we provisionally update sont-map and unv-ids with the
+        ::  commit-sat. We do NOT call ++update-sonts here; the outer
+        ::  loop does that after ++process-unv finishes. This is
+        ::  critical for batching: sont.own must still refer to this
+        ::  input so that subsequent sots (e.g. %escape) can pass
+        ::  the is-sont-in-input check. We compute reveal-sat
+        ::  directly for the %owner emission.
         ::
-        ::  (When the ++update-sonts call happens in the outer loop
-        ::  after ++process-unv finishes, it will simply do nothing
-        ::  because the get:by check for this input will return null, as we've
-        ::  already processed it and moved the comet correctly.)
-        ::
-        =.  sont-map  
-          %:  put-com:si:ol 
-              sont-map 
-              txid.u.commit-sat 
-              vout.u.commit-sat  
-              off.u.commit-sat  
+        =.  sont-map
+          %:  put-com:si:ol
+              sont-map
+              txid.u.commit-sat
+              vout.u.commit-sat
+              off.u.commit-sat
               value.i.inputs :: value of this input to the reveal tx, aka the commit utxo
               who
           ==
@@ -419,9 +415,12 @@
               fief=fief.sot
           ==
         =.  unv-ids  (~(put by unv-ids) who point)
-        ::  ~&  >>  "%urb-core: final step"
-        =.  cor  update-sonts
-        =/  reveal-sat  sont:own:(~(got by unv-ids) who)
+        =/  reveal-sunt
+          %-  index-to-sont-with-coinbase
+          (add running-value off.u.commit-sat)
+        =/  reveal-sat=sont:ord
+          ?~  reveal-sunt  [0x0 0 0]
+          u.reveal-sunt
         ~&  >  ["%urb-watcher found comet: " who]
         =.  cor
           %-  emil
