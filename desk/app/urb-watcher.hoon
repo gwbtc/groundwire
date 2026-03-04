@@ -80,7 +80,22 @@
 ++  on-peek
   |=  =(pole knot)
   ^-  (unit (unit cage))
-  (on-peek:def pole)
+  ?+    pole  (on-peek:def pole)
+    ::  /x/block-height — current synced block height
+    [%x %block-height ~]
+      ``noun+!>(num.block-id.urb-state)
+    ::  /x/block-id — current synced block hash + height
+    [%x %block-id ~]
+      ``noun+!>(block-id.urb-state)
+    ::  /x/point/<ship> — look up a ship in unv-ids (unit point)
+    [%x %point ship=@ ~]
+      =/  who  (slaw %p ship.pole)
+      ?~  who  ~
+      ``noun+!>((~(get by unv-ids.urb-state) u.who))
+    ::  /x/points — all spawned identities
+    [%x %points ~]
+      ``noun+!>(unv-ids.urb-state)
+  ==
 ::
 ++  on-watch
   |=  =(pole knot)
