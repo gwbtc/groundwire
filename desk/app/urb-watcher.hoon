@@ -15,6 +15,10 @@
 ::
 /-  bitcoin, spider, ord, urb
 /+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb
+/=  m-  /mar/ud
+/=  m-  /mar/block-id
+/=  m-  /mar/urb-point
+/=  m-  /mar/urb-points
 ::
 |%
 +$  card  card:agent:gall
@@ -80,7 +84,27 @@
 ++  on-peek
   |=  =(pole knot)
   ^-  (unit (unit cage))
-  (on-peek:def pole)
+  ?+    pole  (on-peek:def pole)
+    ::  /x/block-height — current synced block height
+    ::
+      [%x %block-height ~]
+    ``ud+!>(num.block-id.urb-state)
+    ::  /x/block-id — current synced block hash + height
+    ::
+      [%x %block-id ~]
+    ``block-id+!>(block-id.urb-state)
+    ::  /x/point/<ship> — look up a ship in unv-ids
+    ::
+      [%x %point ship=@ ~]
+    ?~  who=(slaw %p ship.pole)  ~
+    ?~  point=(~(get by unv-ids.urb-state) u.who)
+      [~ ~]
+    ``urb-point+!>(u.point)
+    ::  /x/points — all spawned identities
+    ::
+      [%x %points ~]
+    ``urb-points+!>(unv-ids.urb-state)
+  ==
 ::
 ++  on-watch
   |=  =(pole knot)
