@@ -43,8 +43,8 @@
 ++  on-init
   ^-  (quip card _this)
   ::  =/  new-rpc  ['http://localhost:18332' [%basic 'bitcoinrpc:bitcoinrpc']]
-  =/  new-rpc  ['http://localhost:18443' [%basic 'spvwallet:spvwallet']] :: regtest
-  =/  start-height  100  :: a recent regtest block
+  =/  new-rpc  ['https://bitcoin-testnet-rpc.publicnode.com' ~] :: testnet3
+  =/  start-height  4.841.220  :: a recent testnet3 block
   =/  new-urb-state
     :*  [start-hash:urb start-height]
         *sont-map:ord
@@ -153,8 +153,7 @@
     ?+    sign-arvo  (on-arvo:def wire sign-arvo)
         [%khan %arow *]
       ?.  -.p.sign-arvo
-        ?>  ?=([%khan %arow %| *] sign-arvo)
-        ((slog p.p.sign-arvo) `this)
+        ((slog leaf+<p.p.sign-arvo> ~) `this)
       ?>  ?=([%khan %arow %.y %noun *] sign-arvo)
       =/  [%khan %arow %.y %noun =vase]  sign-arvo
       =/  fx-and-state
@@ -236,7 +235,7 @@
       bind:m
     (get-block-count:btcio rpc ~)
   ?~  latest-block  ~|  %couldnt-find-latest-block  !!
-    ~&  >  "latest block is {<u.latest-block>}"
+  ::  ~&  >  "latest block is {<u.latest-block>}"
   =/  last-settled-block  (sub u.latest-block block-confirmations)
   |-  
   ?.  (lte i last-settled-block)
@@ -248,7 +247,7 @@
   ;<    new=urb-block:urb
       bind:m
     (convert-block i u.bluck)
-    ~&  >>  [%new new]
+  ::  ~&  >>  [%new new]
   ::
   ::  Find all %spawn sotx in the urb-block. For each %spawn, ++get-raw-transaction 
   ::  the commit tx and the precommit tx, which are needed to accurately track the sat.
@@ -259,7 +258,7 @@
   |-
   ?~  txs
     =.  uc  (handle-block:uc new precommits)
-        ~&  >  "processed block {<i>} of {<last-settled-block>}"
+    ::  ~&  >  "processed block {<i>} of {<last-settled-block>}"
     ^$(i +(i))
   =/  tx-inputs  is.i.txs
   ::  Check all inputs for a %spawn. There could be multiple spawning
@@ -279,7 +278,7 @@
     ^$(tx-inputs t.tx-inputs)
   ?.  ?=(%spawn -.i.sots)
     $(sots t.sots)
-      ~&  >>  "%urb-watcher found a spawn!"
+  ::  ~&  >>  "%urb-watcher found a spawn!"
   ::  If we found an input with a %spawn, get the tx that generated it
   ;<  commit-tx=(unit tx:bc)  bind:m
     (get-raw-transaction:btcio rpc ~ txid.i.tx-inputs)
@@ -287,7 +286,7 @@
   ;<    commit-urb-tx=urb-tx:urb  
       bind:m
     (convert-tx u.commit-tx)
-      ~&  >>  [%commit-tx id.commit-urb-tx]
+  ::  ~&  >>  [%commit-tx id.commit-urb-tx]
   ::  Now find the commit tx input that matches attested spkh to get precommit tx.
   ::  (There could technically be multiple that match; we assume the first.)
   ::  To do this, we need one more inner loop to get the values of all outputs
@@ -296,7 +295,7 @@
   =/  inputs  is.commit-urb-tx
   |-
   ?~  inputs
-        ~&  >>>  "%urb-watcher: Couldn't find precommit tx."
+    ::  ~&  >>>  "%urb-watcher: Couldn't find precommit tx."
     ^$(sots t.sots)
   ;<  precommit-tx=(unit tx:bc)  bind:m
     (get-raw-transaction:btcio rpc ~ txid.i.inputs)
@@ -311,7 +310,7 @@
   ;<    precommit-urb-tx=urb-tx:urb  
       bind:m
     (convert-tx u.precommit-tx)
-      ~&  >>  [%precommit-tx id.precommit-urb-tx]
+  ::  ~&  >>  [%precommit-tx id.precommit-urb-tx]
   %=  ^^^$
     tx-inputs   t.tx-inputs
     precommits  %+  ~(put by precommits) 
@@ -330,12 +329,12 @@
     ::   ~&  >>  "error: %ord-watcher's num != num:block"
     ::   !!
     ::  Filter block to urb-relevant txs.
-        ~&  >>  "Filtering block {<i>}"
+    ::  ~&  >>  "Filtering block {<i>}"
     =/  revs-and-block  (find-block-reveals:uc block)
     =/  reveals   -.revs-and-block
-        ~&  [%reveals reveals]
+    ::  ~&  [%reveals reveals]
     =/  block  +.revs-and-block
-        ~&  [%block block]
+    ::  ~&  [%block block]
     =/  txs    (tail txs.block)  :: cb has no prevouts
     ::
     ::  A block:btc does not include input values, but we need those for sont
@@ -347,7 +346,7 @@
     |-  
     ^-  form:m
     ?~  txs
-          ~&  >>  "Applying prevouts to block {<i>}"
+      ::  ~&  >>  "Applying prevouts to block {<i>}"
       (pure:m (apply-prevouts-and-urbify:uc block reveals))
     =/  inputs  is.i.txs
     :: ~&  [%inputs inputs]
