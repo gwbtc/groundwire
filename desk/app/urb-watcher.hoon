@@ -81,10 +81,6 @@
   |=  =(pole knot)
   ^-  (unit (unit cage))
   ?+    pole  (on-peek:def pole)
-    ::  /x/block-height — current synced block height
-    ::
-      [%x %block-height ~]
-    ``ud+!>(num.block-id.urb-state)
     ::  /x/block-id — current synced block hash + height
     ::
       [%x %block-id ~]
