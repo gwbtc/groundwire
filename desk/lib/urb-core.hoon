@@ -425,7 +425,7 @@
         =.  cor
           %-  emil
           :~  [%point who %owner reveal-sat]
-              [%point who %sponsor ~]
+              [%point who %sponsor `who] :: the ames devs say we should never send a null sponsor
               [%point who %keys 1 pass.sot]
               [%point who %fief fief.sot]
           ==
@@ -507,7 +507,7 @@
         ?~  child=(~(get by unv-ids) ship.sot)  cor ::$(sots t.sots)
         ?.  =([& who] sponsor.net.u.child)  cor ::$(sots t.sots)
         =.  sponsor.net.u.child  |/who
-        =.  cor  (emit [%point ship.sot %sponsor ~])
+        =.  cor  (emit [%point ship.sot %sponsor `who]) :: the ames devs say we should never send a null sponsor
         %_    $
             sots     t.sots
             unv-ids   (~(put by unv-ids) ship.sot u.child)
