@@ -7,7 +7,6 @@
 /-  bitcoin, ord
 |%
 ::
-++  start-hash    0x0
 +$  unv-ids       (map @p point)
 +$  state
   $:  block-id=id:block:bitcoin
