@@ -214,14 +214,14 @@
 ::
 |%
 ::
-::  Fetch blocks in range(last-processed + 1, latest - 3)
+::  Fetch blocks in range(last-processed + 1, latest - block-confirmations)
 ::  from the provided RPC endpoint, then use a stateful 
 ::  urb-core to process these blocks, returning
 ::  a new urb-state and a list of fx in +on-arvo.
 ++  get-blocks
   |=  [rpc=req-to:btcio urb-state=state:urb]
   ^-  shed:khan
-  =/  block-confirmations  3
+  =/  block-confirmations  1 :: 1 for alpha
   =/  i  (add block-confirmations num.block-id.urb-state) :: last processed block height + 1
   =/  uc
     %-  abed:urb-core:uc
