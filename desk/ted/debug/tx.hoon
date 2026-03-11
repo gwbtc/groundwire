@@ -1,13 +1,13 @@
 /-  spider, urb, bitcoin
-/+  *ord, ul=urb, strandio, btcio, bc=bitcoin
-/=  test-ord-core  /tests/lib/ord-core
+/+  *ord, ul=urb-core, strandio, btcio, bc=bitcoin
+/=  test-urb-core  /tests/lib/urb-core
 ^-  thread:spider
 |=  args=vase
 =/  m  (strand:strandio ,vase)
 ^-  form:m
 =/  [=req-to:btcio =txid:ord]
   (need !<((unit [req-to:btcio @ux]) args))
-=/  oc  ord-core:ul
+=/  oc  urb-core:ul
 |^
 ;<  raw-tx-result=(unit tx:bc)  bind:m
   (get-raw-transaction:btcio req-to ~ txid)
@@ -19,7 +19,7 @@
       reward=50.000.000
       height=start-height:urb
       ^=  txs
-      :~  mock-coinbase-tx:test-ord-core
+      :~  mock-coinbase-tx:test-urb-core
           ::  u.raw-tx-result
           u.raw-tx-result
       ==

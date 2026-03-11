@@ -1,11 +1,11 @@
-/-  spider, bitcoin, urb, ord, ow=ord-watcher
+/-  spider, bitcoin, urb, ord, uw=urb-watcher
 /+  tag=test-agent, btcio, btcl=bitcoin, ol=ord
-/=  mock-agent  /app/ord-watcher
+/=  mock-agent  /app/urb-watcher
 =>
 ::
 ::  def
 |%
-++  dap   %mock-ord-watcher
+++  dap   %mock-urb-watcher
 ++  dek   %groundwire
 ++  doc   [~zod dap]
 ::
@@ -37,7 +37,7 @@
   ^-  form:m
   ;<  *  bind:m  (do-init:tag dap mock-agent)
   ;<  =vase  bind:m  get-save:tag
-  =/  st=state-0:ow  !<(state-0:ow vase)
+  =/  st=state-0:uw  !<(state-0:uw vase)
   ?.  =(start.st start-height:urb)
     ~|  'start.state not initializsed to constant'
     !!
@@ -56,7 +56,7 @@
   (pure:m ~)
 ::
 ::  XX can't test without calling +get-blocks
-::     should probably be in /lib/ord's +ord-core
+::     should probably be in /lib/urb's +urb-core
 ::
 ::++  test-poke-action-start
 ::  %-  eval-mare:tag
@@ -65,7 +65,7 @@
 ::  ;<  *                bind:m  (do-init:tag dap mock-agent)
 ::  ;<  caz=(list card)  bind:m  (do-poke:tag %action !>([%start start-height:urb]))
 ::  ;<  =vase  bind:m  get-save:tag
-::  =/  st=state-0:ow  !<(state-0:ow vase)
+::  =/  st=state-0:uw  !<(state-0:uw vase)
 ::  %+  ex-cards:tag
 ::    caz
 ::  %-  ex-card:tag
@@ -89,7 +89,7 @@
   ;<  *      bind:m  (do-init:tag dap mock-agent)
   ;<  *      bind:m  (do-poke:tag %action !>([%config-rpc mock-req-to]))
   ;<  =vase  bind:m  get-save:tag
-  =/  st=state-0:ow  !<(state-0:ow vase)
+  =/  st=state-0:uw  !<(state-0:uw vase)
   ?>  =(req-to.st `mock-req-to)
   (pure:m ~)
 ::
@@ -100,8 +100,8 @@
   ;<  *      bind:m  (do-init:tag dap mock-agent)
   ;<  *      bind:m  (do-poke:tag %debug !>([%clear-oc ~]))
   ;<  =vase  bind:m  get-save:tag
-  =/  st=state-0:ow  !<(state-0:ow vase)
-  =/  clear-ord  *state:ord
+  =/  st=state-0:uw  !<(state-0:uw vase)
+  =/  clear-ord  *state:urb
   =.  block-id.clear-ord  [start-hash:urb start-height:urb]
   ?>  =(ord-state.st clear-ord)
   (pure:m ~)
@@ -115,7 +115,7 @@
   ::     but need to do a bunch of fake oc stuff
   ;<  *      bind:m  (do-watch:tag /(scot %p ~zod))
   ;<  =vase  bind:m  get-save:tag
-  =/  st=state-0:ow  !<(state-0:ow vase)
+  =/  st=state-0:uw  !<(state-0:uw vase)
   ?>  (~(has in whos.st) ~zod)
   (pure:m ~)
 ::

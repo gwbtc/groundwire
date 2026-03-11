@@ -1,18 +1,18 @@
 /-  urb
-/+  *ord, ul=urb, *test, *mip, lais, gw=groundwire, bip32, b173=bip-b173, rpc=json-rpc, scr=btc-script, strandio, btcio, bc=bitcoin
+/+  *ord, uc=urb-core, *test, *mip, urb-encoder, gw=groundwire, bip32, b173=bip-b173, rpc=json-rpc, scr=btc-script, strandio, btcio, bc=bitcoin
 =*  raws  raws:gw
 |%
 ++  make-unv-script
   |=  sots=(list sotx:urb)
   ^-  script:scr
-  =/  en-sots  (encode:lais sots)
-  =/  tscr  (unv-to-script:en:ul en-sots)
+  =/  en-sots  (encode:urb-encoder sots)
+  =/  tscr  (unv-to-script:en:urb-encoder en-sots)
   =/  wit   (en:bscr tscr)
   =/  de-wit  (need (de:bscr wit))
   ?>  =(de-wit tscr)
-  =/  de-unv  (unv:de:ul de-wit)
+  =/  de-unv  (unv:de:urb-encoder de-wit)
   ?>  ?=([* ~] de-unv)
-  =/  rol  (parse-roll:ul i.de-unv)
+  =/  rol  (parse-roll:urb-encoder i.de-unv)
   ~|  %failed-to-parse-the-same
   ?>  =((turn rol |=([* sotx:urb] +<+)) sots)
   tscr
@@ -101,7 +101,7 @@
         sed
         %c
         (rap 3 ~[lyf %btc %ord %gw %test])
-        xtr
+        :: xtr
     ==
   ::
   ++  fig  `@p`fig:ex:cac(lyf 1)
@@ -110,8 +110,8 @@
     ++  skim
       |%
       ++  spawn
-        |=  $:  ::from=(unit [=pos:urb =off:urb])
-                out=[spk=output:gw pos=(unit pos:urb) =off:urb tej=off:urb]
+        |=  $:  ::from=(unit [=vout:ord =off:ord])
+                out=[spk=output:gw vout=(unit vout:ord) =off:ord tej=off:ord]
             ==
         =/  utxo  utxo:wal
         =.  value.spk.out
@@ -123,7 +123,7 @@
         =/  en-out  (can 3 script-pubkey.spk.out 8^value.spk.out ~)
         =/  hax-out  (shay (add 8 p.script-pubkey.spk.out) en-out)
         ^-  single:skim-sotx:urb
-        [%spawn pub:ex:cac out(spk hax-out)]
+        [%spawn pub:ex:cac ~ out(spk hax-out)]
       ::
       ++  keys
         |=  bec=?
@@ -134,7 +134,7 @@
       ++  escape
         |=  her=@p
         ^-  single:skim-sotx:urb
-        [%escape her]
+        [%escape her ~]
       ::
       ++  adopt
         |=  her=@p
@@ -156,20 +156,20 @@
       |=  sots=(list single:skim-sotx:urb)
       ^-  sotx:urb
       =/  sot  (batch:skim +<)
-      =/  ent  (skim:encode:lais sot)
+      =/  ent  (skim:encode:urb-encoder sot)
       =/  sig  (sign-octs-raw:ed:crypto 512^(shaz ent) [sgn.pub sgn.sek]:+<:cac)
       [fig^[~ sig] sot]
     ::
     ++  sign-skim
       |=  sot=skim-sotx:urb
       ^-  sotx:urb
-      =/  ent  (skim:encode:lais sot)
+      =/  ent  (skim:encode:urb-encoder sot)
       =/  sig  (sign-octs-raw:ed:crypto 512^(shaz ent) [sgn.pub sgn.sek]:+<:cac)
       [fig^[~ sig] sot]
     ::
     ++  spawn
-      |=  $:  ::from=(unit [=pos:urb =off:urb])
-              out=[spk=output:gw pos=(unit pos:urb) =off:urb tej=off:urb]
+      |=  $:  ::from=(unit [=vout:ord =off:ord])
+              out=[spk=output:gw vout=(unit vout:ord) =off:ord tej=off:ord]
           ==
       ^-  sotx:urb
       =/  sot=skim-sotx:urb  (spawn:skim +<)
@@ -230,8 +230,8 @@
       [res cor]
     ::
     ++  spawn
-      |=  $:  ::from=(unit [=pos =off:urb])
-              out=[spk=output:gw pos=(unit pos:urb) =off:urb tej=off:urb]
+      |=  $:  ::from=(unit [=vout =off:ord])
+              out=[spk=output:gw vout=(unit vout:ord) =off:ord tej=off:ord]
           ==
       ^-  [output:gw _cor]
       =^  out  wal
@@ -308,7 +308,7 @@
   --
 ::
 --
-=/  oc  ord-core:ul
+=/  oc  urb-core:uc
 |%
 +$  waletz  [ali=_wallet car=_wallet]
 ++  make-walz
@@ -320,9 +320,9 @@
 ::++  count-sonts
 ::  |=  sm=sont-map
 ::  %-  ~(rep by sm)
-::  |=  [[* a=(mip pos off:urb sont-val)] b=@]
+::  |=  [[* a=(mip vout off:ord sont-val)] b=@]
 ::  %-  ~(rep by a)
-::  |=  [[* a=(map off:urb sont-val)] =_b]
+::  |=  [[* a=(map off:ord sont-val)] =_b]
 ::  (add ~(wyt by a) b)
 ::
 ++  make-batch
@@ -375,10 +375,10 @@
   ::=.  oc
   ::  %+  handle-tx:oc  0xcafe.babe
   ::  =-  (spawns 0xcafe.beef - ~)
-  ::  :~  [val=100 ali spk=[256 (shax 'ali-spawn')] pos=0 off=0 xsot=~]
-  ::      [val=100 bob spk=[256 (shax 'bob-spawn')] pos=1 off=0 xsot=~]
-  ::      [val=100 car spk=[256 (shax 'car-spawn')] pos=2 off=0 xsot=~]
-  ::      [val=100 dav spk=[256 (shax 'dav-spawn')] pos=3 off=0 xsot=~]
+  ::  :~  [val=100 ali spk=[256 (shax 'ali-spawn')] vout=0 off=0 xsot=~]
+  ::      [val=100 bob spk=[256 (shax 'bob-spawn')] vout=1 off=0 xsot=~]
+  ::      [val=100 car spk=[256 (shax 'car-spawn')] vout=2 off=0 xsot=~]
+  ::      [val=100 dav spk=[256 (shax 'dav-spawn')] vout=3 off=0 xsot=~]
   ::  ==
   ::=/  out-ali  (adopt:btc:ali fig:ali)
   ::=/  out-bob  (adopt:btc:bob fig:bob)
@@ -409,10 +409,10 @@
 ::  =.  oc
 ::    %+  handle-tx:oc  0xcafe.babe
 ::    =-  (spawns 0xcafe.beef - ~)
-::    :~  [val=100 ali spk=[256 (shax 'ali-spawn')] pos=0 off=0 xsot=~]
-::        [val=100 bob spk=[256 (shax 'bob-spawn')] pos=1 off=0 xsot=~]
-::        [val=100 car spk=[256 (shax 'car-spawn')] pos=2 off=0 xsot=~]
-::        [val=100 dav spk=[256 (shax 'dav-spawn')] pos=3 off=0 xsot=~]
+::    :~  [val=100 ali spk=[256 (shax 'ali-spawn')] vout=0 off=0 xsot=~]
+::        [val=100 bob spk=[256 (shax 'bob-spawn')] vout=1 off=0 xsot=~]
+::        [val=100 car spk=[256 (shax 'car-spawn')] vout=2 off=0 xsot=~]
+::        [val=100 dav spk=[256 (shax 'dav-spawn')] vout=3 off=0 xsot=~]
 ::    ==
 ::  =/  out-ali  (adopt:btc:ali fig:ali)
 ::  =/  out-bob  (adopt:btc:bob fig:bob)
@@ -445,13 +445,13 @@
 ::  =.  oc
 ::    %+  handle-tx:oc  0xcafe.babe
 ::    %^  spawns  0xcafe.beef
-::      ^-  (list [val=@ud wat=_walt spk=byts pos=@ud off=@ud xsot=(list single:skim-sotx:urb)])
-::      :~  =-  [val=100 ali spk=[256 (shax 'ali-spawn')] pos=0 off=0 xsot=-]
+::      ^-  (list [val=@ud wat=_walt spk=byts vout=@ud off=@ud xsot=(list single:skim-sotx:urb)])
+::      :~  =-  [val=100 ali spk=[256 (shax 'ali-spawn')] vout=0 off=0 xsot=-]
 ::          ~[(adopt:skim:ali fig:ali) kex (fief:skim:ali ~ %if .127.0.0.1 (add sal 1.337))]
-::          =-  [val=100 bob spk=[256 (shax 'bob-spawn')] pos=1 off=0 xsot=-]
+::          =-  [val=100 bob spk=[256 (shax 'bob-spawn')] vout=1 off=0 xsot=-]
 ::          ~[(adopt:skim:bob fig:bob) kex (fief:skim:bob ~ %if .127.0.0.2 (add sal 1.338))]
-::          [val=100 car spk=[256 (shax 'car-spawn')] pos=2 off=0 ~[(escape:skim:car fig:ali)]]
-::          [val=100 dav spk=[256 (shax 'dav-spawn')] pos=3 off=0 ~[(escape:skim:dav fig:bob)]]
+::          [val=100 car spk=[256 (shax 'car-spawn')] vout=2 off=0 ~[(escape:skim:car fig:ali)]]
+::          [val=100 dav spk=[256 (shax 'dav-spawn')] vout=3 off=0 ~[(escape:skim:dav fig:bob)]]
 ::      ==
 ::    ^-  (list sotx:urb)
 ::    :~  (adopt:ali fig:car)
@@ -462,64 +462,64 @@
 ::  oc
 ::::
 ::++  sing
-::  |=  [wat=_walt oc=_ord-core val=@ sot=sotx:urb]
+::  |=  [wat=_walt oc=_urb-core val=@ sot=sotx:urb]
 ::  ^-  tx:gw
 ::  =/  pon  (~(got by unv-ids:oc) fig:wat)
 ::  =|  tx=dataw:tx
-::  =.  is.tx  ~[(make-unv-input txid.sont.own.pon pos.sont.own.pon val ~[sot])]
+::  =.  is.tx  ~[(make-unv-input txid.sont.own.pon vout.sont.own.pon val ~[sot])]
 ::  =.  os.tx  ~[spk^val]
 ::  tx
 ::::
 ::::++  adopt
-::::  |=  [wat=_walt oc=_ord-core val=@ who=@p]
+::::  |=  [wat=_walt oc=_urb-core val=@ who=@p]
 ::::  ^+  *dataw:tx
 ::::  =/  pon  (~(got by unv-ids:oc) fig:wat)
 ::::  =/  sot  (adopt:wat who)
 ::::  =|  tx=dataw:tx
-::::  =.  is.tx  ~[(make-unv-input txid.sont.own.pon pos.sont.own.pon val ~[sot])]
+::::  =.  is.tx  ~[(make-unv-input txid.sont.own.pon vout.sont.own.pon val ~[sot])]
 ::::  =.  os.tx  ~[[256 (shax 0)]^val]
 ::::  tx
 ::::::
 ::::++  escape
-::::  |=  [wat=_walt oc=_ord-core val=@ who=@p]
+::::  |=  [wat=_walt oc=_urb-core val=@ who=@p]
 ::::  ^+  *dataw:tx
 ::::  =/  pon  (~(got by unv-ids:oc) fig:wat)
 ::::  =/  sot  (escape:wat who)
 ::::  =|  tx=dataw:tx
-::::  =.  is.tx  ~[(make-unv-input txid.sont.own.pon pos.sont.own.pon val ~[sot])]
+::::  =.  is.tx  ~[(make-unv-input txid.sont.own.pon vout.sont.own.pon val ~[sot])]
 ::::  =.  os.tx  ~[[256 (shax 0)]^val]
 ::::  tx
 ::::::
 ::::++  fief
-::::  |=  [wat=_walt oc=_ord-core val=@ fef=(unit ^fief)]
+::::  |=  [wat=_walt oc=_urb-core val=@ fef=(unit ^fief)]
 ::::  ^+  *dataw:tx
 ::::  =/  pon  (~(got by unv-ids:oc) fig:wat)
 ::::  =/  sot  (fief:wat fef)
 ::::  =|  tx=dataw:tx
-::::  =.  is.tx  ~[(make-unv-input txid.sont.own.pon pos.sont.own.pon val ~[sot])]
+::::  =.  is.tx  ~[(make-unv-input txid.sont.own.pon vout.sont.own.pon val ~[sot])]
 ::::  =.  os.tx  ~[[256 (shax 0)]^val]
 ::::  tx
 ::::::
 ::::++  keys
-::::  |=  [wat=_walt oc=_ord-core val=@ bec=?]
+::::  |=  [wat=_walt oc=_urb-core val=@ bec=?]
 ::::  ^+  [*dataw:tx wat]
 ::::  =/  pon  (~(got by unv-ids:oc) fig:wat)
 ::::  =^  sot  wat  (keys:wat bec)
 ::::  =|  tx=dataw:tx
-::::  =.  is.tx  ~[(make-unv-input txid.sont.own.pon pos.sont.own.pon val ~[sot])]
+::::  =.  is.tx  ~[(make-unv-input txid.sont.own.pon vout.sont.own.pon val ~[sot])]
 ::::  =.  os.tx  ~[[256 (shax 0)]^val]
 ::::  tx^wat
 ::::
 ::
 ::++  make-unv-input
-::  |=  [itxid=@ pos=@ud value=@ sots=(list sotx:urb)]
+::  |=  [itxid=@ vout=@ud value=@ sots=(list sotx:urb)]
 ::  ^-  inputw:tx
-::  =/  en-sots  (encode:lais sots)
-::  =/  tscr  (unv-to-script:en:ul en-sots)
+::  =/  en-sots  (encode:urb-encoder sots)
+::  =/  tscr  (unv-to-script:en:uc en-sots)
 ::  =/  wit   (en:bscr tscr)
 ::  =/  de-wit  (need (de:bscr wit))
 ::  ?>  =(de-wit tscr)
-::  =/  de-unv  (unv:de:ul de-wit)
+::  =/  de-unv  (unv:de:uc de-wit)
 ::  ?>  ?=([* ~] de-unv)
 ::  =/  rol  (parse-roll i.de-unv)
 ::  ~|  %failed-to-parse-the-same
@@ -528,11 +528,11 @@
 ::  =.  value.in  value
 ::  =.  witness.in  [wit [0 0] ~]
 ::  =.  txid.in  itxid
-::  =.  pos.in  pos
+::  =.  vout.in  vout
 ::  in
 ::::
 ::++  spawns
-::  |=  $:  itxid=@ux  hers=(list [val=@ud wat=_walt spk=byts pos=@ud off=@ud xsot=(list single:skim-sotx:urb)])
+::  |=  $:  itxid=@ux  hers=(list [val=@ud wat=_walt spk=byts vout=@ud off=@ud xsot=(list single:skim-sotx:urb)])
 ::          aft=(list sotx:urb)
 ::      ==
 ::  |^  ^-  dataw:tx
@@ -563,7 +563,7 @@
 ::    =/  en-out  (can 3 spk.i.hers 8^value.i.os ~)
 ::    =/  hax-out  (shay (add 8 wid.script-pubkey.i.os) en-out)
 ::    =;  sot=sotx:urb  $(sots sot^sots, hers t.hers, i +(i))
-::    =/  sot=single:skim-sotx:urb  (spawn:skim:wat.i.hers hax-out ?:(=(0 (mod i 2)) ~ `pos.i.hers) off.i.hers 0)
+::    =/  sot=single:skim-sotx:urb  (spawn:skim:wat.i.hers hax-out ?:(=(0 (mod i 2)) ~ `vout.i.hers) off.i.hers 0)
 ::    (sign-skim:wat.i.hers ?:(=(~ xsot.i.hers) sot [%batch sot xsot.i.hers]))
 ::  ::
 ::  --
@@ -590,11 +590,11 @@
 ::  tx
 ::
 ::  ++  make-outputs
-::    ~+  =|  pos=@ud
+::    ~+  =|  vout=@ud
 ::    |-  ^-  (list output:tx)
 ::    ?~  os-vals  ~
-::    :_  $(os-vals t.os-vals, pos +(pos))
-::    [256^(shax pos) i.os-vals]
+::    :_  $(os-vals t.os-vals, vout +(vout))
+::    [256^(shax vout) i.os-vals]
 ::  ::
 ::  ++  make-input
 ::    ::=.  sots  (weld sots sots)
@@ -615,7 +615,7 @@
 ::    =|  sats=@ud
 ::    =|  sots=(list sotx:urb)
 ::    =|  i=@ud
-::    =|  pos=@ud
+::    =|  vout=@ud
 ::    ~|  %spawn-test-shouldnt-happen
 ::    |-  ^+  sots
 ::    ?>  ?=(^ os)
@@ -624,12 +624,12 @@
 ::    =/  nsats  (add sats value.i.os)
 ::    ?:  (lte nsats xat)
 ::      ?>  ?=(^ t.os)
-::      $(os t.os, sats nsats, pos +(pos))
+::      $(os t.os, sats nsats, vout +(vout))
 ::    =.  i  +(i)
 ::    =/  en-out  (can 3 script-pubkey.i.os 8^value.i.os ~)
 ::    =/  hax-out  (shay (add 8 wid.script-pubkey.i.os) en-out)
 ::    =/  sot
-::      (spawn:i.wats hax-out ?:(=(0 (mod i 2)) ~ `pos) (sub xat sats) 0)
+::      (spawn:i.wats hax-out ?:(=(0 (mod i 2)) ~ `vout) (sub xat sats) 0)
 ::    $(sots sot^sots, wats t.wats)
 ::  ::
 ::  --

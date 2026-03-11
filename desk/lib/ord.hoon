@@ -20,12 +20,12 @@
   |%
   ++  mails-to-script
     |=  mails=(list mail:ord)
-    ^-  script:ord
+    ^-  script:bscr
     (zing (turn mails mail-to-script))
   ::
   ++  mail-to-script
     |=  =mail:ord
-    ^-  script:ord
+    ^-  script:bscr
     (draft-to-script (mail-to-draft mail))
   ::
   ++  mail-to-draft
@@ -78,7 +78,7 @@
     |=  data=octs
     =/  ripped  (rip-octs data)
     ?:  =(ripped ~)  !! ::~|(%en-draft-push-no-content !!)
-    |-  ^-  script:ord
+    |-  ^-  script:bscr
     ?~  ripped  ~
     :-  (push-one-data i.ripped)
     $(ripped t.ripped)
@@ -96,30 +96,30 @@
   ::
   ++  draft-to-script
     |=  =draft:ord
-    ^-  script:ord
+    ^-  script:bscr
     =/  data  (~(get by draft) 0)
     =/  meta  (~(get by draft) 5)
     =.  draft  (~(del by (~(del by draft) 0)) 5)
     =/  tags  (sort ~(tap by draft) |=([[a=@ *] [b=@ *]] (lth a b)))
     =-  [op-push+num+1+0 %op-if op-push+~+3+'ord' -]
-    |^  ^-  script:ord
+    |^  ^-  script:bscr
     ?~  tags  push-meta
     :+  op-push+num+1+p.i.tags
       (push-one-data q.i.tags)
     $(tags t.tags)
     ::
     ++  push-meta
-      ^-  script:ord
+      ^-  script:bscr
       ?~  meta  push-data
       =/  ripped  (rip-octs u.meta)
-      |-  ^-  script:ord
+      |-  ^-  script:bscr
       ?~  ripped  push-data
       :+  op-push+num+1+5
         (push-one-data i.ripped)
       $(ripped t.ripped)
     ::
     ++  push-data
-      ^-  script:ord
+      ^-  script:bscr
       ?~  data  [%op-endif ~]
       =-  [op-push+num+1+0 -]
       (^push-data u.data)
@@ -129,7 +129,7 @@
 ++  de
   |%
   ++  mails
-    |=  =script:ord
+    |=  =script:bscr
     (turn (drafts script) draft-to-mail)
   ::
   ++  draft-to-mail
@@ -170,7 +170,7 @@
     [p &+[tx (cut 3 [0 ilen] q)]]
   ::
   ++  drafts
-    |=  =script:ord
+    |=  =script:bscr
     ^-  (list draft:ord)
     ?~  script  ~
     ?.  ?=([[%op-push * * %0] %op-if [%op-push * * %'ord'] *] script)  $(script t.script)
@@ -180,7 +180,7 @@
     ?~  tags  ^$  [u.tags ^$]
     ::
     ++  fetch-tags
-      ^-  [(unit draft:ord) script:ord]
+      ^-  [(unit draft:ord) script:bscr]
       ?>  ?=(^ script)
       =|  tags=(map @ud (list octs))
       |-  ^+  fetch-tags
@@ -189,7 +189,7 @@
         `(~(run by tags) |=((list octs) (roll +< |=([a=octs b=octs] (add p.a p.b)^(cat 3 q.a q.b)))))
       ?>  ?=(^ t.script)
       ?.  ?=([[%op-push *] [%op-push *] * *] script)
-        =>  .(script `(lest op:script:ord)`t.script)
+        =>  .(script `(lest op:script:bscr)`t.script)
         |-  ^+  fetch-tags
         ?:  ?=(%op-endif -.script)  ~^t.script
         ?>  ?=(^ t.script)
@@ -205,7 +205,7 @@
             (~(put by tags) tag dat^u.d)
         ==
       =|  dats=(list octs)
-      =>  .(script `(lest op:script:ord)`t.script)
+      =>  .(script `(lest op:script:bscr)`t.script)
       |-  ^+  fetch-tags
       ?.  ?=(%op-endif i.script)
         ?>  ?=([[%op-push *] ^] script)
@@ -226,52 +226,52 @@
 ++  si
   |%
   ++  get
-    |=  [a=sont-map:ord =txid:ord =pos:ord =off:ord]
+    |=  [a=sont-map:ord =txid:ord =vout:ord =off:ord]
     ^-  (unit sont-val:ord)
-    ?~  b=(~(get by a) txid pos)  ~
+    ?~  b=(~(get by a) txid vout)  ~
     (~(get by sats.u.b) off)
   ::
   ++  get-com
-    |=  [a=sont-map:ord =txid:ord =pos:ord =off:ord]
+    |=  [a=sont-map:ord =txid:ord =vout:ord =off:ord]
     ^-  (unit @p)
     ?~(b=(get +<) ~ com.u.b)
   ::
   ++  get-vout
-    |=  [a=sont-map:ord =txid:ord =pos:ord]
+    |=  [a=sont-map:ord =txid:ord =vout:ord]
     ^-  (unit vout-map:ord)
-    (~(get by a) txid pos)
+    (~(get by a) txid vout)
   ::
   ++  put-all
-    |=  [a=sont-map:ord =txid:ord =pos:ord =off:ord val=@ud com=(unit @p) ins=(set insc:ord)]
+    |=  [a=sont-map:ord =txid:ord =vout:ord =off:ord val=@ud com=(unit @p) ins=(set insc:ord)]
     ^-  sont-map:ord
-    %+  ~(put by a)  [txid pos]
-    =/  b=vout-map:ord  (~(gut by a) [txid pos] [0 ~])
+    %+  ~(put by a)  [txid vout]
+    =/  b=vout-map:ord  (~(gut by a) [txid vout] [0 ~])
     =/  c=sont-val:ord  (~(gut by sats.b) off [~ ~])
     val^(~(put by sats.b) off c(com com, ins (~(uni in ins.c) ins)))
   ::
   ++  put-ins
-    |=  [a=sont-map:ord =txid:ord =pos:ord =off:ord val=@ud ins=(set insc:ord)]
+    |=  [a=sont-map:ord =txid:ord =vout:ord =off:ord val=@ud ins=(set insc:ord)]
     ^-  sont-map:ord
-    %+  ~(put by a)  [txid pos]
-    =/  b=vout-map:ord  (~(gut by a) [txid pos] [0 ~])
+    %+  ~(put by a)  [txid vout]
+    =/  b=vout-map:ord  (~(gut by a) [txid vout] [0 ~])
     =/  c=sont-val:ord  (~(gut by sats.b) off [~ ~])
     val^(~(put by sats.b) off c(ins (~(uni in ins.c) ins)))
   ::
   ++  put-com
-    |=  [a=sont-map:ord =txid:ord =pos:ord =off:ord val=@ud com=@p]
+    |=  [a=sont-map:ord =txid:ord =vout:ord =off:ord val=@ud com=@p]
     ^-  sont-map:ord
-    %+  ~(put by a)  [txid pos]
-    =/  b=vout-map:ord  (~(gut by a) [txid pos] [0 ~])
+    %+  ~(put by a)  [txid vout]
+    =/  b=vout-map:ord  (~(gut by a) [txid vout] [0 ~])
     =/  c=sont-val:ord  (~(gut by sats.b) off [~ ~])
     val^(~(put by sats.b) off c(com `com))
   ::
   ++  del
-    |=  [a=sont-map:ord =txid:ord =pos:ord =off:ord]
+    |=  [a=sont-map:ord =txid:ord =vout:ord =off:ord]
     ^-  sont-map:ord
-    ?~  b=(~(get by a) [txid pos])  a
+    ?~  b=(~(get by a) [txid vout])  a
     =/  c  (~(del by sats.u.b) off)
     ?:  =(c ~)  (~(del by a) txid off)
-    (~(put by a) [txid pos] u.b(sats c))
+    (~(put by a) [txid vout] u.b(sats c))
   --
 ::++  ming
 ::  |%
@@ -296,31 +296,55 @@
 ::  --
 ::::
 ::+$  mang-map  (map pass [=txid:ord whos=(set @p)])
-++  pointer-to-sont
-  =|  pos=@ud
-  |=  [pntr=@ud outs=(list output:tx:bitcoin)]
-  ^-  $@(~ [pos=@ud off=@ud])
-  ?~  outs  ~
-  ?:  (lth pntr value.i.outs)  [pos pntr]
-  $(pos +(pos), pntr (sub pntr value.i.outs))
 ::
-++  update-ins
-  |=  [=state:ord oids=(set insc:ord) =sont:ord]
-  ?:  =(~ oids)  state
-  %-  ~(rep in oids)
-  |:  [*=insc:ord state]
-  =/  dat  (~(got by insc-ids) insc)
-  state(insc-ids (~(put by insc-ids) insc dat(sont sont)))
-::
-++  update-com
-  |=  [=state:ord com=@p =sont:ord]
-  =/  point  (~(got by unv-ids:state) com)
-  state(unv-ids (~(put by unv-ids:state) com point(sont.own sont)))
-::
-++  update-ids
-  |=  [=state:ord old=sont-val:ord =sont:ord]
-  =.  state  (update-ins state ins.old sont)
-  ?~  com.old  state
-  (update-com state u.com.old sont)
+::  The following code was moved from lib/urb-core.hoon.
+::  If it's worth preserving, it'll need to have references
+::  to global state from that core removed.
+:: ++  inscription-to-sont
+::   |=  mail
+::   ^-  $@(~ sont)
+::   =/  =txidash  txid.i.is
+::   ::  check for index validity here
+::   ?.  &(?=([* %& *] pntr) (lth p.+.pntr sum-outs))
+::     ?~  tracked=(off-to-sont idx)  ~
+::     [txidash tracked]
+::   ?~  tagged=(index-to-sont p.+.pntr os.tx)  !!
+::   [txidash tagged]
+:: 
+:: ++  check-for-insc
+::   ^+  cor
+::   =/  raw-script=(unit octs)
+::     =/  rwit  (flop witness.i.is)
+::     ?.  ?=([* ^] rwit)  ~
+::     ?.  =+(,.-.rwit &(!=(0 wid) =(0x50 (rsh [3 (dec wid)] dat))))  `i.t.rwit
+::     ?~(t.t.rwit ~ `i.t.rwit)
+::   ?~  raw-script  cor
+::   ::=/  scr  (mole |.((de:bscr u.raw-script)))
+::   :: XX: make crash-proof
+::   ::=/  scr  (de:bscr u.raw-script)
+::   ?~  scr=(de:bscr u.raw-script)  cor
+::   ?>  =(u.raw-script (en:bscr u.scr))
+::   =/  mails=(list mail)  (mails:de:ol u.scr)
+::   |-  ^+  cor
+::   ?~  mails  cor
+::   =/  pntr=@ud  ?:(?=([* %& *] pntr.i.mails) p.+.pntr.i.mails 0)
+::   =/  =insc  id.tx^idx
+::   =/  nsont  (pntr-to-sont pntr)
+::   ?~  nsont
+::     :: the ordinals docs suggests that if the index index is
+::     :: invalid, then it is treated normally i.e. on 0 index
+::     =.  cor  (emit [%insc insc ~ i.mails])
+::     %_  $
+::       idx        +(idx)
+::       mails      t.mails
+::       insc-ids   (~(put by insc-ids) insc [[id.tx 0 0] i.mails])
+::     ==
+::   =.  cor  (emit [%insc insc nsont i.mails])
+::   %_  $
+::     idx     +(idx)
+::     mails   t.mails
+::     sont-map  (put-ins:si:ol sont-map txid.nsont vout.nsont off.nsont insc^~^~)
+::     insc-ids   (~(put by insc-ids) insc [nsont i.mails])
+::    ==
 ::
 --
