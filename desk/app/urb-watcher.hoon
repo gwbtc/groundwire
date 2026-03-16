@@ -4,8 +4,7 @@
 ::  It fetches Bitcoin blocks on a timer and parses them for Jael events.
 ::  Its helper core at the bottom works in conjunction with lib/urb-core.
 ::
-::  This code assumes a Bitcoin Core node running testnet4.
-::  Change new-rpc and start-height in ++init to change this.
+::  Change new-rpc and start-height in ++init to change the network.
 ::  If you're using this in conjunction with the SPV wallet, that
 ::  will need to be pointed to the same Bitcoin network as this.
 ::  The RPC node must have -txindex enabled for ++get-raw-transaction to succeed,
@@ -42,10 +41,9 @@
 ::  and start a timer to fetch again.
 ++  on-init
   ^-  (quip card _this)
-  ::  =/  new-rpc  ['http://localhost:18332' [%basic 'bitcoinrpc:bitcoinrpc']]
-  =/  new-rpc  ['http://64.23.185.118:48332' [%basic 'testnet4rpcuser:eef738ab81ca56a252a1715f5f5a691a3590dbc1837849a6c8cbd18118514407']]
-  =/  start-height  125.000  :: a recent testnet4 block
-  =/  start-hash    0xaaf.5493.271b.02d3.8f6c.5029.56fe.2e60.877e.2f86.9596.834c.eedf.109d
+  =/  new-rpc  ['http://64.23.185.118:38332' [%basic 'signetrpcuser:eef738ab81ca56a252a1715f5f5a691a3590dbc1837849a6c8cbd18118514407']]
+  =/  start-height  295.860  :: a recent signet block
+  =/  start-hash    0xb.7467.c146.d2a0.20a6.8671.cddb.88b0.a745.9ea6.8172.2bf7.31d4.4d39.c6f3
   =/  new-urb-state
     :*  [start-hash start-height]
         *sont-map:ord
