@@ -1,0 +1,58 @@
+imports:
+  base-dev: ./desk
+  btc-wall: ./desk
+  gw-dev:   ./desk
+
+git module btc-wall:
+  url:    https://github.com/urbit/bitcoin-wallet
+  reup:   master
+  export: bitcoin
+  pick:
+    - bitcoin/lib/resource.hoon
+    - bitcoin/sur/resource.hoon
+    - bitcoin/sur/btc-wallet.hoon
+  rev: e112ff06ebaba31f04eba99170fd00cb23d7fee5
+
+git module gw-dev:
+  url:    https://github.com/gwbtc/groundwire
+  reup:   main
+  export: desk
+  recursive: false
+  pick:
+    - desk/lib/bip/b158.hoon
+    - desk/lib/bip/b173.hoon
+    - desk/lib/bip/b174.hoon
+    - desk/lib/bitcoin-utils.hoon
+    - desk/lib/bitcoin.hoon
+    - desk/lib/btc-script.hoon
+    - desk/lib/btcio.hoon
+    - desk/lib/psbt.hoon
+    - desk/sur/bitcoin.hoon
+    - desk/sur/json/rpc.hoon
+    - desk/sur/psbt.hoon
+    - desk/tests/lib/bip32.hoon
+    - desk/tests/lib/bip39.hoon
+  rev: e027bd60656f7e41e76e4b43d2eef6487dd1e970
+
+git module base-dev:
+  url:    https://github.com/urbit/urbit
+  reup:   master
+  export: pkg/base-dev
+  pick:
+    - pkg/base-dev/lib/bip39.hoon
+    - pkg/base-dev/lib/bip39/english.hoon
+    - pkg/base-dev/lib/dbug.hoon
+    - pkg/base-dev/lib/der.hoon
+    - pkg/base-dev/lib/default-agent.hoon
+    - pkg/base-dev/lib/skeleton.hoon
+    - pkg/base-dev/lib/strand.hoon
+    - pkg/base-dev/lib/strandio.hoon
+    - pkg/base-dev/mar/bill.hoon
+    - pkg/base-dev/mar/noun.hoon
+    - pkg/base-dev/mar/mime.hoon
+    - pkg/base-dev/mar/txt.hoon
+    - pkg/base-dev/mar/kelvin.hoon
+    - pkg/base-dev/mar/hoon.hoon
+    - pkg/base-dev/sur/asn1.hoon
+    - pkg/base-dev/sur/spider.hoon
+  rev: 41dd3b5f7c554ac615d0db9eaa5fe46071d47bc8
