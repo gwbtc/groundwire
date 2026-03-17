@@ -1,0 +1,16 @@
+# Claude Code
+.claude
+
+# Peru dependency manager
+.peru/
+venv/
+
+# Tools
+config.json
+tools/venv/
+tools/__pycache__/
+tools/*.pyc
+tools/secrets.json
+
+# Mempool regtest runtime data
+scripts/.mempool-regtest/
