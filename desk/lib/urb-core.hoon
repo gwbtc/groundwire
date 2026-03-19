@@ -137,12 +137,14 @@
     ::  preserve our potential saved value and recurse.
     =/  raw-script=(unit octs)
       =/  rwit  (flop witness.i.is)
-      ?.  ?=([* ^] rwit)  ~
-      ?.  =+  i.rwit
-          &(!=(0 wid) =(0x50 (cut 3 [(dec wid) 1] dat)))
-        `i.t.rwit
-      ?~  t.t.rwit  ~
-      `i.t.t.rwit
+      ?.  ?=([* ^] rwit)  ~                                                               
+      =/  first-byte  =+(i.rwit (cut 3 [(dec wid) 1] dat))
+      ?.  |(=(0xc0 first-byte) =(0xc1 first-byte))  ~  :: limit to taproot tx                                
+      ?.  =+  i.rwit                                                                      
+          &(!=(0 wid) =(0x50 (cut 3 [(dec wid) 1] dat)))                                  
+        `i.t.rwit                                                                         
+      ?~  t.t.rwit  ~        
+      `i.t.t.rwit   
     ?~  raw-script
       (add-to-reveals ~ value)
     =/  descr  (de:bscr u.raw-script)
