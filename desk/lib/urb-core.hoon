@@ -586,7 +586,7 @@
       ::  otherwise return null.
       ++  calc-precommit-sont
         |=  $:  precommit=urb-tx:urb
-                out=[spkh=@ux pos=(unit vout:ord) =off:ord tej=off:ord]
+                out=[spkh=@ux pos=vout:ord =off:ord tej=off:ord]
             ==
         ^-  (unit sont:ord)
         =|  out-pos=@ud
@@ -597,23 +597,20 @@
         |-  
         ^-  (unit sont:ord)
         ?~  outputs  ~
-        ::  Null pos.out is undefined behavior for now, fail
-        ?~  pos.out
-          ~
         ::  If we passed vout, fail
-        ?:  (lth u.pos.out out-pos)  
+        ?:  (lth pos.out out-pos)  
           ~
         ::  If satpoint would exceed total available input value, fail
         ?:  (gth :(add out-val off.out tej.out) in-val)
           ~
         ::  If this isn't the correct output index, loop
-        ?:  !=(out-pos u.pos.out)
+        ?:  !=(out-pos pos.out)
           $(out-val (add out-val value.i.outputs), outputs t.outputs, out-pos +(out-pos))
         ::  Last check: this is the correct output index, but is it big enough?
         ?:  (gth (add off:out tej:out) value.i.outputs)
           ~
         ::  The satpoint is legit, we build it
-        =/  sat=sont:ord  [id.precommit u.pos.out off.out]
+        =/  sat=sont:ord  [id.precommit pos.out off.out]
         ::  Rebuild the hash of this output and check if it matches the given hash
         =/  en-out  (can 3 script-pubkey.i.outputs 8^value.i.outputs ~)
         =/  hax-out  (shay (add 8 wid.script-pubkey.i.outputs) en-out)
