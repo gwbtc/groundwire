@@ -1,0 +1,47 @@
+name: Deploy to distribution ship
+on:
+  push:
+    branches:
+      - main
+
+env:
+  DESK: groundwire
+  SHIP_HOST: root@143.198.70.9
+  PIER_PATH: /root/.local/share/groundwire-alpha/ribsyp-lidwex-mitdev-sopsyn--difrel-mapler-mitnyt-daplyd
+  TMUX_TAB: ribsyp
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install peru
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y pipx
+          pipx ensurepath
+          pipx install peru
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Build desk
+        run: |
+          chmod +x build.sh
+          bash build.sh
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H 143.198.70.9 >> ~/.ssh/known_hosts
+
+      - name: Deploy desk
+        run: |
+          rsync -az --delete --exclude='.git*' \
+            dist/ ${SHIP_HOST}:${PIER_PATH}/${DESK}/
+
+      - name: Commit desk on ship
+        run: |
+          ssh ${SHIP_HOST} "tmux send-keys -t ${TMUX_TAB} '|commit %${DESK}' Enter"
