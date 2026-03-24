@@ -106,7 +106,7 @@
         :+  s+~  0
         :*  [256 spkh.to.sot]
             (mat off.to.sot)  (mat tej.to.sot)
-            ?~(vout.to.sot [2 0]^~ [2 1]^(mat u.vout.to.sot)^~)
+            [2 1]^(mat vout.to.sot)^~  :: this [2 1] stuff might not be necessary anymore now that vout isn't a unit
             ::?~(vout.to.sot ~ [(mat u.vout.to.sot) ~])
         ==
       ::  ++  en-from
@@ -270,16 +270,14 @@
         `[`[vout off] cur]
       ::
       ++  take-to
-        ^-  (unit [[spkh=@ux vout=(unit vout:ord) =off:ord tej=off:ord] cur=@])
+        ^-  (unit [[spkh=@ux =vout:ord =off:ord tej=off:ord] cur=@])
         =^  spkh  cur  (take 0 256)
         =^  off    cur  take-atom
         =^  tej    cur  take-atom
         =^  vout-o  cur  (take 0 2)
-        ?:  =(vout-o 0)
-          `[[spkh ~ off tej] cur]
         ?.  =(vout-o 1)  ~&  >>>  %take-to  !!
         =^  vout    cur   take-atom
-        `[[spkh `vout off tej] cur]
+        `[[spkh vout off tej] cur]
       --
     ::
         %2

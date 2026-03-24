@@ -29,11 +29,10 @@
     ==
   ::
   +$  single
-        ::  spkh may be redundant here; we could make vout not be a unit
+        ::  spkh may be redundant here since vout is no longer a unit
     $%  $:  %spawn  =pass
-            ::from=(unit [=vout =off])
             fief=(unit fief)
-            to=[spkh=@ux vout=(unit vout:ord) =off:ord tej=off:ord] 
+            to=[spkh=@ux =vout:ord =off:ord tej=off:ord] 
         ==
         [%keys =pass breach=?]
         [%escape parent=ship sig=(unit @)]
