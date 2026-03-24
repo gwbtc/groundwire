@@ -1,0 +1,17 @@
+name: Trigger Groundwire Build
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger gwbtc/urbit build
+        run: |
+          gh workflow run groundwire-build.yml \
+            --repo gwbtc/urbit \
+            --ref gw/next/kelvin/408
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
