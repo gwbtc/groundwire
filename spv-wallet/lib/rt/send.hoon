@@ -1,6 +1,6 @@
 /-  s=spv-wallet, tt=transactions
 /+  io=sailboxio, html-utils, sailbox, json-utils, txns=tx-build, *wallet-address,
-    bip32, txns=tx-build, bip329, wallet-account, bcu=bitcoin-utils,
+    bip32=bip32-spv, txns=tx-build, bip329, wallet-account, bcu=bitcoin-utils,
     fees=tx-fees, sel=tx-select, drft=tx-draft, wutxo=wallet-utxo, taproot
 |%
 ::  Safe list indexing (returns unit instead of crashing)

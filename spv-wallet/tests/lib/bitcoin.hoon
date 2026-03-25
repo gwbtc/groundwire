@@ -1,4 +1,4 @@
-/+  *test, *bitcoin, *bitcoin-utils, bip32
+/+  *test, *bitcoin, *bitcoin-utils, bip32=bip32-spv
 =,  secp:crypto
 =+  ecc=secp256k1
 |%

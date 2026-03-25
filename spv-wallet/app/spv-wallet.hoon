@@ -1,7 +1,7 @@
 /-  *spv-wallet
 /+  dbug, sailbox, io=sailboxio, server, multipart,
     ui=ui-spv-wallet, html-utils, json-utils,
-    bip39, bip32, btc=bitcoin, bip329,
+    bip39, bip32=bip32-spv, btc=bitcoin, bip329,
     wallet-address, wallet-account, *wallet-mempool-space,
     rt-wallet, rt-account, rt-send, rt-spv, rt-boot, taproot
 /=  t-  /tests/lib/bitcoin-spv

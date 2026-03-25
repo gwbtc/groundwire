@@ -1,5 +1,5 @@
 /-  *indexer
-/+  btr=bitcoin-core-rpc, bip32
+/+  btr=bitcoin-core-rpc, bip32=bip32-spv
 |%
 ::
 +$  timer

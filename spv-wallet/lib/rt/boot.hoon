@@ -1,5 +1,5 @@
 /-  s=spv-wallet, tx=transactions, urb
-/+  io=sailboxio, html-utils, bip32, btc=bitcoin,
+/+  io=sailboxio, html-utils, bip32=bip32-spv, btc=bitcoin,
     wallet-address, wallet-account, *wallet-mempool-space,
     taproot, txns=tx-build,
     bcu=bitcoin-utils, fees=tx-fees, sig=tx-sighash, urb-encoder,

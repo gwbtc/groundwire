@@ -1,5 +1,5 @@
 /-  *spv-wallet
-/+  io=sailboxio, html-utils, multipart, tarball, bip39, bip32, btc=bitcoin,
+/+  io=sailboxio, html-utils, multipart, tarball, bip39, bip32=bip32-spv, btc=bitcoin,
     txns=transactions
 |%
 ::  Handle test pages (timer, PDF, MP4, mempool tests)

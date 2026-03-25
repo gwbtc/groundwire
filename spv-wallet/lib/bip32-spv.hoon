@@ -1,4 +1,8 @@
-:: NOTE: Version modified from groundwire/volt/ repo.
+::  bip32-spv: fork of vendor/base-dev lib/bip32.hoon
+::
+::  adds ++address-p2sh (BIP49) and ++address-p2wpkh (BIP84)
+::  for deriving addresses directly from bip32 keys.
+::  also uses `this` instead of `+>` for door subject reference.
 ::
 ::  bip32 implementation in hoon
 ::

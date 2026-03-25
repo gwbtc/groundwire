@@ -1,5 +1,5 @@
 /-  *spv-wallet, btc-sur=bitcoin
-/+  bip39, bip32, btc=bitcoin, b173=bip-b173, sailbox, json-utils, taproot
+/+  bip39, bip32=bip32-spv, btc=bitcoin, b173=bip-b173, sailbox, json-utils, taproot
 |%
 ::  Map spv-wallet network to crypto-level network for address encoding
 ::

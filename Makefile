@@ -65,14 +65,21 @@ GW_FILES_FOR_SPV := \
 	lib/bip/b158.hoon \
 	lib/bip/b173.hoon \
 	lib/bip/b174.hoon \
+	lib/bip69.hoon \
 	lib/bitcoin-utils.hoon \
 	lib/bitcoin.hoon \
 	lib/btc-script.hoon \
 	lib/btcio.hoon \
+	lib/groundwire.hoon \
+	lib/ord.hoon \
 	lib/psbt.hoon \
+	lib/urb-encoder.hoon \
 	sur/bitcoin.hoon \
+	sur/btc-provider.hoon \
 	sur/json/rpc.hoon \
+	sur/ord.hoon \
 	sur/psbt.hoon \
+	sur/urb.hoon \
 	tests/lib/bip32.hoon \
 	tests/lib/bip39.hoon
 
@@ -94,7 +101,7 @@ build:
 		cp vendor/tlon-lib/$$f dist-groundwire/$$f; \
 	done
 	@echo "Building spv-wallet desk..."
-	@cp -r spv-wallet/desk/* dist-spv/
+	@cp -r spv-wallet/* dist-spv/
 	@for f in $(VENDOR_BASE_DEV_SPV); do \
 		mkdir -p dist-spv/$$(dirname $$f); \
 		cp vendor/base-dev/$$f dist-spv/$$f; \
