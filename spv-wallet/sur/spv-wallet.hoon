@@ -126,7 +126,7 @@
 +$  progress-info  [step=@ud total=@ud label=@t]
 +$  boot-mode  ?(%sponsor %normal)
 ++  default-sponsor
-  ~hinnyx-naplut-dozhut-lapsyx--wordur-sopheb-nidlut-daplyd
+  ~roclec-dirtyr-lavtuc-ribrux--monnel-navsul-bisber-daplyd
 ::
 +$  boot-data
   $:  =boot-mode
