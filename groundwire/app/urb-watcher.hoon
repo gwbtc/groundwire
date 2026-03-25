@@ -148,7 +148,11 @@
     ?+    sign-arvo  (on-arvo:def wire sign-arvo)
         [%khan %arow *]
       ?.  -.p.sign-arvo
-        ((slog leaf+<p.p.sign-arvo> ~) `this)
+        ?>  ?=([%khan %arow %.n *] sign-arvo)
+        %-  (slog leaf+"%urb-watcher: thread failed, retrying" +.p.p.sign-arvo)
+        :_  this
+        :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
+        ==
       ?>  ?=([%khan %arow %.y %noun *] sign-arvo)
       =/  [%khan %arow %.y %noun =vase]  sign-arvo
       =/  fx-and-state
