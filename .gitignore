@@ -1,8 +1,6 @@
 # build
-.peru
-.tags
-dist
-dist-dev
+dist-groundwire
+dist-spv
 
 # claude
 .claude

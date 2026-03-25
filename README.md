@@ -1,25 +1,20 @@
 # Groundwire
 
-Bitcoin-based Urbit networking.
+This repo contains two Urbit desks: `%groundwire` and `%spv-wallet`. 
 
-## Getting Started
+The `%groundwire` desk runs a background Gall agent called `%urb-watcher` which scans Bitcoin for comet attestations and updates the ship's Jael accordingly.
 
-Groundwire uses [peru](https://github.com/buildinspace/peru) for Hoon dependency management.
+The `%spv-wallet` desk contains an SPV Wallet Gall app. We currently use this app for performing post-boot comet attestations, though this may change soon.
 
-To run Groundwire on a fake ship, you'll need a pill with Arvo and Vere changes.
+## Installation
 
-1. Boot a normal fake ship
-2. `> |new-desk %gw-base`
-3. `$ cp -rL path/to/pkg/arvo/* path/to/gw-base`
-4. `> |commit %gw-base`
-5. `> .gw-base/pill +pill/solid %gw-base`
-6. Build [`gwbtc/vere`](https://github.com/gwbtc/vere)
-  - Make sure you've cloned [`gwbtc/urcrypt`](https://github.com/gwbtc/urcrypt) in the same parent folder as `/vere` before building
-7. `$ path/to/vere/zig-out/<platform>/urbit -F zod -B path/to/gw-base.pill`
-8. `> |new-desk %groundwire`
-9. `> |mount %groundwire`
-10. `$ ./build.sh -p path/to/zod/groundwire`
-  - See [`urbit/desk-skeleton`](https://github.com/urbit/desk-skeleton) for more usage options.
-11. `> |commit %groundwire`
-12. `> |install our %groundwire`
+To install these desks, you'll need to be running a ship using versions of Arvo and Vere with Groundwire's modifications. Until these modifications get merged into the official distros, setting a ship up in this way is a bit of an esoteric process.
 
+This repo also contains a `vendor` directory containing shared libraries between the `%groundwire` and `%spv-wallet` desks. To install the two desks, you'll need to run `make build` to copy in `vendor`'s dependencies and generate a `dist` directory for each one, like so:
+
+1. `|new-desk %groundwire`
+2. `|mount %groundwire`
+3. `make build`
+4. `$ cp -r dist-groundwire/* path/to/zod/groundwire/`
+5. `|commit %groundwire`
+6. `|install our %groundwire`
