@@ -915,15 +915,6 @@ def build_and_broadcast_attestation(
     commit_tx.vin[0].witness = Witness([sig])
 
     commit_hex = commit_tx.serialize().hex()
-    print(f"  Commit tx: {len(commit_hex) // 2} bytes")
-
-    # Debug: verify the input txid matches what we expect
-    decoded = rpc_call("decoderawtransaction", [commit_hex], **rpc_cfg)
-    vin_txid = decoded["vin"][0]["txid"]
-    print(f"  Expected input txid: {txid_hex}")
-    print(f"  Decoded  input txid: {vin_txid}")
-    accept = rpc_call("testmempoolaccept", [[commit_hex]], **rpc_cfg)
-    print(f"  Mempool accept: {accept}")
 
     # Broadcast commit
     commit_txid = rpc_call("sendrawtransaction", [commit_hex], **rpc_cfg)
@@ -964,39 +955,9 @@ def build_and_broadcast_attestation(
     _output_xonly, parity = _taproot_tweak_pubkey(key1_xonly, leaf_hash)
     control_block = bytes([0xC0 | parity]) + key1_xonly
 
-    # Debug taproot verification
-    print(f"  [debug] internal key:  {key1_xonly.hex()}")
-    print(f"  [debug] leaf hash:     {leaf_hash.hex()}")
-    print(f"  [debug] output key:    {_output_xonly.hex()}")
-    print(f"  [debug] parity:        {parity}")
-    print(f"  [debug] commit spk:    {commit_script_obj.data.hex()}")
-    print(f"  [debug] control block: {control_block.hex()}")
-    print(f"  [debug] script len:    {len(spawn_script)}")
-    # Manually verify: recompute output from control block + script
-    verify_leaf = _tapleaf_hash(0xC0, spawn_script)
-    verify_out, verify_par = _taproot_tweak_pubkey(key1_xonly, verify_leaf)
-    expected_spk = b"\x51\x20" + verify_out
-    print(f"  [debug] verify spk:    {expected_spk.hex()}")
-    print(f"  [debug] spk match:     {expected_spk == commit_script_obj.data}")
-
     reveal_tx.vin[0].witness = Witness([reveal_sig, spawn_script, control_block])
 
     reveal_hex = reveal_tx.serialize().hex()
-
-    # Debug: decode to see what Bitcoin Core sees in the witness
-    reveal_decoded = rpc_call("decoderawtransaction", [reveal_hex], **rpc_cfg)
-    wit_items = reveal_decoded["vin"][0].get("txinwitness", [])
-    print(f"  [debug] witness item count: {len(wit_items)}")
-    for i, item in enumerate(wit_items):
-        print(f"  [debug] witness[{i}] len={len(item)//2}: {item[:80]}{'...' if len(item)>80 else ''}")
-    # The last item should be the control block, second-to-last the script
-    if len(wit_items) >= 2:
-        cb = bytes.fromhex(wit_items[-1])
-        scr = bytes.fromhex(wit_items[-2])
-        print(f"  [debug] CB internal key: {cb[1:33].hex()}")
-        print(f"  [debug] CB matches key1: {cb[1:33] == key1_xonly}")
-        print(f"  [debug] script matches:  {scr == spawn_script}")
-    print(f"  Reveal tx: {len(reveal_hex) // 2} bytes")
 
     # Broadcast reveal
     reveal_txid = rpc_call("sendrawtransaction", [reveal_hex], **rpc_cfg)
