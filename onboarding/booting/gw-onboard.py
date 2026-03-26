@@ -575,7 +575,7 @@ def encode_batch_sotx(
         w.write(16, fief[2])   # port (16 bits)
 
     # To fields
-    spkh_int = int.from_bytes(spkh, "little")
+    spkh_int = int.from_bytes(spkh, "big")
     w.write(256, spkh_int)  # spkh (256 bits)
     w.write_mat(off)        # offset
     w.write_mat(tej)        # tej
@@ -659,13 +659,17 @@ def _taproot_tweak_pubkey(internal_key: bytes, merkle_root: bytes | None) -> tup
 
     Returns (x-only output key, parity).
     """
-    internal_point = ec.PublicKey.from_xonly(internal_key)
-    # Use embit's built-in taproot tweak (handles even-y normalization)
+    from embit.util import secp256k1
     h = merkle_root if merkle_root is not None else b""
-    output_point = internal_point.taproot_tweak(h)
-    x_only = output_point.xonly()
-    # Parity: 0 if even y, 1 if odd
-    parity = 0 if output_point.sec()[0] == 0x02 else 1
+    tweak = _tagged_hash("TapTweak", internal_key + h)
+    # Parse internal key with even y (BIP-341 requirement)
+    point = secp256k1.ec_pubkey_parse(b"\x02" + internal_key)
+    # Add tweak*G to get output key
+    pub = secp256k1.ec_pubkey_add(point, tweak)
+    # Serialize to get actual parity (embit's taproot_tweak discards this)
+    sec = secp256k1.ec_pubkey_serialize(pub)
+    parity = 0 if sec[0] == 0x02 else 1
+    x_only = sec[1:33]
     return (x_only, parity)
 
 
@@ -960,9 +964,38 @@ def build_and_broadcast_attestation(
     _output_xonly, parity = _taproot_tweak_pubkey(key1_xonly, leaf_hash)
     control_block = bytes([0xC0 | parity]) + key1_xonly
 
+    # Debug taproot verification
+    print(f"  [debug] internal key:  {key1_xonly.hex()}")
+    print(f"  [debug] leaf hash:     {leaf_hash.hex()}")
+    print(f"  [debug] output key:    {_output_xonly.hex()}")
+    print(f"  [debug] parity:        {parity}")
+    print(f"  [debug] commit spk:    {commit_script_obj.data.hex()}")
+    print(f"  [debug] control block: {control_block.hex()}")
+    print(f"  [debug] script len:    {len(spawn_script)}")
+    # Manually verify: recompute output from control block + script
+    verify_leaf = _tapleaf_hash(0xC0, spawn_script)
+    verify_out, verify_par = _taproot_tweak_pubkey(key1_xonly, verify_leaf)
+    expected_spk = b"\x51\x20" + verify_out
+    print(f"  [debug] verify spk:    {expected_spk.hex()}")
+    print(f"  [debug] spk match:     {expected_spk == commit_script_obj.data}")
+
     reveal_tx.vin[0].witness = Witness([reveal_sig, spawn_script, control_block])
 
     reveal_hex = reveal_tx.serialize().hex()
+
+    # Debug: decode to see what Bitcoin Core sees in the witness
+    reveal_decoded = rpc_call("decoderawtransaction", [reveal_hex], **rpc_cfg)
+    wit_items = reveal_decoded["vin"][0].get("txinwitness", [])
+    print(f"  [debug] witness item count: {len(wit_items)}")
+    for i, item in enumerate(wit_items):
+        print(f"  [debug] witness[{i}] len={len(item)//2}: {item[:80]}{'...' if len(item)>80 else ''}")
+    # The last item should be the control block, second-to-last the script
+    if len(wit_items) >= 2:
+        cb = bytes.fromhex(wit_items[-1])
+        scr = bytes.fromhex(wit_items[-2])
+        print(f"  [debug] CB internal key: {cb[1:33].hex()}")
+        print(f"  [debug] CB matches key1: {cb[1:33] == key1_xonly}")
+        print(f"  [debug] script matches:  {scr == spawn_script}")
     print(f"  Reveal tx: {len(reveal_hex) // 2} bytes")
 
     # Broadcast reveal
