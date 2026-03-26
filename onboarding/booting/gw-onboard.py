@@ -453,7 +453,7 @@ def decode_uw(uw_str: str) -> int:
     if not s:
         return 0
     result = 0
-    for ch in reversed(s):
+    for ch in s:
         result = result * 64 + _UW_MAP[ch]
     return result
 
@@ -677,7 +677,9 @@ def tapscript_address(internal_xonly: bytes, script_bytes: bytes, network: str =
     """
     leaf_hash = _tapleaf_hash(0xC0, script_bytes)
     output_xonly, _parity = _taproot_tweak_pubkey(internal_xonly, leaf_hash)
-    sc = script.p2tr(ec.PublicKey.from_xonly(output_xonly))
+    # Construct P2TR scriptPubKey directly from the tweaked output key
+    # (do NOT pass through script.p2tr() which would apply a second tweak)
+    sc = script.Script(b"\x51\x20" + output_xonly)
     return sc.address(NETWORKS[network])
 
 
@@ -891,7 +893,7 @@ def build_and_broadcast_attestation(
     print(f"  Commit: {sats} sats → {commit_value} sats + {commit_fee} fee")
 
     # Build raw commit tx
-    txid_bytes = bytes.fromhex(txid_hex)[::-1]  # display hex → internal LE
+    txid_bytes = bytes.fromhex(txid_hex)
     commit_tx = Transaction(
         version=2,
         vin=[TransactionInput(txid_bytes, vout, sequence=0xFFFFFFFF)],
@@ -899,16 +901,25 @@ def build_and_broadcast_attestation(
         locktime=0,
     )
 
-    # Sign commit tx (P2TR key-path spend)
+    # Sign commit tx (P2TR key-path spend — must use tweaked private key)
     funding_script = script.Script.from_address(address)
     sighash = commit_tx.sighash_taproot(
-        0, [funding_script], [sats], sighash_type=0x00
+        0, [funding_script], [sats]
     )
-    sig = key0.key.schnorr_sign(sighash)
+    tweaked_key0 = key0.key.taproot_tweak(b"")  # no script tree
+    sig = tweaked_key0.schnorr_sign(sighash).serialize()
     commit_tx.vin[0].witness = Witness([sig])
 
     commit_hex = commit_tx.serialize().hex()
     print(f"  Commit tx: {len(commit_hex) // 2} bytes")
+
+    # Debug: verify the input txid matches what we expect
+    decoded = rpc_call("decoderawtransaction", [commit_hex], **rpc_cfg)
+    vin_txid = decoded["vin"][0]["txid"]
+    print(f"  Expected input txid: {txid_hex}")
+    print(f"  Decoded  input txid: {vin_txid}")
+    accept = rpc_call("testmempoolaccept", [[commit_hex]], **rpc_cfg)
+    print(f"  Mempool accept: {accept}")
 
     # Broadcast commit
     commit_txid = rpc_call("sendrawtransaction", [commit_hex], **rpc_cfg)
@@ -927,7 +938,7 @@ def build_and_broadcast_attestation(
 
     print(f"  Reveal: {commit_value} sats → {reveal_value} sats + {reveal_fee} fee ({reveal_vbytes} vB)")
 
-    commit_txid_bytes = bytes.fromhex(commit_txid)[::-1]
+    commit_txid_bytes = bytes.fromhex(commit_txid)
     reveal_tx = Transaction(
         version=2,
         vin=[TransactionInput(commit_txid_bytes, 0, sequence=0xFFFFFFFF)],
@@ -937,12 +948,13 @@ def build_and_broadcast_attestation(
 
     # Sign reveal tx (P2TR script-path spend)
     commit_script_obj = script.Script.from_address(commit_addr)
+    spawn_script_obj = script.Script(spawn_script)
     leaf_hash = _tapleaf_hash(0xC0, spawn_script)
     reveal_sighash = reveal_tx.sighash_taproot(
         0, [commit_script_obj], [commit_value], ext_flag=1,
-        script=spawn_script, leaf_version=0xC0,
+        script=spawn_script_obj, leaf_version=0xC0,
     )
-    reveal_sig = key1.key.schnorr_sign(reveal_sighash)
+    reveal_sig = key1.key.schnorr_sign(reveal_sighash).serialize()
 
     # Control block: leaf_version | parity, internal key, (no merkle proof for single leaf)
     _output_xonly, parity = _taproot_tweak_pubkey(key1_xonly, leaf_hash)
@@ -1350,8 +1362,14 @@ def main():
         sponsor_sig, sponsor_height = request_sponsor_signature(comet, sponsor_url)
         print(f"  Sponsor signed at block height {sponsor_height}")
     except Exception as e:
-        print(f"  ERROR: Could not get sponsor signature: {e}")
-        print(f"  Make sure the sponsor-signer agent is running at {sponsor_url}")
+        print()
+        print(f"  Could not reach the Groundwire sponsor ({e}).")
+        print()
+        print("  This is usually temporary — the sponsor may be restarting")
+        print("  or the network may be briefly unavailable.")
+        print()
+        print("  To retry, re-run with your master ticket:")
+        print(f"    python3 gw-onboard.py --master-ticket '{master_ticket}'")
         sys.exit(1)
 
     # ------------------------------------------------------------------

@@ -57,30 +57,22 @@
         ?~  body.request.inbound-request
           [(send [400 ~ [%plain "Missing request body"]]) state]
         =/  jon  (de:json:html q.u.body.request.inbound-request)
-        ~&  jon
         ?~  jon
           [(send [400 ~ [%plain "Invalid JSON"]]) state]
         ?.  ?=([%o *] u.jon)
           [(send [400 ~ [%plain "Expected JSON object"]]) state]
         =/  ship-text=@t
           ((ot:dejs:format ~[ship+so:dejs:format]) u.jon)
-        ~&  ship-text
         =/  sponsee=(unit @p)  (slaw %p ship-text)
-        ~&  sponsee
         ?~  sponsee
-          ~&  %fail
           [(send [400 ~ [%plain "Invalid ship name"]]) state]
         ::  Scry jael for our deed (pass) and ring (signing key)
-        ~&  sponsee
         =/  deed=[=life =pass sec=(unit @)]
           .^([life pass (unit @)] %j /(scot %p our.bowl)/deed/(scot %da now.bowl)/(scot %p our.bowl)/1)
-        ~&  deed
         =/  =ring
           .^(ring %j /(scot %p our.bowl)/vein/(scot %da now.bowl)/(scot %ud life.deed))
-        ~&  ring
         =/  cac  (nol:nu:cric:crypto ring)
         ?>  ?=(^ sek.+<.cac)
-        ~&  %cac
         ::  Get current block height from urb-watcher
         ?.  .^(? %gu /(scot %p our.bowl)/urb-watcher/(scot %da now.bowl)/$)
           [(send [503 ~ [%plain "urb-watcher not running"]]) state]
