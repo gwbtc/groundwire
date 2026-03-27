@@ -485,6 +485,136 @@ def hoon_mat(a: int) -> tuple[int, int]:
 
 
 # =========================================================================
+#  Hoon jam — noun serialization
+# =========================================================================
+
+
+def hoon_jam(noun) -> int:
+    """Jam a noun (atom or [head, tail] pair) into an atom.
+
+    Nouns are represented as: int for atoms, tuple (head, tail) for cells.
+    This is a minimal implementation sufficient for key derivation.
+    """
+    bits = []
+    pos = 0
+    refs = {}
+
+    def write_bit(b):
+        nonlocal pos
+        bits.append(1 if b else 0)
+        pos += 1
+
+    def write_bits(val, count):
+        nonlocal pos
+        for i in range(count):
+            bits.append(1 if (val >> i) & 1 else 0)
+        pos += count
+
+    def write_mat(val):
+        if val == 0:
+            bits.append(1)
+            nonlocal pos
+            pos += 1
+            return
+        p, q = hoon_mat(val)
+        write_bits(q, p)
+
+    def encode(n):
+        nonlocal pos
+        start = pos
+        if isinstance(n, tuple):
+            # Cell
+            if n in refs:
+                write_bit(1); write_bit(1)  # back-reference tag
+                write_mat(refs[n])
+            else:
+                refs[n] = start
+                write_bit(1); write_bit(0)  # cell tag
+                encode(n[0])
+                encode(n[1])
+        else:
+            # Atom
+            if n in refs:
+                n_bits = n.bit_length()
+                ref_bits = refs[n].bit_length() if refs[n] > 0 else 1
+                if n_bits <= ref_bits:
+                    write_bit(0)
+                    write_mat(n)
+                else:
+                    write_bit(1); write_bit(1)
+                    write_mat(refs[n])
+            else:
+                refs[n] = start
+                write_bit(0)
+                write_mat(n)
+
+    encode(noun)
+    result = 0
+    for i, b in enumerate(bits):
+        result |= b << i
+    return result
+
+
+# =========================================================================
+#  Hoon crypto primitives — shal, shaf, shax for luck:ed key derivation
+# =========================================================================
+
+
+def hoon_shax(atom: int) -> int:
+    """Hoon shax: SHA-256 of an atom's minimal bytes. Returns atom."""
+    n = (atom.bit_length() + 7) // 8
+    data = atom.to_bytes(n, "little") if n > 0 else b""
+    digest = hashlib.sha256(data).digest()
+    return int.from_bytes(digest, "little")
+
+
+def hoon_shal(length: int, atom: int) -> int:
+    """Hoon shal: SHA-512 with explicit byte length. Returns atom.
+
+    ++  shal  |=([len=@ ruz=@] ...)  ::  sha-512 with length
+    Hashes the first `length` bytes of the atom.
+    """
+    data = atom.to_bytes(max(length, 1), "little")[:length] if length > 0 else b""
+    digest = hashlib.sha512(data).digest()
+    return int.from_bytes(digest, "little")
+
+
+def hoon_luck_ed(seed_atom: int, b: int = 256) -> tuple[bytes, bytes]:
+    """Hoon luck:ed: derive ed25519 keypair from seed atom.
+
+    From zuse.hoon:
+      =+  h=(shal (rsh [0 3] b) sed)     :: h = SHA-512(first 32 bytes of seed)
+      =+  a = bex(b-2) + lsh(0, 3, cut(0, [3 (sub b 5)] h))  :: clamp
+      =+  aa=(scalarmult-base a)
+      [aa (can 0 ~[[b a] [b (cut 0 [b b] h)]])]
+
+    Returns (public_key_32bytes, secret_part).
+    """
+    cb = b >> 3  # 32 for ed25519
+    # h = shal(32, seed) = SHA-512 of first 32 bytes of seed
+    h = hoon_shal(cb, seed_atom)
+
+    # Clamp: a = bex(b-2) + lsh(0, 3, cut(0, [3 (sub b 5)] h))
+    # cut(0, [3 (sub b 5)] h) = bits 3 through (b-5+3-1) = bits 3 through (b-3) of h
+    # For b=256: cut(0, [3 251] h) = bits 3..253 of h (251 bits)
+    low_bits = (h >> 3) & ((1 << (b - 5)) - 1)
+    # lsh(0, 3, x) = x << 3
+    shifted = low_bits << 3
+    # bex(b-2) = 2^254
+    a = (1 << (b - 2)) + shifted
+
+    # scalarmult-base
+    a_bytes = a.to_bytes(32, "little")
+    pub = nacl.bindings.crypto_scalarmult_ed25519_base_noclamp(a_bytes)
+
+    # Secret: (can 0 ~[[b a] [b (cut 0 [b b] h)]])
+    upper_h = (h >> b) & ((1 << b) - 1)
+    sek_atom = a | (upper_h << b)
+
+    return (pub, a_bytes)
+
+
+# =========================================================================
 #  Bitstream writer — builds packed bit arrays for urb encoding
 # =========================================================================
 
@@ -575,7 +705,7 @@ def encode_batch_sotx(
         w.write(16, fief[2])   # port (16 bits)
 
     # To fields
-    spkh_int = int.from_bytes(spkh, "big")
+    spkh_int = int.from_bytes(spkh, "little")
     w.write(256, spkh_int)  # spkh (256 bits)
     w.write_mat(off)        # offset
     w.write_mat(tej)        # tej
@@ -728,6 +858,8 @@ def build_tweak_bytes(txid_hex: str, vout: int, off: int = 0) -> bytes:
 def derive_pass_from_ring(ring_uw: str, tweak_bytes: bytes) -> int:
     """Derive the Suite C pass (public networking key) from a ring.
 
+    Replicates Hoon's pub:ex:(nol:nu:cric:crypto ring).
+
     ring_uw: the ring value as a @uw string from comet-miner output
     tweak_bytes: the tweak bytes (from build_tweak_bytes)
 
@@ -735,45 +867,67 @@ def derive_pass_from_ring(ring_uw: str, tweak_bytes: bytes) -> int:
     """
     ring_int = decode_uw(ring_uw)
 
-    # The ring is a packed bitstream: 'C'(1 byte) + seed(64 bytes) + mat(tweak)
-    # Extract as little-endian bytes
+    # Parse ring: 'C'(1 byte) + seed(64 bytes) + mat(tweak)
     ring_byte_len = (ring_int.bit_length() + 7) // 8
     ring_raw = ring_int.to_bytes(ring_byte_len, "little")
 
     tag = ring_raw[0]
     assert tag == ord("C"), f"Expected Suite C ring tag 'C' (0x43), got 0x{tag:02x}"
 
-    # Seed is bytes 1-64 (64 bytes)
-    seed = ring_raw[1:65]
-    auth_seed = seed[0:32]
-    crypt_seed = seed[32:64]
+    # bod = ring >> 8 (strip tag byte)
+    bod = ring_int >> 8
 
-    # Derive ed25519 key pairs using libsodium (same as Hoon's luck:ed)
-    auth_pub, _auth_sk = nacl.bindings.crypto_sign_seed_keypair(auth_seed)
-    crypt_pub, _crypt_sk = nacl.bindings.crypto_sign_seed_keypair(crypt_seed)
+    # Hoon: s = luck:ed(end(8, bod)), c = luck:ed(cut(8, [1 1], bod))
+    # end(8, bod) = bod & ((1<<256)-1) = signing seed (low 32 bytes)
+    # cut(8, [1 1], bod) = (bod >> 256) & ((1<<256)-1) = crypto seed (next 32 bytes)
+    s_seed_atom = bod & ((1 << 256) - 1)
+    c_seed_atom = (bod >> 256) & ((1 << 256) - 1)
 
-    # Apply tweak: tw_scalar = SHA-256(auth_pub || tweak_bytes)
-    tw_input = auth_pub + tweak_bytes
-    tw_scalar = hashlib.sha256(tw_input).digest()
+    # luck:ed derives ed25519 keypair using Hoon's shal (NOT standard ed25519)
+    s_pub, s_sek = hoon_luck_ed(s_seed_atom)
+    c_pub, c_sek = hoon_luck_ed(c_seed_atom)
 
-    # Tweaked auth pub = auth_pub + tw_scalar * G (ed25519 point addition)
-    tw_point = nacl.bindings.crypto_scalarmult_ed25519_base_noclamp(tw_scalar)
-    tweaked_auth_pub = nacl.bindings.crypto_core_ed25519_add(auth_pub, tw_point)
+    # Extract tweak data from ring: rub at bit 512 of bod
+    # (rub 512 bod) gives [bit_count, tweak_data]
+    def hoon_rub(a, b):
+        c = 0
+        while ((b >> (a + c)) & 1) == 0:
+            c += 1
+            if c > 2000:
+                raise ValueError("too many zeros in rub")
+        if c == 0:
+            return (1, 0)
+        d = a + c + 1
+        low = (b >> d) & ((1 << (c - 1)) - 1) if c > 1 else 0
+        e = (1 << (c - 1)) + low
+        val = (b >> (d + (c - 1))) & ((1 << e) - 1)
+        return (2 * c + e, val)
 
-    # Convert crypt ed25519 key to curve25519
-    crypt_curve = nacl.bindings.crypto_sign_ed25519_pk_to_curve25519(crypt_pub)
+    _cur, dat = hoon_rub(512, bod)
 
-    # Build pass atom using the same bitstream format as Hoon's pub:ex:cric
-    # pass = fax:plot(0, ['c'(1 byte), ugn(32 bytes), cry(32 bytes), mat(tweak)])
-    tweak_int = _bytes_to_hoon_atom(tweak_bytes)
-    mat_p, mat_q = hoon_mat(tweak_int)
+    # Compute tweak: mit = shax(can(3, [32 pub.s] [(met 3 dat) dat] ~))
+    # shax hashes the minimal bytes of the atom
+    s_pub_atom = int.from_bytes(s_pub, "little")
+    can_result = s_pub_atom | (dat << 256)  # can 3: s_pub in low 32 bytes, dat above
+    mit = hoon_shax(can_result)
 
-    # Pack: 'c' tag (8 bits) + ugn (256 bits) + cry (256 bits) + mat(tweak)
+    # Apply tweak: t = scad:ed(pub.s, sek.s, mit)
+    # scad does: pub' = scalarmult-base(a + mit) where a is the clamped secret
+    # But for the pass, we just need the tweaked public key
+    mit_bytes = mit.to_bytes(32, "little")
+    tw_point = nacl.bindings.crypto_scalarmult_ed25519_base_noclamp(mit_bytes)
+    tweaked_s_pub = nacl.bindings.crypto_core_ed25519_add(s_pub, tw_point)
+
+    # Build pass: 'c' + ugn(untweaked s_pub) + cry(c_pub ed25519) + mat(dat)
+    # From zuse.hoon line 1605: pub [cry=pub.c sgn=pub.t tw=[ugn=pub.s dat=dat xtr=xtr]]
+    # cry is the ed25519 public key from luck, NOT curve25519
+    mat_p, mat_q = hoon_mat(dat)
+
     w = BitWriter()
     w.write(8, ord("c"))
-    w.write(256, _bytes_to_hoon_atom(tweaked_auth_pub))
-    w.write(256, _bytes_to_hoon_atom(crypt_curve))
-    w.write(mat_p, mat_q)
+    w.write(256, int.from_bytes(s_pub, "little"))   # ugn = untweaked s_pub
+    w.write(256, int.from_bytes(c_pub, "little"))    # cry = ed25519 pub from luck
+    w.write(mat_p, mat_q)                                 # mat(dat)
 
     return w.to_int()
 
@@ -793,9 +947,14 @@ def compute_spkh(funding_address: str, funding_value_sats: int) -> bytes:
     # Decode the taproot address to get the script pubkey
     sc = script.Script.from_address(funding_address)
     spk_bytes = sc.data  # raw script bytes (OP_1 <32-byte-key>)
-    # Concatenate: script_pubkey || value (8 bytes LE)
-    value_bytes = funding_value_sats.to_bytes(8, "little")
-    data = spk_bytes + value_bytes
+    # Hoon's (can 3 [wid dat] [8 val] ~) concatenates the LE bytes of the
+    # script-pubkey atom followed by the LE bytes of the value atom.
+    # The script-pubkey atom's LE bytes are the REVERSE of the standard
+    # script byte order.
+    spk_atom = int.from_bytes(spk_bytes, "big")  # standard bytes → atom
+    spk_le = spk_atom.to_bytes(len(spk_bytes), "little")  # atom → LE bytes
+    value_le = funding_value_sats.to_bytes(8, "little")
+    data = spk_le + value_le
     return hashlib.sha256(data).digest()
 
 
@@ -1257,12 +1416,13 @@ def main():
 
         print("Step 1/7: Generating master ticket")
         print()
-        print("  ┌──────────────────────────────────────────────────────┐")
-        print("  │  SAVE THIS — it is your login credential.           │")
-        print("  │  If you lose it, you lose access to your comet.     │")
-        print("  │                                                     │")
-        print(f"  │  {master_ticket:<52s}│")
-        print("  └──────────────────────────────────────────────────────┘")
+        print("  ┌─────────────────────────────────────────────────────────┐")
+        print("  │  SAVE THIS — it is your login credential and           │")
+        print("  │  wallet seed. If you lose it, you lose access to       │")
+        print("  │  your comet and your coins.                            │")
+        print("  │                                                        │")
+        print(f"  │  {master_ticket:<56s}│")
+        print("  └─────────────────────────────────────────────────────────┘")
         print()
         confirm_master_ticket(master_ticket)
 

@@ -4,6 +4,6 @@ dist-spv
 
 # python
 __pycache__/
-
+onboarding/booting/__pycache__
 # claude
 .claude
