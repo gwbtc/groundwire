@@ -308,12 +308,13 @@ def rpc_call(
     return data.get("result")
 
 
-def request_faucet(address: str) -> str | None:
+def request_faucet(address: str, invite: str | None = None) -> str | None:
     """Request testnet sats from the faucet. Returns txid on success, None on failure."""
     try:
-        resp = requests.post(
-            FAUCET_URL, json={"address": address, "api_key": FAUCET_API_KEY}, timeout=30
-        )
+        payload = {"address": address, "api_key": FAUCET_API_KEY}
+        if invite:
+            payload["invite"] = invite
+        resp = requests.post(FAUCET_URL, json=payload, timeout=30)
         if resp.ok:
             try:
                 data = json.loads(resp.text)
@@ -327,7 +328,14 @@ def request_faucet(address: str) -> str | None:
                 print(f"  Faucet: {resp.text.strip()}")
                 return ""
         else:
-            print(f"  Faucet error (HTTP {resp.status_code}): {resp.text.strip()}")
+            # Try to extract a human-readable message from the faucet error response.
+            msg = resp.text.strip()
+            try:
+                err_data = json.loads(resp.text)
+                msg = err_data.get("error") or err_data.get("message") or msg
+            except (json.JSONDecodeError, AttributeError):
+                pass
+            print(f"  Faucet error: {msg}")
             return None
     except Exception as e:
         print(f"  Could not reach faucet: {e}")
@@ -1367,6 +1375,11 @@ def main():
         default=SPONSOR_URL,
         help=f"URL of the sponsor-signer agent (default: {SPONSOR_URL})",
     )
+    parser.add_argument(
+        "--invite",
+        default=None,
+        help="Invite code to submit to the faucet for automatic funding",
+    )
 
     # Dev-only flag: hidden from help, rejected in frozen/bundled builds.
     if not getattr(sys, "frozen", False):
@@ -1447,7 +1460,7 @@ def main():
     print("Step 3/7: Funding your address")
     print()
     print("  Requesting testnet bitcoin from faucet...")
-    faucet_result = request_faucet(address)
+    faucet_result = request_faucet(address, invite=args.invite)
     if faucet_result is not None:
         print("  Waiting for transaction to confirm...\n")
     else:
