@@ -4,6 +4,9 @@ dist-spv
 
 # python
 __pycache__/
-onboarding/booting/__pycache__
+
+# macOS
+.DS_Store
+
 # claude
 .claude

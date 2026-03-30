@@ -84,7 +84,7 @@ MEMPOOL_TX_URL = "https://mempool.space/signet/tx"
 FAUCET_URL = "http://alpha.groundwire.dev/faucet"
 FAUCET_API_KEY = "fda188b3f39bd7fee1cd9d7d06fe40e28394c78d55fa4aa4154a1ef119e58c32"
 
-SPONSOR_URL = "http://localhost:8085"
+SPONSOR_URL = "http://143.198.70.9:8081"
 SPONSOR_SHIP = "~daplyd"
 BLOCK_CONFIRMATIONS = 2
 
