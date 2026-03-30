@@ -1,0 +1,16 @@
+line-length = 100
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = [
+    "E501",    # line length — handled by formatter where possible
+    "SIM108",  # ternary instead of if/else — readability preference
+    "RUF046",  # int(round(float)) is intentional for sat conversion
+]
+
+[lint.isort]
+split-on-trailing-comma = false
+
+[format]
+# Keep the compact syllable tables readable (8 per row, matching Urbit source)
+skip-magic-trailing-comma = true

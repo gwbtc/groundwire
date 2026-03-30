@@ -257,7 +257,7 @@
   |-
   ?~  txs
     =.  uc  (handle-block:uc new precommits)
-    ::  ~&  >  "processed block {<i>} of {<last-settled-block>}"
+    ~&  >  "processed block {<i>} of {<last-settled-block>}"
     ^$(i +(i))
   =/  tx-inputs  is.i.txs
   ::  Check all inputs for a %spawn. There could be multiple spawning

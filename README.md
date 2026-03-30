@@ -8,7 +8,11 @@ The `%spv-wallet` desk contains an SPV Wallet Gall app. We currently use this ap
 
 ## Installation
 
-To install these desks, you'll need to be running a ship using versions of Arvo and Vere with Groundwire's modifications. Until these modifications get merged into the official distros, setting a ship up in this way is a bit of an esoteric process.
+If you're interesting in running a Groundwire ship, go to [groundwire.dev](https://groundwire.dev/) and use the one-line command.
+
+To install these desks for development purposes, you'll need to be running a ship using versions of Arvo and Vere with Groundwire's modifications. Until these modifications get merged into the official distros, setting a ship up in this way is a bit of an esoteric process. 
+
+See the onboarding directory for elaboration on the boot process and additional tooling we use.
 
 This repo also contains a `vendor` directory containing shared libraries between the `%groundwire` and `%spv-wallet` desks. To install the two desks, you'll need to run `make build` to copy in `vendor`'s dependencies and generate a `dist` directory for each one, like so:
 
