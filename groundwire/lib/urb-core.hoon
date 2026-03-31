@@ -479,7 +479,9 @@
         ::  Message is (shaz (jam [sponsee height])), with a 10 block buffer
         ?^  sig.sot
           =/  sponsor  (~(get by unv-ids) parent.sot)
-          ?~  sponsor  cor
+          ?~  sponsor  
+            ~&  >>>  "%urb-core: sponsor {<parent.sot>} not found in unv-ids, dropping escape" 
+            cor
           =/  cac  (com:nu:cric:crypto pass.net.u.sponsor)
           =/  lower-bound
             ?:  (lth num.block-id.state 10) 
@@ -488,7 +490,7 @@
           ?.  %+  lien
                 (gulf lower-bound (add num.block-id.state 1))
               |=(h=@ud (veri-octs:ed:crypto u.sig.sot 512^(shaz (jam [who h])) sgn:ded:ex:cac))
-            ~&  >>>  "%urb-core: sponsor's signature is bad"
+            ~&  >>>  ["%urb-core: escape sig from {<parent.sot>} for {<who>} failed verification (checked block heights {<lower-bound>} to {<(add num.block-id.state 1)>})"]
             cor
           =.  sponsor.net.u.point  &/parent.sot
           =.  escape.net.u.point   ~

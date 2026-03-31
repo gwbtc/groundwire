@@ -759,14 +759,14 @@
       [[400 ~] `(as-octs:mimes:html '400 Bad Request - Missing Host header')]
     =/  host=@t  u.host-header
     ::
-    ~&  >>  host+host
-    ~&  >>  origin+(get-header:http 'origin' header-list.request.req)
-    ~&  >>  referer+(get-header:http 'referer' header-list.request.req)
-    ~&  >>  accept+(get-header:http 'accept' header-list.request.req)
-    ~&  >>  connection+(get-header:http 'connection' header-list.request.req)
-    ~&  >>  last-event-id+(get-header:http 'last-event-id' header-list.request.req)
-    ~&  >>  range+(get-header:http 'range' header-list.request.req)
-    ~&  >  "received {(trip method.request.req)} request for {<site.lin>}!"
+    ::  ~&  >>  host+host
+    ::  ~&  >>  origin+(get-header:http 'origin' header-list.request.req)
+    ::  ~&  >>  referer+(get-header:http 'referer' header-list.request.req)
+    ::  ~&  >>  accept+(get-header:http 'accept' header-list.request.req)
+    ::  ~&  >>  connection+(get-header:http 'connection' header-list.request.req)
+    ::  ~&  >>  last-event-id+(get-header:http 'last-event-id' header-list.request.req)
+    ::  ~&  >>  range+(get-header:http 'range' header-list.request.req)
+    ::  ~&  >  "received {(trip method.request.req)} request for {<site.lin>}!"
     :: :: Eyre Security: Check for modern browser with fetch metadata
     :: ::
     :: =/  fetch-mode=(unit @t)  (get-header:http 'sec-fetch-mode' header-list.request.req)
@@ -799,7 +799,7 @@
         ?:  ?=(%& -.res)  p.res
         ((slog p.res) (mean p.res)) :: goes to dojo and browser
       [cards this]
-    ~&  %sse-request
+    ::  ~&  %sse-request
     =/  last-event-id=(unit @t)
       (get-header:http 'last-event-id' header-list.request.req)
     =/  first=(unit sse-key)

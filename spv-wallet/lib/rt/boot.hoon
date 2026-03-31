@@ -8,7 +8,7 @@
 ::  Boot network configuration
 ::  Change these to retarget the boot sequence.
 ::
-++  boot-network    `network:tx`%signet
+++  boot-network    `network:tx`%main
 ::  Pure helpers
 ::
 ++  sots-to-ptst

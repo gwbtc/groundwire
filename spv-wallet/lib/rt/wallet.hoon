@@ -442,9 +442,6 @@
     (login-redirect:sailbox [ext site] args)
   =+  !<(state-0:s state)
   ::  Check urb-watcher for our point to determine spawn status
-  ::  %spawned: confirmed on chain (in urb-watcher)
-  ::  %pending: boot done but not yet confirmed (in mempool)
-  ::  %unspawned: not spawned yet
   =/  spawn-status=?(%spawned %pending %unspawned)
     =/  in-watcher=?
       ?.  .^(? %gu /(scot %p our.bowl)/urb-watcher/(scot %da now.bowl)/$)

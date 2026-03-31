@@ -198,71 +198,71 @@
     ==
     ::  Scrollable content area
     ;div.fc.g3.p5.ma.mw-page(style "flex: 1; min-height: 0; overflow-y: auto; padding-top: 0;")
-      ::  Spawn banner - shows based on spawn status
-      ;+  ?-  spawn-status
-          ::  Confirmed on chain: hide banner
-            %spawned
-          ;span;
-          ::  In mempool, waiting for block confirmation
-            %pending
-          ;div.p4.b1.br2(style "flex-shrink: 0; border: 1px solid rgba(100, 200, 100, 0.4); background: rgba(100, 200, 100, 0.08); position: relative;")
-            ;div(style "display: flex; align-items: center; gap: 12px;")
-              ;div(style "flex-shrink: 0;")
-                ;+  (make:fi 'loader')
-              ==
-              ;div
-                ;h2.s1.bold(style "margin-bottom: 4px;"): Spawn transaction broadcast
-                ;p.f2.s-1(style "opacity: 0.7;"): Your attestation is in the mempool. Waiting for block confirmation.
-              ==
-            ==
-          ==
-          ::  Not spawned: show full boot form
-            %unspawned
-          ;div.p4.b1.br2(style "flex-shrink: 0; border: 1px solid rgba(255, 180, 50, 0.4); background: rgba(255, 180, 50, 0.08); position: relative;")
-            ;button.hover.pointer(onclick "this.closest('.p4').style.display='none'", style "position: absolute; top: 8px; right: 8px; background: transparent; border: none; color: var(--f3); cursor: pointer; font-size: 18px; line-height: 1; padding: 4px; outline: none;"): ✕
-            ;h2.s1.bold(style "margin-bottom: 8px;"): Your comet has not been spawned
-            ;p.f2.s-1(style "margin-bottom: 12px; opacity: 0.7;"): Enter your boot secret from your comet's boot sequence.
-            ;form(hx-post "/spv-wallet/progress", hx-swap "none")
-              ;input(type "hidden", name "action", value "start");
-              ;div(style "display: flex; gap: 8px;")
-                ;input.p3.br2(type "text", name "seed-phrase", placeholder "~sampel-palnet-sampel-palnet", style "flex: 1; background: var(--b0); border: 1px solid var(--b3); color: var(--f0); outline: none; font-family: monospace;");
-                ;+  =/  booting=?  ?&(?=(^ boot) !?=(%done step.u.boot) ?=(~ error.u.boot))
-                    ?:  booting
-                      ;button.p3.br2.bold(id "spawn-btn", type "submit", disabled "disabled", style "background: rgba(255, 180, 50, 0.4); color: white; border: none; white-space: nowrap; outline: none; cursor: not-allowed;"): Spawning...
-                    ;button.p3.br2.bold.hover.pointer(id "spawn-btn", type "submit", style "background: rgba(255, 180, 50, 0.8); color: white; border: none; white-space: nowrap; outline: none;"): Spawn Comet
-              ==
-              ;div(style "margin-top: 8px; display: flex; align-items: center; gap: 12px;")
-                ;label.s-1.f2(style "display: flex; align-items: center; gap: 6px; cursor: pointer;")
-                  ;input(type "radio", name "boot-mode", value "fief", onchange "document.getElementById('fief-fields').style.display='flex'; document.getElementById('sponsor-fields').style.display='none';");
-                  ;span: Direct (Fief)
-                ==
-                ;label.s-1.f2(style "display: flex; align-items: center; gap: 6px; cursor: pointer;")
-                  ;input(type "radio", name "boot-mode", value "normal", checked "", onchange "document.getElementById('sponsor-fields').style.display='flex'; document.getElementById('fief-fields').style.display='none';");
-                  ;span: Sponsor (Relay)
-                ==
-              ==
-              ;div(id "fief-fields", style "display: none; margin-top: 8px; gap: 8px;")
-                ;div.s-2.f2(style "margin-bottom: 4px;"): Your public IP and port — use this if your machine is directly reachable from the internet
-                ;div(style "display: flex; gap: 8px;")
-                  ;input.p3.br2(type "text", name "fief-ip", placeholder "1.2.3.4", style "flex: 2; background: var(--b0); border: 1px solid var(--b3); color: var(--f0); outline: none; font-family: monospace;");
-                  ;input.p3.br2(type "text", name "fief-port", placeholder "34343", style "flex: 1; background: var(--b0); border: 1px solid var(--b3); color: var(--f0); outline: none; font-family: monospace;");
-                ==
-              ==
-              ;div(id "sponsor-fields", style "margin-top: 8px;")
-                ;div.s-2.f2(style "margin-bottom: 4px;"): Relay traffic through a sponsor — recommended for home networks without port forwarding
-                ;+  =/  ds=tape  (scow %p default-sponsor)
-                    ;input.p3.br2(type "text", name "sponsor", value ds, style "width: 100%; background: var(--b0); border: 1px solid var(--b3); color: var(--f0); outline: none; font-family: monospace;");
-              ==
-            ==
-            ;div(hx-ext "sse", sse-connect "/spv-wallet/progress", sse-swap "progress-update", style "margin-top: 12px;")
-              ;+  =/  prog=(unit progress-info)
-                    ?~(boot ~ `(boot-progress u.boot))
-                  =/  err=(unit [term tang])
-                    ?~(boot ~ error.u.boot)
-                  (progress-bar prog err)
-            ==
-          ==
-          ==
+      ::  Spawn banner disabled
+      ::  ;+  ?-  spawn-status
+      ::      ::  Confirmed on chain: hide banner
+      ::        %spawned
+      ::      ;span;
+      ::      ::  In mempool, waiting for block confirmation
+      ::        %pending
+      ::      ;div.p4.b1.br2(style "flex-shrink: 0; border: 1px solid rgba(100, 200, 100, 0.4); background: rgba(100, 200, 100, 0.08); position: relative;")
+      ::        ;div(style "display: flex; align-items: center; gap: 12px;")
+      ::          ;div(style "flex-shrink: 0;")
+      ::            ;+  (make:fi 'loader')
+      ::          ==
+      ::          ;div
+      ::            ;h2.s1.bold(style "margin-bottom: 4px;"): Spawn transaction broadcast
+      ::            ;p.f2.s-1(style "opacity: 0.7;"): Your attestation is in the mempool. Waiting for block confirmation.
+      ::          ==
+      ::        ==
+      ::      ==
+      ::      ::  Not spawned: show full boot form
+      ::        %unspawned
+      ::      ;div.p4.b1.br2(style "flex-shrink: 0; border: 1px solid rgba(255, 180, 50, 0.4); background: rgba(255, 180, 50, 0.08); position: relative;")
+      ::        ;button.hover.pointer(onclick "this.closest('.p4').style.display='none'", style "position: absolute; top: 8px; right: 8px; background: transparent; border: none; color: var(--f3); cursor: pointer; font-size: 18px; line-height: 1; padding: 4px; outline: none;"): ✕
+      ::        ;h2.s1.bold(style "margin-bottom: 8px;"): Your comet has not been spawned
+      ::        ;p.f2.s-1(style "margin-bottom: 12px; opacity: 0.7;"): Enter your boot secret from your comet's boot sequence.
+      ::        ;form(hx-post "/spv-wallet/progress", hx-swap "none")
+      ::          ;input(type "hidden", name "action", value "start");
+      ::          ;div(style "display: flex; gap: 8px;")
+      ::            ;input.p3.br2(type "text", name "seed-phrase", placeholder "~sampel-palnet-sampel-palnet", style "flex: 1; background: var(--b0); border: 1px solid var(--b3); color: var(--f0); outline: none; font-family: monospace;");
+      ::            ;+  =/  booting=?  ?&(?=(^ boot) !?=(%done step.u.boot) ?=(~ error.u.boot))
+      ::                ?:  booting
+      ::                  ;button.p3.br2.bold(id "spawn-btn", type "submit", disabled "disabled", style "background: rgba(255, 180, 50, 0.4); color: white; border: none; white-space: nowrap; outline: none; cursor: not-allowed;"): Spawning...
+      ::                ;button.p3.br2.bold.hover.pointer(id "spawn-btn", type "submit", style "background: rgba(255, 180, 50, 0.8); color: white; border: none; white-space: nowrap; outline: none;"): Spawn Comet
+      ::          ==
+      ::          ;div(style "margin-top: 8px; display: flex; align-items: center; gap: 12px;")
+      ::            ;label.s-1.f2(style "display: flex; align-items: center; gap: 6px; cursor: pointer;")
+      ::              ;input(type "radio", name "boot-mode", value "fief", onchange "document.getElementById('fief-fields').style.display='flex'; document.getElementById('sponsor-fields').style.display='none';");
+      ::              ;span: Direct (Fief)
+      ::            ==
+      ::            ;label.s-1.f2(style "display: flex; align-items: center; gap: 6px; cursor: pointer;")
+      ::              ;input(type "radio", name "boot-mode", value "normal", checked "", onchange "document.getElementById('sponsor-fields').style.display='flex'; document.getElementById('fief-fields').style.display='none';");
+      ::              ;span: Sponsor (Relay)
+      ::            ==
+      ::          ==
+      ::          ;div(id "fief-fields", style "display: none; margin-top: 8px; gap: 8px;")
+      ::            ;div.s-2.f2(style "margin-bottom: 4px;"): Your public IP and port — use this if your machine is directly reachable from the internet
+      ::            ;div(style "display: flex; gap: 8px;")
+      ::              ;input.p3.br2(type "text", name "fief-ip", placeholder "1.2.3.4", style "flex: 2; background: var(--b0); border: 1px solid var(--b3); color: var(--f0); outline: none; font-family: monospace;");
+      ::              ;input.p3.br2(type "text", name "fief-port", placeholder "34343", style "flex: 1; background: var(--b0); border: 1px solid var(--b3); color: var(--f0); outline: none; font-family: monospace;");
+      ::            ==
+      ::          ==
+      ::          ;div(id "sponsor-fields", style "margin-top: 8px;")
+      ::            ;div.s-2.f2(style "margin-bottom: 4px;"): Relay traffic through a sponsor — recommended for home networks without port forwarding
+      ::            ;+  =/  ds=tape  (scow %p default-sponsor)
+      ::                ;input.p3.br2(type "text", name "sponsor", value ds, style "width: 100%; background: var(--b0); border: 1px solid var(--b3); color: var(--f0); outline: none; font-family: monospace;");
+      ::          ==
+      ::        ==
+      ::        ;div(hx-ext "sse", sse-connect "/spv-wallet/progress", sse-swap "progress-update", style "margin-top: 12px;")
+      ::          ;+  =/  prog=(unit progress-info)
+      ::                ?~(boot ~ `(boot-progress u.boot))
+      ::              =/  err=(unit [term tang])
+      ::                ?~(boot ~ error.u.boot)
+      ::              (progress-bar prog err)
+      ::        ==
+      ::      ==
+      ::      ==
       ::  SSE connection for wallet list updates
       ;div(hx-ext "sse", sse-connect "/spv-wallet/stream", sse-swap "wallet-list-update,generate-clear", style "display:none;");
       ;+  %+  tabs  (trip default-tab)
