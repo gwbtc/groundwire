@@ -382,8 +382,10 @@
         ;<  ~  bind:m  (sleep:io ~s1)
         $
       ==
+    ::  spawn disabled
     ?:  ?=([%spv-wallet %progress ~] site)
-      (handle-boot-actions:rt-boot args)
+      ::  (handle-boot-actions:rt-boot args)
+      (pure:m ~)
     ?+    site  !!
         [%spv-wallet ~]
       (handle-wallet-actions:rt-wallet args)
