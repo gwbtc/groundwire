@@ -2,7 +2,7 @@
 """
 gw-onboard.py — Groundwire comet onboarding script
 
-Generates a random @q master ticket, derives a taproot testnet address,
+Generates a random @q master ticket, derives a taproot address,
 watches Bitcoin Core for funding, mines a comet with the correct tweak,
 boots it, and directs the user to the spv-wallet interface.
 """
@@ -49,9 +49,9 @@ from embit.transaction import Transaction, TransactionInput, TransactionOutput, 
 # Configuration defaults (overridable via CLI)
 # ---------------------------------------------------------------------------
 
-RPC_URL = "http://64.23.185.118:38332"
-RPC_USER = "signetrpcuser"
-RPC_PASS = "eef738ab81ca56a252a1715f5f5a691a3590dbc1837849a6c8cbd18118514407"
+RPC_URL = "https://alpha.groundwire.dev/rpc"
+RPC_USER = "mainnetrpcuser"
+RPC_PASS = "fc3d36ce83e15484e75a658b2a9a8a90a66f4cb017ace74c8631fe082b93adbf"
 
 
 def _detect_zig_target() -> str:
@@ -79,11 +79,10 @@ else:
     GW_PILL = "./gw-base.pill"
 REQUIRED_SATS = 1_000
 POLL_INTERVAL = 15  # seconds between UTXO scans
-MEMPOOL_TX_URL = "https://mempool.space/signet/tx"
+MEMPOOL_TX_URL = "https://mempool.space/tx"
 
-FAUCET_URL = "https://signet.groundwire.dev/faucet"
-FAUCET_API_KEY = "fda188b3f39bd7fee1cd9d7d06fe40e28394c78d55fa4aa4154a1ef119e58c32"
-
+FAUCET_URL = "https://alpha.groundwire.dev/faucet"
+FAUCET_API_KEY = "e8ec9ac94a4f5396da27091f3b7f8099cf27856b5b2921aa20fb9fd59b967ebe"
 
 SPONSOR_URL = "http://143.198.70.9:8081"
 SPONSOR_SHIP = "~daplyd"
@@ -310,7 +309,7 @@ def rpc_call(
 
 
 def request_faucet(address: str, invite: str | None = None) -> str | None:
-    """Request testnet sats from the faucet. Returns txid on success, None on failure."""
+    """Request sats from the faucet. Returns txid on success, None on failure."""
     try:
         payload = {"address": address, "api_key": FAUCET_API_KEY}
         if invite:
@@ -430,20 +429,16 @@ def make_tweak_expr(txid_hex: str, vout: int, off: int = 0) -> str:
 
 def derive_taproot_address(seed_bytes: bytes) -> str:
     """
-    Derive the first taproot testnet receiving address (m/86'/1'/0'/0/0)
+    Derive the first taproot receiving address (m/86'/1'/0'/0/0)
     from raw seed bytes, matching what spv-wallet does for @q seeds.
 
     spv-wallet's seed-to-bytes for %q uses raw atom bytes directly
     as the BIP-32 seed (no BIP-39 mnemonic/PBKDF2 step).
-
-    NOTE: We use 8 bytes (64 bits) of entropy here intentionally — this
-    matches the comet @q ticket size. Do NOT copy this pattern for
-    mainnet wallets, which need 128-256 bits of entropy.
     """
-    root = bip32.HDKey.from_seed(seed_bytes, version=NETWORKS["test"]["xprv"])
+    root = bip32.HDKey.from_seed(seed_bytes, version=NETWORKS["main"]["xprv"])
     child = root.derive("m/86h/1h/0h/0/0")
     # BIP-86 taproot: key-path only (empty script tree)
-    addr = script.p2tr(child.key).address(NETWORKS["test"])
+    addr = script.p2tr(child.key).address(NETWORKS["main"])
     return addr
 
 
@@ -846,7 +841,7 @@ def _taproot_tweak_pubkey(internal_key: bytes, merkle_root: bytes | None) -> tup
     return (x_only, parity)
 
 
-def tapscript_address(internal_xonly: bytes, script_bytes: bytes, network: str = "test") -> str:
+def tapscript_address(internal_xonly: bytes, script_bytes: bytes, network: str = "main") -> str:
     """Derive a bech32m taproot address for a single-leaf script tree.
 
     internal_xonly: 32-byte x-only internal public key
@@ -1035,7 +1030,7 @@ def request_sponsor_signature(
 
 def _derive_key_at_index(seed_bytes: bytes, index: int) -> bip32.HDKey:
     """Derive BIP-86 key at m/86'/1'/0'/0/<index> from raw seed bytes."""
-    root = bip32.HDKey.from_seed(seed_bytes, version=NETWORKS["test"]["xprv"])
+    root = bip32.HDKey.from_seed(seed_bytes, version=NETWORKS["main"]["xprv"])
     return root.derive(f"m/86h/1h/0h/0/{index}")
 
 
@@ -1093,7 +1088,7 @@ def build_and_broadcast_attestation(
     key2 = _derive_key_at_index(seed_bytes, 2)
 
     key1_xonly = key1.key.xonly()
-    reveal_addr = script.p2tr(key2.key).address(NETWORKS["test"])
+    reveal_addr = script.p2tr(key2.key).address(NETWORKS["main"])
 
     # -- Commit address = tapscript address with spawn script --
     commit_addr = tapscript_address(key1_xonly, spawn_script)
@@ -1425,7 +1420,7 @@ def main():
     parser.add_argument(
         "--invite",
         default=None,
-        help="Invite code to submit to the faucet for automatic funding",
+        help="Invite code for faucet funding",
     )
     parser.add_argument(
         "--fief",
@@ -1502,24 +1497,24 @@ def main():
         print(f"Resuming with master ticket: {master_ticket}")
         print()
     else:
-        seed_bytes = secrets.token_bytes(8)
+        seed_bytes = secrets.token_bytes(16)
         seed_int = int.from_bytes(seed_bytes, "little")
         master_ticket = encode_q(seed_int)
 
         print(f"Step 1/{total_steps}: Generating master ticket")
         print()
-        print("  ┌─────────────────────────────────────────────────────────┐")
-        print("  │  SAVE THIS — it is your login credential and           │")
-        print("  │  wallet seed. If you lose it, you lose access to       │")
-        print("  │  your comet and your coins.                            │")
-        print("  │                                                        │")
-        print(f"  │  {master_ticket:<56s}│")
-        print("  └─────────────────────────────────────────────────────────┘")
+        print("  ┌──────────────────────────────────────────────────────────────────┐")
+        print("  │  SAVE THIS — it is your login credential and                    │")
+        print("  │  wallet seed. If you lose it, you lose access to                │")
+        print("  │  your comet and your coins.                                     │")
+        print("  │                                                                 │")
+        print(f"  │  {master_ticket:<65s}│")
+        print("  └──────────────────────────────────────────────────────────────────┘")
         print()
         confirm_master_ticket(master_ticket)
 
     # ------------------------------------------------------------------
-    # Step 2: Derive taproot testnet address
+    # Step 2: Derive taproot address
     # ------------------------------------------------------------------
     try:
         address = derive_taproot_address(seed_bytes)
@@ -1530,7 +1525,7 @@ def main():
 
     print(f"Step 2/{total_steps}: Deriving funding address")
     print()
-    print(f"  Signet address: {address}")
+    print(f"  Address: {address}")
     print()
 
     # ------------------------------------------------------------------
@@ -1538,7 +1533,7 @@ def main():
     # ------------------------------------------------------------------
     print(f"Step 3/{total_steps}: Funding your address")
     print()
-    print("  Requesting testnet bitcoin from faucet...")
+    print("  Requesting bitcoin from faucet...")
     faucet_result = request_faucet(address, invite=args.invite)
     if faucet_result is not None:
         print("  Waiting for transaction to confirm...\n")
@@ -1556,12 +1551,12 @@ def main():
     else:
         try:
             block_count = rpc_call("getblockcount", **rpc_cfg)
-            print(f"  Connected to Bitcoin testnet (block height: {block_count:,})")
+            print(f"  Connected to Bitcoin (block height: {block_count:,})")
         except Exception as e:
             print(f"  ERROR: Cannot reach Bitcoin Core at {rpc_cfg['rpc_url']}")
             print(f"    {e}")
             print()
-            print("  Make sure bitcoind is running with signet and the RPC")
+            print("  Make sure bitcoind is running and the RPC")
             print("  credentials match, then re-run this script.")
             sys.exit(1)
 
