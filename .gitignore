@@ -2,5 +2,11 @@
 dist-groundwire
 dist-spv
 
+# python
+__pycache__/
+
+# macOS
+.DS_Store
+
 # claude
 .claude
