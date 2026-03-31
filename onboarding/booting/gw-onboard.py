@@ -81,8 +81,9 @@ REQUIRED_SATS = 1_000
 POLL_INTERVAL = 15  # seconds between UTXO scans
 MEMPOOL_TX_URL = "https://mempool.space/signet/tx"
 
-FAUCET_URL = "http://alpha.groundwire.dev/faucet"
+FAUCET_URL = "https://signet.groundwire.dev/faucet"
 FAUCET_API_KEY = "fda188b3f39bd7fee1cd9d7d06fe40e28394c78d55fa4aa4154a1ef119e58c32"
+
 
 SPONSOR_URL = "http://143.198.70.9:8081"
 SPONSOR_SHIP = "~daplyd"
@@ -313,7 +314,7 @@ def request_faucet(address: str, invite: str | None = None) -> str | None:
     try:
         payload = {"address": address, "api_key": FAUCET_API_KEY}
         if invite:
-            payload["invite"] = invite
+            payload["invite_code"] = invite
         resp = requests.post(FAUCET_URL, json=payload, timeout=30)
         if resp.ok:
             try:
@@ -666,36 +667,16 @@ class BitWriter:
 # =========================================================================
 
 
-def encode_batch_sotx(
-    comet_p: int,
+def _encode_spawn_skim(
+    w: "BitWriter",
     pass_atom: int,
+    fief: tuple | None,
     spkh: bytes,
     vout: int | None,
     off: int,
     tej: int,
-    fief: tuple | None,
-    sponsor_p: int,
-    sponsor_sig: int,
-) -> bytes:
-    """Encode a batch SOTx (spawn + escape) as raw bytes for script embedding.
-
-    Returns the encoded data as bytes ready for wrapping in a urb Taproot script.
-    """
-    w = BitWriter()
-
-    # -- Top-level SOTx header --
-    # Sig: no sig (type 0)
-    w.write(2, 0)
-    # Ship: comet @p (128 bits)
-    w.write(128, comet_p)
-    # Pad bit before skim
-    # (not needed — the batch opcode follows directly)
-
-    # -- Batch skim --
-    w.write(7, 10)         # opcode: %batch
-    w.write_mat(2)         # count: 2 items in batch
-
-    # -- Sub-item 1: Spawn --
+) -> None:
+    """Encode a %spawn skim into the BitWriter."""
     w.write(7, 1)          # opcode: %spawn
     w.write(1, 0)          # pad
     w.write_mat(pass_atom) # networking key (pass)
@@ -722,6 +703,60 @@ def encode_batch_sotx(
         w.write_mat(vout)   # vout value
     else:
         w.write(2, 0)       # no vout
+
+
+def encode_spawn_sotx(
+    comet_p: int,
+    pass_atom: int,
+    spkh: bytes,
+    vout: int | None,
+    off: int,
+    tej: int,
+    fief: tuple | None,
+) -> bytes:
+    """Encode a spawn-only SOTx (no escape) as raw bytes for script embedding.
+
+    Used in fief/sponsor mode where no escape transaction is needed.
+    """
+    w = BitWriter()
+
+    # -- Top-level SOTx header --
+    w.write(2, 0)          # Sig: no sig (type 0)
+    w.write(128, comet_p)  # Ship: comet @p (128 bits)
+
+    # -- Spawn skim (no batch wrapper) --
+    _encode_spawn_skim(w, pass_atom, fief, spkh, vout, off, tej)
+
+    return w.to_bytes()
+
+
+def encode_batch_sotx(
+    comet_p: int,
+    pass_atom: int,
+    spkh: bytes,
+    vout: int | None,
+    off: int,
+    tej: int,
+    fief: tuple | None,
+    sponsor_p: int,
+    sponsor_sig: int,
+) -> bytes:
+    """Encode a batch SOTx (spawn + escape) as raw bytes for script embedding.
+
+    Returns the encoded data as bytes ready for wrapping in a urb Taproot script.
+    """
+    w = BitWriter()
+
+    # -- Top-level SOTx header --
+    w.write(2, 0)          # Sig: no sig (type 0)
+    w.write(128, comet_p)  # Ship: comet @p (128 bits)
+
+    # -- Batch skim --
+    w.write(7, 10)         # opcode: %batch
+    w.write_mat(2)         # count: 2 items in batch
+
+    # -- Sub-item 1: Spawn --
+    _encode_spawn_skim(w, pass_atom, fief, spkh, vout, off, tej)
 
     # -- Sub-item 2: Escape --
     w.write(7, 3)            # opcode: %escape
@@ -1013,10 +1048,11 @@ def build_and_broadcast_attestation(
     comet_name: str,
     comet_p_int: int,
     pass_atom: int,
-    sponsor_name: str,
-    sponsor_p_int: int,
-    sponsor_sig: int,
     rpc_cfg: dict,
+    fief: tuple | None = None,
+    sponsor_name: str | None = None,
+    sponsor_p_int: int | None = None,
+    sponsor_sig: int | None = None,
 ) -> tuple[str, str]:
     """Build and broadcast commit + reveal transactions.
 
@@ -1024,17 +1060,28 @@ def build_and_broadcast_attestation(
     """
     # -- Build attestation script --
     spkh = compute_spkh(address, sats)
-    encoded = encode_batch_sotx(
-        comet_p=comet_p_int,
-        pass_atom=pass_atom,
-        spkh=spkh,
-        vout=vout,
-        off=0,
-        tej=0,
-        fief=None,
-        sponsor_p=sponsor_p_int,
-        sponsor_sig=sponsor_sig,
-    )
+    if fief is not None:
+        encoded = encode_spawn_sotx(
+            comet_p=comet_p_int,
+            pass_atom=pass_atom,
+            spkh=spkh,
+            vout=vout,
+            off=0,
+            tej=0,
+            fief=fief,
+        )
+    else:
+        encoded = encode_batch_sotx(
+            comet_p=comet_p_int,
+            pass_atom=pass_atom,
+            spkh=spkh,
+            vout=vout,
+            off=0,
+            tej=0,
+            fief=None,
+            sponsor_p=sponsor_p_int,
+            sponsor_sig=sponsor_sig,
+        )
     spawn_script = wrap_urb_script(encoded)
 
     # -- Derive keys --
@@ -1380,6 +1427,12 @@ def main():
         default=None,
         help="Invite code to submit to the faucet for automatic funding",
     )
+    parser.add_argument(
+        "--fief",
+        default=None,
+        metavar="IP:PORT",
+        help="Static IP and port for direct routing (skips escape/sponsor)",
+    )
 
     # Dev-only flag: hidden from help, rejected in frozen/bundled builds.
     if not getattr(sys, "frozen", False):
@@ -1392,6 +1445,32 @@ def main():
     # Ensure the dev flag can never be set in a release build.
     if getattr(sys, "frozen", False):
         args.dev_skip_funding = False
+
+    # Parse --fief flag (ip:port)
+    fief = None
+    if args.fief:
+        parts = args.fief.rsplit(":", 1)
+        if len(parts) != 2:
+            print("Error: --fief must be in IP:PORT format (e.g. 1.2.3.4:34543)")
+            sys.exit(1)
+        ip_str, port_str = parts
+        try:
+            port = int(port_str)
+        except ValueError:
+            print(f"Error: invalid port number: {port_str}")
+            sys.exit(1)
+        if ":" in ip_str:
+            # IPv6
+            import ipaddress
+            ip_int = int(ipaddress.IPv6Address(ip_str))
+            fief = ("is", ip_int, port)
+        else:
+            # IPv4
+            import ipaddress
+            ip_int = int(ipaddress.IPv4Address(ip_str))
+            fief = ("if", ip_int, port)
+
+    total_steps = 6 if fief is not None else 7
 
     # Use CLI args for RPC config
     rpc_cfg = {"rpc_url": args.rpc_url, "rpc_user": args.rpc_user, "rpc_pass": args.rpc_pass}
@@ -1427,7 +1506,7 @@ def main():
         seed_int = int.from_bytes(seed_bytes, "little")
         master_ticket = encode_q(seed_int)
 
-        print("Step 1/7: Generating master ticket")
+        print(f"Step 1/{total_steps}: Generating master ticket")
         print()
         print("  ┌─────────────────────────────────────────────────────────┐")
         print("  │  SAVE THIS — it is your login credential and           │")
@@ -1449,7 +1528,7 @@ def main():
         print("  This is unexpected — please report this issue.")
         sys.exit(1)
 
-    print("Step 2/7: Deriving funding address")
+    print(f"Step 2/{total_steps}: Deriving funding address")
     print()
     print(f"  Signet address: {address}")
     print()
@@ -1457,7 +1536,7 @@ def main():
     # ------------------------------------------------------------------
     # Step 3: Auto-fund via faucet, then wait for confirmation
     # ------------------------------------------------------------------
-    print("Step 3/7: Funding your address")
+    print(f"Step 3/{total_steps}: Funding your address")
     print()
     print("  Requesting testnet bitcoin from faucet...")
     faucet_result = request_faucet(address, invite=args.invite)
@@ -1501,7 +1580,7 @@ def main():
     tweak_expr = make_tweak_expr(txid, vout, off)
 
     print()
-    print("Step 4/7: Mining comet")
+    print(f"Step 4/{total_steps}: Mining comet")
     miner_result = run_comet_miner(tweak_expr, args.miner)
 
     comet = miner_result["comet"]
@@ -1519,60 +1598,82 @@ def main():
             boot_comet(comet, feed, args.vere)
         return
 
-    # ------------------------------------------------------------------
-    # Step 5: Request sponsor signature
-    # ------------------------------------------------------------------
-    print()
-    print("Step 5/7: Requesting sponsor signature")
-    sponsor_url = args.sponsor_url
-    try:
-        sponsor_sig, sponsor_height = request_sponsor_signature(comet, sponsor_url)
-        print(f"  Sponsor signed at block height {sponsor_height}")
-    except Exception as e:
-        print()
-        print(f"  Could not reach the Groundwire sponsor ({e}).")
-        print()
-        print("  This is usually temporary — the sponsor may be restarting")
-        print("  or the network may be briefly unavailable.")
-        print()
-        print("  To retry, re-run with your master ticket:")
-        print(f"    python3 gw-onboard.py --master-ticket '{master_ticket}'")
-        sys.exit(1)
-
-    # ------------------------------------------------------------------
-    # Step 6: Build and broadcast attestation transactions
-    # ------------------------------------------------------------------
-    print()
-    print("Step 6/7: Building and broadcasting attestation")
-
     # Derive the networking key (pass) from the ring
     tweak_raw = build_tweak_bytes(txid, vout, off)
     pass_atom = derive_pass_from_ring(ring_uw, tweak_raw)
-
-    # Convert @p strings to integers
     comet_p_int = patp_to_int(comet)
-    sponsor_p_int = patp_to_int(SPONSOR_SHIP)
 
-    commit_txid, reveal_txid = build_and_broadcast_attestation(
-        seed_bytes=seed_bytes,
-        txid_hex=txid,
-        vout=vout,
-        sats=sats,
-        address=address,
-        comet_name=comet,
-        comet_p_int=comet_p_int,
-        pass_atom=pass_atom,
-        sponsor_name=SPONSOR_SHIP,
-        sponsor_p_int=sponsor_p_int,
-        sponsor_sig=sponsor_sig,
-        rpc_cfg=rpc_cfg,
-    )
+    if fief is not None:
+        # ------------------------------------------------------------------
+        # Fief mode: spawn-only, no escape/sponsor needed
+        # ------------------------------------------------------------------
+        print()
+        print(f"Step 5/{total_steps}: Building and broadcasting attestation (fief mode)")
+
+        commit_txid, reveal_txid = build_and_broadcast_attestation(
+            seed_bytes=seed_bytes,
+            txid_hex=txid,
+            vout=vout,
+            sats=sats,
+            address=address,
+            comet_name=comet,
+            comet_p_int=comet_p_int,
+            pass_atom=pass_atom,
+            fief=fief,
+            sponsor_name=None,
+            sponsor_p_int=None,
+            sponsor_sig=None,
+            rpc_cfg=rpc_cfg,
+        )
+    else:
+        # ------------------------------------------------------------------
+        # Normal mode: batch spawn + escape
+        # ------------------------------------------------------------------
+        # Step 5: Request sponsor signature
+        print()
+        print(f"Step 5/{total_steps}: Requesting sponsor signature")
+        sponsor_url = args.sponsor_url
+        try:
+            sponsor_sig, sponsor_height = request_sponsor_signature(comet, sponsor_url)
+            print(f"  Sponsor signed at block height {sponsor_height}")
+        except Exception as e:
+            print()
+            print(f"  Could not reach the Groundwire sponsor ({e}).")
+            print()
+            print("  This is usually temporary — the sponsor may be restarting")
+            print("  or the network may be briefly unavailable.")
+            print()
+            print("  To retry, re-run with your master ticket:")
+            print(f"    python3 gw-onboard.py --master-ticket '{master_ticket}'")
+            sys.exit(1)
+
+        # Step 6: Build and broadcast attestation transactions
+        print()
+        print(f"Step 6/{total_steps}: Building and broadcasting attestation")
+
+        sponsor_p_int = patp_to_int(SPONSOR_SHIP)
+
+        commit_txid, reveal_txid = build_and_broadcast_attestation(
+            seed_bytes=seed_bytes,
+            txid_hex=txid,
+            vout=vout,
+            sats=sats,
+            address=address,
+            comet_name=comet,
+            comet_p_int=comet_p_int,
+            pass_atom=pass_atom,
+            fief=None,
+            sponsor_name=SPONSOR_SHIP,
+            sponsor_p_int=sponsor_p_int,
+            sponsor_sig=sponsor_sig,
+            rpc_cfg=rpc_cfg,
+        )
 
     # Wait for block confirmations
     wait_for_confirmations(reveal_txid, BLOCK_CONFIRMATIONS, args.poll_interval, **rpc_cfg)
 
     # ------------------------------------------------------------------
-    # Step 7: Boot comet
+    # Boot comet
     # ------------------------------------------------------------------
     if args.skip_boot:
         print(f"  feed: {feed}")
@@ -1582,7 +1683,7 @@ def main():
         print(f"  {args.vere} -w {pier_name} -B {GW_PILL} -G {feed} --http-port <port>")
     else:
         print()
-        print("Step 7/7: Booting comet")
+        print(f"Step {total_steps}/{total_steps}: Booting comet")
         # This replaces the current process — does not return
         boot_comet(comet, feed, args.vere)
 
