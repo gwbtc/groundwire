@@ -341,11 +341,20 @@
         =/  commit-tx  commit.u.pcmtx
         ?~  precommit-sat=(calc-precommit-sont precommit-tx to.sot)  
           cor
+        ::  tweak = [%version payload]
+        ::  payload = [pki-agent-source-ship pki-agent pki-data]
+        ::  pki-agent has a required interface for handling out-of-band attestation
+        ::            (does nothing yet)
+        ::  pki-data = [%src-name %protocol-name %protocol-version crypto-data]
         =/  tweak
           %+  rap 
-            3 
-          :~  %btc 
-              %gw 
+            3
+          :~  %9
+              ~tyr
+              %urb-watcher
+              %btc 
+              %gw
+              %9  :: in this version we stipulate a fixed list of sotxes that mirrors azimuth
               txid=txid.u.precommit-sat 
               vout=vout.u.precommit-sat 
               off=off.u.precommit-sat
