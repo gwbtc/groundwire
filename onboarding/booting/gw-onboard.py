@@ -409,9 +409,10 @@ def make_tweak_expr(txid_hex: str, vout: int, off: int = 0) -> str:
     Build the Hoon expression string for the Groundwire tweak.
 
     comet-miner's --tweak evaluates this via u3v_wish().
+    Tweak format v9: (rap 3 ~[%9 ~tyr %urb-watcher %btc %gw %9 txid vout off])
     """
     txid_ux = format_hoon_ux(txid_hex)
-    return f"(rap 3 ~[%btc %gw {txid_ux} {vout} {off}])"
+    return f"(rap 3 ~[%9 ~tyr %urb-watcher %btc %gw %9 {txid_ux} {vout} {off}])"
 
 
 # =========================================================================
@@ -833,14 +834,18 @@ def _bytes_to_hoon_atom(b: bytes) -> int:
 
 
 def build_tweak_bytes(txid_hex: str, vout: int, off: int = 0) -> bytes:
-    """Build the tweak atom bytes: (rap 3 ~[%btc %gw txid vout off]).
+    """Build the tweak atom bytes: (rap 3 ~[%9 ~tyr %urb-watcher %btc %gw %9 txid vout off]).
 
     This is the same tweak as make_tweak_expr but as raw bytes.
     """
     # Each element's bytes are concatenated (rap 3 = byte-level concat)
     parts = bytearray()
-    parts.extend(b"btc")
-    parts.extend(b"gw")
+    parts.extend(b"\x09")             # %9 version tag (atom 9)
+    parts.extend(b"\x99")             # ~tyr (galaxy 153)
+    parts.extend(b"urb-watcher")      # %urb-watcher
+    parts.extend(b"btc")              # %btc
+    parts.extend(b"gw")               # %gw
+    parts.extend(b"\x09")             # %9 (atom 9)
     # txid as Hoon atom bytes (little-endian, 32 bytes for a 256-bit hash)
     txid_int = int(txid_hex, 16)
     parts.extend(txid_int.to_bytes(32, "little"))

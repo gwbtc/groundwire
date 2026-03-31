@@ -114,7 +114,7 @@ class TestMakeTweakExpr(unittest.TestCase):
         txid = "ab" * 32
         self.assertEqual(
             gw.make_tweak_expr(txid, 0, 0),
-            "(rap 3 ~[%btc %gw 0xabab.abab.abab.abab.abab.abab.abab.abab"
+            "(rap 3 ~[%9 ~tyr %urb-watcher %btc %gw %9 0xabab.abab.abab.abab.abab.abab.abab.abab"
             ".abab.abab.abab.abab.abab.abab.abab.abab 0 0])",
         )
 
