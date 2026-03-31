@@ -1,6 +1,8 @@
 # Groundwire Comet Onboarding
 
-`gw-onboard.py` is a Python script that wraps the Groundwire boot process. It generates a master ticket, derives a signet taproot address, funds it via the faucet, mines a comet, and boots it.
+**NOTE: This README is a bit out of date now that we've automated our build process and drifted from some of these requirements.**
+
+`gw-onboard.py` is a Python script that wraps the Groundwire boot process. It generates a master ticket, derives a taproot address, funds it via the faucet, mines a comet, and boots it.
 
 ## Prerequisites
 
