@@ -765,11 +765,12 @@ def encode_batch_sotx(
     return w.to_bytes()
 
 
-def wrap_urb_script(data: bytes) -> bytes:
+def wrap_urb_script(data: bytes, xonly_pubkey: bytes) -> bytes:
     """Wrap encoded URB data in a Taproot script envelope.
 
     Returns the raw script bytes for:
       OP_FALSE OP_IF OP_PUSH "urb" <push data chunks> OP_ENDIF
+      <xonly_pubkey> OP_CHECKSIG
     """
     parts = bytearray()
     parts.append(0x00)  # OP_0 (OP_FALSE)
@@ -796,6 +797,10 @@ def wrap_urb_script(data: bytes) -> bytes:
         offset += 520
 
     parts.append(0x68)  # OP_ENDIF
+    # Require a signature from the reveal key to spend via script-path
+    parts.append(0x20)  # PUSH 32 bytes
+    parts.extend(xonly_pubkey)
+    parts.append(0xAC)  # OP_CHECKSIG
     return bytes(parts)
 
 
@@ -1082,15 +1087,15 @@ def build_and_broadcast_attestation(
             sponsor_p=sponsor_p_int,
             sponsor_sig=sponsor_sig,
         )
-    spawn_script = wrap_urb_script(encoded)
-
     # -- Derive keys --
     # Index 0: funding address key (for spending the UTXO)
     key0 = _derive_key_at_index(seed_bytes, 0)
-    # Index 1: commit address internal key
+    # Index 1: commit address internal key (also signs the script-path spend)
     key1 = _derive_key_at_index(seed_bytes, 1)
     # Index 2: reveal destination address
     key2 = _derive_key_at_index(seed_bytes, 2)
+
+    spawn_script = wrap_urb_script(encoded, key1.key.xonly())
 
     key1_xonly = key1.key.xonly()
     reveal_addr = script.p2tr(key2.key).address(NETWORKS["main"])
