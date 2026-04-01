@@ -85,7 +85,8 @@ FAUCET_URL = "https://alpha.groundwire.dev/faucet"
 FAUCET_API_KEY = "e8ec9ac94a4f5396da27091f3b7f8099cf27856b5b2921aa20fb9fd59b967ebe"
 
 SPONSOR_URL = "http://143.198.70.9:8081"
-SPONSOR_SHIP = "~daplyd"
+SPONSOR_SHIP = "~daplyd"  # star — comet mines under this
+ESCAPE_SPONSOR = "~linluc-palnus-barpub-dalweg--miptyp-molfer-pitren-daplyd"  # networking sponsor for escape
 BLOCK_CONFIRMATIONS = 2
 
 
@@ -1656,7 +1657,7 @@ def main():
         print()
         print(f"Step 6/{total_steps}: Building and broadcasting attestation")
 
-        sponsor_p_int = patp_to_int(SPONSOR_SHIP)
+        escape_sponsor_p_int = patp_to_int(ESCAPE_SPONSOR)
 
         commit_txid, reveal_txid = build_and_broadcast_attestation(
             seed_bytes=seed_bytes,
@@ -1668,8 +1669,8 @@ def main():
             comet_p_int=comet_p_int,
             pass_atom=pass_atom,
             fief=None,
-            sponsor_name=SPONSOR_SHIP,
-            sponsor_p_int=sponsor_p_int,
+            sponsor_name=ESCAPE_SPONSOR,
+            sponsor_p_int=escape_sponsor_p_int,
             sponsor_sig=sponsor_sig,
             rpc_cfg=rpc_cfg,
         )
