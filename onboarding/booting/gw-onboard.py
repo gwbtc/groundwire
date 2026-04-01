@@ -80,6 +80,7 @@ else:
 REQUIRED_SATS = 1_000
 POLL_INTERVAL = 15  # seconds between UTXO scans
 MEMPOOL_TX_URL = "https://mempool.space/tx"
+MEMPOOL_API_URL = "https://mempool.space/api"
 
 FAUCET_URL = "https://alpha.groundwire.dev/faucet"
 FAUCET_API_KEY = "e8ec9ac94a4f5396da27091f3b7f8099cf27856b5b2921aa20fb9fd59b967ebe"
@@ -343,48 +344,29 @@ def request_faucet(address: str, invite: str | None = None) -> str | None:
         return None
 
 
-def scan_for_utxo(address: str, **rpc_kwargs) -> dict | None:
-    """Scan the UTXO set for a confirmed output paying to `address`."""
-    scan_timeout = 300  # scantxoutset can take minutes on large UTXO sets
+def scan_for_utxo(address: str, **_rpc_kwargs) -> dict | None:
+    """Check mempool.space API for a confirmed UTXO at `address`."""
     try:
-        result = rpc_call(
-            "scantxoutset", ["start", [f"addr({address})"]], timeout=scan_timeout, **rpc_kwargs
-        )
-    except requests.exceptions.ReadTimeout:
-        print("\n  Bitcoin node is still scanning, will check again shortly...")
-        return None
-    except requests.exceptions.ConnectionError:
-        print("\n  Lost connection to Bitcoin node, will retry...")
-        return None
-    except RuntimeError as e:
-        if "Scan already in progress" in str(e):
-            try:
-                rpc_call("scantxoutset", ["abort"], **rpc_kwargs)
-                result = rpc_call(
-                    "scantxoutset",
-                    ["start", [f"addr({address})"]],
-                    timeout=scan_timeout,
-                    **rpc_kwargs,
-                )
-            except Exception:
-                print("\n  UTXO scan error, will retry...")
-                return None
-        else:
-            print(f"\n  RPC error: {e}")
-            print("  Will retry...")
+        resp = requests.get(f"{MEMPOOL_API_URL}/address/{address}/utxo", timeout=15)
+        if not resp.ok:
             return None
-    if not result or not result.get("unspents"):
+        utxos = resp.json()
+        for utxo in utxos:
+            if not utxo.get("status", {}).get("confirmed", False):
+                continue
+            if utxo["value"] >= REQUIRED_SATS:
+                return {
+                    "txid": utxo["txid"],
+                    "vout": utxo["vout"],
+                    "_sats": utxo["value"],
+                }
+    except Exception:
         return None
-    for utxo in result["unspents"]:
-        sat_value = int(round(utxo["amount"] * 1e8))
-        if sat_value >= REQUIRED_SATS:
-            utxo["_sats"] = sat_value
-            return utxo
     return None
 
 
 def wait_for_funding(address: str, poll_interval: int = POLL_INTERVAL, **rpc_kwargs) -> dict:
-    """Block until a UTXO with >= REQUIRED_SATS appears at `address`."""
+    """Block until a confirmed UTXO with >= REQUIRED_SATS appears at `address`."""
     print(f"\nWaiting for funding transaction to confirm (checking every {poll_interval}s)...")
     start = time.monotonic()
     while True:
