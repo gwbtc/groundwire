@@ -41,9 +41,9 @@
 ::  and start a timer to fetch again.
 ++  on-init
   ^-  (quip card _this)
-  =/  new-rpc  ['http://64.23.185.118:8332' [%basic 'mainnetrpcuser:fc3d36ce83e15484e75a658b2a9a8a90a66f4cb017ace74c8631fe082b93adbf']]
-  =/  start-height  943.080  :: a recent block
-  =/  start-hash    0x42b6.08cb.02f4.eb0b.bc94.3068.dd87.e577.12ed.6388.2206
+  =/  new-rpc  ['https://alpha.groundwire.dev/rpc' [%basic 'mainnetrpcuser:fc3d36ce83e15484e75a658b2a9a8a90a66f4cb017ace74c8631fe082b93adbf']]
+  =/  start-height  943.140
+  =/  start-hash    0x1.62b3.04e4.d48c.3a53.d80a.96de.0210.d325.c0a9.a464.8b3c
   =/  new-urb-state
     :*  [start-hash start-height]
         *sont-map:ord

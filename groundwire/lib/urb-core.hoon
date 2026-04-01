@@ -147,14 +147,28 @@
       `i.t.t.rwit   
     ?~  raw-script
       (add-to-reveals ~ value)
+    ::  Quick check: skip scripts that don't start with the urb envelope.
+    ::  Envelope is OP_0 OP_IF PUSH3 "urb" = bytes 00 63 03 75 72 62.
+    ::  In octs, the first script byte is the MSB of the atom.
+    ::  We check the top 5 bytes (skipping the leading 0x00 which
+    ::  vanishes in the atom) for OP_IF PUSH3 "urb" = 0x6303757262.
+    ?.  ?&  (gte p.u.raw-script 6)
+            =(0x63.0375.7262 (cut 3 [(sub p.u.raw-script 6) 5] q.u.raw-script))
+        ==
+      (add-to-reveals ~ value)
+    ~&  >  "%urb-core: urb envelope detected! parsing..."
     =/  descr  (de:bscr u.raw-script)
     ?~  descr
+      ~&  >>>  "%urb-core: de:bscr failed on urb script"
       (add-to-reveals ~ value)
     ~|  [=+(u.raw-script [p `@ux`q]) =+((en:bscr u.descr) [p `@ux`q])]
-    ?.  =(u.raw-script (en:bscr u.descr)) 
-      ~&  >>>  "%urb-core: If you see this, there's a bug in the witness parsing logic."  !!
+    ?.  =(u.raw-script (en:bscr u.descr))
+      ~&  >>>  "%urb-core: round-trip mismatch in witness parsing"  !!
+    ~&  >  "%urb-core: script parsed successfully, extracting unvs..."
     =/  unvs=(unit (list @))  (some (unv:de:urb-encoder u.descr))
-    ?~  unvs  (add-to-reveals ~ value)
+    ?~  unvs
+      ~&  >>>  "%urb-core: no unvs found in parsed script"
+      (add-to-reveals ~ value)
     ::
     ::  If there is sots, get it, add it to reveals, 
     ::  flag this tx as needed, and recurse.
