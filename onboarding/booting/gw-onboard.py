@@ -85,7 +85,7 @@ FAUCET_URL = "https://alpha.groundwire.dev/faucet"
 FAUCET_API_KEY = "e8ec9ac94a4f5396da27091f3b7f8099cf27856b5b2921aa20fb9fd59b967ebe"
 
 SPONSOR_URL = "http://143.198.70.9:8081"
-SPONSOR_SHIP = "~daplyd"  # galaxy — comet mines under this
+SPONSOR_SHIP = "~daplyd"  # star — comet mines under this
 ESCAPE_SPONSOR = "~linluc-palnus-barpub-dalweg--miptyp-molfer-pitren-daplyd"  # networking sponsor for escape
 BLOCK_CONFIRMATIONS = 2
 
