@@ -1365,7 +1365,7 @@ def boot_comet(
         webbrowser.open(f"{url}/spv-wallet")
 
     # Replace this process with vere
-    cmd = [vere_bin, "-w", pier_name, "-B", pill, "-G", feed, "--http-port", str(port)]
+    cmd = [vere_bin, "-w", pier_name, "-B", pill, "-G", feed, "--http-port", str(port), "--Dunsafe-dawn=true"]
     os.execvp(vere_bin, cmd)
 
 
