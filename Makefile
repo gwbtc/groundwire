@@ -14,6 +14,7 @@ VENDOR_BASE_DEV_GW := \
 	lib/strandio.hoon \
 	lib/test.hoon \
 	lib/verb.hoon \
+	lib/server.hoon \
 	mar/bill.hoon \
 	mar/kelvin.hoon \
 	mar/noun.hoon \
@@ -34,6 +35,9 @@ VENDOR_BTC_WALL_GW := \
 
 VENDOR_TLON_LIB_GW := \
 	lib/test-agent.hoon
+
+VENDOR_YARD_LIB_GW := \
+	lib/schooner.hoon
 
 # Vendor files needed by spv-wallet desk (base-dev subset)
 VENDOR_BASE_DEV_SPV := \
@@ -99,6 +103,10 @@ build:
 	@for f in $(VENDOR_TLON_LIB_GW); do \
 		mkdir -p dist-groundwire/$$(dirname $$f); \
 		cp vendor/tlon-lib/$$f dist-groundwire/$$f; \
+	done
+		@for f in $(VENDOR_YARD_LIB_GW); do \
+		mkdir -p dist-groundwire/$$(dirname $$f); \
+		cp vendor/yard/$$f dist-groundwire/$$f; \
 	done
 	@echo "Building spv-wallet desk..."
 	@cp -r spv-wallet/* dist-spv/

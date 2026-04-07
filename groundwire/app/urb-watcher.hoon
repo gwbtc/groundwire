@@ -13,7 +13,7 @@
 ::  You may want to change block-confirmations as well.
 ::
 /-  bitcoin, spider, ord, urb
-/+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb
+/+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb, server, schooner
 ::
 |%
 +$  card  card:agent:gall
@@ -50,11 +50,30 @@
         *insc-ids:ord
         *unv-ids:urb
     ==
-  :_  this(rpc new-rpc)
-  :~  :*  %pass  /blocks  %arvo  %k
-          %lard  q.byk.bowl
-          (get-blocks new-rpc new-urb-state)
-      ==  
+  ::  Short-term performance hack: request a snapshot from the default sponsor.
+  :_  this(rpc new-rpc, urb-state new-urb-state)
+  ?:  =(our.bowl ~linluc-palnus-barpub-dalweg--miptyp-molfer-pitren-daplyd)
+    :~  :*  %pass  /blocks  %arvo  %k
+            %lard  q.byk.bowl
+            (get-blocks new-rpc new-urb-state)
+        ==  
+        :*  %pass  /eyre/connect  %arvo  %e 
+            %connect  `/snapshot  dap.bowl
+        ==  
+    ==
+  ~&  "%urb-watcher: requesting a snapshot from the default sponsor."
+  :~  :*  %pass  /snapshot  %arvo  %i
+          %request
+          ^-  request:http
+          :*  %'GET'
+              'http://143.198.70.9:8081/snapshot'
+              :~  ['Content-Type' 'application/json']
+                  ['accept' 'application/json']
+              ==
+              ~
+          ==
+          *outbound-config:iris
+      ==
   ==
 ::
 ++  on-save
@@ -74,7 +93,21 @@
   |=  [=mark =vase]
   ^-  (quip card _this)
   ?>  =(our src):bowl
-  (on-poke:def mark vase)
+  ?+    mark  !!
+      %handle-http-request
+    =+  !<([eyre-id=@ta =inbound-request:eyre] vase)
+    =/  ,request-line:server
+      (parse-request-line:server url.request.inbound-request)
+    =+  send=(cury response:schooner eyre-id)
+    ?+    method.request.inbound-request  !!
+        %'GET'
+      ?+    site  !!
+          [%snapshot ~]
+        :_  this
+        (send [200 ~ [%none ~]]) :: XX send urb-state as JSON/jam
+      ==
+    ==
+  ==
 ::
 ++  on-peek
   |=  =(pole knot)
@@ -101,6 +134,7 @@
   |=  =(pole knot)
   ^-  (quip card _this)
   ?+    pole  (on-watch:def pole)
+      [%http-response *]  `this
   ::
   ::  Jael subscribes to / (aka ~) if it hears
   ::  that this agent is the default PKI source
@@ -138,7 +172,31 @@
     :~  :*  %pass  /blocks  %arvo  %k
             %lard  q.byk.bowl
             (get-blocks [rpc urb-state]:state)
-        ==  
+        == 
+    ==
+  ::
+  ::  Receive a snapshot from the default sponsor
+  ::  containing an urb-state and tell Jael to subscribe
+  ::  to %urb-watcher for udiffs for each ship in that
+  ::  urb-state, which we'll fulfill immediately in ++on-agent.
+  ::  Now start indexing ourselves.
+      [%snapshot ~]
+    ?.  ?=([%iris %http-response *] sign-arvo)  [(snapshot-fail bowl) this]
+    =/  response  client-response.sign-arvo
+    ?+    -.response  [(snapshot-fail bowl) this]
+        %finished
+      ?~  full-file.response  [(snapshot-fail bowl) this]
+      =/  mime  u.full-file.response
+      =/  jsun  (de:json:html q.data.mime)
+      ?~  jsun  [(snapshot-fail bowl) this]
+      `this
+      ::  XX  Finish this:
+      ::  =/  new-urb-state  :: XX parse JSON/jam into urb-state
+      ::  =/  ships  ~(key by unv-ids:new-urb-state)
+      ::  :_  this(urb-state new-urb-state)
+      ::  :~  (listen-to-urb ships [%| dap.bowl])
+      ::      [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
+      ::  ==
     ==
   ::
   ::  Our +get-blocks thread returned. Update
@@ -159,6 +217,10 @@
         !<  
         [(list [id:block:bitcoin effect:urb]) state:urb]
         vase
+      ::  Jael is subscribed to %urb-watcher to receive udiffs for some ships,
+      ::  and it isn't subscribed yet for others. For the ones in fx it is, we 
+      ::  send udiffs. For the ones it isn't subscribed to yet, we tell it to,
+      ::  and it will hit ++on-agent to get the udiff afterwards.
       =/  fx-ships=(set ship)
         %.  -.fx-and-state
         |=  fx=(list [id:block:bitcoin effect:urb])
@@ -209,12 +271,21 @@
     ==
   ==
 ::
-++  on-leave  on-leave:def
 ++  on-agent  on-agent:def
+++  on-leave  on-leave:def
 ++  on-fail   on-fail:def
 --
 ::
 |%
+++  snapshot-fail
+  |=  =bowl:gall
+  ~&  >>  "%urb-watcher's request for a snapshot failed. Beginning self-chain-watching."
+  ^-  (list card)
+  :~  :*  %pass  /blocks  %arvo  %k
+          %lard  q.byk.bowl
+          (get-blocks [rpc urb-state]:state)
+      == 
+  ==
 ::
 ::  Fetch blocks in range(last-processed + 1, latest - block-confirmations)
 ::  from the provided RPC endpoint, then use a stateful 
