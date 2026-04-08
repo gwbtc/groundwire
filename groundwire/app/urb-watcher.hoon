@@ -58,7 +58,7 @@
             (get-blocks new-rpc new-urb-state)
         ==  
         :*  %pass  /eyre/connect  %arvo  %e 
-            %connect  `/snapshot  dap.bowl
+            %connect  `/apps/urb-watcher  dap.bowl
         ==  
     ==
   ~&  "%urb-watcher: requesting a snapshot from the default sponsor."
@@ -66,7 +66,8 @@
           %request
           ^-  request:http
           :*  %'GET'
-              'http://143.198.70.9:8081/apps/urb-watcher/snapshot'
+              ::  'http://143.198.70.9:8081/apps/urb-watcher/snapshot'
+              'http://localhost:80/apps/urb-watcher/snapshot'
               :~  ['accept' 'application/x-urb-jam']
               ==
               ~
@@ -85,13 +86,17 @@
   =/  old  !<(versioned-state vase)
   ?-    -.old
       %0
-    `this(state old)
+    :_  this(state old)
+    ::  This wasn't bound in our first deployment:
+    :~  :*  %pass  /eyre/connect  %arvo  %e 
+            %connect  `/apps/urb-watcher  dap.bowl
+        ==  
+    ==
   ==
 ::
 ++  on-poke
   |=  [=mark =vase]
   ^-  (quip card _this)
-  ?>  =(our src):bowl
   ?+    mark  !!
       %handle-http-request
     =+  !<([eyre-id=@ta =inbound-request:eyre] vase)
@@ -196,6 +201,7 @@
         ::  XX if we implement signed snapshots,
         ::     verify here with +sure:as:cic
         =/  new-urb=state:urb  ;;(state:urb (cue q.data.mime-data))
+        ~&  >  '%urb-watcher received a snapshot! Now beginning indexing from its latest block.'
         :_  this(urb-state new-urb)
         :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
             (listen-to-urb ~(key by unv-ids:new-urb) [%| dap.bowl])
