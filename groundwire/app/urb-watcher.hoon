@@ -13,7 +13,7 @@
 ::  You may want to change block-confirmations as well.
 ::
 /-  bitcoin, spider, ord, urb
-/+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb, server, schooner
+/+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb, server
 ::
 |%
 +$  card  card:agent:gall
@@ -66,9 +66,8 @@
           %request
           ^-  request:http
           :*  %'GET'
-              'http://143.198.70.9:8081/snapshot'
-              :~  ['Content-Type' 'application/json']
-                  ['accept' 'application/json']
+              'http://143.198.70.9:8081/apps/urb-watcher/snapshot'
+              :~  ['accept' 'application/x-urb-jam']
               ==
               ~
           ==
@@ -98,13 +97,18 @@
     =+  !<([eyre-id=@ta =inbound-request:eyre] vase)
     =/  ,request-line:server
       (parse-request-line:server url.request.inbound-request)
-    =+  send=(cury response:schooner eyre-id)
     ?+    method.request.inbound-request  !!
         %'GET'
       ?+    site  !!
-          [%snapshot ~]
+          [%apps %urb-watcher %snapshot ~]
+        ::  XX should sign the snapshot with +sign:as:cic
+        ::     if this is more than a short-term hack
         :_  this
-        (send [200 ~ [%none ~]]) :: XX send urb-state as JSON/jam
+        %+  give-simple-payload:app:server
+          eyre-id
+        ^-  simple-payload:http
+        :_  `(as-octs:mimes:html (jam urb-state))
+        [200 ~[['content-type' 'application/x-urb-jam']]]
       ==
     ==
   ==
@@ -186,17 +190,17 @@
     ?+    -.response  [(snapshot-fail bowl) this]
         %finished
       ?~  full-file.response  [(snapshot-fail bowl) this]
-      =/  mime  u.full-file.response
-      =/  jsun  (de:json:html q.data.mime)
-      ?~  jsun  [(snapshot-fail bowl) this]
-      `this
-      ::  XX  Finish this:
-      ::  =/  new-urb-state  :: XX parse JSON/jam into urb-state
-      ::  =/  ships  ~(key by unv-ids:new-urb-state)
-      ::  :_  this(urb-state new-urb-state)
-      ::  :~  (listen-to-urb ships [%| dap.bowl])
-      ::      [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
-      ::  ==
+      =/  =mime-data:iris  u.full-file.response
+      ?+    type.mime-data  [(snapshot-fail bowl) this]
+          %'application/x-urb-jam'
+        ::  XX if we implement signed snapshots,
+        ::     verify here with +sure:as:cic
+        =/  new-urb=state:urb  ;;(state:urb (cue q.data.mime-data))
+        :_  this(urb-state new-urb)
+        :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
+            (listen-to-urb ~(key by unv-ids:new-urb) [%| dap.bowl])
+        ==
+      ==
     ==
   ::
   ::  Our +get-blocks thread returned. Update
