@@ -14,6 +14,7 @@ VENDOR_BASE_DEV_GW := \
 	lib/strandio.hoon \
 	lib/test.hoon \
 	lib/verb.hoon \
+	lib/server.hoon \
 	mar/bill.hoon \
 	mar/kelvin.hoon \
 	mar/noun.hoon \

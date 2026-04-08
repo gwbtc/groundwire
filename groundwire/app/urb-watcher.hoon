@@ -13,7 +13,7 @@
 ::  You may want to change block-confirmations as well.
 ::
 /-  bitcoin, spider, ord, urb
-/+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb
+/+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb, server
 ::
 |%
 +$  card  card:agent:gall
@@ -50,11 +50,29 @@
         *insc-ids:ord
         *unv-ids:urb
     ==
-  :_  this(rpc new-rpc)
-  :~  :*  %pass  /blocks  %arvo  %k
-          %lard  q.byk.bowl
-          (get-blocks new-rpc new-urb-state)
-      ==  
+  ::  Short-term performance hack: request a snapshot from the default sponsor.
+  :_  this(rpc new-rpc, urb-state new-urb-state)
+  ?:  =(our.bowl ~linluc-palnus-barpub-dalweg--miptyp-molfer-pitren-daplyd)
+    :~  :*  %pass  /blocks  %arvo  %k
+            %lard  q.byk.bowl
+            (get-blocks new-rpc new-urb-state)
+        ==  
+        :*  %pass  /eyre/connect  %arvo  %e 
+            %connect  `/apps/urb-watcher  dap.bowl
+        ==  
+    ==
+  ~&  "%urb-watcher: requesting a snapshot from the default sponsor."
+  :~  :*  %pass  /snapshot  %arvo  %i
+          %request
+          ^-  request:http
+          :*  %'GET'
+              'http://143.198.70.9:8081/apps/urb-watcher/snapshot'
+              :~  ['accept' 'application/x-urb-jam']
+              ==
+              ~
+          ==
+          *outbound-config:iris
+      ==
   ==
 ::
 ++  on-save
@@ -67,14 +85,37 @@
   =/  old  !<(versioned-state vase)
   ?-    -.old
       %0
-    `this(state old)
+    :_  this(state old)
+    ::  This wasn't bound in our first deployment:
+    :~  :*  %pass  /eyre/connect  %arvo  %e 
+            %connect  `/apps/urb-watcher  dap.bowl
+        ==  
+    ==
   ==
 ::
 ++  on-poke
   |=  [=mark =vase]
   ^-  (quip card _this)
-  ?>  =(our src):bowl
-  (on-poke:def mark vase)
+  ?+    mark  !!
+      %handle-http-request
+    =+  !<([eyre-id=@ta =inbound-request:eyre] vase)
+    =/  ,request-line:server
+      (parse-request-line:server url.request.inbound-request)
+    ?+    method.request.inbound-request  !!
+        %'GET'
+      ?+    site  !!
+          [%apps %urb-watcher %snapshot ~]
+        ::  XX should sign the snapshot with +sign:as:cic
+        ::     if this is more than a short-term hack
+        :_  this
+        %+  give-simple-payload:app:server
+          eyre-id
+        ^-  simple-payload:http
+        :_  `(as-octs:mimes:html (jam urb-state))
+        [200 ~[['content-type' 'application/x-urb-jam']]]
+      ==
+    ==
+  ==
 ::
 ++  on-peek
   |=  =(pole knot)
@@ -101,6 +142,7 @@
   |=  =(pole knot)
   ^-  (quip card _this)
   ?+    pole  (on-watch:def pole)
+      [%http-response *]  `this
   ::
   ::  Jael subscribes to / (aka ~) if it hears
   ::  that this agent is the default PKI source
@@ -138,7 +180,32 @@
     :~  :*  %pass  /blocks  %arvo  %k
             %lard  q.byk.bowl
             (get-blocks [rpc urb-state]:state)
-        ==  
+        == 
+    ==
+  ::
+  ::  Receive a snapshot from the default sponsor
+  ::  containing an urb-state and tell Jael to subscribe
+  ::  to %urb-watcher for udiffs for each ship in that
+  ::  urb-state, which we'll fulfill immediately in ++on-agent.
+  ::  Now start indexing ourselves.
+      [%snapshot ~]
+    ?.  ?=([%iris %http-response *] sign-arvo)  [(snapshot-fail bowl) this]
+    =/  response  client-response.sign-arvo
+    ?+    -.response  [(snapshot-fail bowl) this]
+        %finished
+      ?~  full-file.response  [(snapshot-fail bowl) this]
+      =/  =mime-data:iris  u.full-file.response
+      ?+    type.mime-data  [(snapshot-fail bowl) this]
+          %'application/x-urb-jam'
+        ::  XX if we implement signed snapshots,
+        ::     verify here with +sure:as:cic
+        =/  new-urb=state:urb  ;;(state:urb (cue q.data.mime-data))
+        ~&  >  '%urb-watcher received a snapshot! Now beginning indexing from its latest block.'
+        :_  this(urb-state new-urb)
+        :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
+            (listen-to-urb ~(key by unv-ids:new-urb) [%| dap.bowl])
+        ==
+      ==
     ==
   ::
   ::  Our +get-blocks thread returned. Update
@@ -159,6 +226,10 @@
         !<  
         [(list [id:block:bitcoin effect:urb]) state:urb]
         vase
+      ::  Jael is subscribed to %urb-watcher to receive udiffs for some ships,
+      ::  and it isn't subscribed yet for others. For the ones in fx it is, we 
+      ::  send udiffs. For the ones it isn't subscribed to yet, we tell it to,
+      ::  and it will hit ++on-agent to get the udiff afterwards.
       =/  fx-ships=(set ship)
         %.  -.fx-and-state
         |=  fx=(list [id:block:bitcoin effect:urb])
@@ -209,12 +280,21 @@
     ==
   ==
 ::
-++  on-leave  on-leave:def
 ++  on-agent  on-agent:def
+++  on-leave  on-leave:def
 ++  on-fail   on-fail:def
 --
 ::
 |%
+++  snapshot-fail
+  |=  =bowl:gall
+  ~&  >>  "%urb-watcher's request for a snapshot failed. Beginning self-chain-watching."
+  ^-  (list card)
+  :~  :*  %pass  /blocks  %arvo  %k
+          %lard  q.byk.bowl
+          (get-blocks [rpc urb-state]:state)
+      == 
+  ==
 ::
 ::  Fetch blocks in range(last-processed + 1, latest - block-confirmations)
 ::  from the provided RPC endpoint, then use a stateful 
