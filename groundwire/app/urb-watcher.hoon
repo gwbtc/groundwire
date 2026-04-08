@@ -66,8 +66,7 @@
           %request
           ^-  request:http
           :*  %'GET'
-              ::  'http://143.198.70.9:8081/apps/urb-watcher/snapshot'
-              'http://localhost:80/apps/urb-watcher/snapshot'
+              'http://143.198.70.9:8081/apps/urb-watcher/snapshot'
               :~  ['accept' 'application/x-urb-jam']
               ==
               ~
