@@ -30,8 +30,8 @@ jobs:
 
       - name: Deploy desk
         run: |
-          scp -rL dist-spv/* ${SHIP_HOST}:${PIER_PATH}/spv-wallet/
-          scp -rL dist-groundwire/* ${SHIP_HOST}:${PIER_PATH}/groundwire/
+          scp -r dist-spv/* ${SHIP_HOST}:${PIER_PATH}/spv-wallet/
+          scp -r dist-groundwire/* ${SHIP_HOST}:${PIER_PATH}/groundwire/
 
       - name: Commit desk on ship
         run: |
