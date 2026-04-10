@@ -17,18 +17,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install peru
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y pipx
-          pipx ensurepath
-          pipx install peru
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-
       - name: Build desk
         run: |
-          chmod +x build.sh
-          bash build.sh
+          make build
 
       - name: Setup SSH
         run: |
@@ -39,9 +30,10 @@ jobs:
 
       - name: Deploy desk
         run: |
-          rsync -az --delete --exclude='.git*' \
-            dist/ ${SHIP_HOST}:${PIER_PATH}/${DESK}/
+          cp -rL dist-spv/* ${SHIP_HOST}:${PIER_PATH}/spv-wallet/
+          cp -rL dist-groundwire/* ${SHIP_HOST}:${PIER_PATH}/groundwire/
 
       - name: Commit desk on ship
         run: |
-          ssh ${SHIP_HOST} "tmux send-keys -t ${TMUX_TAB} '|commit %${DESK}' Enter"
+          ssh ${SHIP_HOST} "tmux send-keys -t ${TMUX_TAB} '|commit %groundwire' Enter"
+          ssh ${SHIP_HOST} "tmux send-keys -t ${TMUX_TAB} '|commit %spv-wallet' Enter"
