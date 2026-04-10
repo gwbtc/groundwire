@@ -133,27 +133,32 @@
   ?+    pole  (on-watch:def pole)
       [%http-response *]  `this
   ::
-  ::  Jael subscribes to / (aka ~) if it hears
+  ::  Jael subscribes to / (aka ~) when it hears
   ::  that this agent is the default PKI source
       ~
-    `this
+    :_  this
+    (jael-update (state-to-udiffs urb-state.state))
   ::
   ::  Jael subcribes to /ship when it hears about a new ship
       [=ship ~]
+    =/  who=ship  (slav %p ship.pole)
+    =/  punt=(unit point:urb)
+      (~(get by unv-ids.urb-state.state) who)
     :_  this
     :~  :*  %give
             %fact
             ~
             %azimuth-udiffs
             !>  ^-  udiffs:point:jael
-            %+  murn
-              (state-to-udiffs urb-state.state)
-            |=  [=ship =udiff:point:jael]
-            ^-  (unit [^ship udiff:point:jael])
-            ::  ignore all ships but /ship
-            ?.  =(ship (slav %p ship.pole))
+            ?~  punt
               ~
-            `[ship udiff]
+            =/  =id:block:jael  block-id.urb-state.state
+            =,  u.punt
+            :~  [who id %keys [life.net (sub (end 3 pass.net) 'a') pass.net] %.y]
+                [who id %rift rift.net %.y]
+                [who id %spon ?:(has.sponsor.net `who.sponsor.net ~)]
+                [who id %fief fief.net]
+            ==
         ==
     ==
   ==
