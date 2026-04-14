@@ -61,7 +61,18 @@
             %connect  `/apps/urb-watcher  dap.bowl
         ==  
     ==
-  :~  [%pass /init/snapshot %arvo %b %wait (add ~s10 now.bowl)]
+  ~&  "%urb-watcher: requesting a snapshot from the default sponsor."
+  :~  :*  %pass  /snapshot  %arvo  %i
+          %request
+          ^-  request:http
+          :*  %'GET'
+              'http://143.198.70.9:8081/apps/urb-watcher/snapshot'
+              :~  ['accept' 'application/x-urb-jam']
+              ==
+              ~
+          ==
+          *outbound-config:iris
+      ==
   ==
 ::
 ++  on-save
@@ -163,29 +174,6 @@
   ^-  (quip card _this)
   ?+    wire  (on-arvo:def wire sign-arvo)
   ::
-  ::  Send the iris snapshot request now that
-  ::  the agent is fully initialized.
-      [%init %snapshot ~]
-    ?.  ?=([%behn %wake *] sign-arvo)  (on-arvo:def wire sign-arvo)
-    ?^  error.sign-arvo
-      %-  (slog leaf+"%urb-watcher: /init/snapshot timer error" ~)
-      `this
-    ~&  "%urb-watcher: requesting a snapshot from the default sponsor."
-    :_  this
-    :~  :*  %pass  /snapshot
-            %arvo  %i
-            %request
-            ^-  request:http
-            :*  %'GET'
-                'http://143.198.70.9:8081/apps/urb-watcher/snapshot'
-                :~  ['accept' 'application/x-urb-jam']
-                ==
-                ~
-            ==
-            *outbound-config:iris
-        ==
-    ==
-  ::
   ::  Run +get-blocks at regular intervals.
       [%timer ~]
     :_  this
@@ -215,7 +203,7 @@
         ~&  >  '%urb-watcher received a snapshot! Now beginning indexing from its latest block.'
         :_  this(urb-state new-urb)
         :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
-            (listen-to-urb ~ [%| dap.bowl])
+            (listen-to-urb ~(key by unv-ids:new-urb) [%| dap.bowl])
         ==
       ==
     ==
