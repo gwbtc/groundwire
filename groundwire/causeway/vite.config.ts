@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 export default defineConfig({
   base: "/causeway/",
   build: {
-    outDir: resolve(__dirname, "../website/static/causeway"),
+    outDir: resolve(__dirname, "../../../website/static/causeway"),
     emptyOutDir: true,
     target: "es2022",
     rollupOptions: {
