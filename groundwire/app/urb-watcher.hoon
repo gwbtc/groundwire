@@ -61,6 +61,8 @@
             %connect  `/apps/urb-watcher  dap.bowl
         ==  
     ==
+  ::  The snapshot HTTP request fails from ++on-init when we include the %groundwire
+  ::  desk in a pill. We send it a few seconds later to get around this. %azimuth does this too.
   :~  [%pass /init/snapshot %arvo %b %wait (add ~s10 now.bowl)]
   ==
 ::
