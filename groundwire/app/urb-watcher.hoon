@@ -215,7 +215,7 @@
         ~&  >  '%urb-watcher received a snapshot! Now beginning indexing from its latest block.'
         :_  this(urb-state new-urb)
         :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
-            (listen-to-urb ~ [%| dap.bowl])
+            (listen-to-urb ~(key by unv-ids:new-urb) [%| dap.bowl])
         ==
       ==
     ==
