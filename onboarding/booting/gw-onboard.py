@@ -1401,6 +1401,41 @@ _EXIT_DOJO = """:*  0
                     '''
                 =="""
 
+_INSTALL_GW_APPS = """:*  0
+                          %fyrd
+                          %base
+                          %khan-eval
+                          %noun
+                          %ted-eval
+                          :_  :~  /sur/spider/hoon
+                                  /lib/strandio/hoon
+                              ==
+                          '''
+                          =/  m  (strand ,vase)
+                          ;<  ~  bind:m
+                            %:  poke-our
+                                %hood
+                                %kiln-install
+                                !>
+                                :*  %groups
+                                    ~ribsyp-lidwex-mitdev-sopsyn--difrel-mapler-mitnyt-daplyd
+                                    %groups
+                                ==
+                            ==
+                          ;<  ~  bind:m
+                            %:  poke-our
+                                %hood
+                                %kiln-install
+                                !>
+                                :*  %landscape
+                                    ~ribsyp-lidwex-mitdev-sopsyn--difrel-mapler-mitnyt-daplyd
+                                    %landscape
+                                ==
+                            ==
+                          (pure:m !>(~))
+                          '''
+                      =="""
+
 
 def wait_for_idle(
     vere_bin: str, conn_sock: str, poll_interval: int = 1, max_attempts: int = 60
@@ -1464,6 +1499,7 @@ def boot_comet(comet_name: str, feed: str, vere_bin: str, pill: str = GW_PILL) -
 
     wait_for_idle(vere_bin, conn_sock)
 
+    send_fyrd(vere_bin, conn_sock, _INSTALL_GW_APPS)
     send_fyrd(vere_bin, conn_sock, _EXIT_DOJO)
     proc.wait()
 
