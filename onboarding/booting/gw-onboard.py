@@ -1269,9 +1269,9 @@ def run_comet_miner(tweak_expr: str, miner_bin: str) -> dict:
         output_lines.append(line)
         # Show progress lines but don't clutter
         if line.startswith("tries:"):
-            print(f"{line}", end="\r")
+            print(f"\033[90m{line}\033[0m", end="\r")
         else:
-            print(f"{line}")
+            print(f"\033[90m{line}\033[0m")
 
     process.wait()
     print()  # clear the last \r
@@ -1280,7 +1280,7 @@ def run_comet_miner(tweak_expr: str, miner_bin: str) -> dict:
         print(f"ERROR: Comet miner failed (exit code {process.returncode}).")
         print("Output:")
         for line in output_lines[-10:]:
-            print(f"{line}")
+            print(f"\033[90m{line}\033[0m")
         print()
         print("Please share the output above when reporting this issue.")
         sys.exit(1)
