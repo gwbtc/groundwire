@@ -1,4 +1,8 @@
-.PHONY: build clean
+.PHONY: build clean gw-onboard
+
+ONBOARD_DIR := onboarding/booting
+ONBOARD_VENV := $(ONBOARD_DIR)/.venv
+ONBOARD_BIN := $(ONBOARD_DIR)/dist/gw-onboard
 
 # Vendor files needed by groundwire desk
 VENDOR_BASE_DEV_GW := \
@@ -84,6 +88,22 @@ GW_FILES_FOR_SPV := \
 	tests/lib/bip32.hoon \
 	tests/lib/bip39.hoon
 
+$(ONBOARD_VENV):
+	python3 -m venv $(ONBOARD_VENV)
+	$(ONBOARD_VENV)/bin/pip install -q -r $(ONBOARD_DIR)/requirements.txt pyinstaller
+
+$(ONBOARD_BIN): $(ONBOARD_VENV) $(ONBOARD_DIR)/gw-onboard.py
+	@echo "Building gw-onboard binary..."
+	cd $(ONBOARD_DIR) && .venv/bin/pyinstaller --onefile \
+		--hidden-import requests \
+		--hidden-import nacl.bindings \
+		--hidden-import embit.util.secp256k1 \
+		--hidden-import _cffi_backend \
+		gw-onboard.py
+	@echo "gw-onboard binary built at $(ONBOARD_BIN)"
+
+gw-onboard: $(ONBOARD_BIN)
+
 build:
 	@rm -rf dist-groundwire dist-spv
 	@mkdir -p dist-groundwire dist-spv
@@ -116,6 +136,8 @@ build:
 		cp groundwire/$$f dist-spv/$$f; \
 	done
 	@echo "Build completed successfully."
+	@$(MAKE) $(ONBOARD_BIN)
 
 clean:
 	rm -rf dist-groundwire dist-spv
+	rm -rf $(ONBOARD_DIR)/dist $(ONBOARD_DIR)/build $(ONBOARD_DIR)/gw-onboard.spec

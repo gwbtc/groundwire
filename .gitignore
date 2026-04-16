@@ -1,6 +1,8 @@
 # build
 dist-groundwire
 dist-spv
+onboarding/booting/dist
+onboarding/booting/build
 
 # python
 __pycache__/

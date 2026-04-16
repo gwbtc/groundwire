@@ -17,6 +17,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import webbrowser
 
@@ -69,7 +70,7 @@ _ZIG_TARGET = _detect_zig_target()
 # In frozen builds, binaries live alongside the executable in the same directory.
 # In dev, they're in the zig build output trees.
 if getattr(sys, "frozen", False):
-    _BIN_DIR = os.path.dirname(os.path.abspath(sys.executable))
+    _BIN_DIR = os.path.dirname(os.path.realpath(sys.executable))
     COMET_MINER_BIN = os.path.join(_BIN_DIR, "comet_miner")
     VERE_BIN = os.path.join(_BIN_DIR, "gw-vere")
     GW_PILL = os.path.join(_BIN_DIR, "gw-base.pill")
@@ -95,11 +96,21 @@ BLOCK_CONFIRMATIONS = 2
 #  Terminal helpers
 # =========================================================================
 
+_BOLD   = "\033[1m"
+_ACCENT = "\033[38;2;72;199;142m"
+_LINK   = "\033[4;36m"
+_NC     = "\033[0m"
+
+
+def step_header(text: str) -> str:
+    """Format a step header with bold accent color."""
+    return f"{_ACCENT}{_BOLD}{text}{_NC}"
+
 
 def tx_link(txid: str) -> str:
     """Return an OSC 8 clickable hyperlink for a txid pointing to mempool.space."""
     url = f"{MEMPOOL_TX_URL}/{txid}"
-    return f"\033]8;;{url}\033\\\033[4;36m{url}\033[0m\033]8;;\033\\"
+    return f"\033]8;;{url}\033\\{_LINK}{url}{_NC}\033]8;;\033\\"
 
 
 def normalize_ticket(raw: str) -> str:
@@ -112,22 +123,21 @@ def normalize_ticket(raw: str) -> str:
 
 def confirm_master_ticket(ticket: str) -> None:
     """Require the user to re-enter their master ticket before proceeding."""
-    print("  Please re-enter your master ticket to confirm you saved it:")
+    print("Please re-enter your master ticket to confirm you saved it:")
     while True:
         try:
-            entry = input("  > ")
+            entry = input("> ")
         except EOFError:
             print()
             continue
         if normalize_ticket(entry) == ticket:
-            print("  Confirmed!")
             print()
             return
         print()
-        print("  That doesn't match. Your master ticket is:")
-        print(f"  {ticket}")
+        print("That doesn't match. Your master ticket is:")
+        print(f"{ticket}")
         print()
-        print("  Please re-enter it exactly:")
+        print("Please re-enter it exactly:")
 
 
 def copy_to_clipboard(text: str) -> bool:
@@ -322,12 +332,12 @@ def request_faucet(address: str, invite: str | None = None) -> str | None:
                 data = json.loads(resp.text)
                 txid = data.get("txid")
                 sats = data.get("amount_sats", "?")
-                print(f"  Faucet sent {sats} sats.")
+                print(f"Faucet sent {sats} sats.")
                 if txid:
-                    print(f"  Transaction: {tx_link(txid)}")
+                    print(f"Transaction: {tx_link(txid)}")
                 return txid
             except (json.JSONDecodeError, KeyError):
-                print(f"  Faucet: {resp.text.strip()}")
+                print(f"Faucet: {resp.text.strip()}")
                 return ""
         else:
             # Try to extract a human-readable message from the faucet error response.
@@ -337,10 +347,10 @@ def request_faucet(address: str, invite: str | None = None) -> str | None:
                 msg = err_data.get("error") or err_data.get("message") or msg
             except (json.JSONDecodeError, AttributeError):
                 pass
-            print(f"  Faucet error: {msg}")
+            print(f"Faucet error: {msg}")
             return None
     except Exception as e:
-        print(f"  Could not reach faucet: {e}")
+        print(f"Could not reach faucet: {e}")
         return None
 
 
@@ -374,7 +384,7 @@ def wait_for_funding(address: str, poll_interval: int = POLL_INTERVAL, **rpc_kwa
         if utxo:
             return utxo
         elapsed = int(time.monotonic() - start)
-        print(f"  No confirmed funding yet ({elapsed}s elapsed)   ", end="\r")
+        print(f"No confirmed funding yet ({elapsed}s elapsed)   ", end="\r")
         time.sleep(poll_interval)
 
 
@@ -1096,7 +1106,7 @@ def build_and_broadcast_attestation(
     if commit_value <= 0:
         raise RuntimeError(f"Funding UTXO too small for commit tx: {sats} sats, need > {commit_fee}")
 
-    print(f"  Commit: {sats} sats → {commit_value} sats + {commit_fee} fee")
+    print(f"Commit: {sats} sats → {commit_value} sats + {commit_fee} fee")
 
     # Build raw commit tx
     txid_bytes = bytes.fromhex(txid_hex)
@@ -1120,7 +1130,7 @@ def build_and_broadcast_attestation(
 
     # Broadcast commit
     commit_txid = rpc_call("sendrawtransaction", [commit_hex], **rpc_cfg)
-    print(f"  Commit broadcast: {tx_link(commit_txid)}")
+    print(f"Commit broadcast: {tx_link(commit_txid)}")
 
     # -- Build reveal tx --
     # Script-path spend is heavier: ~265 + script_len for the input
@@ -1133,7 +1143,7 @@ def build_and_broadcast_attestation(
     if reveal_value < 330:
         raise RuntimeError(f"Commit output too small for reveal: {commit_value} sats, need > {reveal_fee + 330}")
 
-    print(f"  Reveal: {commit_value} sats → {reveal_value} sats + {reveal_fee} fee ({reveal_vbytes} vB)")
+    print(f"Reveal: {commit_value} sats → {reveal_value} sats + {reveal_fee} fee ({reveal_vbytes} vB)")
 
     commit_txid_bytes = bytes.fromhex(commit_txid)
     reveal_tx = Transaction(
@@ -1163,7 +1173,7 @@ def build_and_broadcast_attestation(
 
     # Broadcast reveal
     reveal_txid = rpc_call("sendrawtransaction", [reveal_hex], **rpc_cfg)
-    print(f"  Reveal broadcast: {tx_link(reveal_txid)}")
+    print(f"Reveal broadcast: {tx_link(reveal_txid)}")
 
     return (commit_txid, reveal_txid)
 
@@ -1189,7 +1199,7 @@ def wait_for_confirmations(
                 print(f"\n  Transaction confirmed! ({confs} confirmations, {elapsed}s elapsed)")
                 return
             elapsed = int(time.monotonic() - start)
-            print(f"  {confs}/{required} confirmations ({elapsed}s elapsed)   ", end="\r")
+            print(f"{confs}/{required} confirmations ({elapsed}s elapsed)   ", end="\r")
         except Exception:
             pass
         time.sleep(poll_interval)
@@ -1245,21 +1255,18 @@ def run_comet_miner(tweak_expr: str, miner_bin: str) -> dict:
     """
     if not os.path.isfile(miner_bin):
         print(f"\n  ERROR: Comet miner not found at: {miner_bin}")
-        print("  Make sure the comet_miner binary is in the expected location.")
+        print("Make sure the comet_miner binary is in the expected location.")
         sys.exit(1)
 
     cmd = [miner_bin, "-c", "--tweak", tweak_expr, "daplyd"]
-
-    print("\nMining your comet identity (this may take a few minutes)...")
-    print()
 
     try:
         process = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
         )
     except PermissionError:
-        print(f"  ERROR: Cannot execute comet miner at: {miner_bin}")
-        print(f"  Try: chmod +x {miner_bin}")
+        print(f"ERROR: Cannot execute comet miner at: {miner_bin}")
+        print(f"Try: chmod +x {miner_bin}")
         sys.exit(1)
 
     output_lines = []
@@ -1268,20 +1275,20 @@ def run_comet_miner(tweak_expr: str, miner_bin: str) -> dict:
         output_lines.append(line)
         # Show progress lines but don't clutter
         if line.startswith("tries:"):
-            print(f"  {line}", end="\r")
+            print(f"\033[90m{line}\033[0m", end="\r")
         else:
-            print(f"  {line}")
+            print(f"\033[90m{line}\033[0m")
 
     process.wait()
     print()  # clear the last \r
 
     if process.returncode != 0:
-        print(f"  ERROR: Comet miner failed (exit code {process.returncode}).")
-        print("  Output:")
+        print(f"ERROR: Comet miner failed (exit code {process.returncode}).")
+        print("Output:")
         for line in output_lines[-10:]:
-            print(f"    {line}")
+            print(f"\033[90m{line}\033[0m")
         print()
-        print("  Please share the output above when reporting this issue.")
+        print("Please share the output above when reporting this issue.")
         sys.exit(1)
 
     # Parse output
@@ -1294,12 +1301,12 @@ def run_comet_miner(tweak_expr: str, miner_bin: str) -> dict:
 
     for required in ("comet", "feed"):
         if required not in result:
-            print(f"  ERROR: Comet miner did not produce a '{required}' value.")
-            print("  Last 10 lines of output:")
+            print(f"ERROR: Comet miner did not produce a '{required}' value.")
+            print("Last 10 lines of output:")
             for line in output_lines[-10:]:
-                print(f"    {line}")
+                print(f"{line}")
             print()
-            print("  Please share the output above when reporting this issue.")
+            print("Please share the output above when reporting this issue.")
             sys.exit(1)
 
     return result
@@ -1322,51 +1329,232 @@ def find_available_port(start: int = 8080, max_tries: int = 100) -> int:
     raise RuntimeError(f"No available port found in range {start}-{start + max_tries - 1}")
 
 
-def boot_comet(
-    comet_name: str, feed: str, vere_bin: str, pill: str = GW_PILL, master_ticket: str = ""
-) -> None:
-    """Boot a comet in the foreground, replacing this process.
+def send_fyrd(vere_bin: str, conn_sock: str, fyrd_hoon: str) -> str:
+    """Send a FYRD to a running ship via its conn.sock and return the decoded response.
 
-    Prints instructions and opens the browser before handing control to vere.
-    Does not return.
+    Replicates the shell pipeline in fyrd.sh:
+      echo "$fyrd" | vere eval -jn | nc -U -W 3 <sock> | vere eval -cn
+    """
+    # Step 1: encode the Hoon noun to wire format
+    enc = subprocess.run([vere_bin, "eval", "-jn"], input=fyrd_hoon.encode(), capture_output=True)
+    if not enc.stdout:
+        return ""
+
+    # Step 2: send encoded bytes over the Unix socket and read response
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(3)
+            sock.connect(conn_sock)
+            sock.sendall(enc.stdout)
+            chunks = []
+            try:
+                while True:
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+            except TimeoutError:
+                pass
+            raw = b"".join(chunks)
+    except OSError:
+        return ""
+
+    if not raw:
+        return ""
+
+    # Step 3: decode the response noun back to text
+    dec = subprocess.run([vere_bin, "eval", "-cn"], input=raw, capture_output=True)
+    return dec.stdout.decode(errors="replace")
+
+
+_IDLE_FYRD = """:*  0
+                    %fyrd
+                    %base
+                    %khan-eval
+                    %noun
+                    %ted-eval
+                    :_  ~
+                    '''
+                    =/  m  (strand ,vase)
+                    (pure:m !>('Success!'))
+                    '''
+                =="""
+
+_EXIT_DOJO = """:*  0
+                    %fyrd
+                    %base
+                    %khan-eval
+                    %noun
+                    %ted-eval
+                    :_  :~  /sur/spider/hoon
+                            /lib/strandio/hoon
+                        ==
+                    '''
+                    =/  m  (strand ,vase)
+                    ;<   ~  bind:m
+                      %-  send-raw-card
+                      :*  %pass  /
+                          %arvo  %d
+                          %belt  [%txt (tuba "|exit")]
+                      ==
+                    ;<   ~  bind:m
+                      %-  send-raw-card
+                      :*  %pass  /
+                          %arvo  %d
+                          %belt  [%ret ~]
+                      ==
+                    (pure:m !>(~))
+                    '''
+                =="""
+
+_INSTALL_GW_APPS = """:*  0
+                          %fyrd
+                          %base
+                          %khan-eval
+                          %noun
+                          %ted-eval
+                          :_  :~  /sur/spider/hoon
+                                  /lib/strandio/hoon
+                              ==
+                          '''
+                          =/  m  (strand ,vase)
+                          ;<  ~  bind:m
+                            %:  poke-our
+                                %hood
+                                %kiln-install
+                                !>
+                                :*  %groups
+                                    ~ribsyp-lidwex-mitdev-sopsyn--difrel-mapler-mitnyt-daplyd
+                                    %tlon-408
+                                ==
+                            ==
+                          ;<  ~  bind:m
+                            %:  poke-our
+                                %hood
+                                %kiln-install
+                                !>
+                                :*  %landscape
+                                    ~ribsyp-lidwex-mitdev-sopsyn--difrel-mapler-mitnyt-daplyd
+                                    %landscape
+                                ==
+                            ==
+                          (pure:m !>(~))
+                          '''
+                      =="""
+
+
+def wait_for_idle(
+    vere_bin: str, conn_sock: str, poll_interval: int = 1, max_attempts: int = 60
+) -> None:
+    """Poll the ship's conn.sock until it responds to a FYRD (i.e. is idle and booted)."""
+    for attempt in range(1, max_attempts + 1):
+        elapsed = attempt * poll_interval
+        result = send_fyrd(vere_bin, conn_sock, _IDLE_FYRD)
+        if "%avow" in result:
+            return
+        time.sleep(poll_interval)
+    print()
+    print(f"ERROR: Ship did not become idle after {max_attempts * poll_interval}s.")
+    sys.exit(1)
+
+
+def _tee_gray(stream: "subprocess.IO[bytes]") -> None:
+    """Re-emit lines from *stream* in gray ANSI to signal a non-interactive background process."""
+    for raw in iter(stream.readline, b""):
+        line = raw.decode(errors="replace").rstrip("\n")
+        sys.stdout.write(f"\033[90m{line}\033[0m\n")
+        sys.stdout.flush()
+
+
+_MUTED = "\033[38;2;90;100;128m"
+
+
+def print_master_ticket(master_ticket: str) -> None:
+    """Print the master ticket with a save warning."""
+    print(f"{_BOLD}WRITE DOWN YOUR MASTER TICKET{_NC}")
+    print()
+    print("Your master ticket is your HD wallet seed")
+    print("Your master ticket is the root of your login credentials")
+    print("If you lose your master ticket, you lose your comet")
+    print("If you lose your master ticket, you lose your coins")
+    print()
+    print("You cannot retrieve your master ticket from your ship")
+    print("This is your only chance to write down your master ticket")
+    print()
+    print(f"Your master ticket is {_BOLD}{master_ticket}{_NC}")
+    print()
+
+
+def print_boot_success(url: str, master_ticket: str, pier_name: str) -> None:
+    """Print the post-boot success banner."""
+    port = url.split(":")[-1] if ":" in url else "8080"
+    print()
+    print(f"{_ACCENT}{_BOLD}Your ship was booted and shut down successfully{_NC}")
+    print()
+    print(f"{_BOLD}To start using your ship, run these lines in another tab:{_NC}")
+    print(f"$ cd {os.getcwd()}")
+    print(f"$ ./{pier_name}/.run --http-port {port}")
+    print()
+    print(f"{_BOLD}When your ship starts up, it will resume downloading the default apps{_NC}")
+    print(f"- Manage your apps at {_LINK}{url}/apps/landscape{_NC}")
+    print(f"- Use your Bitcoin hot wallet at {_LINK}{url}/spv-wallet{_NC}")
+    print(f"- Chat in P2P groups and DMs at {_LINK}{url}/apps/groups{_NC}")
+    print(f"- Use Nostr at {_LINK}{url}/apps/groups{_NC}")
+    print(f"- Connect your AI agent to {_LINK}{url}/mcp{_NC}")
+    print()
+    print(f"{_BOLD}To use your ship from the browser, you'll need your web login code{_NC}")
+    print("Type +code in your ship's terminal to get your login code at any time")
+    print()
+    print(f"{_BOLD}Next steps:{_NC}")
+    print("1. Open your SPV wallet and set up your sponsor")
+    print("  - Choose the default sponsor and wait 2 block confirmations")
+    print("2. Say hi in the Groundwire Foundation group on Tlon")
+
+
+def boot_comet(comet_name: str, feed: str, vere_bin: str, pill: str = GW_PILL) -> str:
+    """Boot a comet, wait until idle, kill the process, then return the local URL.
+
+    Starts vere, polls conn.sock until the ship responds to a FYRD, then kills
+    the process and returns the http://localhost:<port> URL for the caller to display.
     """
     pier_name = comet_name.lstrip("~")
 
     if not os.path.isfile(vere_bin):
         print(f"\n  ERROR: Urbit runtime not found at: {vere_bin}")
-        print("  Make sure the gw-vere binary is in the expected location.")
+        print("Make sure the gw-vere binary is in the expected location.")
         sys.exit(1)
 
     if not os.path.isfile(pill):
         print(f"\n  ERROR: Pill file not found at: {pill}")
-        print("  Make sure gw-base.pill is in the expected location.")
+        print("Make sure gw-base.pill is in the expected location.")
         sys.exit(1)
 
     port = find_available_port()
     url = f"http://localhost:{port}"
 
-    # Print instructions before handing off to vere
-    print()
-    print("  ┌──────────────────────────────────────────────────────────┐")
-    print("  │  Your ship is about to boot. This will take a while.    │")
-    print("  │                                                          │")
-    print("  │  When the boot finishes, type +code in the dojo         │")
-    print("  │  to get your login code.                                │")
-    print("  │                                                          │")
-    print(f"  │  Wallet UI: {url + '/spv-wallet':<46s}│")
-    print(f"  │  Landscape: {url + '/apps/landscape':<46s}│")
-    print("  └──────────────────────────────────────────────────────────┘")
-    print()
-    print(f"  To restart later: {vere_bin} {pier_name}")
-    print()
+    cmd = [vere_bin, "-d", "-w", pier_name, "-B", pill, "-G", feed, "--http-port", str(port)]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    threading.Thread(target=_tee_gray, args=(proc.stdout,), daemon=True).start()
 
-    # Try to open browser
-    with contextlib.suppress(Exception):
-        webbrowser.open(f"{url}/spv-wallet")
+    # conn.sock appears once the Arvo event loop is running
+    conn_sock = os.path.join(pier_name, ".urb", "conn.sock")
+    print()
+    for _ in range(60):
+        if os.path.exists(conn_sock):
+            break
+        time.sleep(5)
+    else:
+        print(f"ERROR: {conn_sock} never appeared. Check vere logs.")
+        proc.kill()
+        sys.exit(1)
 
-    # Replace this process with vere
-    cmd = [vere_bin, "-w", pier_name, "-B", pill, "-G", feed, "--http-port", str(port)]
-    os.execvp(vere_bin, cmd)
+    wait_for_idle(vere_bin, conn_sock)
+
+    send_fyrd(vere_bin, conn_sock, _INSTALL_GW_APPS)
+    send_fyrd(vere_bin, conn_sock, _EXIT_DOJO)
+    proc.wait()
+
+    return url
 
 
 # =========================================================================
@@ -1421,18 +1609,13 @@ def main():
         metavar="IP:PORT",
         help="Static IP and port for direct routing (skips escape/sponsor)",
     )
-
-    # Dev-only flag: hidden from help, rejected in frozen/bundled builds.
-    if not getattr(sys, "frozen", False):
-        parser.add_argument(
-            "--dev-skip-funding", action="store_true", default=False, help=argparse.SUPPRESS
-        )
+    parser.add_argument(
+        "--skip-attestation",
+        action="store_true",
+        help="Skip all funding and attestation steps — mines and boots the comet without a Bitcoin transaction",
+    )
 
     args = parser.parse_args()
-
-    # Ensure the dev flag can never be set in a release build.
-    if getattr(sys, "frozen", False):
-        args.dev_skip_funding = False
 
     # Parse --fief flag (ip:port)
     fief = None
@@ -1458,7 +1641,10 @@ def main():
             ip_int = int(ipaddress.IPv4Address(ip_str))
             fief = ("if", ip_int, port)
 
-    total_steps = 6 if fief is not None else 7
+    if args.skip_attestation:
+        total_steps = 3 if args.skip_boot else 4
+    else:
+        total_steps = 6 if fief is not None else 7
 
     # Use CLI args for RPC config
     rpc_cfg = {"rpc_url": args.rpc_url, "rpc_user": args.rpc_user, "rpc_pass": args.rpc_pass}
@@ -1466,9 +1652,6 @@ def main():
     # ------------------------------------------------------------------
     # Step 1: Generate or restore @q master ticket
     # ------------------------------------------------------------------
-    print("=" * 60)
-    print("  GROUNDWIRE ONBOARDING")
-    print("=" * 60)
     print()
 
     # Reopen stdin from the terminal if it was consumed by a pipe
@@ -1482,8 +1665,8 @@ def main():
         try:
             seed_int = decode_q(master_ticket)
         except (ValueError, IndexError):
-            print(f"  ERROR: Invalid master ticket format: {master_ticket}")
-            print("  The ticket should look like: ~sampel-palnet-sampel-palnet")
+            print(f"ERROR: Invalid master ticket format: {master_ticket}")
+            print("The ticket should look like: ~sampel-palnet-sampel-palnet")
             sys.exit(1)
         n_bytes = (seed_int.bit_length() + 7) // 8
         seed_bytes = seed_int.to_bytes(n_bytes, "little")
@@ -1494,16 +1677,9 @@ def main():
         seed_int = int.from_bytes(seed_bytes, "little")
         master_ticket = encode_q(seed_int)
 
-        print(f"Step 1/{total_steps}: Generating master ticket")
+        print(step_header(f"Step 1/{total_steps}: Generating master ticket"))
         print()
-        print("  ┌──────────────────────────────────────────────────────────────────┐")
-        print("  │  SAVE THIS — it is your login credential and                    │")
-        print("  │  wallet seed. If you lose it, you lose access to                │")
-        print("  │  your comet and your coins.                                     │")
-        print("  │                                                                 │")
-        print(f"  │  {master_ticket:<65s}│")
-        print("  └──────────────────────────────────────────────────────────────────┘")
-        print()
+        print_master_ticket(master_ticket)
         confirm_master_ticket(master_ticket)
 
     # ------------------------------------------------------------------
@@ -1512,45 +1688,42 @@ def main():
     try:
         address = derive_taproot_address(seed_bytes)
     except Exception as e:
-        print(f"  ERROR: Could not derive funding address: {e}")
-        print("  This is unexpected — please report this issue.")
+        print(f"ERROR: Could not derive funding address: {e}")
+        print("This is unexpected — please report this issue.")
         sys.exit(1)
 
-    print(f"Step 2/{total_steps}: Deriving funding address")
+    print(step_header(f"Step 2/{total_steps}: Deriving funding address"))
     print()
-    print(f"  Address: {address}")
-    print()
-
+    print(f"Address: {address}")
     # ------------------------------------------------------------------
     # Step 3: Auto-fund via faucet, then wait for confirmation
     # ------------------------------------------------------------------
-    print(f"Step 3/{total_steps}: Funding your address")
-    print()
-    print("  Requesting bitcoin from faucet...")
-    faucet_result = request_faucet(address, invite=args.invite)
-    if faucet_result is not None:
-        print("  Waiting for transaction to confirm...\n")
-    else:
-        print()
-        print(f"  Automatic funding failed. Please send at least {REQUIRED_SATS} sats manually to:")
-        print(f"    {address}")
-        print()
-
-    if getattr(args, "dev_skip_funding", False):
-        print("[DEV] Skipping funding check — using placeholder tweak")
+    if args.skip_attestation:
         txid = "0" * 64
         vout = 0
         sats = REQUIRED_SATS
     else:
+        print(step_header(f"Step 3/{total_steps}: Funding your address"))
+        print()
+        print("Requesting bitcoin from faucet...")
+        faucet_result = request_faucet(address, invite=args.invite)
+        if faucet_result is not None:
+            print("Waiting for transaction to confirm...\n")
+        else:
+            print()
+            print(f"Automatic funding failed. Please send at least {_BOLD}{REQUIRED_SATS} sats{_NC} manually to:")
+            print(f"{address}")
+            print()
+
         try:
             block_count = rpc_call("getblockcount", **rpc_cfg)
-            print(f"  Connected to Bitcoin (block height: {block_count:,})")
+            print(f"Connected to Bitcoin (block height: {block_count:,})")
         except Exception as e:
-            print(f"  ERROR: Cannot reach Bitcoin Core at {rpc_cfg['rpc_url']}")
-            print(f"    {e}")
+            print(f"ERROR: Cannot reach Bitcoin Core at {rpc_cfg['rpc_url']}")
+            print(f"{e}")
             print()
-            print("  Make sure bitcoind is running and the RPC")
-            print("  credentials match, then re-run this script.")
+            print("Make sure bitcoind is running and the RPC")
+            print("credentials match, then re-run this script.")
             sys.exit(1)
 
         utxo = wait_for_funding(address, args.poll_interval, **rpc_cfg)
@@ -1559,7 +1732,7 @@ def main():
         vout = utxo["vout"]
         sats = utxo["_sats"]
         print(f"\n  Funding confirmed! Received {sats:,} sats.")
-        print(f"  Transaction: {tx_link(txid)}:{vout}")
+        print(f"Transaction: {tx_link(txid)}:{vout}")
 
     # ------------------------------------------------------------------
     # Step 4: Construct tweak and mine comet
@@ -1568,22 +1741,25 @@ def main():
     tweak_expr = make_tweak_expr(txid, vout, off)
 
     print()
-    print(f"Step 4/{total_steps}: Mining comet")
+    mining_step = 3 if args.skip_attestation else 4
+    print(step_header(f"Step {mining_step}/{total_steps}: Mining your comet identity"))
+    print()
     miner_result = run_comet_miner(tweak_expr, args.miner)
 
     comet = miner_result["comet"]
     feed = miner_result["feed"]
     ring_uw = miner_result.get("ring", "")
-    print(f"  Comet mined: {comet}")
 
-    if getattr(args, "dev_skip_funding", False):
-        # In dev mode, skip attestation steps
+    if args.skip_attestation:
         if args.skip_boot:
-            print(f"  feed: {feed}")
+            print(f"comet: {comet}")
+            print(f"feed: {feed}")
         else:
+            print(step_header(f"Step 4/{total_steps}: Booting your ship"))
             print()
-            print("[DEV] Skipping attestation — booting directly")
-            boot_comet(comet, feed, args.vere)
+            print("Give it a second...")
+            url = boot_comet(comet, feed, args.vere)
+            print_boot_success(url, master_ticket, pier_name=comet.lstrip("~"))
         return
 
     # Derive the networking key (pass) from the ring
@@ -1596,7 +1772,7 @@ def main():
         # Fief mode: spawn-only, no escape/sponsor needed
         # ------------------------------------------------------------------
         print()
-        print(f"Step 5/{total_steps}: Building and broadcasting attestation (fief mode)")
+        print(step_header(f"Step 5/{total_steps}: Building and broadcasting attestation (fief mode)"))
 
         commit_txid, reveal_txid = build_and_broadcast_attestation(
             seed_bytes=seed_bytes,
@@ -1619,25 +1795,25 @@ def main():
         # ------------------------------------------------------------------
         # Step 5: Request sponsor signature
         print()
-        print(f"Step 5/{total_steps}: Requesting sponsor signature")
+        print(step_header(f"Step 5/{total_steps}: Requesting sponsor signature"))
         sponsor_url = args.sponsor_url
         try:
             sponsor_sig, sponsor_height = request_sponsor_signature(comet, sponsor_url)
-            print(f"  Sponsor signed at block height {sponsor_height}")
+            print(f"Sponsor signed at block height {sponsor_height}")
         except Exception as e:
             print()
-            print(f"  Could not reach the Groundwire sponsor ({e}).")
+            print(f"Could not reach the Groundwire sponsor ({e}).")
             print()
-            print("  This is usually temporary — the sponsor may be restarting")
-            print("  or the network may be briefly unavailable.")
+            print("This is usually temporary — the sponsor may be restarting")
+            print("or the network may be briefly unavailable.")
             print()
-            print("  To retry, re-run with your master ticket:")
-            print(f"    python3 gw-onboard.py --master-ticket '{master_ticket}'")
+            print("To retry, re-run with your master ticket:")
+            print(f"./gw-onboard --master-ticket '{master_ticket}'")
             sys.exit(1)
 
         # Step 6: Build and broadcast attestation transactions
         print()
-        print(f"Step 6/{total_steps}: Building and broadcasting attestation")
+        print(step_header(f"Step 6/{total_steps}: Building and broadcasting attestation"))
 
         escape_sponsor_p_int = patp_to_int(ESCAPE_SPONSOR)
 
@@ -1663,18 +1839,20 @@ def main():
     # ------------------------------------------------------------------
     # Boot comet
     # ------------------------------------------------------------------
+    pier_name = comet.lstrip("~")
     if args.skip_boot:
-        print(f"  feed: {feed}")
+        print(f"comet: {comet}")
+        print(f"feed: {feed}")
         print()
         print("To boot manually later, run:")
-        pier_name = comet.lstrip("~")
-        print(f"  {args.vere} -w {pier_name} -B {GW_PILL} -G {feed} --http-port <port>")
+        print(f"{args.vere} -w {pier_name} -B {GW_PILL} -G {feed}")
     else:
         print()
-        print(f"Step {total_steps}/{total_steps}: Booting comet")
-        # This replaces the current process — does not return
-        boot_comet(comet, feed, args.vere)
-
+        print(step_header(f"Step {total_steps}/{total_steps}: Booting your ship"))
+        print()
+        print("Give it a second...")
+        url = boot_comet(comet, feed, args.vere)
+        print_boot_success(url, master_ticket, pier_name)
 
 if __name__ == "__main__":
     try:
@@ -1682,7 +1860,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         try:
             print("\n\nInterrupted. Your master ticket is still valid — rerun with")
-            print("  --master-ticket to resume.")
+            print("--master-ticket to resume.")
         except Exception:
             pass
         os._exit(130)
@@ -1691,14 +1869,14 @@ if __name__ == "__main__":
     except Exception as e:
         print()
         print("=" * 60)
-        print("  Something went wrong.")
+        print("Something went wrong.")
         print("=" * 60)
         print()
-        print(f"  Error: {e}")
+        print(f"Error: {e}")
         print()
-        print("  Your master ticket is still valid if one was generated.")
-        print("  Rerun with --master-ticket to resume from where you left off.")
+        print("Your master ticket is still valid if one was generated.")
+        print("Rerun with --master-ticket to resume from where you left off.")
         print()
-        print("  If this keeps happening, please report the issue with the")
-        print("  error message above.")
+        print("If this keeps happening, please report the issue with the")
+        print("error message above.")
         sys.exit(1)
