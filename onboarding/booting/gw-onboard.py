@@ -96,11 +96,21 @@ BLOCK_CONFIRMATIONS = 2
 #  Terminal helpers
 # =========================================================================
 
+_BOLD   = "\033[1m"
+_ACCENT = "\033[38;2;72;199;142m"
+_LINK   = "\033[4;36m"
+_NC     = "\033[0m"
+
+
+def step_header(text: str) -> str:
+    """Format a step header with bold accent color."""
+    return f"{_ACCENT}{_BOLD}{text}{_NC}"
+
 
 def tx_link(txid: str) -> str:
     """Return an OSC 8 clickable hyperlink for a txid pointing to mempool.space."""
     url = f"{MEMPOOL_TX_URL}/{txid}"
-    return f"\033]8;;{url}\033\\\033[4;36m{url}\033[0m\033]8;;\033\\"
+    return f"\033]8;;{url}\033\\{_LINK}{url}{_NC}\033]8;;\033\\"
 
 
 def normalize_ticket(raw: str) -> str:
@@ -121,7 +131,6 @@ def confirm_master_ticket(ticket: str) -> None:
             print()
             continue
         if normalize_ticket(entry) == ticket:
-            print("Confirmed!")
             print()
             return
         print()
@@ -1251,9 +1260,6 @@ def run_comet_miner(tweak_expr: str, miner_bin: str) -> dict:
 
     cmd = [miner_bin, "-c", "--tweak", tweak_expr, "daplyd"]
 
-    print("\nMining your comet identity (this may take a few minutes)...")
-    print()
-
     try:
         process = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
@@ -1419,7 +1425,7 @@ _INSTALL_GW_APPS = """:*  0
                                 !>
                                 :*  %groups
                                     ~ribsyp-lidwex-mitdev-sopsyn--difrel-mapler-mitnyt-daplyd
-                                    %groups
+                                    %tlon-408
                                 ==
                             ==
                           ;<  ~  bind:m
@@ -1460,6 +1466,51 @@ def _tee_gray(stream: "subprocess.IO[bytes]") -> None:
         sys.stdout.flush()
 
 
+_MUTED = "\033[38;2;90;100;128m"
+
+
+def print_master_ticket(master_ticket: str) -> None:
+    """Print the master ticket with a save warning."""
+    print(f"{_BOLD}WRITE DOWN YOUR MASTER TICKET{_NC}")
+    print()
+    print("Your master ticket is your HD wallet seed")
+    print("Your master ticket is the root of your login credentials")
+    print("If you lose your master ticket, you lose your comet")
+    print("If you lose your master ticket, you lose your coins")
+    print()
+    print("You cannot retrieve your master ticket from your ship")
+    print("This is your only chance to write down your master ticket")
+    print()
+    print(f"Your master ticket is {_BOLD}{master_ticket}{_NC}")
+    print()
+
+
+def print_boot_success(url: str, master_ticket: str, pier_name: str) -> None:
+    """Print the post-boot success banner."""
+    port = url.split(":")[-1] if ":" in url else "8080"
+    print()
+    print(f"{_ACCENT}{_BOLD}Your ship was booted and shut down successfully{_NC}")
+    print()
+    print(f"{_BOLD}To start using your ship, run these lines in another tab:{_NC}")
+    print(f"$ cd {os.getcwd()}")
+    print(f"$ ./{pier_name}/.run --http-port {port}")
+    print()
+    print(f"{_BOLD}When your ship starts up, it will resume downloading the default apps{_NC}")
+    print(f"- Manage your apps at {_LINK}{url}/apps/landscape{_NC}")
+    print(f"- Use your Bitcoin hot wallet at {_LINK}{url}/spv-wallet{_NC}")
+    print(f"- Chat in P2P groups and DMs at {_LINK}{url}/apps/groups{_NC}")
+    print(f"- Use Nostr at {_LINK}{url}/apps/groups{_NC}")
+    print(f"- Connect your AI agent to {_LINK}{url}/mcp{_NC}")
+    print()
+    print(f"{_BOLD}To use your ship from the browser, you'll need your web login code{_NC}")
+    print("Type +code in your ship's terminal to get your login code at any time")
+    print()
+    print(f"{_BOLD}Next steps:{_NC}")
+    print("1. Open your SPV wallet and set up your sponsor")
+    print("  - Choose the default sponsor and wait 2 block confirmations")
+    print("2. Say hi in the Groundwire Foundation group on Tlon")
+
+
 def boot_comet(comet_name: str, feed: str, vere_bin: str, pill: str = GW_PILL) -> str:
     """Boot a comet, wait until idle, kill the process, then return the local URL.
 
@@ -1487,7 +1538,7 @@ def boot_comet(comet_name: str, feed: str, vere_bin: str, pill: str = GW_PILL) -
 
     # conn.sock appears once the Arvo event loop is running
     conn_sock = os.path.join(pier_name, ".urb", "conn.sock")
-    print(f"Waiting for {conn_sock} to appear...")
+    print()
     for _ in range(60):
         if os.path.exists(conn_sock):
             break
@@ -1601,9 +1652,6 @@ def main():
     # ------------------------------------------------------------------
     # Step 1: Generate or restore @q master ticket
     # ------------------------------------------------------------------
-    print("=" * 60)
-    print("GROUNDWIRE ONBOARDING")
-    print("=" * 60)
     print()
 
     # Reopen stdin from the terminal if it was consumed by a pipe
@@ -1629,16 +1677,9 @@ def main():
         seed_int = int.from_bytes(seed_bytes, "little")
         master_ticket = encode_q(seed_int)
 
-        print(f"Step 1/{total_steps}: Generating master ticket")
+        print(step_header(f"Step 1/{total_steps}: Generating master ticket"))
         print()
-        print("┌──────────────────────────────────────────────────────────────────┐")
-        print("│  SAVE THIS — it is your login credential and                     │")
-        print("│  wallet seed. If you lose it, you lose access to                 │")
-        print("│  your comet and your coins.                                      │")
-        print("│                                                                  │")
-        print(f"│  {master_ticket:<64s}│")
-        print("└──────────────────────────────────────────────────────────────────┘")
-        print()
+        print_master_ticket(master_ticket)
         confirm_master_ticket(master_ticket)
 
     # ------------------------------------------------------------------
@@ -1651,11 +1692,9 @@ def main():
         print("This is unexpected — please report this issue.")
         sys.exit(1)
 
-    print(f"Step 2/{total_steps}: Deriving funding address")
+    print(step_header(f"Step 2/{total_steps}: Deriving funding address"))
     print()
     print(f"Address: {address}")
-    print()
-
     # ------------------------------------------------------------------
     # Step 3: Auto-fund via faucet, then wait for confirmation
     # ------------------------------------------------------------------
@@ -1664,7 +1703,7 @@ def main():
         vout = 0
         sats = REQUIRED_SATS
     else:
-        print(f"Step 3/{total_steps}: Funding your address")
+        print(step_header(f"Step 3/{total_steps}: Funding your address"))
         print()
         print("Requesting bitcoin from faucet...")
         faucet_result = request_faucet(address, invite=args.invite)
@@ -1672,7 +1711,7 @@ def main():
             print("Waiting for transaction to confirm...\n")
         else:
             print()
-            print(f"Automatic funding failed. Please send at least {REQUIRED_SATS} sats manually to:")
+            print(f"Automatic funding failed. Please send at least {_BOLD}{REQUIRED_SATS} sats{_NC} manually to:")
             print(f"{address}")
             print()
 
@@ -1703,22 +1742,24 @@ def main():
 
     print()
     mining_step = 3 if args.skip_attestation else 4
-    print(f"Step {mining_step}/{total_steps}: Mining comet")
+    print(step_header(f"Step {mining_step}/{total_steps}: Mining your comet identity"))
+    print()
     miner_result = run_comet_miner(tweak_expr, args.miner)
 
     comet = miner_result["comet"]
     feed = miner_result["feed"]
     ring_uw = miner_result.get("ring", "")
-    print(f"Comet mined: {comet}")
 
     if args.skip_attestation:
-        # Skip all Bitcoin steps — mine and boot (or just print feed if --skip-boot)
         if args.skip_boot:
+            print(f"comet: {comet}")
             print(f"feed: {feed}")
         else:
+            print(step_header(f"Step 4/{total_steps}: Booting your ship"))
             print()
-            print(f"Step 4/{total_steps}: Booting comet")
+            print("Give it a second...")
             url = boot_comet(comet, feed, args.vere)
+            print_boot_success(url, master_ticket, pier_name=comet.lstrip("~"))
         return
 
     # Derive the networking key (pass) from the ring
@@ -1731,7 +1772,7 @@ def main():
         # Fief mode: spawn-only, no escape/sponsor needed
         # ------------------------------------------------------------------
         print()
-        print(f"Step 5/{total_steps}: Building and broadcasting attestation (fief mode)")
+        print(step_header(f"Step 5/{total_steps}: Building and broadcasting attestation (fief mode)"))
 
         commit_txid, reveal_txid = build_and_broadcast_attestation(
             seed_bytes=seed_bytes,
@@ -1754,7 +1795,7 @@ def main():
         # ------------------------------------------------------------------
         # Step 5: Request sponsor signature
         print()
-        print(f"Step 5/{total_steps}: Requesting sponsor signature")
+        print(step_header(f"Step 5/{total_steps}: Requesting sponsor signature"))
         sponsor_url = args.sponsor_url
         try:
             sponsor_sig, sponsor_height = request_sponsor_signature(comet, sponsor_url)
@@ -1767,12 +1808,12 @@ def main():
             print("or the network may be briefly unavailable.")
             print()
             print("To retry, re-run with your master ticket:")
-            print(f"python3 gw-onboard.py --master-ticket '{master_ticket}'")
+            print(f"./gw-onboard --master-ticket '{master_ticket}'")
             sys.exit(1)
 
         # Step 6: Build and broadcast attestation transactions
         print()
-        print(f"Step 6/{total_steps}: Building and broadcasting attestation")
+        print(step_header(f"Step 6/{total_steps}: Building and broadcasting attestation"))
 
         escape_sponsor_p_int = patp_to_int(ESCAPE_SPONSOR)
 
@@ -1800,34 +1841,18 @@ def main():
     # ------------------------------------------------------------------
     pier_name = comet.lstrip("~")
     if args.skip_boot:
+        print(f"comet: {comet}")
         print(f"feed: {feed}")
         print()
         print("To boot manually later, run:")
-        print(f"{args.vere} -w {pier_name} -B {GW_PILL} -G {feed} --http-port <port>")
+        print(f"{args.vere} -w {pier_name} -B {GW_PILL} -G {feed}")
     else:
         print()
-        print(f"Step {total_steps}/{total_steps}: Booting comet")
+        print(step_header(f"Step {total_steps}/{total_steps}: Booting your ship"))
+        print()
+        print("Give it a second...")
         url = boot_comet(comet, feed, args.vere)
-
-        print()
-        print("┌──────────────────────────────────────────────────────────┐")
-        print("│  Your ship has booted successfully.                      │")
-        print("│                                                          │")
-        print("│  Type +code in the dojo to get your login code.         │")
-        print("│                                                          │")
-        print(f"│  Wallet UI: {url + '/spv-wallet':<46s}│")
-        print(f"│  Landscape: {url + '/apps/landscape':<46s}│")
-        print("│                                                          │")
-        print("│  Your master ticket (paste into spawning UI):            │")
-        print(f"│  {master_ticket:<56s}│")
-        print("│                                                          │")
-        print("│  Choose the default sponsor and wait for                 │")
-        print("│  2 block confirmations.                                  │")
-        print("└──────────────────────────────────────────────────────────┘")
-        print()
-        print("To restart later, run:")
-        print(f"~/.local/share/groundwire-alpha/{pier_name}/.run")
-        print()
+        print_boot_success(url, master_ticket, pier_name)
 
 if __name__ == "__main__":
     try:
