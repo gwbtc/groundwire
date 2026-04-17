@@ -1438,6 +1438,16 @@ _INSTALL_GW_APPS = """:*  0
                                     %landscape
                                 ==
                             ==
+                          ;<  ~  bind:m
+                            %:  poke-our
+                                %hood
+                                %kiln-install
+                                !>
+                                :*  %mcp
+                                    ~tornec-magdev-masdyl-pidnel--pindys-docnys-darfex-daplyd
+                                    %mcp
+                                ==
+                            ==
                           (pure:m !>(~))
                           '''
                       =="""
