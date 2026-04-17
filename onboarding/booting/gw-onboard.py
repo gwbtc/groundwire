@@ -1424,7 +1424,7 @@ _INSTALL_GW_APPS = """:*  0
                                 %kiln-install
                                 !>
                                 :*  %groups
-                                    ~ribsyp-lidwex-mitdev-sopsyn--difrel-mapler-mitnyt-daplyd
+                                    ~tornec-magdev-masdyl-pidnel--pindys-docnys-darfex-daplyd
                                     %tlon-408
                                 ==
                             ==
@@ -1434,7 +1434,7 @@ _INSTALL_GW_APPS = """:*  0
                                 %kiln-install
                                 !>
                                 :*  %landscape
-                                    ~ribsyp-lidwex-mitdev-sopsyn--difrel-mapler-mitnyt-daplyd
+                                    ~tornec-magdev-masdyl-pidnel--pindys-docnys-darfex-daplyd
                                     %landscape
                                 ==
                             ==
