@@ -1448,6 +1448,16 @@ _INSTALL_GW_APPS = """:*  0
                                     %mcp
                                 ==
                             ==
+                          ;<  ~  bind:m
+                            %:  poke-our
+                                %hood
+                                %kiln-install
+                                !>
+                                :*  %nostrill
+                                    ~tornec-magdev-masdyl-pidnel--pindys-docnys-darfex-daplyd
+                                    %nostrill
+                                ==
+                            ==
                           (pure:m !>(~))
                           '''
                       =="""
