@@ -1418,16 +1418,16 @@ _INSTALL_GW_APPS = """:*  0
                               ==
                           '''
                           =/  m  (strand ,vase)
-                          ;<  ~  bind:m
-                            %:  poke-our
-                                %hood
-                                %kiln-install
-                                !>
-                                :*  %groups
-                                    ~tornec-magdev-masdyl-pidnel--pindys-docnys-darfex-daplyd
-                                    %tlon-408
-                                ==
-                            ==
+                          ::  ;<  ~  bind:m
+                          ::    %:  poke-our
+                          ::        %hood
+                          ::        %kiln-install
+                          ::        !>
+                          ::        :*  %groups
+                          ::            ~tornec-magdev-masdyl-pidnel--pindys-docnys-darfex-daplyd
+                          ::            %groups
+                          ::        ==
+                          ::    ==
                           ;<  ~  bind:m
                             %:  poke-our
                                 %hood
@@ -1498,7 +1498,7 @@ def print_boot_success(url: str, master_ticket: str, pier_name: str) -> None:
     print(f"{_BOLD}When your ship starts up, it will resume downloading the default apps{_NC}")
     print(f"- Manage your apps at {_LINK}{url}/apps/landscape{_NC}")
     print(f"- Use your Bitcoin hot wallet at {_LINK}{url}/spv-wallet{_NC}")
-    print(f"- Chat in P2P groups and DMs at {_LINK}{url}/apps/groups{_NC}")
+    # print(f"- Chat in P2P groups and DMs at {_LINK}{url}/apps/groups{_NC}")
     print(f"- Use Nostr at {_LINK}{url}/apps/groups{_NC}")
     print(f"- Connect your AI agent to {_LINK}{url}/mcp{_NC}")
     print()
@@ -1506,9 +1506,9 @@ def print_boot_success(url: str, master_ticket: str, pier_name: str) -> None:
     print("Type +code in your ship's terminal to get your login code at any time")
     print()
     print(f"{_BOLD}Next steps:{_NC}")
-    print("1. Open your SPV wallet and set up your sponsor")
+    print("- Open your SPV wallet and set up your sponsor")
     print("  - Choose the default sponsor and wait 2 block confirmations")
-    print("2. Say hi in the Groundwire Foundation group on Tlon")
+    # print("2. Say hi in the Groundwire Foundation group on Tlon")
 
 
 def boot_comet(comet_name: str, feed: str, vere_bin: str, pill: str = GW_PILL) -> str:
