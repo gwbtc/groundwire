@@ -1,4 +1,4 @@
-.PHONY: build clean gw-onboard
+.PHONY: build clean groundwire spv gw-onboard
 
 ONBOARD_DIR := onboarding/booting
 ONBOARD_VENV := $(ONBOARD_DIR)/.venv
@@ -104,9 +104,9 @@ $(ONBOARD_BIN): $(ONBOARD_VENV) $(ONBOARD_DIR)/gw-onboard.py
 
 gw-onboard: $(ONBOARD_BIN)
 
-build:
-	@rm -rf dist-groundwire dist-spv
-	@mkdir -p dist-groundwire dist-spv
+groundwire:
+	@rm -rf dist-groundwire
+	@mkdir -p dist-groundwire
 	@echo "Building groundwire desk..."
 	@cp -r groundwire/* dist-groundwire/
 	@for f in $(VENDOR_BASE_DEV_GW); do \
@@ -121,6 +121,11 @@ build:
 		mkdir -p dist-groundwire/$$(dirname $$f); \
 		cp vendor/tlon-lib/$$f dist-groundwire/$$f; \
 	done
+	@echo "groundwire desk built."
+
+spv:
+	@rm -rf dist-spv
+	@mkdir -p dist-spv
 	@echo "Building spv-wallet desk..."
 	@cp -r spv-wallet/* dist-spv/
 	@for f in $(VENDOR_BASE_DEV_SPV); do \
@@ -135,8 +140,10 @@ build:
 		mkdir -p dist-spv/$$(dirname $$f); \
 		cp groundwire/$$f dist-spv/$$f; \
 	done
+	@echo "spv-wallet desk built."
+
+build: groundwire spv gw-onboard
 	@echo "Build completed successfully."
-	@$(MAKE) $(ONBOARD_BIN)
 
 clean:
 	rm -rf dist-groundwire dist-spv
