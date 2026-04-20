@@ -13,7 +13,7 @@
 ::  You may want to change block-confirmations as well.
 ::
 /-  bitcoin, spider, ord, urb
-/+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb, server
+/+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb
 ::
 |%
 +$  card  card:agent:gall
@@ -56,10 +56,7 @@
     :~  :*  %pass  /blocks  %arvo  %k
             %lard  q.byk.bowl
             (get-blocks new-rpc new-urb-state)
-        ==  
-        :*  %pass  /eyre/connect  %arvo  %e 
-            %connect  `/apps/urb-watcher  dap.bowl
-        ==  
+        ==
     ==
   ::  The snapshot HTTP request fails from ++on-init when we include the %groundwire
   ::  desk in a pill. We send it a few seconds later to get around this. %azimuth does this too.
@@ -76,37 +73,13 @@
   =/  old  !<(versioned-state vase)
   ?-    -.old
       %0
-    :_  this(state old)
-    ::  This wasn't bound in our first deployment:
-    :~  :*  %pass  /eyre/connect  %arvo  %e 
-            %connect  `/apps/urb-watcher  dap.bowl
-        ==  
-    ==
+    `this(state old)
   ==
 ::
 ++  on-poke
   |=  [=mark =vase]
   ^-  (quip card _this)
-  ?+    mark  !!
-      %handle-http-request
-    =+  !<([eyre-id=@ta =inbound-request:eyre] vase)
-    =/  ,request-line:server
-      (parse-request-line:server url.request.inbound-request)
-    ?+    method.request.inbound-request  !!
-        %'GET'
-      ?+    site  !!
-          [%apps %urb-watcher %snapshot ~]
-        ::  XX should sign the snapshot with +sign:as:cic
-        ::     if this is more than a short-term hack
-        :_  this
-        %+  give-simple-payload:app:server
-          eyre-id
-        ^-  simple-payload:http
-        :_  `(as-octs:mimes:html (jam urb-state))
-        [200 ~[['content-type' 'application/x-urb-jam']]]
-      ==
-    ==
-  ==
+  (on-poke:def mark vase)
 ::
 ++  on-peek
   |=  =(pole knot)
@@ -133,8 +106,6 @@
   |=  =(pole knot)
   ^-  (quip card _this)
   ?+    pole  (on-watch:def pole)
-      [%http-response *]  `this
-  ::
   ::  Jael subscribes to / (aka ~) if it hears
   ::  that this agent is the default PKI source
       ~
@@ -218,6 +189,7 @@
         :_  this(urb-state new-urb)
         :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
             (listen-to-urb ~(key by unv-ids:new-urb) [%| dap.bowl])
+            (cache-snapshot new-urb)
         ==
       ==
     ==
@@ -289,7 +261,8 @@
               [%| dap.bowl]
           ==
         ~
-      :-  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
+      :+  (cache-snapshot +.fx-and-state)
+        [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
       (jael-update filtered-udiffs)
     ==
   ==
@@ -300,6 +273,21 @@
 --
 ::
 |%
+++  cache-snapshot
+  |=  us=state:urb
+  ^-  card
+  :*  %pass  /eyre/snapshot  %arvo  %e
+      %set-response  '/apps/urb-watcher/snapshot'
+      %-  some
+      ^-  cache-entry:eyre
+      :*  %.n
+          :-  %payload
+          ^-  simple-payload:http
+          :_  `(as-octs:mimes:html (jam us))
+          [200 ~[['content-type' 'application/x-urb-jam']]]
+      ==
+  ==
+::
 ++  snapshot-fail
   |=  =bowl:gall
   ~&  >>  "%urb-watcher's request for a snapshot failed. Beginning self-chain-watching."
