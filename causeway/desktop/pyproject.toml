@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "causeway"
+version = "0.1.0"
+description = "Desktop Causeway: CLI and TUI for Groundwire comet spawning and management via confidential commits."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Groundwire" }]
+dependencies = [
+    "embit>=0.7.0",
+    "requests>=2.28",
+    "pynacl>=1.5",
+    "click>=8.1",
+    "rich>=13.0",
+    "textual>=0.55",
+    "cbor2>=5.4",
+    "qrcode>=7.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-timeout>=2.1",
+]
+
+[project.scripts]
+causeway = "causeway:main"
+causeway-tui = "causeway_tui:main"
+
+[tool.setuptools]
+py-modules = ["causeway", "causeway_tui"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 60
