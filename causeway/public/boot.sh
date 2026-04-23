@@ -14,11 +14,17 @@
 #   --dir <path>       where to install the runtime (default ~/.groundwire)
 #   --port <port>      HTTP port for vere (default 8080)
 #   --version <tag>    pin a release tag instead of "latest"
+#   --proof <path>     path to a comet.proof.json file from Desktop Causeway
+#                      (confidential-comet attestation proof). Saved to
+#                      $INSTALL_DIR/<patp>.proof.json so future runtime
+#                      versions can ingest it. The current runtime does NOT
+#                      consume this file.
 
 set -euo pipefail
 
 COMET=""
 FEED=""
+PROOF=""
 INSTALL_DIR="${GROUNDWIRE_DIR:-$HOME/.groundwire}"
 PORT="${GROUNDWIRE_PORT:-8080}"
 TAG="${GROUNDWIRE_VERSION:-latest}"
@@ -41,6 +47,7 @@ Optional:
   --dir <path>       install path (default ~/.groundwire)
   --port <n>         HTTP port for the ship (default 8080)
   --version <tag>    pin a release (default: latest)
+  --proof <file>     confidential-comet proof.json (saved, not yet consumed)
 EOF
 }
 
@@ -48,6 +55,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --comet)   COMET="$2"; shift 2 ;;
     --feed)    FEED="$2"; shift 2 ;;
+    --proof)   PROOF="$2"; shift 2 ;;
     --dir)     INSTALL_DIR="$2"; shift 2 ;;
     --port)    PORT="$2"; shift 2 ;;
     --version) TAG="$2"; shift 2 ;;
@@ -104,6 +112,21 @@ PILL="$INSTALL_DIR/gw-base.pill"
 [[ -f "$PILL" ]] || { echo "error: gw-base.pill not found in $INSTALL_DIR" >&2; exit 1; }
 
 pier="${COMET#\~}"   # strip the leading ~
+
+# Optional: stash the confidential-comet attestation proof alongside the pier.
+# The current runtime ignores this file; saving it now means future runtime
+# versions can pick it up and inject into Ames self-attestation without another
+# round-trip through Causeway.
+if [[ -n "$PROOF" ]]; then
+  if [[ ! -f "$PROOF" ]]; then
+    echo "error: --proof $PROOF does not exist" >&2
+    exit 1
+  fi
+  cp "$PROOF" "$INSTALL_DIR/${pier}.proof.json"
+  echo "Saved proof → $INSTALL_DIR/${pier}.proof.json"
+  echo "NOTE: runtime does not yet consume proof.json. See"
+  echo "      https://groundwire.io/causeway/docs/CONFIDENTIAL-COMETS"
+fi
 
 echo ""
 echo "Booting $COMET on port $PORT..."

@@ -1,9 +1,10 @@
-/-  *spv-wallet
+/-  *spv-wallet, urb
 /+  dbug, sailbox, io=sailboxio, server, multipart,
     ui=ui-spv-wallet, html-utils, json-utils,
     bip39, bip32=bip32-spv, btc=bitcoin, bip329,
     wallet-address, wallet-account, *wallet-mempool-space,
-    rt-wallet, rt-account, rt-send, rt-spv, rt-boot, taproot
+    rt-wallet, rt-account, rt-send, rt-spv, rt-boot,
+    mg=rt-management, taproot
 /=  t-  /tests/lib/bitcoin-spv
 /=  t-  /tests/lib/seed-phrases
 /=  t-  /tests/lib/transactions
@@ -424,6 +425,54 @@
     ::
       %on-fail :: sent by sailbox
     =+  !<([=term =tang] vase)
+    (pure:m ~)
+    ::
+    ::  ---------------------------------------------------------------
+    ::  Causeway management pokes — landed from +spv-wallet|<op> gens.
+    ::  The handler:
+    ::    1. appends the incoming sotx to causeway-ops (phase=%pending);
+    ::    2. delegates to run-causeway-op:mg which picks a wallet UTXO,
+    ::       builds + signs a confidential commit tx (internal-key =
+    ::       funding xonly, merkle_root = tapleaf(sotx)), broadcasts
+    ::       via mempool.space, and returns the commit txid;
+    ::    3. updates the queue entry's phase/txid/note.
+    ::
+    ::  If run-causeway-op:mg is unavailable (lib hasn't been ported
+    ::  the rest of the way yet), the sotx simply sits at %pending —
+    ::  the queue itself is load-bearing so a crash here loses nothing.
+    ::  ---------------------------------------------------------------
+    ::
+      ?(%causeway-rekey %causeway-escape %causeway-cancel-escape %causeway-adopt %causeway-reject %causeway-detach %causeway-fief)
+    =+  !<(sot=sotx:urb vase)
+    ;<  =bowl:gall  bind:m  get-bowl:io
+    ;<  state=state-0  bind:m  (get-state-as:io state-0)
+    =/  entry=causeway-op  [now.bowl sot %pending ~ '']
+    =.  causeway-ops.state  (snoc causeway-ops.state entry)
+    ~&  "causeway: {<mark>} queued from {<ship.sot>}; {<(lent causeway-ops.state)>} ops pending"
+    ;<  ~  bind:m  (replace:io !>(state))
+    ::  Dispatch to the management pipeline. Returns (unit [txid=@ux note=@t]);
+    ::  ~ means the pipeline declined (no UTXO, etc) and we leave %pending.
+    ::  Errors raise; sailbox will report via on-fail.
+    ;<  res=(unit [txid=@ux note=@t])  bind:m
+      (run-causeway-op:mg sot state)
+    ?~  res  (pure:m ~)
+    ;<  state=state-0  bind:m  (get-state-as:io state-0)
+    =.  causeway-ops.state
+      %+  turn  causeway-ops.state
+      |=  e=causeway-op
+      ?.  =(sot sot.e)  e
+      e(phase %commit-broadcast, commit-txid `txid.u.res, note note.u.res)
+    ;<  ~  bind:m  (replace:io !>(state))
+    ~&  "causeway: {<mark>} committed as {<txid.u.res>}"
+    (pure:m ~)
+    ::
+      %causeway-import-proof
+    =+  !<(proof=@t vase)
+    ;<  =bowl:gall  bind:m  get-bowl:io
+    ;<  state=state-0  bind:m  (get-state-as:io state-0)
+    =.  causeway-proofs.state  (snoc causeway-proofs.state [now.bowl proof])
+    ~&  "causeway: proof imported ({<(met 3 proof)>} bytes); {<(lent causeway-proofs.state)>} proofs stored"
+    ;<  ~  bind:m  (replace:io !>(state))
     (pure:m ~)
   ==
 ::

@@ -174,6 +174,22 @@
     %refresh            [(add 9 os) total 'Refreshing addresses...']
     %done               [total total 'Boot complete']
   ==
+::  Causeway operations — non-spawn sotx routed to this agent by a
+::  +spv-wallet|<op> generator. Each entry tracks its own pipeline state
+::  (pending → mined → commit-broadcast → done) so a crash mid-flight is
+::  recoverable on agent reload.
+::
++$  causeway-op
+  $:  at=@da
+      sot=sotx:urb
+      phase=?(%pending %commit-built %commit-broadcast %done %failed)
+      commit-txid=(unit @ux)
+      note=@t                      ::  free-form status / error
+  ==
+::  Causeway proofs — proof.json blobs imported from Desktop Causeway. Today
+::  stored raw; the consumer (Ames self-attestation) is still TBD.
+::
++$  causeway-proof  [at=@da body=@t]
 ::
 +$  state-0
   $:  %0
@@ -197,5 +213,8 @@
       binding=binding:eyre
       ::  Experimental/testing features
       counter=@ud
+      ::  Causeway management queue + imported confidential proofs
+      causeway-ops=(list causeway-op)
+      causeway-proofs=(list causeway-proof)
   ==
 --
