@@ -1539,7 +1539,7 @@ def print_boot_success(url: str, master_ticket: str, pier_name: str) -> None:
     print(f"$ cd {os.getcwd()}")
     print(f"$ ./{pier_name}/.run --http-port {port}")
     print()
-    print(f"{_BOLD}When your ship starts up, it will resume downloading the default apps{_NC}")
+    print(f"{_BOLD}What you can do{_NC}")
     print(f"- Manage your apps at {_LINK}{url}/apps/landscape{_NC}")
     print(f"- Use your Bitcoin hot wallet at {_LINK}{url}/spv-wallet{_NC}")
     # print(f"- Chat in P2P groups and DMs at {_LINK}{url}/apps/groups{_NC}")
