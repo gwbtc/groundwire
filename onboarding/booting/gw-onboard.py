@@ -1478,12 +1478,36 @@ def wait_for_idle(
     sys.exit(1)
 
 
-def _tee_gray(stream: "subprocess.IO[bytes]") -> None:
-    """Re-emit lines from *stream* in gray ANSI to signal a non-interactive background process."""
+_AMES_BAD_PACKET = "ames_pact_free: bad packet type"
+_KILN_MCP_OK = "kiln: merge into %mcp succeeded"
+_KILN_LANDSCAPE_OK = "kiln: merge into %landscape succeeded"
+_KILN_NOSTRILL_OK = "kiln: merge into %nostrill succeeded"
+
+
+def _tee_gray(
+    stream: "subprocess.IO[bytes]",
+    crash_event: "threading.Event | None" = None,
+    mcp_event: "threading.Event | None" = None,
+    landscape_event: "threading.Event | None" = None,
+    nostrill_event: "threading.Event | None" = None,
+) -> None:
+    """Re-emit lines from *stream* in gray ANSI.
+
+    Sets crash_event on fatal Ames errors and sets desk events when Kiln
+    reports successful merges into %mcp, %landscape, or %nostrill.
+    """
     for raw in iter(stream.readline, b""):
         line = raw.decode(errors="replace").rstrip("\n")
         sys.stdout.write(f"\033[90m{line}\033[0m\n")
         sys.stdout.flush()
+        if crash_event is not None and _AMES_BAD_PACKET in line:
+            crash_event.set()
+        if mcp_event is not None and _KILN_MCP_OK in line:
+            mcp_event.set()
+        if landscape_event is not None and _KILN_LANDSCAPE_OK in line:
+            landscape_event.set()
+        if nostrill_event is not None and _KILN_NOSTRILL_OK in line:
+            nostrill_event.set()
 
 
 _MUTED = "\033[38;2;90;100;128m"
@@ -1534,8 +1558,8 @@ def print_boot_success(url: str, master_ticket: str, pier_name: str) -> None:
 def boot_comet(comet_name: str, feed: str, vere_bin: str, pill: str = GW_PILL) -> str:
     """Boot a comet, wait until idle, kill the process, then return the local URL.
 
-    Starts vere, polls conn.sock until the ship responds to a FYRD, then kills
-    the process and returns the http://localhost:<port> URL for the caller to display.
+    Starts vere, polls conn.sock until the ship responds to a FYRD, then waits
+    for required agents to be running before shutting down cleanly.
     """
     pier_name = comet_name.lstrip("~")
 
@@ -1551,26 +1575,76 @@ def boot_comet(comet_name: str, feed: str, vere_bin: str, pill: str = GW_PILL) -
 
     port = find_available_port()
     url = f"http://localhost:{port}"
-
-    cmd = [vere_bin, "-d", "-w", pier_name, "-B", pill, "-G", feed, "--http-port", str(port)]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    threading.Thread(target=_tee_gray, args=(proc.stdout,), daemon=True).start()
-
-    # conn.sock appears once the Arvo event loop is running
     conn_sock = os.path.join(pier_name, ".urb", "conn.sock")
+
+    def _start_proc(cmd: list[str]) -> tuple[
+        subprocess.Popen,
+        threading.Event,
+        threading.Event,
+        threading.Event,
+        threading.Event,
+    ]:
+        crash_event = threading.Event()
+        mcp_event = threading.Event()
+        landscape_event = threading.Event()
+        nostrill_event = threading.Event()
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        threading.Thread(
+            target=_tee_gray,
+            args=(p.stdout, crash_event, mcp_event, landscape_event, nostrill_event),
+            daemon=True,
+        ).start()
+        return p, crash_event, mcp_event, landscape_event, nostrill_event
+
+    def _wait_for_sock(proc: subprocess.Popen) -> None:
+        for _ in range(60):
+            if os.path.exists(conn_sock):
+                break
+            time.sleep(5)
+        else:
+            print(f"ERROR: {conn_sock} never appeared. Check vere logs.")
+            proc.kill()
+            sys.exit(1)
+
+    # Initial boot
+    cmd = [vere_bin, "-d", "-w", pier_name, "-B", pill, "-G", feed, "--http-port", str(port)]
     print()
-    for _ in range(60):
-        if os.path.exists(conn_sock):
-            break
-        time.sleep(5)
-    else:
-        print(f"ERROR: {conn_sock} never appeared. Check vere logs.")
-        proc.kill()
-        sys.exit(1)
-
+    proc, crash_event, mcp_event, landscape_event, nostrill_event = _start_proc(cmd)
+    _wait_for_sock(proc)
     wait_for_idle(vere_bin, conn_sock)
-
     send_fyrd(vere_bin, conn_sock, _INSTALL_GW_APPS)
+
+    # Track desk installations across potential restarts
+    installed = {"mcp": False, "landscape": False, "nostrill": False}
+
+    # Wait for all desks to install; restart if vere crashes with Ames bad-packet.
+    while True:
+        if mcp_event.is_set():
+            installed["mcp"] = True
+        if landscape_event.is_set():
+            installed["landscape"] = True
+        if nostrill_event.is_set():
+            installed["nostrill"] = True
+        if installed["mcp"] and installed["landscape"] and installed["nostrill"]:
+            break
+        if crash_event.is_set():
+            print("\nDetected Ames crash — restarting ship...")
+            print()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            # Remove stale conn.sock so _wait_for_sock reliably detects the new one
+            with contextlib.suppress(OSError):
+                os.remove(conn_sock)
+            run_cmd = [os.path.join(pier_name, ".run"), "-d", "--http-port", str(port)]
+            proc, crash_event, mcp_event, landscape_event, nostrill_event = _start_proc(run_cmd)
+            _wait_for_sock(proc)
+            wait_for_idle(vere_bin, conn_sock)
+            continue
+        time.sleep(1)
+
     send_fyrd(vere_bin, conn_sock, _EXIT_DOJO)
     proc.wait()
 
