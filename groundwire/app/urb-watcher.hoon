@@ -170,9 +170,9 @@
       [%init %snapshot ~]
     ?.  ?=([%behn %wake *] sign-arvo)  (on-arvo:def wire sign-arvo)
     ?^  error.sign-arvo
-      %-  (slog leaf+"%urb-watcher: /init/snapshot timer error" ~)
+      %-  (slog :_(~ [%leaf "%urb-watcher: /init/snapshot timer error"]))
       `this
-    %-  (slog :_(~ [%leaf "%urb-watcher: requesting a snapshot from the default sponsor."]))
+    %-  (slog :_(~ [%leaf "%urb-watcher: requesting a snapshot from the default sponsor"]))
     :_  this
     :~  :*  %pass  /snapshot
             %arvo  %i
@@ -302,7 +302,7 @@
 |%
 ++  snapshot-fail
   |=  =bowl:gall
-  %-  (slog :_(~ [%leaf "%urb-watcher's request for a snapshot failed. Beginning self-chain-watching."]))
+  %-  (slog :_(~ [%leaf "%urb-watcher's request for a snapshot failed. Beginning self-chain-watching"]))
   ^-  (list card)
   :~  :*  %pass  /blocks  %arvo  %k
           %lard  q.byk.bowl
