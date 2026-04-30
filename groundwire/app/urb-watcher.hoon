@@ -170,9 +170,9 @@
       [%init %snapshot ~]
     ?.  ?=([%behn %wake *] sign-arvo)  (on-arvo:def wire sign-arvo)
     ?^  error.sign-arvo
-      %-  (slog leaf+"%urb-watcher: /init/snapshot timer error" ~)
+      %-  (slog :_(~ [%leaf "%urb-watcher: /init/snapshot timer error"]))
       `this
-    ~&  "%urb-watcher: requesting a snapshot from the default sponsor."
+    %-  (slog :_(~ [%leaf "%urb-watcher: requesting a snapshot from the default sponsor"]))
     :_  this
     :~  :*  %pass  /snapshot
             %arvo  %i
@@ -214,7 +214,7 @@
         ::  XX if we implement signed snapshots,
         ::     verify here with +sure:as:cic
         =/  new-urb=state:urb  ;;(state:urb (cue q.data.mime-data))
-        ~&  >  '%urb-watcher received a snapshot! Now beginning indexing from its latest block.'
+        %-  (slog :_(~ [%leaf "%urb-watcher: processing groundwire snapshot ({<~(wyt by unv-ids.new-urb)>} points)"]))
         :_  this(urb-state new-urb)
         :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
             (listen-to-urb ~(key by unv-ids:new-urb) [%| dap.bowl])
@@ -302,7 +302,7 @@
 |%
 ++  snapshot-fail
   |=  =bowl:gall
-  ~&  >>  "%urb-watcher's request for a snapshot failed. Beginning self-chain-watching."
+  %-  (slog :_(~ [%leaf "%urb-watcher's request for a snapshot failed. Beginning self-chain-watching"]))
   ^-  (list card)
   :~  :*  %pass  /blocks  %arvo  %k
           %lard  q.byk.bowl
