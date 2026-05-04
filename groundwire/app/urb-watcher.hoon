@@ -13,11 +13,10 @@
 ::  You may want to change block-confirmations as well.
 ::
 /-  bitcoin, spider, ord, urb
-/+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb, server
+/+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb
 ::
 |%
 +$  card  card:agent:gall
-+$  versioned-state  $%(state-0)
 +$  state-0
   $:  %0
       rpc=req-to:btcio
@@ -35,35 +34,14 @@
 +*  this   .
     def    ~(. (default-agent this %|) bowl)
 ::
-::  Tell Jael to subscribe to us for PKI updates,
-::  initialize an urb-core, start a thread to
-::  fetch and process the first batch of blocks,
-::  and start a timer to fetch again.
 ++  on-init
   ^-  (quip card _this)
-  =/  new-rpc  ['https://alpha.groundwire.dev/rpc' [%basic 'mainnetrpcuser:fc3d36ce83e15484e75a658b2a9a8a90a66f4cb017ace74c8631fe082b93adbf']]
-  =/  start-height  943.140
-  =/  start-hash    0x1.62b3.04e4.d48c.3a53.d80a.96de.0210.d325.c0a9.a464.8b3c
-  =/  new-urb-state
-    :*  [start-hash start-height]
-        *sont-map:ord
-        *insc-ids:ord
-        *unv-ids:urb
-    ==
-  ::  Short-term performance hack: request a snapshot from the default sponsor.
-  :_  this(rpc new-rpc, urb-state new-urb-state)
-  ?:  =(our.bowl ~linluc-palnus-barpub-dalweg--miptyp-molfer-pitren-daplyd)
-    :~  :*  %pass  /blocks  %arvo  %k
-            %lard  q.byk.bowl
-            (get-blocks new-rpc new-urb-state)
-        ==  
-        :*  %pass  /eyre/connect  %arvo  %e 
-            %connect  `/apps/urb-watcher  dap.bowl
-        ==  
-    ==
-  ::  The snapshot HTTP request fails from ++on-init when we include the %groundwire
-  ::  desk in a pill. We send it a few seconds later to get around this. %azimuth does this too.
-  :~  [%pass /init/snapshot %arvo %b %wait (add ~s10 now.bowl)]
+  :-  ~
+  %=  this
+     rpc  :*  'https://alpha.groundwire.dev/rpc'
+              %basic
+              'mainnetrpcuser:fc3d36ce83e15484e75a658b2a9a8a90a66f4cb017ace74c8631fe082b93adbf'
+          ==
   ==
 ::
 ++  on-save
@@ -73,38 +51,27 @@
 ++  on-load
   |=  =vase
   ^-  (quip card _this)
-  =/  old  !<(versioned-state vase)
-  ?-    -.old
-      %0
-    :_  this(state old)
-    ::  This wasn't bound in our first deployment:
-    :~  :*  %pass  /eyre/connect  %arvo  %e 
-            %connect  `/apps/urb-watcher  dap.bowl
-        ==  
-    ==
-  ==
+  `this(state !<(state-0 vase))
 ::
 ++  on-poke
   |=  [=mark =vase]
   ^-  (quip card _this)
   ?+    mark  !!
-      %handle-http-request
-    =+  !<([eyre-id=@ta =inbound-request:eyre] vase)
-    =/  ,request-line:server
-      (parse-request-line:server url.request.inbound-request)
-    ?+    method.request.inbound-request  !!
-        %'GET'
-      ?+    site  !!
-          [%apps %urb-watcher %snapshot ~]
-        ::  XX should sign the snapshot with +sign:as:cic
-        ::     if this is more than a short-term hack
-        :_  this
-        %+  give-simple-payload:app:server
-          eyre-id
-        ^-  simple-payload:http
-        :_  `(as-octs:mimes:html (jam urb-state))
-        [200 ~[['content-type' 'application/x-urb-jam']]]
+      %urb-start-indexing
+    =/  start-urb  !<((unit state:urb) vase)
+    ?~  start-urb
+      :_  this(urb-state default-urb-state)
+      :~  :*  %pass  /timer
+              %arvo  %b
+              %wait  now.bowl
+          ==
       ==
+    :_  this(urb-state u.start-urb)
+    :~  (listen-to-urb ~(key by unv-ids.u.start-urb) [%| dap.bowl])
+        :*  %pass  /timer
+            %arvo  %b
+            %wait  (add ~s30 now.bowl)
+        ==
     ==
   ==
 ::
@@ -127,13 +94,24 @@
     ::
       [%x %points ~]
     ``urb-points+!>(unv-ids.urb-state)
+    ::  /x/urb-state — entire urb-state for snapshots
+    ::
+      [%x %urb-state ~]
+    ``noun+!>(urb-state)
   ==
 ::
 ++  on-watch
   |=  =(pole knot)
   ^-  (quip card _this)
   ?+    pole  (on-watch:def pole)
-      [%http-response *]  `this
+  ::
+  ::  %urb-snapshot listens for new urb-states
+      [%urb-state ~]
+    :_  this
+    :~  :*  %give  %fact  ~
+            %noun  !>(urb-state)
+        ==
+    ==
   ::
   ::  Jael subscribes to / (aka ~) if it hears
   ::  that this agent is the default PKI source
@@ -165,66 +143,19 @@
   ^-  (quip card _this)
   ?+    wire  (on-arvo:def wire sign-arvo)
   ::
-  ::  Send the iris snapshot request now that
-  ::  the agent is fully initialized.
-      [%init %snapshot ~]
-    ?.  ?=([%behn %wake *] sign-arvo)  (on-arvo:def wire sign-arvo)
-    ?^  error.sign-arvo
-      %-  (slog :_(~ [%leaf "%urb-watcher: /init/snapshot timer error"]))
-      `this
-    %-  (slog :_(~ [%leaf "%urb-watcher: requesting a snapshot from the default sponsor"]))
-    :_  this
-    :~  :*  %pass  /snapshot
-            %arvo  %i
-            %request
-            ^-  request:http
-            :*  %'GET'
-                'http://143.198.70.9:8081/apps/urb-watcher/snapshot'
-                :~  ['accept' 'application/x-urb-jam']
-                ==
-                ~
-            ==
-            *outbound-config:iris
-        ==
-    ==
-  ::
   ::  Run +get-blocks at regular intervals.
       [%timer ~]
     :_  this
     :~  :*  %pass  /blocks  %arvo  %k
             %lard  q.byk.bowl
             (get-blocks [rpc urb-state]:state)
-        == 
-    ==
-  ::
-  ::  Receive a snapshot from the default sponsor
-  ::  containing an urb-state and tell Jael to subscribe
-  ::  to %urb-watcher for udiffs for each ship in that
-  ::  urb-state, which we'll fulfill immediately in ++on-agent.
-  ::  Now start indexing ourselves.
-      [%snapshot ~]
-    ?.  ?=([%iris %http-response *] sign-arvo)  [(snapshot-fail bowl) this]
-    =/  response  client-response.sign-arvo
-    ?+    -.response  [(snapshot-fail bowl) this]
-        %finished
-      ?~  full-file.response  [(snapshot-fail bowl) this]
-      =/  =mime-data:iris  u.full-file.response
-      ?+    type.mime-data  [(snapshot-fail bowl) this]
-          %'application/x-urb-jam'
-        ::  XX if we implement signed snapshots,
-        ::     verify here with +sure:as:cic
-        =/  new-urb=state:urb  ;;(state:urb (cue q.data.mime-data))
-        %-  (slog :_(~ [%leaf "%urb-watcher: processing groundwire snapshot ({<~(wyt by unv-ids.new-urb)>} points)"]))
-        :_  this(urb-state new-urb)
-        :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
-            (listen-to-urb ~(key by unv-ids:new-urb) [%| dap.bowl])
         ==
-      ==
     ==
   ::
   ::  Our +get-blocks thread returned. Update
-  ::  urb-state, emit udiffs to Jael, and set a timer
-  ::  to run the thread again.
+  ::  urb-state, emit udiffs to Jael and full
+  ::  urb-state snapshots to /urb-state watchers,
+  ::  and set a timer to run the thread again.
       [%blocks ~]
     ?+    sign-arvo  (on-arvo:def wire sign-arvo)
         [%khan %arow *]
@@ -278,8 +209,8 @@
         ?.  (~(has in tracked-ships) ship)
           ~
         `[ship udiff]
-      ::
-      :_  this(urb-state.state +.fx-and-state)
+      =/  new-urb-state  +.fx-and-state
+      :_  this(urb-state.state new-urb-state)
       %+  welp
         ?.  =(~ fx-ships)
           ::  don't send a %listen task for ships
@@ -289,7 +220,10 @@
               [%| dap.bowl]
           ==
         ~
-      :-  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
+      %+  welp
+        :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
+            [%give %fact ~[/urb-state] %noun !>(new-urb-state)]
+        ==
       (jael-update filtered-udiffs)
     ==
   ==
@@ -300,14 +234,17 @@
 --
 ::
 |%
-++  snapshot-fail
-  |=  =bowl:gall
-  %-  (slog :_(~ [%leaf "%urb-watcher's request for a snapshot failed. Beginning self-chain-watching"]))
-  ^-  (list card)
-  :~  :*  %pass  /blocks  %arvo  %k
-          %lard  q.byk.bowl
-          (get-blocks [rpc urb-state]:state)
-      == 
+::
+::  Hard-coded initial sync state used if
+::  %urb-start-indexing receives a null snapshot
+++  default-urb-state
+  ^-  state:urb
+  =/  start-height  943.140
+  =/  start-hash    0x1.62b3.04e4.d48c.3a53.d80a.96de.0210.d325.c0a9.a464.8b3c
+  :*  [start-hash start-height]
+      *sont-map:ord
+      *insc-ids:ord
+      *unv-ids:urb
   ==
 ::
 ::  Fetch blocks in range(last-processed + 1, latest - block-confirmations)
