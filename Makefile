@@ -65,6 +65,10 @@ VENDOR_BTC_WALL_SPV := \
 	sur/resource.hoon \
 	sur/btc-wallet.hoon
 
+# Vendor files needed by spv-wallet desk (mcp)
+VENDOR_MCP_SPV := \
+	sur/mcp.hoon
+
 # Groundwire desk files needed by spv-wallet desk
 GW_FILES_FOR_SPV := \
 	lib/bip/b158.hoon \
@@ -135,6 +139,10 @@ spv:
 	@for f in $(VENDOR_BTC_WALL_SPV); do \
 		mkdir -p dist-spv/$$(dirname $$f); \
 		cp vendor/btc-wall/$$f dist-spv/$$f; \
+	done
+	@for f in $(VENDOR_MCP_SPV); do \
+		mkdir -p dist-spv/$$(dirname $$f); \
+		cp vendor/mcp/$$f dist-spv/$$f; \
 	done
 	@for f in $(GW_FILES_FOR_SPV); do \
 		mkdir -p dist-spv/$$(dirname $$f); \
