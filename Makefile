@@ -22,6 +22,7 @@ VENDOR_BASE_DEV_GW := \
 	mar/bill.hoon \
 	mar/kelvin.hoon \
 	mar/noun.hoon \
+	mar/jam.hoon \
 	mar/mime.hoon \
 	mar/hoon.hoon \
 	sur/asn1.hoon \
