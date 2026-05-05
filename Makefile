@@ -99,6 +99,13 @@ $(ONBOARD_BIN): $(ONBOARD_VENV) $(ONBOARD_DIR)/gw-onboard.py
 		--hidden-import nacl.bindings \
 		--hidden-import embit.util.secp256k1 \
 		--hidden-import _cffi_backend \
+		--hidden-import bitstring.bitstore_bitarray \
+		--hidden-import bitstring.bitstore_bitarray_helpers \
+		--hidden-import bitstring.bitstore_common_helpers \
+		--hidden-import bitstring.bitstore_tibs \
+		--hidden-import bitstring.bitstore_tibs_helpers \
+		--hidden-import bitarray \
+		--hidden-import bitarray._bitarray \
 		gw-onboard.py
 	@echo "gw-onboard binary built at $(ONBOARD_BIN)"
 
