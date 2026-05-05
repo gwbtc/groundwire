@@ -90,6 +90,9 @@ SPONSOR_URL = "http://143.198.70.9:8081"
 SPONSOR_SHIP = "~daplyd"  # star — comet mines under this
 ESCAPE_SPONSOR = "~linluc-palnus-barpub-dalweg--miptyp-molfer-pitren-daplyd"  # networking sponsor for escape
 BLOCK_CONFIRMATIONS = 2
+SNAPSHOT_URL = "https://groundwire.io/snapshot"
+
+from pynoun import noun as pynoun
 
 
 # =========================================================================
@@ -1367,6 +1370,153 @@ def send_fyrd(vere_bin: str, conn_sock: str, fyrd_hoon: str) -> str:
     return dec.stdout.decode(errors="replace")
 
 
+def _snapshot_file_to_noun_literal(data: bytes) -> str:
+    """Convert jam bytes to a Hoon noun literal, validating with pynoun."""
+    jam_atom = int.from_bytes(data, "little") if data else 0
+    noun_value = pynoun.cue(jam_atom)
+    # Some snapshot sources provide jam(jam(state:urb)); unwrap nested jam atoms.
+    for _ in range(3):
+        if not isinstance(noun_value, int):
+            break
+        noun_value = pynoun.cue(noun_value)
+    if isinstance(noun_value, int):
+        raise ValueError("Snapshot did not decode to a state noun")
+    return _hoon_noun_with_dotted_atoms(noun_value)
+
+
+def _format_dotted_decimal_atom(value: int) -> str:
+    """Format a decimal atom with dots every 3 digits."""
+    s = str(value)
+    if len(s) <= 3:
+        return s
+    first = len(s) % 3
+    if first == 0:
+        first = 3
+    out = [s[:first]]
+    for i in range(first, len(s), 3):
+        out.append(s[i:i + 3])
+    return ".".join(out)
+
+
+def _hoon_noun_with_dotted_atoms(n, tail_pos: bool = False) -> str:
+    """Render a pynoun noun using Hoon list syntax with dotted decimal atoms."""
+    if isinstance(n, int):
+        return _format_dotted_decimal_atom(n)
+    if isinstance(n, pynoun.Cell):
+        content = f"{_hoon_noun_with_dotted_atoms(n.head, False)} {_hoon_noun_with_dotted_atoms(n.tail, True)}"
+        return content if tail_pos else f"[{content}]"
+    raise TypeError(f"Unsupported noun type: {type(n)!r}")
+
+
+def load_snapshot_file(local_path: str | None, remote_url: str = SNAPSHOT_URL) -> bytes | None:
+    """Load snapshot.jam from local file or remote URL.
+
+    Returns raw jam bytes, or None if remote fetch fails.
+    """
+    if local_path:
+        try:
+            with open(local_path, "rb") as f:
+                data = f.read()
+        except OSError as e:
+            print(f"ERROR: Could not read snapshot jam file: {local_path}")
+            print(e)
+            sys.exit(1)
+        if not data:
+            print(f"ERROR: Snapshot jam file is empty: {local_path}")
+            sys.exit(1)
+        try:
+            _snapshot_file_to_noun_literal(data)
+        except Exception as e:
+            print(f"ERROR: Snapshot jam file is not valid Urbit jam: {local_path}")
+            print(e)
+            sys.exit(1)
+        print(f"Using local snapshot jam: {local_path}")
+        return data
+
+    for attempt in range(1, 4):
+        try:
+            resp = requests.get(remote_url, timeout=20)
+            if resp.ok and resp.content:
+                try:
+                    _snapshot_file_to_noun_literal(resp.content)
+                except Exception:
+                    if attempt < 3:
+                        time.sleep(2)
+                    continue
+                print(f"Fetched snapshot jam from {remote_url}")
+                return resp.content
+        except Exception:
+            pass
+        if attempt < 3:
+            time.sleep(2)
+
+    print(f"WARNING: Could not fetch snapshot jam from {remote_url}; will start indexing without snapshot.")
+    return None
+
+
+def make_snapshot_fyrd(snapshot_file: bytes) -> str:
+    """Build a FYRD that pokes %urb-watcher with (unit state:urb)."""
+    cued_snapshot = _snapshot_file_to_noun_literal(snapshot_file)
+    # print("cued snapshot:")
+    # print(f"{cued_snapshot}")
+    return f""":*  0
+                    %fyrd
+                    %base
+                    %khan-eval
+                    %noun
+                    %ted-eval
+                    :_  :~  /sur/spider/hoon
+                            /lib/strandio/hoon
+                        ==
+                    '''
+                    =/  m  (strand ,vase)
+                    ::  XX verify signed jamfile
+                    ;<  our=ship  bind:m  get-our
+                    ;<  ~  bind:m
+                      %-  send-raw-card
+                      :*  %pass   /start-indexing
+                          %agent  [our %urb-watcher]
+                          %poke   %urb-start-indexing
+                          !>((some {cued_snapshot}))
+                      ==
+                    ;<  ~  bind:m  (take-poke-ack /start-indexing)
+                    (pure:m !>(~))
+                    '''
+                =="""
+
+
+_START_INDEXING_NO_SNAPSHOT = """:*  0
+                                  %fyrd
+                                  %base
+                                  %khan-eval
+                                  %noun
+                                  %ted-eval
+                                  :_  :~  /sur/spider/hoon
+                                          /lib/strandio/hoon
+                                      ==
+                                  '''
+                                  =/  m  (strand ,vase)
+                                  ;<  ~  bind:m
+                                    %:  poke-our
+                                        %urb-watcher
+                                        %urb-start-indexing
+                                        !>(~)
+                                    ==
+                                  (pure:m !>(~))
+                                  '''
+                              =="""
+
+
+def start_indexing_from_snapshot(vere_bin: str, conn_sock: str, snapshot_file: bytes | None) -> None:
+    """Poke %urb-watcher to start %urb-watcher indexing."""
+
+    if snapshot_file is not None:
+        send_fyrd(vere_bin, conn_sock, make_snapshot_fyrd(snapshot_file))
+        return
+
+    send_fyrd(vere_bin, conn_sock, _START_INDEXING_NO_SNAPSHOT)
+
+
 _IDLE_FYRD = """:*  0
                     %fyrd
                     %base
@@ -1555,7 +1705,13 @@ def print_boot_success(url: str, master_ticket: str, pier_name: str) -> None:
     # print("2. Say hi in the Groundwire Foundation group on Tlon")
 
 
-def boot_comet(comet_name: str, feed: str, vere_bin: str, pill: str = GW_PILL) -> str:
+def boot_comet(
+    comet_name: str,
+    feed: str,
+    vere_bin: str,
+    pill: str = GW_PILL,
+    snapshot_file: bytes | None = None,
+) -> str:
     """Boot a comet, wait until idle, kill the process, then return the local URL.
 
     Starts vere, polls conn.sock until the ship responds to a FYRD, then waits
@@ -1612,10 +1768,13 @@ def boot_comet(comet_name: str, feed: str, vere_bin: str, pill: str = GW_PILL) -
     proc, crash_event, mcp_event, landscape_event, nostrill_event = _start_proc(cmd)
     _wait_for_sock(proc)
     wait_for_idle(vere_bin, conn_sock)
-    send_fyrd(vere_bin, conn_sock, _INSTALL_GW_APPS)
+    time.sleep(30)
+    start_indexing_from_snapshot(vere_bin, conn_sock, snapshot_file)
+    # send_fyrd(vere_bin, conn_sock, _INSTALL_GW_APPS)
 
     # Track desk installations across potential restarts
-    installed = {"mcp": False, "landscape": False, "nostrill": False}
+    installed = {"mcp": True, "landscape": True, "nostrill": True}
+    # installed = {"mcp": False, "landscape": False, "nostrill": False}
 
     # Wait for all desks to install; restart if vere crashes with Ames bad-packet.
     while True:
@@ -1708,8 +1867,15 @@ def main():
         action="store_true",
         help="Skip all funding and attestation steps — mines and boots the comet without a Bitcoin transaction",
     )
+    parser.add_argument(
+        "--snapshot-file",
+        default=None,
+        help="Path to local snapshot.jam file (skips remote fetch from groundwire.io)",
+    )
 
     args = parser.parse_args()
+
+    snapshot_file = load_snapshot_file(args.snapshot_file)
 
     # Parse --fief flag (ip:port)
     fief = None
@@ -1852,7 +2018,7 @@ def main():
             print(step_header(f"Step 4/{total_steps}: Booting your ship"))
             print()
             print("Give it a second...")
-            url = boot_comet(comet, feed, args.vere)
+            url = boot_comet(comet, feed, args.vere, snapshot_file=snapshot_file)
             print_boot_success(url, master_ticket, pier_name=comet.lstrip("~"))
         return
 
@@ -1945,7 +2111,7 @@ def main():
         print(step_header(f"Step {total_steps}/{total_steps}: Booting your ship"))
         print()
         print("Give it a second...")
-        url = boot_comet(comet, feed, args.vere)
+        url = boot_comet(comet, feed, args.vere, snapshot_file=snapshot_file)
         print_boot_success(url, master_ticket, pier_name)
 
 if __name__ == "__main__":
