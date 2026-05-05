@@ -58,9 +58,9 @@
   ^-  (quip card _this)
   ?+    mark  !!
       %urb-start-indexing
-    =/  start-urb  !<((unit state:urb) vase)
+    =/  start-urb  ;;((unit state:urb) !<((unit noun) vase))
     ?~  start-urb
-      %-  (slog :_(~ [%leaf "%urb-watcher: indexing from block {<num.block-id.default-urb-state>}"]))
+      %-  (slog :_(~ [%leaf "%urb-watcher: indexing from block {<num.block-id:(state:urb default-urb-state)>}"]))
       :_  this(urb-state default-urb-state)
       :~  :*  %pass  /timer
               %arvo  %b
