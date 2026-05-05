@@ -60,12 +60,14 @@
       %urb-start-indexing
     =/  start-urb  !<((unit state:urb) vase)
     ?~  start-urb
+      %-  (slog :_(~ [%leaf "%urb-watcher: indexing from block {<num.block-id.default-urb-state>}"]))
       :_  this(urb-state default-urb-state)
       :~  :*  %pass  /timer
               %arvo  %b
               %wait  now.bowl
           ==
       ==
+    %-  (slog :_(~ [%leaf "%urb-watcher: processing groundwire snapshot ({<~(wyt by unv-ids.u.start-urb)>} points)"]))
     :_  this(urb-state u.start-urb)
     :~  (listen-to-urb ~(key by unv-ids.u.start-urb) [%| dap.bowl])
         :*  %pass  /timer
