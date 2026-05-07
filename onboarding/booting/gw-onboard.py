@@ -90,7 +90,7 @@ SPONSOR_URL = "http://143.198.70.9:8081"
 SPONSOR_SHIP = "~daplyd"  # star — comet mines under this
 ESCAPE_SPONSOR = "~linluc-palnus-barpub-dalweg--miptyp-molfer-pitren-daplyd"  # networking sponsor for escape
 BLOCK_CONFIRMATIONS = 2
-SNAPSHOT_URL = "https://groundwire.io/snapshot"
+DEFAULT_SNAPSHOT_URL = "https://groundwire.nyc3.cdn.digitaloceanspaces.com/snapshot/urb-snapshot.jam"
 
 from pynoun import noun as pynoun
 
@@ -1408,7 +1408,7 @@ def _hoon_noun_with_dotted_atoms(n, tail_pos: bool = False) -> str:
     raise TypeError(f"Unsupported noun type: {type(n)!r}")
 
 
-def load_snapshot_file(local_path: str | None, remote_url: str = SNAPSHOT_URL) -> bytes | None:
+def load_snapshot_file(local_path: str | None, snapshot_url: str = DEFAULT_SNAPSHOT_URL) -> bytes | None:
     """Load snapshot.jam from local file or remote URL.
 
     Returns raw jam bytes, or None if remote fetch fails.
@@ -1435,22 +1435,26 @@ def load_snapshot_file(local_path: str | None, remote_url: str = SNAPSHOT_URL) -
 
     for attempt in range(1, 4):
         try:
-            resp = requests.get(remote_url, timeout=20)
+            print(f"Fetching snapshot from {snapshot_url}")
+            resp = requests.get(snapshot_url, timeout=120)
             if resp.ok and resp.content:
                 try:
                     _snapshot_file_to_noun_literal(resp.content)
-                except Exception:
+                except Exception as e:
+                    print(f"  Failed to deserialize snapshot: {e}")
                     if attempt < 3:
                         time.sleep(2)
                     continue
-                print(f"Fetched snapshot jam from {remote_url}")
+                print("Fetched snapshot")
                 return resp.content
-        except Exception:
-            pass
+            else:
+                print(f"  HTTP {resp.status_code}")
+        except Exception as e:
+            print(f"  Download failed: {e}")
         if attempt < 3:
             time.sleep(2)
 
-    print(f"WARNING: Could not fetch snapshot jam from {remote_url}; will start indexing without snapshot.")
+    print(f"Could not fetch snapshot from {snapshot_url}; indexing without snapshot.")
     return None
 
 
@@ -1872,10 +1876,20 @@ def main():
         default=None,
         help="Path to local snapshot.jam file (skips remote fetch from groundwire.io)",
     )
+    parser.add_argument(
+        "--snapshot-url",
+        default=DEFAULT_SNAPSHOT_URL,
+        help=f"URL to fetch snapshot from {DEFAULT_SNAPSHOT_URL}",
+    )
+    parser.add_argument(
+        "--pill",
+        default=GW_PILL,
+        help=f"Path to pill file for booting (default: {GW_PILL})",
+    )
 
     args = parser.parse_args()
 
-    snapshot_file = load_snapshot_file(args.snapshot_file)
+    snapshot_file = load_snapshot_file(args.snapshot_file, snapshot_url=args.snapshot_url)
 
     # Parse --fief flag (ip:port)
     fief = None
@@ -2018,7 +2032,7 @@ def main():
             print(step_header(f"Step 4/{total_steps}: Booting your ship"))
             print()
             print("Give it a second...")
-            url = boot_comet(comet, feed, args.vere, snapshot_file=snapshot_file)
+            url = boot_comet(comet, feed, args.vere, pill=args.pill, snapshot_file=snapshot_file)
             print_boot_success(url, master_ticket, pier_name=comet.lstrip("~"))
         return
 
@@ -2105,13 +2119,13 @@ def main():
         print(f"feed: {feed}")
         print()
         print("To boot manually later, run:")
-        print(f"{args.vere} -w {pier_name} -B {GW_PILL} -G {feed}")
+        print(f"{args.vere} -w {pier_name} -B {args.pill} -G {feed}")
     else:
         print()
         print(step_header(f"Step {total_steps}/{total_steps}: Booting your ship"))
         print()
         print("Give it a second...")
-        url = boot_comet(comet, feed, args.vere, snapshot_file=snapshot_file)
+        url = boot_comet(comet, feed, args.vere, pill=args.pill, snapshot_file=snapshot_file)
         print_boot_success(url, master_ticket, pier_name)
 
 if __name__ == "__main__":
