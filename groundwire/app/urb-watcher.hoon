@@ -111,7 +111,7 @@
       [%urb-state ~]
     :_  this
     :~  :*  %give  %fact  ~
-            %noun  !>(urb-state)
+            %urb-state  !>(urb-state)
         ==
     ==
   ::
@@ -224,7 +224,11 @@
         ~
       %+  welp
         :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
-            [%give %fact ~[/urb-state] %noun !>(new-urb-state)]
+        ==
+      %+  welp
+        ?:  =(~ -.fx-and-state)
+          ~
+        :~  [%give %fact ~[/urb-state] %urb-state !>(new-urb-state)]
         ==
       (jael-update filtered-udiffs)
     ==
