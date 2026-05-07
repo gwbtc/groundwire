@@ -176,6 +176,7 @@
             "application/x-urb-jam\0a"
             (trip http-date)
             "\0a"
+            "x-amz-acl:public-read\0a"
             "/"
             (trip bucket.state)
             (trip object-path)
@@ -201,6 +202,7 @@
                     full-url
                     :~  ['Date' http-date]
                         ['Content-Type' 'application/x-urb-jam']
+                        ['x-amz-acl' 'public-read']
                         ['Authorization' authorization-v2]
                     ==
                     `body
