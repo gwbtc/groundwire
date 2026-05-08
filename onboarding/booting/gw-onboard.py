@@ -1332,11 +1332,14 @@ def find_available_port(start: int = 8080, max_tries: int = 100) -> int:
     raise RuntimeError(f"No available port found in range {start}-{start + max_tries - 1}")
 
 
-def send_fyrd(vere_bin: str, conn_sock: str, fyrd_hoon: str) -> str:
+def send_fyrd(vere_bin: str, conn_sock: str, fyrd_hoon: str, timeout: int = 3) -> str:
     """Send a FYRD to a running ship via its conn.sock and return the decoded response.
 
     Replicates the shell pipeline in fyrd.sh:
       echo "$fyrd" | vere eval -jn | nc -U -W 3 <sock> | vere eval -cn
+
+    timeout controls the per-recv idle timeout. Use a longer value for FYRDs that
+    block on slow ship-side work (e.g. snapshot poke with take-poke-ack).
     """
     # Step 1: encode the Hoon noun to wire format
     enc = subprocess.run([vere_bin, "eval", "-jn"], input=fyrd_hoon.encode(), capture_output=True)
@@ -1346,7 +1349,7 @@ def send_fyrd(vere_bin: str, conn_sock: str, fyrd_hoon: str) -> str:
     # Step 2: send encoded bytes over the Unix socket and read response
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(3)
+            sock.settimeout(timeout)
             sock.connect(conn_sock)
             sock.sendall(enc.stdout)
             chunks = []
@@ -1511,14 +1514,16 @@ _START_INDEXING_NO_SNAPSHOT = """:*  0
                               =="""
 
 
-def start_indexing_from_snapshot(vere_bin: str, conn_sock: str, snapshot_file: bytes | None) -> None:
-    """Poke %urb-watcher to start %urb-watcher indexing."""
-
+def start_indexing_from_snapshot(vere_bin: str, conn_sock: str, snapshot_file: bytes | None) -> bool:
+    """Poke %urb-watcher to start indexing. Returns True if the poke was confirmed."""
     if snapshot_file is not None:
-        send_fyrd(vere_bin, conn_sock, make_snapshot_fyrd(snapshot_file))
-        return
+        # Use a long timeout: the Spider thread blocks on take-poke-ack until
+        # urb-watcher finishes processing the snapshot noun.
+        result = send_fyrd(vere_bin, conn_sock, make_snapshot_fyrd(snapshot_file), timeout=120)
+        return "%avow" in result
 
-    send_fyrd(vere_bin, conn_sock, _START_INDEXING_NO_SNAPSHOT)
+    result = send_fyrd(vere_bin, conn_sock, _START_INDEXING_NO_SNAPSHOT)
+    return "%avow" in result
 
 
 _IDLE_FYRD = """:*  0
@@ -1773,7 +1778,12 @@ def boot_comet(
     _wait_for_sock(proc)
     wait_for_idle(vere_bin, conn_sock)
     time.sleep(30)
-    start_indexing_from_snapshot(vere_bin, conn_sock, snapshot_file)
+    ok = start_indexing_from_snapshot(vere_bin, conn_sock, snapshot_file)
+    if snapshot_file is not None:
+        if ok:
+            print("Snapshot poke confirmed.")
+        else:
+            print("WARNING: snapshot poke did not receive ack — indexing may start from scratch.")
     # send_fyrd(vere_bin, conn_sock, _INSTALL_GW_APPS)
 
     # Track desk installations across potential restarts
