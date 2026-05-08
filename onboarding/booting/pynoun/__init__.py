@@ -1,0 +1,1 @@
+"""Vendored pynoun package."""
