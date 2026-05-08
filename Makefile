@@ -107,6 +107,9 @@ $(ONBOARD_BIN): $(ONBOARD_VENV) $(ONBOARD_DIR)/gw-onboard.py
 		--hidden-import bitstring.bitstore_tibs_helpers \
 		--hidden-import bitarray \
 		--hidden-import bitarray._bitarray \
+		--hidden-import bitarray._util \
+		--hidden-import nacl._sodium \
+		--hidden-import mmh3 \
 		gw-onboard.py
 	@echo "gw-onboard binary built at $(ONBOARD_BIN)"
 
