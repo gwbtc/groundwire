@@ -1779,11 +1779,12 @@ def boot_comet(
     wait_for_idle(vere_bin, conn_sock)
     time.sleep(30)
     ok = start_indexing_from_snapshot(vere_bin, conn_sock, snapshot_file)
-    if snapshot_file is not None:
-        if ok:
-            print("Snapshot poke confirmed.")
-        else:
-            print("WARNING: snapshot poke did not receive ack — indexing may start from scratch.")
+    if snapshot_file is not None and ok is False:
+        print()
+        print("WARNING: %urb-watcher did not ack the snapshot poke")
+        print("         run `:urb-watcher &urb-start-indexing ~` to")
+        print("         index the onchain Urb state from scratch")
+        print()
     # send_fyrd(vere_bin, conn_sock, _INSTALL_GW_APPS)
 
     # Track desk installations across potential restarts
