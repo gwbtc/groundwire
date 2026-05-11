@@ -86,9 +86,9 @@ MEMPOOL_API_URL = "https://mempool.space/api"
 FAUCET_URL = "https://alpha.groundwire.dev/faucet"
 FAUCET_API_KEY = "e8ec9ac94a4f5396da27091f3b7f8099cf27856b5b2921aa20fb9fd59b967ebe"
 
-SPONSOR_URL = "http://143.198.70.9:8081"
+SPONSOR_URL = "http://143.198.70.9:8080"
 SPONSOR_SHIP = "~daplyd"  # star — comet mines under this
-ESCAPE_SPONSOR = "~linluc-palnus-barpub-dalweg--miptyp-molfer-pitren-daplyd"  # networking sponsor for escape
+ESCAPE_SPONSOR = "~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd"  # networking sponsor for escape
 BLOCK_CONFIRMATIONS = 2
 DEFAULT_SNAPSHOT_URL = "https://groundwire.nyc3.cdn.digitaloceanspaces.com/snapshot/urb-snapshot.jam"
 
@@ -1557,7 +1557,7 @@ def hi_dister(vere_bin: str, conn_sock: str) -> bool:
                         ;<  ~  bind:m
                           %-  send-raw-card
                           :*  %pass   /hi-dister
-                              %agent  :_(%hood ~nopner-loclyr-fonzod-batwet--mirmel-toplev-sopluc-daplyd)
+                              %agent  :_(%hood ~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd)
                               %poke   %helm-hi
                               !>('')
                           ==
@@ -1614,7 +1614,7 @@ _INSTALL_GW_APPS = """:*  0
                           ::        %kiln-install
                           ::        !>
                           ::        :*  %groups
-                          ::            ~nopner-loclyr-fonzod-batwet--mirmel-toplev-sopluc-daplyd
+                          ::            ~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd
                           ::            %groups
                           ::        ==
                           ::    ==
@@ -1624,7 +1624,7 @@ _INSTALL_GW_APPS = """:*  0
                                 %kiln-install
                                 !>
                                 :*  %landscape
-                                    ~nopner-loclyr-fonzod-batwet--mirmel-toplev-sopluc-daplyd
+                                    ~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd
                                     %landscape
                                 ==
                             ==
@@ -1634,7 +1634,7 @@ _INSTALL_GW_APPS = """:*  0
                                 %kiln-install
                                 !>
                                 :*  %mcp
-                                    ~nopner-loclyr-fonzod-batwet--mirmel-toplev-sopluc-daplyd
+                                    ~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd
                                     %mcp
                                 ==
                             ==
@@ -1644,7 +1644,7 @@ _INSTALL_GW_APPS = """:*  0
                                 %kiln-install
                                 !>
                                 :*  %nostrill
-                                    ~nopner-loclyr-fonzod-batwet--mirmel-toplev-sopluc-daplyd
+                                    ~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd
                                     %nostrill
                                 ==
                             ==
