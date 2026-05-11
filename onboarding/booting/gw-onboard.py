@@ -86,9 +86,9 @@ MEMPOOL_API_URL = "https://mempool.space/api"
 FAUCET_URL = "https://alpha.groundwire.dev/faucet"
 FAUCET_API_KEY = "e8ec9ac94a4f5396da27091f3b7f8099cf27856b5b2921aa20fb9fd59b967ebe"
 
-SPONSOR_URL = "http://143.198.70.9:8081"
+SPONSOR_URL = "http://143.198.70.9:8080"
 SPONSOR_SHIP = "~daplyd"  # star — comet mines under this
-ESCAPE_SPONSOR = "~linluc-palnus-barpub-dalweg--miptyp-molfer-pitren-daplyd"  # networking sponsor for escape
+ESCAPE_SPONSOR = "~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd"  # networking sponsor for escape
 BLOCK_CONFIRMATIONS = 2
 DEFAULT_SNAPSHOT_URL = "https://groundwire.nyc3.cdn.digitaloceanspaces.com/snapshot/urb-snapshot.jam"
 
@@ -1539,6 +1539,37 @@ _IDLE_FYRD = """:*  0
                     '''
                 =="""
 
+
+def hi_dister(vere_bin: str, conn_sock: str) -> bool:
+    """Ping the desk distributor to confirm it's online and trigger Ames -> Mesa"""
+
+    _HI_DISTER = """:*  0
+                        %fyrd
+                        %base
+                        %khan-eval
+                        %noun
+                        %ted-eval
+                        :_  :~  /sur/spider/hoon
+                                /lib/strandio/hoon
+                            ==
+                        '''
+                        =/  m  (stand ,vase)
+                        ;<  ~  bind:m
+                          %-  send-raw-card
+                          :*  %pass   /hi-dister
+                              %agent  :_(%hood ~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd)
+                              %poke   %helm-hi
+                              !>('')
+                          ==
+                        ;<  ~  bind:m  (take-poke-ack /hi-dister)
+                        (pure:m !>(~))
+                        '''
+                    =="""
+
+    result = send_fyrd(vere_bin, conn_sock, _HI_DISTER)
+    return "%avow" in result
+
+
 _EXIT_DOJO = """:*  0
                     %fyrd
                     %base
@@ -1583,7 +1614,7 @@ _INSTALL_GW_APPS = """:*  0
                           ::        %kiln-install
                           ::        !>
                           ::        :*  %groups
-                          ::            ~tornec-magdev-masdyl-pidnel--pindys-docnys-darfex-daplyd
+                          ::            ~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd
                           ::            %groups
                           ::        ==
                           ::    ==
@@ -1593,7 +1624,7 @@ _INSTALL_GW_APPS = """:*  0
                                 %kiln-install
                                 !>
                                 :*  %landscape
-                                    ~tornec-magdev-masdyl-pidnel--pindys-docnys-darfex-daplyd
+                                    ~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd
                                     %landscape
                                 ==
                             ==
@@ -1603,7 +1634,7 @@ _INSTALL_GW_APPS = """:*  0
                                 %kiln-install
                                 !>
                                 :*  %mcp
-                                    ~tornec-magdev-masdyl-pidnel--pindys-docnys-darfex-daplyd
+                                    ~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd
                                     %mcp
                                 ==
                             ==
@@ -1613,7 +1644,7 @@ _INSTALL_GW_APPS = """:*  0
                                 %kiln-install
                                 !>
                                 :*  %nostrill
-                                    ~tornec-magdev-masdyl-pidnel--pindys-docnys-darfex-daplyd
+                                    ~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd
                                     %nostrill
                                 ==
                             ==
@@ -1777,7 +1808,7 @@ def boot_comet(
     proc, crash_event, mcp_event, landscape_event, nostrill_event = _start_proc(cmd)
     _wait_for_sock(proc)
     wait_for_idle(vere_bin, conn_sock)
-    time.sleep(30)
+
     ok = start_indexing_from_snapshot(vere_bin, conn_sock, snapshot_file)
     if snapshot_file is not None and ok is False:
         print()
@@ -1785,11 +1816,28 @@ def boot_comet(
         print("         run `:urb-watcher &urb-start-indexing ~` to")
         print("         index the onchain Urb state from scratch")
         print()
-    # send_fyrd(vere_bin, conn_sock, _INSTALL_GW_APPS)
+
+    connected_to_dister = hi_dister(vere_bin, conn_sock)
+
+    if connected_to_dister is False:
+        print()
+        print("WARNING: failed to connect to app distributor")
+        print("         your ship will install the default apps when")
+        print("         the distributor is back online")
+        print()
+
+    #  TODO replace; check if we're on Mesa with the dister
+    if connected_to_dister is True:
+        time.sleep(10)
+
+    send_fyrd(vere_bin, conn_sock, _INSTALL_GW_APPS)
 
     # Track desk installations across potential restarts
-    installed = {"mcp": True, "landscape": True, "nostrill": True}
-    # installed = {"mcp": False, "landscape": False, "nostrill": False}
+    installed = {"mcp": False, "landscape": False, "nostrill": False}
+
+    # Skip blocking installation step if we can't connect to app distributor
+    if connected_to_dister is False:
+        installed = {"mcp": True, "landscape": True, "nostrill": True}
 
     # Wait for all desks to install; restart if vere crashes with Ames bad-packet.
     while True:
