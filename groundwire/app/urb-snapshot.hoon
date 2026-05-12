@@ -194,7 +194,7 @@
             (trip signature-v2)
           ==
         :_  this
-        :~  :*  %pass  /upload/(scot %uv (cut 5 [0 1] jammed))
+        :~  :*  %pass  /upload/(scot %uv (sham urb-state))
                 %arvo  %i
                 %request
                 :_  *outbound-config:iris
