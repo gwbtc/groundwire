@@ -9,10 +9,12 @@ boots it, and directs the user to the spv-wallet interface.
 
 import argparse
 import contextlib
+import errno
 import json
 import os
 import platform
 import secrets
+import signal
 import shutil
 import socket
 import subprocess
@@ -20,6 +22,11 @@ import sys
 import threading
 import time
 import webbrowser
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 
 # ---------------------------------------------------------------------------
 # CA bundle fix for frozen builds — certifi's path breaks when bundled, and
@@ -1772,6 +1779,7 @@ def boot_comet(
     port = find_available_port()
     url = f"http://localhost:{port}"
     conn_sock = os.path.join(pier_name, ".urb", "conn.sock")
+    lock_file = os.path.join(pier_name, ".vere.lock")
 
     def _start_proc(cmd: list[str]) -> tuple[
         subprocess.Popen,
@@ -1792,6 +1800,90 @@ def boot_comet(
         ).start()
         return p, crash_event, mcp_event, landscape_event, nostrill_event
 
+    def _read_lock_pid() -> int | None:
+        for _ in range(40):
+            try:
+                with open(lock_file) as f:
+                    pid_text = f.read().strip()
+            except OSError:
+                time.sleep(0.25)
+                continue
+            if pid_text.isdigit():
+                return int(pid_text)
+            time.sleep(0.25)
+        return None
+
+    def _read_lock_pid_once() -> int | None:
+        try:
+            with open(lock_file) as f:
+                pid_text = f.read().strip()
+        except OSError:
+            return None
+        if pid_text.isdigit():
+            return int(pid_text)
+        return None
+
+    def _wait_pid_exit(pid: int, timeout_s: float) -> bool:
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                return True
+            time.sleep(0.1)
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return True
+        return False
+
+    def _kill_pid_if_alive(pid: int) -> None:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGTERM)
+        if _wait_pid_exit(pid, timeout_s=2.0):
+            return
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+        _wait_pid_exit(pid, timeout_s=3.0)
+
+    def _wait_for_lock_release(timeout_s: float | None = None) -> bool:
+        def _lock_is_free() -> bool:
+            # Vere uses POSIX record locks (fcntl); probe with lockf so we only
+            # continue once the kernel lock is actually released.
+            if fcntl is None:
+                return _read_lock_pid_once() is None
+            try:
+                with open(lock_file, "a+") as f:
+                    try:
+                        fcntl.lockf(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except OSError as e:
+                        if e.errno in (errno.EACCES, errno.EAGAIN):
+                            return False
+                        return False
+                    fcntl.lockf(f.fileno(), fcntl.LOCK_UN)
+                    return True
+            except OSError:
+                # If the file doesn't exist, there is no lock holder.
+                return not os.path.exists(lock_file)
+
+        start = time.time()
+        while True:
+            if timeout_s is not None and time.time() - start >= timeout_s:
+                return False
+            lock_pid = _read_lock_pid_once()
+            if _lock_is_free():
+                return True
+            if lock_pid is not None:
+                if _wait_pid_exit(lock_pid, timeout_s=0.2):
+                    time.sleep(0.1)
+                    continue
+                _kill_pid_if_alive(lock_pid)
+            time.sleep(0.1)
+
     def _wait_for_sock(proc: subprocess.Popen) -> None:
         for _ in range(60):
             if os.path.exists(conn_sock):
@@ -1807,6 +1899,10 @@ def boot_comet(
     print()
     proc, crash_event, mcp_event, landscape_event, nostrill_event = _start_proc(cmd)
     _wait_for_sock(proc)
+    daemon_pids: set[int] = set()
+    lock_pid = _read_lock_pid()
+    if lock_pid is not None:
+        daemon_pids.add(lock_pid)
     wait_for_idle(vere_bin, conn_sock)
 
     ok = start_indexing_from_snapshot(vere_bin, conn_sock, snapshot_file)
@@ -1863,12 +1959,25 @@ def boot_comet(
             run_cmd = [os.path.join(pier_name, ".run"), "-d", "--http-port", str(port)]
             proc, crash_event, mcp_event, landscape_event, nostrill_event = _start_proc(run_cmd)
             _wait_for_sock(proc)
+            lock_pid = _read_lock_pid()
+            if lock_pid is not None:
+                daemon_pids.add(lock_pid)
             wait_for_idle(vere_bin, conn_sock)
             continue
         time.sleep(1)
 
     send_fyrd(vere_bin, conn_sock, _EXIT_DOJO)
     proc.wait()
+    for pid in daemon_pids:
+        _kill_pid_if_alive(pid)
+    for pid in daemon_pids:
+        if not _wait_pid_exit(pid, timeout_s=2.0):
+            raise RuntimeError(f"failed to stop gw-vere daemon process PID {pid}")
+    if not _wait_for_lock_release(timeout_s=None):
+        lock_pid = _read_lock_pid_once()
+        if lock_pid is None:
+            raise RuntimeError("failed to confirm pier lock release")
+        raise RuntimeError(f"pier lock still held by PID {lock_pid}")
 
     return url
 
