@@ -224,8 +224,12 @@
         ~
       %+  welp
         (jael-update filtered-udiffs)
-      :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
-          [%give %fact ~[/urb-state] %urb-state !>(new-urb-state)]
+      %+  welp
+        :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
+        ==
+      ?:  =(num.block-id.new-urb-state num.block-id.urb-state.state)
+        ~
+      :~  [%give %fact ~[/urb-state] %urb-state !>(new-urb-state)]
       ==
     ==
   ==
