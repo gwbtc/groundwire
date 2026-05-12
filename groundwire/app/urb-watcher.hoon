@@ -223,14 +223,10 @@
           ==
         ~
       %+  welp
-        :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
-        ==
-      %+  welp
-        ?:  =(~ -.fx-and-state)
-          ~
-        :~  [%give %fact ~[/urb-state] %urb-state !>(new-urb-state)]
-        ==
-      (jael-update filtered-udiffs)
+        (jael-update filtered-udiffs)
+      :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
+          [%give %fact ~[/urb-state] %urb-state !>(new-urb-state)]
+      ==
     ==
   ==
 ::
