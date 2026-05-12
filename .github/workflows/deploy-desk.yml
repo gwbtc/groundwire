@@ -7,8 +7,8 @@ on:
 env:
   DESK: groundwire
   SHIP_HOST: root@143.198.70.9
-  PIER_PATH: /root/.local/share/groundwire-alpha/tornec-magdev-masdyl-pidnel--pindys-docnys-darfex-daplyd
-  TMUX_TAB: desk-distributor
+  PIER_PATH: /root/.local/share/groundwire-alpha/watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd
+  TMUX_TAB: sponsor
 
 jobs:
   deploy:
