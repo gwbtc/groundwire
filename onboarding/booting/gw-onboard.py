@@ -97,7 +97,7 @@ SPONSOR_URL = "http://143.198.70.9:8080"
 SPONSOR_SHIP = "~daplyd"  # star — comet mines under this
 ESCAPE_SPONSOR = "~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd"  # networking sponsor for escape
 BLOCK_CONFIRMATIONS = 2
-DEFAULT_SNAPSHOT_URL = "https://groundwire.nyc3.cdn.digitaloceanspaces.com/snapshot/urb-snapshot.jam"
+DEFAULT_SNAPSHOT_URL = "https://groundwire.nyc3.digitaloceanspaces.com/snapshot/urb-snapshot.jam"
 
 from pynoun import noun as pynoun
 
