@@ -46,6 +46,7 @@ if getattr(sys, "frozen", False) and not os.environ.get("REQUESTS_CA_BUNDLE"):
             break
 
 import hashlib
+import re
 
 import requests  # must come after CA bundle fix above
 import nacl.bindings
@@ -1547,38 +1548,6 @@ _IDLE_FYRD = """:*  0
                 =="""
 
 
-def hi_dister(vere_bin: str, conn_sock: str) -> bool:
-    """Ping the desk distributor to confirm it's online and trigger Ames -> Mesa."""
-    hi_dister_thread = """:*  0
-                              %fyrd
-                              %base
-                              %khan-eval
-                              %noun
-                              %ted-eval
-                              :_  :~  /sur/spider/hoon
-                                      /lib/strandio/hoon
-                                  ==
-                              '''
-                              =/  m  (strand ,vase)
-                              ;<   ~  bind:m
-                                %-  send-raw-card
-                                :*  %pass  /
-                                    %arvo  %d
-                                    %belt  [%txt (tuba "|hi ~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd")]
-                                ==
-                              ;<   ~  bind:m
-                                %-  send-raw-card
-                                :*  %pass  /
-                                    %arvo  %d
-                                    %belt  [%ret ~]
-                                ==
-                              (pure:m !>(~))
-                              '''
-                          =="""
-    result = send_fyrd(vere_bin, conn_sock, hi_dister_thread)
-    return "%avow" in result
-
-
 def exit_dojo(vere_bin: str, conn_sock: str) -> str:
     """Exit dojo cleanly so the ship can shut down."""
     exit_dojo_thread = """:*  0
@@ -1609,6 +1578,137 @@ def exit_dojo(vere_bin: str, conn_sock: str) -> str:
                           =="""
     return send_fyrd(vere_bin, conn_sock, exit_dojo_thread)
 
+
+def _extract_web_login_code(khan_output: str) -> str | None:
+    """Extract an Urbit +code-like token from khan-eval output."""
+
+    match = re.search(r"([a-z]{3,6}(?:-[a-z]{3,6}){3,})", khan_output)
+
+    if match:
+        return match.group(1)
+    return None
+
+
+def _get_web_login_code(
+    vere_bin: str, conn_sock: str, attempts: int = 10, delay_s: float = 1.0
+) -> str | None:
+    """Fetch the ship web login code via khan-eval with retries."""
+
+    _GET_WEB_LOGIN_CODE = """:*  0
+                                 %fyrd
+                                 %base
+                                 %khan-eval
+                                 %noun
+                                 %ted-eval
+                                 :_  :~  /sur/spider/hoon
+                                         /lib/strandio/hoon
+                                     ==
+                                 '''
+                                 =/  m  (strand ,vase)
+                                 ;<  our=@p  bind:m  get-our
+                                 ;<  code=@p  bind:m
+                                   (scry @p /j/code/(scot %p our))
+                                 (pure:m !>((crip (slag 1 (scow %p code)))))
+                                 '''
+                             =="""
+
+    for _ in range(attempts):
+        out = send_fyrd(vere_bin, conn_sock, _GET_WEB_LOGIN_CODE)
+
+        if out:
+            code = _extract_web_login_code(out)
+            if code:
+                return code
+        time.sleep(delay_s)
+    return None
+
+
+def _get_ship_cookie_from_login(url: str, login_code: str) -> str:
+    """POST /~/login and return the urbauth cookie pair."""
+
+    resp = requests.post(
+        f"{url}/~/login",
+        data={"password": login_code},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    raw_cookie = resp.headers.get("set-cookie", "")
+    cookie_pair = raw_cookie.split(";", 1)[0].strip()
+
+    if not cookie_pair:
+        raise RuntimeError("No Set-Cookie header returned from /~/login")
+    return cookie_pair
+
+
+def _write_ship_mcp_configs(pier_name: str, port: int, ship_cookie: str) -> None:
+    """Write project-scoped MCP configs for local agent CLIs."""
+
+    url = f"http://localhost:{port}/mcp"
+    header_cookie = {"Cookie": ship_cookie}
+    pier_dir = os.path.abspath(pier_name)
+    pier_words = [word for word in re.split(r"-+", pier_name) if word]
+
+    if len(pier_words) > 4:
+        mcp_server_name = f"{pier_words[0]}_{pier_words[-1]}"
+    else:
+        mcp_server_name = pier_name
+
+    codex_dir = os.path.join(pier_dir, ".codex")
+    os.makedirs(codex_dir, exist_ok=True)
+    codex_path = os.path.join(codex_dir, "config.toml")
+
+    with open(codex_path, "w", encoding="utf-8") as f:
+        f.write(
+            f"""[mcp_servers.{mcp_server_name}]
+enabled = true
+url = "{url}"
+# See this guide to get a new cookie
+# https://github.com/gwbtc/urbit-mcp/blob/main/README.md
+http_headers = {{ "Cookie" = "{ship_cookie}" }}
+"""
+        )
+
+    claude_path = os.path.join(pier_dir, ".mcp.json")
+
+    with open(claude_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "mcpServers": {
+                    mcp_server_name: {
+                        "type": "http",
+                        "url": url,
+                        "headers": header_cookie,
+                    }
+                }
+            },
+            f,
+            indent=2,
+        )
+        f.write("\n")
+
+    opencode_dir = os.path.join(pier_dir, ".opencode")
+    os.makedirs(opencode_dir, exist_ok=True)
+    opencode_path = os.path.join(pier_dir, ".opencode/opencode.jsonc")
+
+    with open(opencode_path, "w", encoding="utf-8") as f:
+        f.write(
+            f"""{{
+  "mcp": {{
+    "{mcp_server_name}": {{
+      "oauth": false,
+      "enabled": true,
+      "type": "remote",
+      "url": "{url}",
+      // See this guide to get a new cookie
+      // https://github.com/gwbtc/urbit-mcp/blob/main/README.md
+      "headers": {{
+        "Cookie": "{ship_cookie}"
+      }}
+    }}
+  }}
+}}
+"""
+        )
 
 
 def wait_for_idle(
@@ -1696,6 +1796,11 @@ def print_boot_success(url: str, master_ticket: str, pier_name: str) -> None:
     print()
     print(f"{_BOLD}To use your ship from the browser, you'll need your web login code{_NC}")
     print("Type +code in your ship's terminal to get your login code at any time")
+    print()
+    print(f"{_BOLD}To use your ship with Codex, Claude Code, or Opencode, run:{_NC}")
+    print(f"$ cd {os.getcwd()}/{pier_name}")
+    print()
+    print("Then run `codex`, `claude`, or `opencode`")
     print()
     print(f"{_BOLD}Next steps:{_NC}")
     print("- Open your SPV wallet and set up your sponsor")
@@ -1864,7 +1969,20 @@ def boot_comet(
         print("         index the onchain Urb state from scratch")
         print()
 
-    hi_dister(vere_bin, conn_sock)
+    login_code = _get_web_login_code(vere_bin, conn_sock)
+
+    if not login_code:
+        print("ERROR: Failed to fetch web login code from ship.")
+        proc.kill()
+        sys.exit(1)
+
+    try:
+        ship_cookie = _get_ship_cookie_from_login(url, login_code)
+        _write_ship_mcp_configs(pier_name, port, ship_cookie)
+    except Exception as e:
+        print(f"ERROR: Failed to generate local MCP config files: {e}")
+        proc.kill()
+        sys.exit(1)
 
     exit_dojo(vere_bin, conn_sock)
 
