@@ -1640,12 +1640,18 @@ def _get_ship_cookie_from_login(url: str, login_code: str) -> str:
     return cookie_pair
 
 
-def _write_ship_mcp_configs(pier_name: str, ship_name: str, port: int, ship_cookie: str) -> None:
+def _write_ship_mcp_configs(pier_name: str, port: int, ship_cookie: str) -> None:
     """Write project-scoped MCP configs for local agent CLIs."""
 
     url = f"http://localhost:{port}/mcp"
     header_cookie = {"Cookie": ship_cookie}
     pier_dir = os.path.abspath(pier_name)
+    pier_words = [word for word in re.split(r"-+", pier_name) if word]
+
+    if len(pier_words) > 4:
+        mcp_server_name = f"{pier_words[0]}_{pier_words[-1]}"
+    else:
+        mcp_server_name = pier_name
 
     codex_dir = os.path.join(pier_dir, ".codex")
     os.makedirs(codex_dir, exist_ok=True)
@@ -1653,7 +1659,7 @@ def _write_ship_mcp_configs(pier_name: str, ship_name: str, port: int, ship_cook
 
     with open(codex_path, "w", encoding="utf-8") as f:
         f.write(
-            f"""[mcp_servers.{ship_name}]
+            f"""[mcp_servers.{mcp_server_name}]
 enabled = true
 url = "{url}"
 # See this guide to get a new cookie
@@ -1668,7 +1674,7 @@ http_headers = {{ "Cookie" = "{ship_cookie}" }}
         json.dump(
             {
                 "mcpServers": {
-                    ship_name: {
+                    mcp_server_name: {
                         "type": "http",
                         "url": url,
                         "headers": header_cookie,
@@ -1686,7 +1692,7 @@ http_headers = {{ "Cookie" = "{ship_cookie}" }}
         f.write(
             f"""{{
   "mcp": {{
-    "{ship_name}": {{
+    "{mcp_server_name}": {{
       "oauth": false,
       "enabled": true,
       "type": "remote",
@@ -1970,7 +1976,7 @@ def boot_comet(
 
     try:
         ship_cookie = _get_ship_cookie_from_login(url, login_code)
-        _write_ship_mcp_configs(pier_name, comet_name.lstrip("~"), port, ship_cookie)
+        _write_ship_mcp_configs(pier_name, port, ship_cookie)
     except Exception as e:
         print(f"ERROR: Failed to generate local MCP config files: {e}")
         proc.kill()
