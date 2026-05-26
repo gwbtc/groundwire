@@ -1640,89 +1640,63 @@ def _get_ship_cookie_from_login(url: str, login_code: str) -> str:
     return cookie_pair
 
 
-def _which_cmd(cmd: str) -> str | None:
-    """Return resolved path from `which <cmd>` or None."""
-
-    try:
-        found = subprocess.run(
-            ["which", cmd], capture_output=True, text=True, timeout=5, check=False
-        )
-    except (subprocess.SubprocessError, OSError):
-        return None
-    if found.returncode != 0:
-        return None
-
-    path = found.stdout.strip()
-
-    return path if path else None
-
-
 def _write_ship_mcp_configs(pier_name: str, ship_name: str, port: int, ship_cookie: str) -> None:
-    """Write project-scoped MCP configs for installed local agent CLIs."""
+    """Write project-scoped MCP configs for local agent CLIs."""
 
     url = f"http://localhost:{port}/mcp"
     header_cookie = {"Cookie": ship_cookie}
     pier_dir = os.path.abspath(pier_name)
 
-    codex_path_bin = _which_cmd("codex")
+    codex_dir = os.path.join(pier_dir, ".codex")
+    os.makedirs(codex_dir, exist_ok=True)
+    codex_path = os.path.join(codex_dir, "config.toml")
 
-    if codex_path_bin:
-        codex_dir = os.path.join(pier_dir, ".codex")
-        os.makedirs(codex_dir, exist_ok=True)
-        codex_path = os.path.join(codex_dir, "config.toml")
-
-        with open(codex_path, "w", encoding="utf-8") as f:
-            f.write(
-                f"""[mcp_servers.{ship_name}]
+    with open(codex_path, "w", encoding="utf-8") as f:
+        f.write(
+            f"""[mcp_servers.{ship_name}]
 enabled = true
 url = "{url}"
 http_headers = {{ "Cookie" = "{ship_cookie}" }}
 """
-            )
+        )
 
-    claude_path_bin = _which_cmd("claude")
+    claude_path = os.path.join(pier_dir, ".mcp.json")
 
-    if claude_path_bin:
-        claude_path = os.path.join(pier_dir, ".mcp.json")
-
-        with open(claude_path, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "mcpServers": {
-                        ship_name: {
-                            "type": "http",
-                            "url": url,
-                            "headers": header_cookie,
-                        }
+    with open(claude_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "mcpServers": {
+                    ship_name: {
+                        "type": "http",
+                        "url": url,
+                        "headers": header_cookie,
                     }
-                },
-                f,
-                indent=2,
-            )
-            f.write("\n")
+                }
+            },
+            f,
+            indent=2,
+        )
+        f.write("\n")
 
-    opencode_path_bin = _which_cmd("opencode")
+    opencode_path = os.path.join(pier_dir, "opencode.json")
 
-    if opencode_path_bin:
-        opencode_path = os.path.join(pier_dir, "opencode.json")
-
-        with open(opencode_path, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "mcp": {
-                        ship_name: {
-                            "oauth": False,
-                            "enabled": True,
-                            "type": "remote",
-                            "url": url,
-                            "headers": header_cookie,
-                        }
+    with open(opencode_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "mcp": {
+                    ship_name: {
+                        "oauth": False,
+                        "enabled": True,
+                        "type": "remote",
+                        "url": url,
+                        "headers": header_cookie,
                     }
-                },
-                f,
-                indent=2,
-            )
-            f.write("\n")
+                }
+            },
+            f,
+            indent=2,
+        )
+        f.write("\n")
 
 
 def wait_for_idle(
@@ -1810,6 +1784,11 @@ def print_boot_success(url: str, master_ticket: str, pier_name: str) -> None:
     print()
     print(f"{_BOLD}To use your ship from the browser, you'll need your web login code{_NC}")
     print("Type +code in your ship's terminal to get your login code at any time")
+    print()
+    print(f"{_BOLD}To use your ship with Codex, Claude Code, or Opencode, run:{_NC}")
+    print(f"$ cd {os.getcwd()}/{pier_name}")
+    print()
+    print("Then run `codex`, `claude`, or `opencode`")
     print()
     print(f"{_BOLD}Next steps:{_NC}")
     print("- Open your SPV wallet and set up your sponsor")
