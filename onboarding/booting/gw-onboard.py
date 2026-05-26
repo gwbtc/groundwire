@@ -1548,117 +1548,35 @@ _IDLE_FYRD = """:*  0
                 =="""
 
 
-def hi_dister(vere_bin: str, conn_sock: str) -> bool:
-    """Ping the desk distributor to confirm it's online and trigger Ames -> Mesa"""
-
-    _HI_DISTER = """:*  0
-                        %fyrd
-                        %base
-                        %khan-eval
-                        %noun
-                        %ted-eval
-                        :_  :~  /sur/spider/hoon
-                                /lib/strandio/hoon
-                            ==
-                        '''
-                        =/  m  (stand ,vase)
-                        ;<  ~  bind:m
-                          %-  send-raw-card
-                          :*  %pass   /hi-dister
-                              %agent  :_(%hood ~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd)
-                              %poke   %helm-hi
-                              !>('')
-                          ==
-                        ;<  ~  bind:m  (take-poke-ack /hi-dister)
-                        (pure:m !>(~))
-                        '''
-                    =="""
-
-    result = send_fyrd(vere_bin, conn_sock, _HI_DISTER)
-    return "%avow" in result
-
-
-_EXIT_DOJO = """:*  0
-                    %fyrd
-                    %base
-                    %khan-eval
-                    %noun
-                    %ted-eval
-                    :_  :~  /sur/spider/hoon
-                            /lib/strandio/hoon
-                        ==
-                    '''
-                    =/  m  (strand ,vase)
-                    ;<   ~  bind:m
-                      %-  send-raw-card
-                      :*  %pass  /
-                          %arvo  %d
-                          %belt  [%txt (tuba "|exit")]
-                      ==
-                    ;<   ~  bind:m
-                      %-  send-raw-card
-                      :*  %pass  /
-                          %arvo  %d
-                          %belt  [%ret ~]
-                      ==
-                    (pure:m !>(~))
-                    '''
-                =="""
-
-_INSTALL_GW_APPS = """:*  0
-                          %fyrd
-                          %base
-                          %khan-eval
-                          %noun
-                          %ted-eval
-                          :_  :~  /sur/spider/hoon
-                                  /lib/strandio/hoon
-                              ==
-                          '''
-                          =/  m  (strand ,vase)
-                          ::  ;<  ~  bind:m
-                          ::    %:  poke-our
-                          ::        %hood
-                          ::        %kiln-install
-                          ::        !>
-                          ::        :*  %groups
-                          ::            ~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd
-                          ::            %groups
-                          ::        ==
-                          ::    ==
-                          ;<  ~  bind:m
-                            %:  poke-our
-                                %hood
-                                %kiln-install
-                                !>
-                                :*  %landscape
-                                    ~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd
-                                    %landscape
+def exit_dojo(vere_bin: str, conn_sock: str) -> str:
+    """Exit dojo cleanly so the ship can shut down."""
+    exit_dojo_thread = """:*  0
+                              %fyrd
+                              %base
+                              %khan-eval
+                              %noun
+                              %ted-eval
+                              :_  :~  /sur/spider/hoon
+                                      /lib/strandio/hoon
+                                  ==
+                              '''
+                              =/  m  (strand ,vase)
+                              ;<   ~  bind:m
+                                %-  send-raw-card
+                                :*  %pass  /
+                                    %arvo  %d
+                                    %belt  [%txt (tuba "|exit")]
                                 ==
-                            ==
-                          ;<  ~  bind:m
-                            %:  poke-our
-                                %hood
-                                %kiln-install
-                                !>
-                                :*  %mcp
-                                    ~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd
-                                    %mcp
+                              ;<   ~  bind:m
+                                %-  send-raw-card
+                                :*  %pass  /
+                                    %arvo  %d
+                                    %belt  [%ret ~]
                                 ==
-                            ==
-                          ;<  ~  bind:m
-                            %:  poke-our
-                                %hood
-                                %kiln-install
-                                !>
-                                :*  %nostrill
-                                    ~watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd
-                                    %nostrill
-                                ==
-                            ==
-                          (pure:m !>(~))
-                          '''
-                      =="""
+                              (pure:m !>(~))
+                              '''
+                          =="""
+    return send_fyrd(vere_bin, conn_sock, exit_dojo_thread)
 
 
 def _extract_web_login_code(khan_output: str) -> str | None:
@@ -1696,6 +1614,7 @@ def _get_web_login_code(
 
     for _ in range(attempts):
         out = send_fyrd(vere_bin, conn_sock, _GET_WEB_LOGIN_CODE)
+
         if out:
             code = _extract_web_login_code(out)
             if code:
@@ -1732,7 +1651,9 @@ def _which_cmd(cmd: str) -> str | None:
         return None
     if found.returncode != 0:
         return None
+
     path = found.stdout.strip()
+
     return path if path else None
 
 
@@ -1749,6 +1670,7 @@ def _write_ship_mcp_configs(pier_name: str, ship_name: str, port: int, ship_cook
         codex_dir = os.path.join(pier_dir, ".codex")
         os.makedirs(codex_dir, exist_ok=True)
         codex_path = os.path.join(codex_dir, "config.toml")
+
         with open(codex_path, "w", encoding="utf-8") as f:
             f.write(
                 f"""[mcp_servers.{ship_name}]
@@ -1762,6 +1684,7 @@ http_headers = {{ "Cookie" = "{ship_cookie}" }}
 
     if claude_path_bin:
         claude_path = os.path.join(pier_dir, ".mcp.json")
+
         with open(claude_path, "w", encoding="utf-8") as f:
             json.dump(
                 {
@@ -1782,6 +1705,7 @@ http_headers = {{ "Cookie" = "{ship_cookie}" }}
 
     if opencode_path_bin:
         opencode_path = os.path.join(pier_dir, "opencode.json")
+
         with open(opencode_path, "w", encoding="utf-8") as f:
             json.dump(
                 {
@@ -2046,28 +1970,16 @@ def boot_comet(
         daemon_pids.add(lock_pid)
     wait_for_idle(vere_bin, conn_sock)
 
-    ok = start_indexing_from_snapshot(vere_bin, conn_sock, snapshot_file)
-    if snapshot_file is not None and ok is False:
+    started_indexing = start_indexing_from_snapshot(vere_bin, conn_sock, snapshot_file)
+    if snapshot_file is not None and started_indexing is False:
         print()
         print("WARNING: %urb-watcher did not ack the snapshot poke")
         print("         run `:urb-watcher &urb-start-indexing ~` to")
         print("         index the onchain Urb state from scratch")
         print()
 
-    connected_to_dister = hi_dister(vere_bin, conn_sock)
-
-    if connected_to_dister is False:
-        print()
-        print("WARNING: failed to connect to app distributor")
-        print("         your ship will install the default apps when")
-        print("         the distributor is back online")
-        print()
-
-    #  TODO replace; check if we're on Mesa with the dister
-    if connected_to_dister is True:
-        time.sleep(10)
-
     login_code = _get_web_login_code(vere_bin, conn_sock)
+
     if not login_code:
         print("ERROR: Failed to fetch web login code from ship.")
         proc.kill()
@@ -2081,47 +1993,8 @@ def boot_comet(
         proc.kill()
         sys.exit(1)
 
-    send_fyrd(vere_bin, conn_sock, _INSTALL_GW_APPS)
+    exit_dojo(vere_bin, conn_sock)
 
-    # Track desk installations across potential restarts
-    installed = {"mcp": False, "landscape": False, "nostrill": False}
-
-    # Skip blocking installation step if we can't connect to app distributor
-    if connected_to_dister is False:
-        installed = {"mcp": True, "landscape": True, "nostrill": True}
-
-    # Wait for all desks to install; restart if vere crashes with Ames bad-packet.
-    while True:
-        if mcp_event.is_set():
-            installed["mcp"] = True
-        if landscape_event.is_set():
-            installed["landscape"] = True
-        if nostrill_event.is_set():
-            installed["nostrill"] = True
-        if installed["mcp"] and installed["landscape"] and installed["nostrill"]:
-            break
-        if crash_event.is_set():
-            print("\nDetected Ames crash — restarting ship...")
-            print()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-            # Remove stale conn.sock so _wait_for_sock reliably detects the new one
-            with contextlib.suppress(OSError):
-                os.remove(conn_sock)
-            run_cmd = [os.path.join(pier_name, ".run"), "-d", "--http-port", str(port)]
-            proc, crash_event, mcp_event, landscape_event, nostrill_event = _start_proc(run_cmd)
-            _wait_for_sock(proc)
-            lock_pid = _read_lock_pid()
-            if lock_pid is not None:
-                daemon_pids.add(lock_pid)
-            wait_for_idle(vere_bin, conn_sock)
-            continue
-        time.sleep(1)
-
-    send_fyrd(vere_bin, conn_sock, _EXIT_DOJO)
     proc.wait()
     for pid in daemon_pids:
         _kill_pid_if_alive(pid)
@@ -2209,7 +2082,6 @@ def main():
         default=GW_PILL,
         help=f"Path to pill file for booting (default: {GW_PILL})",
     )
-
     args = parser.parse_args()
 
     snapshot_file = load_snapshot_file(args.snapshot_file, snapshot_url=args.snapshot_url)
@@ -2355,7 +2227,13 @@ def main():
             print(step_header(f"Step 4/{total_steps}: Booting your ship"))
             print()
             print("Give it a second...")
-            url = boot_comet(comet, feed, args.vere, pill=args.pill, snapshot_file=snapshot_file)
+            url = boot_comet(
+                comet,
+                feed,
+                args.vere,
+                pill=args.pill,
+                snapshot_file=snapshot_file,
+            )
             print_boot_success(url, master_ticket, pier_name=comet.lstrip("~"))
         return
 
@@ -2448,7 +2326,13 @@ def main():
         print(step_header(f"Step {total_steps}/{total_steps}: Booting your ship"))
         print()
         print("Give it a second...")
-        url = boot_comet(comet, feed, args.vere, pill=args.pill, snapshot_file=snapshot_file)
+        url = boot_comet(
+            comet,
+            feed,
+            args.vere,
+            pill=args.pill,
+            snapshot_file=snapshot_file,
+        )
         print_boot_success(url, master_ticket, pier_name)
 
 if __name__ == "__main__":
