@@ -46,6 +46,7 @@ if getattr(sys, "frozen", False) and not os.environ.get("REQUESTS_CA_BUNDLE"):
             break
 
 import hashlib
+import re
 
 import requests  # must come after CA bundle fix above
 import nacl.bindings
@@ -1660,6 +1661,146 @@ _INSTALL_GW_APPS = """:*  0
                       =="""
 
 
+def _extract_web_login_code(khan_output: str) -> str | None:
+    """Extract an Urbit +code-like token from khan-eval output."""
+
+    match = re.search(r"([a-z]{3,6}(?:-[a-z]{3,6}){3,})", khan_output)
+
+    if match:
+        return match.group(1)
+    return None
+
+
+def _get_web_login_code(
+    vere_bin: str, conn_sock: str, attempts: int = 10, delay_s: float = 1.0
+) -> str | None:
+    """Fetch the ship web login code via khan-eval with retries."""
+
+    _GET_WEB_LOGIN_CODE = """:*  0
+                                 %fyrd
+                                 %base
+                                 %khan-eval
+                                 %noun
+                                 %ted-eval
+                                 :_  :~  /sur/spider/hoon
+                                         /lib/strandio/hoon
+                                     ==
+                                 '''
+                                 =/  m  (strand ,vase)
+                                 ;<  our=@p  bind:m  get-our
+                                 ;<  code=@p  bind:m
+                                   (scry @p /j/code/(scot %p our))
+                                 (pure:m !>((crip (slag 1 (scow %p code)))))
+                                 '''
+                             =="""
+
+    for _ in range(attempts):
+        out = send_fyrd(vere_bin, conn_sock, _GET_WEB_LOGIN_CODE)
+        if out:
+            code = _extract_web_login_code(out)
+            if code:
+                return code
+        time.sleep(delay_s)
+    return None
+
+
+def _get_ship_cookie_from_login(url: str, login_code: str) -> str:
+    """POST /~/login and return the urbauth cookie pair."""
+
+    resp = requests.post(
+        f"{url}/~/login",
+        data={"password": login_code},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    raw_cookie = resp.headers.get("set-cookie", "")
+    cookie_pair = raw_cookie.split(";", 1)[0].strip()
+
+    if not cookie_pair:
+        raise RuntimeError("No Set-Cookie header returned from /~/login")
+    return cookie_pair
+
+
+def _which_cmd(cmd: str) -> str | None:
+    """Return resolved path from `which <cmd>` or None."""
+
+    try:
+        found = subprocess.run(
+            ["which", cmd], capture_output=True, text=True, timeout=5, check=False
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if found.returncode != 0:
+        return None
+    path = found.stdout.strip()
+    return path if path else None
+
+
+def _write_ship_mcp_configs(pier_name: str, ship_name: str, port: int, ship_cookie: str) -> None:
+    """Write project-scoped MCP configs for installed local agent CLIs."""
+
+    url = f"http://localhost:{port}/mcp"
+    header_cookie = {"Cookie": ship_cookie}
+    pier_dir = os.path.abspath(pier_name)
+
+    codex_path_bin = _which_cmd("codex")
+
+    if codex_path_bin:
+        codex_dir = os.path.join(pier_dir, ".codex")
+        os.makedirs(codex_dir, exist_ok=True)
+        codex_path = os.path.join(codex_dir, "config.toml")
+        with open(codex_path, "w", encoding="utf-8") as f:
+            f.write(
+                f"""[mcp_servers.{ship_name}]
+enabled = true
+url = "{url}"
+http_headers = {{ "Cookie" = "{ship_cookie}" }}
+"""
+            )
+
+    claude_path_bin = _which_cmd("claude")
+
+    if claude_path_bin:
+        claude_path = os.path.join(pier_dir, ".mcp.json")
+        with open(claude_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "mcpServers": {
+                        ship_name: {
+                            "type": "http",
+                            "url": url,
+                            "headers": header_cookie,
+                        }
+                    }
+                },
+                f,
+                indent=2,
+            )
+            f.write("\n")
+
+    opencode_path_bin = _which_cmd("opencode")
+
+    if opencode_path_bin:
+        opencode_path = os.path.join(pier_dir, "opencode.json")
+        with open(opencode_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "mcp": {
+                        ship_name: {
+                            "oauth": False,
+                            "enabled": True,
+                            "type": "remote",
+                            "url": url,
+                            "headers": header_cookie,
+                        }
+                    }
+                },
+                f,
+                indent=2,
+            )
+            f.write("\n")
+
+
 def wait_for_idle(
     vere_bin: str, conn_sock: str, poll_interval: int = 1, max_attempts: int = 60
 ) -> None:
@@ -1925,6 +2066,20 @@ def boot_comet(
     #  TODO replace; check if we're on Mesa with the dister
     if connected_to_dister is True:
         time.sleep(10)
+
+    login_code = _get_web_login_code(vere_bin, conn_sock)
+    if not login_code:
+        print("ERROR: Failed to fetch web login code from ship.")
+        proc.kill()
+        sys.exit(1)
+
+    try:
+        ship_cookie = _get_ship_cookie_from_login(url, login_code)
+        _write_ship_mcp_configs(pier_name, comet_name.lstrip("~"), port, ship_cookie)
+    except Exception as e:
+        print(f"ERROR: Failed to generate local MCP config files: {e}")
+        proc.kill()
+        sys.exit(1)
 
     send_fyrd(vere_bin, conn_sock, _INSTALL_GW_APPS)
 
