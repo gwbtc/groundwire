@@ -1686,7 +1686,9 @@ http_headers = {{ "Cookie" = "{ship_cookie}" }}
         )
         f.write("\n")
 
-    opencode_path = os.path.join(pier_dir, "opencode.jsonc")
+    opencode_dir = os.path.join(pier_dir, ".opencode")
+    os.makedirs(opencode_dir, exist_ok=True)
+    opencode_path = os.path.join(pier_dir, ".opencode/opencode.jsonc")
 
     with open(opencode_path, "w", encoding="utf-8") as f:
         f.write(
