@@ -1656,6 +1656,8 @@ def _write_ship_mcp_configs(pier_name: str, ship_name: str, port: int, ship_cook
             f"""[mcp_servers.{ship_name}]
 enabled = true
 url = "{url}"
+# See this guide to get a new cookie
+# https://github.com/gwbtc/urbit-mcp/blob/main/README.md
 http_headers = {{ "Cookie" = "{ship_cookie}" }}
 """
         )
@@ -1678,25 +1680,27 @@ http_headers = {{ "Cookie" = "{ship_cookie}" }}
         )
         f.write("\n")
 
-    opencode_path = os.path.join(pier_dir, "opencode.json")
+    opencode_path = os.path.join(pier_dir, "opencode.jsonc")
 
     with open(opencode_path, "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "mcp": {
-                    ship_name: {
-                        "oauth": False,
-                        "enabled": True,
-                        "type": "remote",
-                        "url": url,
-                        "headers": header_cookie,
-                    }
-                }
-            },
-            f,
-            indent=2,
+        f.write(
+            f"""{{
+  "mcp": {{
+    "{ship_name}": {{
+      "oauth": false,
+      "enabled": true,
+      "type": "remote",
+      "url": "{url}",
+      // See this guide to get a new cookie
+      // https://github.com/gwbtc/urbit-mcp/blob/main/README.md
+      "headers": {{
+        "Cookie": "{ship_cookie}"
+      }}
+    }}
+  }}
+}}
+"""
         )
-        f.write("\n")
 
 
 def wait_for_idle(
