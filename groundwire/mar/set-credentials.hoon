@@ -4,8 +4,8 @@
   ++  noun  [url=(unit @t) access-key=(unit @t) secret-key=(unit @t)]
   --
 ++  grow
-  |=  =update
-  ^-  vase
-  !>(update)
+  |%
+  ++  noun  update
+  --
 ++  grad  %noun
 --

@@ -4,8 +4,8 @@
   ++  noun  [url=(unit @t) bucket=(unit @t) region=(unit @t)]
   --
 ++  grow
-  |=  =update
-  ^-  vase
-  !>(update)
+  |%
+  ++  noun  update
+  --
 ++  grad  %noun
 --
