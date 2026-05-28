@@ -714,6 +714,7 @@
     |=  old-state=vase
     ^-  (quip card:agent:gall agent:gall)
     :: ?<  ?=([%eyre *] sap.bowl) :: Eyre Security (never happens)
+    =.  +<.q.old-state  !>(+<+.q.old-state)
     =.  full-state  !<(state-0 old-state)
     =.  state  (migrate:app state)
     =^  cards  full-state
