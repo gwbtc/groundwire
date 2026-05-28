@@ -1791,7 +1791,7 @@ def print_boot_success(url: str, master_ticket: str, pier_name: str) -> None:
     print(f"- Manage your apps at {_LINK}{url}/apps/landscape{_NC}")
     print(f"- Use your Bitcoin hot wallet at {_LINK}{url}/spv-wallet{_NC}")
     # print(f"- Chat in P2P groups and DMs at {_LINK}{url}/apps/groups{_NC}")
-    print(f"- Use Nostr at {_LINK}{url}/apps/groups{_NC}")
+    print(f"- Use Nostr at {_LINK}{url}/apps/nostrill{_NC}")
     print(f"- Connect your AI agent to {_LINK}{url}/mcp{_NC}")
     print()
     print(f"{_BOLD}To use your ship from the browser, you'll need your web login code{_NC}")
