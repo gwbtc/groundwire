@@ -493,14 +493,19 @@
       %rift
     `[ship.eu id %rift rift.pdiff %.n]
   ::
-      %sponsor
-    `[ship.eu id %spon sponsor.pdiff]
-  ::
       %keys
     `[ship.eu id %keys [life.pdiff (sub (end 3 pass.pdiff) 'a') pass.pdiff] %.y]
   ::
       %fief
     `[ship.eu id %fief fief.pdiff]
+  ::
+      %sponsor
+    ::
+    ::  defensively guarantee that a ship with no
+    ::  onchain sponsor is sponsoring itself in jael
+    ?~  sponsor.pdiff
+      `[ship.eu id %spon `ship.eu]
+    `[ship.eu id %spon sponsor.pdiff]
   ==
 ::
 ++  state-to-udiffs
@@ -524,8 +529,14 @@
       ^-  udiffs:point:jael
       :~  [ship id %keys [life.net (sub (end 3 pass.net) 'a') pass.net] %.y]
           [ship id %rift rift.net %.y]
-          [ship id %spon ?:(has.sponsor.net `who.sponsor.net ~)]
           [ship id %fief fief.net]
+          :*  ship
+              id
+              %spon
+              ?.  has.sponsor.net
+                `ship
+              `who.sponsor.net
+          ==
       ==
     new-udiffs
   ==
