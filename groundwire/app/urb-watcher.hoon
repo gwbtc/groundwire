@@ -529,8 +529,14 @@
       ^-  udiffs:point:jael
       :~  [ship id %keys [life.net (sub (end 3 pass.net) 'a') pass.net] %.y]
           [ship id %rift rift.net %.y]
-          [ship id %spon ?:(has.sponsor.net `who.sponsor.net ~)]
           [ship id %fief fief.net]
+          :*  ship
+              id
+              %spon
+              ?.  has.sponsor.net
+                `ship
+              `who.sponsor.net
+          ==
       ==
     new-udiffs
   ==
