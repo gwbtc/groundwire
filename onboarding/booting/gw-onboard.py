@@ -1659,7 +1659,10 @@ def _write_ship_mcp_configs(pier_name: str, port: int, ship_cookie: str) -> None
 
     with open(codex_path, "w", encoding="utf-8") as f:
         f.write(
-            f"""[mcp_servers.{mcp_server_name}]
+            f"""[mcp_servers.urbit-docs]
+url = "https://docs.urbit.org/~gitbook/mcp"
+
+[mcp_servers.{mcp_server_name}]
 enabled = true
 url = "{url}"
 # See this guide to get a new cookie
@@ -1674,6 +1677,10 @@ http_headers = {{ "Cookie" = "{ship_cookie}" }}
         json.dump(
             {
                 "mcpServers": {
+                    "urbit-docs": {
+                      "type": "http",
+                      "url": "https://docs.urbit.org/~gitbook/mcp"
+                    },
                     mcp_server_name: {
                         "type": "http",
                         "url": url,
@@ -1694,6 +1701,12 @@ http_headers = {{ "Cookie" = "{ship_cookie}" }}
         f.write(
             f"""{{
   "mcp": {{
+    "urbit-docs": {{
+      "oauth": false,
+      "enabled": true,
+      "type": "remote",
+      "url": "https://docs.urbit.org/~gitbook/mcp"
+    }},
     "{mcp_server_name}": {{
       "oauth": false,
       "enabled": true,
