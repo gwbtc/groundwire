@@ -135,6 +135,27 @@
   ?~  res=(de:base16:mimes:html p.res.res)  (pure:m ~)
   (pure:m `[txid (decodew:txu:bc u.res)])
 ::
+::  +get-tx-out: query whether a specific output is unspent (RPC gettxout).
+::
+::    Produces ~ on RPC error, `%.y if the output is unspent (UTXO present),
+::    or `%.n if it is spent or does not exist (gettxout yields JSON null).
+::
+++  get-tx-out
+  |=  [=req-to id=(unit @t) txid=@ux vout=@ud]
+  =/  m  (strand:strandio (unit ?))
+  ^-  form:m
+  ;<  res=response:rpc  bind:m
+    %+  request-rpc  req-to
+    ^-  request:rpc
+    :*  ?~(id 'get-tx-out' u.id)
+        '2.0'
+        'gettxout'
+        list+[s+(render-hex-bytes 32 txid) (numb:enjs:format vout) ~]
+    ==
+  ?.  ?=([%result *] res)  (pure:m ~)
+  ?:  ?=(~ res.res)  (pure:m `%.n)
+  (pure:m `%.y)
+::
 ++  get-block-count
   |=  [=req-to id=(unit @t)]
   =/  m  (strand:strandio (unit @ud))

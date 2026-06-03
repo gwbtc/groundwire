@@ -36,6 +36,11 @@
             to=[spkh=@ux vout=(unit vout:ord) =off:ord tej=off:ord] 
         ==
         [%keys =pass breach=?]
+        ::  %no-op: a plain ownership transfer with no PKI change. Confidential
+        ::  comets must mark regular sat transfers with this so the attestation
+        ::  chain has no gaps (an unmarked transfer would be indistinguishable
+        ::  from a hidden PKI action).
+        [%no-op ~]
         [%escape parent=ship sig=(unit @)]
         [%cancel-escape parent=ship]
         [%adopt =ship]

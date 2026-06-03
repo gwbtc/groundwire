@@ -591,9 +591,15 @@
             sots     t.sots
             unv-ids   (~(put by unv-ids) who u.point)
         ==
+      ::
+      ::  A plain ownership transfer: the owner controlled the sat (checked
+      ::  above via is-sont-in-input) and makes no PKI change. Nothing to update
+      ::  on the point; ++update-sonts tracks the sat to its new home afterward.
+          %no-op
+        $(sots t.sots)
       ==
       ::
-      ::  Is this sont in the input that's being processed? 
+      ::  Is this sont in the input that's being processed?
       ++  is-sont-in-input
         |=  sot=sont:ord
         ~|  [s=sot [txid pos value]:i.inputs]

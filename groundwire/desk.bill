@@ -1,3 +1,4 @@
 :~  %reg-tester
+    %urb-handler
     %urb-watcher
 ==
