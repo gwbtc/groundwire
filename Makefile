@@ -25,6 +25,7 @@ VENDOR_BASE_DEV_GW := \
 	mar/jam.hoon \
 	mar/mime.hoon \
 	mar/hoon.hoon \
+	mar/txt.hoon \
 	sur/asn1.hoon \
 	sur/spider.hoon \
 	sur/verb.hoon
