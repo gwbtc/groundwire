@@ -1725,17 +1725,27 @@ http_headers = {{ "Cookie" = "{ship_cookie}" }}
 
 
 def wait_for_idle(
-    vere_bin: str, conn_sock: str, poll_interval: int = 1, max_attempts: int = 60
+    vere_bin: str,
+    conn_sock: str,
+    poll_interval: int = 1,
+    max_attempts: int = 60,
+    fyrd_timeout: int = 180,
 ) -> None:
     """Poll the ship's conn.sock until it responds to a FYRD (i.e. is idle and booted)."""
+    started_at = time.monotonic()
     for attempt in range(1, max_attempts + 1):
-        elapsed = attempt * poll_interval
-        result = send_fyrd(vere_bin, conn_sock, _IDLE_FYRD)
+        result = send_fyrd(
+            vere_bin,
+            conn_sock,
+            _IDLE_FYRD,
+            timeout=fyrd_timeout,
+        )
         if "%avow" in result:
             return
         time.sleep(poll_interval)
     print()
-    print(f"ERROR: Ship did not become idle after {max_attempts * poll_interval}s.")
+    elapsed = int(time.monotonic() - started_at)
+    print(f"ERROR: Ship did not become idle after {elapsed}s.")
     sys.exit(1)
 
 
