@@ -720,7 +720,7 @@
         ?-  tx-status.tx-b
           [%unconfirmed ~]       %.n  :: confirmed comes after
           [%confirmed *]         :: compare block heights
-            (gth +>:tx-status.tx-a +>:tx-status.tx-b)
+            (gth block-height.tx-status.tx-a block-height.tx-status.tx-b)
         ==
     ==
   ::  Format derivation path - get account path from wallet if available
@@ -1262,7 +1262,7 @@
       [%confirmed *]
         ?-  tx-status.tx-b
           [%unconfirmed ~]  %.n
-          [%confirmed *]    (gth +>:tx-status.tx-a +>:tx-status.tx-b)
+          [%confirmed *]    (gth block-height.tx-status.tx-a block-height.tx-status.tx-b)
         ==
     ==
   ::  Build URLs
@@ -2005,7 +2005,7 @@
         ?-  tx-status.tx-b
           [%unconfirmed ~]       %.n  :: confirmed comes after
           [%confirmed *]         :: compare block heights
-            (gth +>:tx-status.tx-a +>:tx-status.tx-b)
+            (gth block-height.tx-status.tx-a block-height.tx-status.tx-b)
         ==
     ==
   ::  Generate OOB updates for all sections

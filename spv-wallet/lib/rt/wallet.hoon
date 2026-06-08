@@ -457,13 +457,13 @@
   ::  /apps/wallet-2 -> draft 2, etc.
   ?:  ?=([%apps %wallet ~] site)
     %-  mime-response:sailbox
-    [/text/html (manx-to-octs:server (draft-page:draft 0 wallets accounts args local-txs))]
+    [/text/html (manx-to-octs:server (draft-page:draft 0 wallets accounts args broadcasts))]
   ?:  ?=([%apps %wallet-1 ~] site)
     %-  mime-response:sailbox
-    [/text/html (manx-to-octs:server (draft-page:draft 1 wallets accounts args local-txs))]
+    [/text/html (manx-to-octs:server (draft-page:draft 1 wallets accounts args broadcasts))]
   ?:  ?=([%apps %wallet-2 ~] site)
     %-  mime-response:sailbox
-    [/text/html (manx-to-octs:server (draft-page:draft 2 wallets accounts args local-txs))]
+    [/text/html (manx-to-octs:server (draft-page:draft 2 wallets accounts args broadcasts))]
   ::  Handle address data endpoint (returns simple-payload:http)
   ?:  ?=([%spv-wallet %wallet @ %account @ %address @ %data ~] site)
     =/  pubkey=@ux  (rash i.t.site hex)

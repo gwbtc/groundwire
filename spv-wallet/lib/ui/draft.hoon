@@ -17,11 +17,11 @@
           wallets=(map @ux wallet)
           accounts=(map @ux account-details)
           args=(list [key=@t value=@t])
-          local-txs=(map @t local-tx)
+          broadcasts=(map @t broadcast)
       ==
   ^-  manx
-  ?+  num  (draft-0 wallets accounts args local-txs)
-    %0  (draft-0 wallets accounts args local-txs)
+  ?+  num  (draft-0 wallets accounts args broadcasts)
+    %0  (draft-0 wallets accounts args broadcasts)
   ==
 ::
 ++  format-btc
@@ -104,7 +104,7 @@
   |=  $:  all-wallets=(map @ux wallet)
           all-accounts=(map @ux account-details)
           args=(list [key=@t value=@t])
-          local-txs=(map @t local-tx)
+          broadcasts=(map @t broadcast)
       ==
   ^-  manx
   ::  Find the <simple> wallet, fall back to first wallet
@@ -167,11 +167,7 @@
     (compute-account-balance u.acct)
   =/  bal-tape=tape  (format-btc bal)
   =/  bal-sats=tape  (a-co:co bal)
-  =/  [pending-in=@ud pending-out=@ud]
-    ?~  acct  [0 0]
-    (compute-account-pending u.acct)
-  =/  pending-in-tape=tape  (format-btc pending-in)
-  =/  pending-out-tape=tape  (format-btc pending-out)
+  ::  pending-in/out computed after tx-list is built (below)
   =/  is-mainnet=?
     ?~  acct  %.n
     =(%main active-network.u.acct)
@@ -182,23 +178,24 @@
   ::  Address is now fetched live via POST when Receive is clicked
   ::  Build transaction list for activity popup
   ::  Each tx gets a direction (sent/received) and net amount
+  =/  our-addrs=(set @t)
+    ?~  acct  ~
+    =/  ac  ~(. ac:wallet-account [u.acct active-network.u.acct])
+    =/  addrs=(set @t)  ~
+    =/  recv=(list [@ud hd-leaf])  (tap:((on @ud hd-leaf) gth) receiving:ac)
+    |-
+    ?~  recv
+      =/  chng=(list [@ud hd-leaf])  (tap:((on @ud hd-leaf) gth) change:ac)
+      |-
+      ?~  chng  addrs
+      $(chng t.chng, addrs (~(put in addrs) address.main.+.i.chng))
+    $(recv t.recv, addrs (~(put in addrs) address.main.+.i.recv))
   =/  tx-list=(list [dir=?(%sent %received) amt=@ud conf=? =transaction])
     ?~  acct  ~
     =/  net-det=network-details
       =/  nd  (~(get by networks.u.acct) active-network.u.acct)
       ?~  nd  *network-details
       u.nd
-    =/  ac  ~(. ac:wallet-account [u.acct active-network.u.acct])
-    =/  our-addrs=(set @t)
-      =/  addrs=(set @t)  ~
-      =/  recv=(list [@ud hd-leaf])  (tap:((on @ud hd-leaf) gth) receiving:ac)
-      |-
-      ?~  recv
-        =/  chng=(list [@ud hd-leaf])  (tap:((on @ud hd-leaf) gth) change:ac)
-        |-
-        ?~  chng  addrs
-        $(chng t.chng, addrs (~(put in addrs) address.main.+.i.chng))
-      $(recv t.recv, addrs (~(put in addrs) address.main.+.i.recv))
     =/  txns=(list [txid=@t tx=transaction])  ~(tap by transactions.net-det)
     =/  acc=(list [dir=?(%sent %received) amt=@ud conf=? =transaction])  ~
     |-
@@ -234,81 +231,142 @@
         ~[[%sent (sub out-val in-val) conf tx]]
       ~[[%received (sub in-val out-val) conf tx]]
     $(txns t.txns, acc (weld entries acc))
-  ::  Inject pending local-txs not yet in transaction map
+  ::  Compute pending from unconfirmed transactions in tx-list
+  =/  [pending-in=@ud pending-out=@ud]
+    =/  rem=(list [dir=?(%sent %received) amt=@ud conf=? =transaction])  tx-list
+    =/  pin=@ud  0
+    =/  pout=@ud  0
+    |-
+    ?~  rem  [pin pout]
+    ?:  conf.i.rem  $(rem t.rem)
+    ?:  ?=(%received dir.i.rem)
+      $(rem t.rem, pin (add pin amt.i.rem))
+    $(rem t.rem, pout (add pout amt.i.rem))
+  =/  pending-in-tape=tape  (format-btc pending-in)
+  =/  pending-out-tape=tape  (format-btc pending-out)
+  ::  Inject pending broadcasts not yet in transaction map
   =/  pending-items=(list manx)
     ?~  acct  ~
     =/  net-det=network-details
       =/  nd  (~(get by networks.u.acct) active-network.u.acct)
       ?~  nd  *network-details
       u.nd
-    =/  rem=(list [txid=@t ltx=local-tx])  ~(tap by local-txs)
+    =/  rem=(list [txid=@t bc=broadcast])  ~(tap by broadcasts)
     =/  items=(list manx)  ~
     |-
     ?~  rem  (flop items)
-    =/  [txid=@t ltx=local-tx]  i.rem
+    =/  [txid=@t bc=broadcast]  i.rem
+    ?.  =(network.bc active-network.u.acct)
+      $(rem t.rem)
     ?:  (~(has by transactions.net-det) txid)
       $(rem t.rem)
-    =/  txid-short=tape  (weld (scag 8 (trip txid)) "...")
-    =/  status-label=tape
-      ?-  status.ltx
-        %broadcast  "Broadcast"
-        %mempool    "In Mempool"
-        %confirmed  "Confirmed"
-      ==
+    ::  Compute send amount: sum non-change outputs
+    =/  send-amt=@ud
+      =/  outs=(list [address=@t amount=@ud])  outputs.bc
+      =/  s=@ud  0
+      |-
+      ?~  outs  s
+      ?:  ?&(?=(^ change-address.bc) =(address.i.outs u.change-address.bc))
+        $(outs t.outs)
+      $(outs t.outs, s (add s amount.i.outs))
+    =/  amt-tape=tape  (format-btc send-amt)
+    ::  Destination: first non-change output
+    =/  dest=tape
+      =/  outs=(list [address=@t amount=@ud])  outputs.bc
+      |-
+      ?~  outs  ""
+      ?:  ?&(?=(^ change-address.bc) =(address.i.outs u.change-address.bc))
+        $(outs t.outs)
+      (trip address.i.outs)
+    =/  sent-da=@da  sent.bc
+    =/  =date  (yore sent-da)
+    =/  [dy=@ud hr=@ud mn=@ud *]  t.date
+    =/  sent-tape=tape
+      "{(a-co:co m.date)}/{(a-co:co dy)} {(a-co:co hr)}:{?:((lth mn 10) "0" "")}{(a-co:co mn)}"
+    =/  txid-full=tape  (trip txid)
     =/  item=manx
-      ;div.activity-tx
-        ;div.activity-tx-left
-          ;div(class "activity-tx-dir tx-sent"): Sent
-          ;div.activity-tx-id-row
-            ;span.activity-tx-id: {txid-short}
-            ;button.tx-copy-btn(onclick "copyTxid(this)", data-txid (trip txid))
-              ;svg(xmlns "http://www.w3.org/2000/svg", viewBox "0 0 24 24", width "12", height "12", fill "none", stroke "currentColor", stroke-width "2", stroke-linecap "round", stroke-linejoin "round")
-                ;rect(x "9", y "9", width "13", height "13", rx "2", ry "2");
-                ;path(d "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1");
-              ==
-            ==
+      ;div.activity-tx(onclick "showTxDetail(this)", data-txid txid-full, data-addr dest, data-addr-label "To", data-status "Broadcast", data-time sent-tape)
+        ;div.activity-tx-icon.tx-sent
+          ;svg(xmlns "http://www.w3.org/2000/svg", viewBox "0 0 24 24", width "16", height "16", fill "none", stroke "currentColor", stroke-width "2.5", stroke-linecap "round", stroke-linejoin "round")
+            ;line(x1 "12", y1 "19", x2 "12", y2 "5");
+            ;polyline(points "5 12 12 5 19 12");
           ==
         ==
-        ;div.activity-tx-right
-          ;div(class "activity-tx-amt tx-sent"): pending
-          ;div.activity-tx-status.pending: {status-label}
+        ;div.activity-tx-body
+          ;+  ?.  (gth (lent dest) 0)  ;span;
+              ;div.activity-tx-addr: {dest}
+          ;div.activity-tx-meta
+            ;span.activity-tx-status.pending: Broadcast
+            ;span.activity-tx-time: {sent-tape}
+          ==
+        ==
+        ;div.activity-tx-value
+          ;div(class "activity-tx-amt tx-sent")
+            ; -{amt-tape} BTC
+          ==
+          ;div.activity-tx-fiat(data-sats "{(a-co:co send-amt)}"): ;
         ==
       ==
     $(rem t.rem, items [item items])
   ::  Pre-render activity items outside sail to avoid fuse-loop
+  ::  Sort: pending (unconfirmed) first, then confirmed
+  =/  tx-list-sorted=(list [dir=?(%sent %received) amt=@ud conf=? =transaction])
+    %+  weld
+      (skim tx-list |=(e=[* * conf=? *] !conf.e))
+    (skim tx-list |=(e=[* * conf=? *] conf.e))
   =/  tx-items=(list manx)
-    =/  rem=(list [dir=?(%sent %received) amt=@ud conf=? =transaction])  tx-list
+    =/  rem=(list [dir=?(%sent %received) amt=@ud conf=? =transaction])  tx-list-sorted
     =/  items=(list manx)  ~
     |-
     ?~  rem  (flop items)
     =/  e  i.rem
     =/  amt-tape=tape  (format-btc amt.e)
-    =/  dir-label=tape  ?:(?=(%sent dir.e) "Sent" "Received")
     =/  dir-class=tape  ?:(?=(%sent dir.e) "tx-sent" "tx-received")
+    =/  tx-time=tape
+      ?.  ?=([%confirmed *] tx-status.transaction.e)  ""
+      =/  bt=@ud  block-time.tx-status.transaction.e
+      ?:  =(0 bt)  ""
+      =/  =date  (yore (add ~1970.1.1 (mul bt ~s1)))
+      =/  [dy=@ud hr=@ud mn=@ud *]  t.date
+      "{(a-co:co m.date)}/{(a-co:co dy)} {(a-co:co hr)}:{?:((lth mn 10) "0" "")}{(a-co:co mn)}"
     =/  status=tape  ?:(conf.e "Confirmed" "Pending")
-    =/  txid-short=tape
-      =/  t=tape  (trip txid.transaction.e)
-      (weld (scag 8 t) "...")
+    =/  counterparty=tape
+      ?:  ?=(%sent dir.e)
+        ::  Sent: first output address
+        =/  outs=(list tx-output)  outputs.transaction.e
+        ?~(outs "" (trip address.i.outs))
+      ::  Received: first input prevout address
+      =/  ins=(list tx-input)  inputs.transaction.e
+      |-
+      ?~  ins  ""
+      ?~  prevout.i.ins  $(ins t.ins)
+      (trip address.u.prevout.i.ins)
+    =/  addr-label=tape  ?:(?=(%sent dir.e) "To" "From")
     =/  txid-full=tape  (trip txid.transaction.e)
     =/  item=manx
-      ;div.activity-tx
-        ;div.activity-tx-left
-          ;div(class "activity-tx-dir {dir-class}"): {dir-label}
-          ;div.activity-tx-id-row
-            ;span.activity-tx-id: {txid-short}
-            ;button.tx-copy-btn(onclick "copyTxid(this)", data-txid txid-full)
-              ;svg(xmlns "http://www.w3.org/2000/svg", viewBox "0 0 24 24", width "12", height "12", fill "none", stroke "currentColor", stroke-width "2", stroke-linecap "round", stroke-linejoin "round")
-                ;rect(x "9", y "9", width "13", height "13", rx "2", ry "2");
-                ;path(d "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1");
-              ==
-            ==
+      ;div.activity-tx(onclick "showTxDetail(this)", data-txid txid-full, data-addr counterparty, data-addr-label addr-label, data-status status, data-time tx-time)
+        ;div(class "activity-tx-icon {dir-class}")
+          ;svg(xmlns "http://www.w3.org/2000/svg", viewBox "0 0 24 24", width "16", height "16", fill "none", stroke "currentColor", stroke-width "2.5", stroke-linecap "round", stroke-linejoin "round")
+            ;+  ?:  ?=(%sent dir.e)
+                ;polyline(points "5 12 12 5 19 12");
+            ;polyline(points "19 12 12 19 5 12");
+            ;line(x1 "12", y1 "19", x2 "12", y2 "5");
           ==
         ==
-        ;div.activity-tx-right
+        ;div.activity-tx-body
+          ;+  ?.  (gth (lent counterparty) 0)  ;span;
+              ;div.activity-tx-addr: {counterparty}
+          ;div.activity-tx-meta
+            ;span.activity-tx-status(class ?:(conf.e "confirmed" "pending")): {status}
+            ;+  ?.  (gth (lent tx-time) 0)  ;span;
+                ;span.activity-tx-time: {tx-time}
+          ==
+        ==
+        ;div.activity-tx-value
           ;div(class "activity-tx-amt {dir-class}")
             ; {?:(?=(%sent dir.e) "-" "+")}{amt-tape} BTC
           ==
-          ;div.activity-tx-status(class ?:(conf.e "confirmed" "pending")): {status}
+          ;div.activity-tx-fiat(data-sats "{(a-co:co amt.e)}"): ;
         ==
       ==
     $(rem t.rem, items [item items])
@@ -346,9 +404,11 @@
     ?:  (lth (lent addr) 20)  addr
     (weld (scag 10 addr) (weld "..." (slag (sub (lent addr) 6) addr)))
   =/  bal=@ud
-    ?~  info.det  0
-    ?:  (gth chain-spent.u.info.det chain-funded.u.info.det)  0
-    (sub chain-funded.u.info.det chain-spent.u.info.det)
+    =/  rem=(list [txid=@t vout=@ud value=@ud =tx-status])  utxos.det
+    =/  s=@ud  0
+    |-
+    ?~  rem  s
+    $(rem t.rem, s (add s value.i.rem))
   =/  bal-tape=tape  (format-btc bal)
   =/  idx-tape=tape  (a-co:co idx)
   =/  last-title=tape
@@ -356,8 +416,11 @@
     =/  d=date  (yore u.last-check.det)
     "Last refreshed: {(a-co:co m.d)}/{(a-co:co d.t.d)} {(a-co:co h.t.d)}:{?:((lth m.t.d 10) "0" "")}{(a-co:co m.t.d)}"
   =/  has-pending=?
-    ?~  info.det  %.n
-    |(!=(0 mempool-funded.u.info.det) !=(0 mempool-spent.u.info.det))
+    =/  rem=(list [txid=@t vout=@ud value=@ud =tx-status])  utxos.det
+    |-
+    ?~  rem  %.n
+    ?:  ?=([%unconfirmed ~] tx-status.i.rem)  %.y
+    $(rem t.rem)
   =/  item=manx
     ;div.addr-item
       ;div.addr-item-left
@@ -444,10 +507,6 @@
         ==
       ==
     ==
-    ;div.activity-row
-      ;button.activity-btn(onclick "toggleActivity()"): Activity
-      ;button.activity-btn(onclick "toggleAddresses()"): Addresses
-    ==
   ==
 ::
 ++  render-banner
@@ -491,6 +550,9 @@
       ;div.balance-fiat
         ;span#fiat-value(data-sats bal-sats): —
       ==
+      ;div.balance-rate
+        ;span#btc-rate: —
+      ==
     ==
     ;div(class uc)
       ;div.unconf-label: Unconfirmed
@@ -521,24 +583,18 @@
     ;button.action-btn.action-btn-primary(onclick "toggleSend()"): Send
   ==
 ::
-++  render-activity-popup
-  |=  tx-items=(list manx)
+++  render-tab-panel
+  |=  [tx-items=(list manx) addr-items=[recv=(list manx) chng=(list manx)]]
   ^-  manx
-  ;div#activity-overlay.activity-overlay(onclick "closeActivity(event)")
-    ;div.activity-modal
-      ;button.activity-close(onclick "toggleActivity()"): ×
-      ;div.activity-title: Activity
+  ;div.tab-panel
+    ;div.tab-bar
+      ;button.tab-btn.active(onclick "switchTab('activity', this)"): Activity
+      ;button.tab-btn(onclick "switchTab('addresses', this)"): Addresses
+    ==
+    ;div#tab-activity.tab-content
       ;+  (render-activity-list tx-items)
     ==
-  ==
-::
-++  render-addresses-popup
-  |=  addr-items=[recv=(list manx) chng=(list manx)]
-  ^-  manx
-  ;div#addresses-overlay.activity-overlay(onclick "closeAddresses(event)")
-    ;div.activity-modal
-      ;button.activity-close(onclick "toggleAddresses()"): ×
-      ;div.activity-title: Addresses
+    ;div#tab-addresses.tab-content.hidden
       ;div.addr-tabs
         ;button.addr-tab.active(onclick "switchAddrTab('recv', this)"): Receiving
         ;button.addr-tab(onclick "switchAddrTab('chng', this)"): Change
@@ -552,6 +608,47 @@
         ;+  ?.  =(~ chng.addr-items)  ;span;
             ;div.addr-empty: No change addresses derived
         ;*  chng.addr-items
+      ==
+    ==
+  ==
+::
+++  render-tx-detail-popup
+  |=  ~
+  ^-  manx
+  ;div.tx-detail-overlay.hidden(id "tx-detail-overlay", onclick "closeTxDetail(event)")
+    ;div.tx-detail-modal
+      ;button.receive-close(onclick "closeTxDetail()"): ×
+      ;div.tx-detail-row.hidden(id "tx-detail-addr")
+        ;span.tx-detail-label(id "tx-detail-addr-label"): From
+        ;div.tx-detail-value-row
+          ;span.tx-detail-value(id "tx-detail-addr-value");
+          ;button.tx-copy-btn(onclick "copyTxid(this)", data-txid "")
+            ;svg(xmlns "http://www.w3.org/2000/svg", viewBox "0 0 24 24", width "14", height "14", fill "none", stroke "currentColor", stroke-width "2", stroke-linecap "round", stroke-linejoin "round")
+              ;rect(x "9", y "9", width "13", height "13", rx "2", ry "2");
+              ;path(d "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1");
+            ==
+          ==
+        ==
+      ==
+      ;div.tx-detail-row
+        ;span.tx-detail-label: Txid
+        ;div.tx-detail-value-row
+          ;span.tx-detail-value(id "tx-detail-txid");
+          ;button.tx-copy-btn(onclick "copyTxid(this)", data-txid "")
+            ;svg(xmlns "http://www.w3.org/2000/svg", viewBox "0 0 24 24", width "14", height "14", fill "none", stroke "currentColor", stroke-width "2", stroke-linecap "round", stroke-linejoin "round")
+              ;rect(x "9", y "9", width "13", height "13", rx "2", ry "2");
+              ;path(d "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1");
+            ==
+          ==
+        ==
+      ==
+      ;div.tx-detail-row
+        ;span.tx-detail-label: Status
+        ;span.tx-detail-value(id "tx-detail-status");
+      ==
+      ;div.tx-detail-row.hidden(id "tx-detail-time-row")
+        ;span.tx-detail-label: Time
+        ;span.tx-detail-value(id "tx-detail-time");
       ==
     ==
   ==
@@ -767,6 +864,12 @@
         ;   justify-content: center;
         ;   gap: 6px;
         ; }
+        ; .balance-rate {
+        ;   margin-top: 4px;
+        ;   font-size: 11px;
+        ;   color: var(--f4);
+        ;   text-align: center;
+        ; }
         ; .sync-btn {
         ;   background: none;
         ;   border: none;
@@ -950,6 +1053,59 @@
         ;   font-size: 13px;
         ;   font-weight: 600;
         ;   color: var(--accent);
+        ; }
+        ;
+        ; /* --- Tx detail overlay --- */
+        ; .tx-detail-overlay {
+        ;   position: fixed;
+        ;   top: 0; left: 0; right: 0; bottom: 0;
+        ;   background: rgba(0,0,0,0.6);
+        ;   z-index: 100;
+        ;   display: flex;
+        ;   align-items: center;
+        ;   justify-content: center;
+        ; }
+        ; .tx-detail-overlay.hidden {
+        ;   display: none;
+        ; }
+        ; .tx-detail-modal {
+        ;   background: var(--b0);
+        ;   border-radius: 20px;
+        ;   padding: 24px;
+        ;   max-width: 400px;
+        ;   width: 90%;
+        ;   position: relative;
+        ; }
+        ; .tx-detail-row {
+        ;   margin-bottom: 16px;
+        ; }
+        ; .tx-detail-row:last-child {
+        ;   margin-bottom: 0;
+        ; }
+        ; .tx-detail-label {
+        ;   font-size: 11px;
+        ;   color: var(--f4);
+        ;   display: block;
+        ;   margin-bottom: 4px;
+        ; }
+        ; .tx-detail-value {
+        ;   font-size: 13px;
+        ;   font-family: monospace;
+        ;   color: var(--f1);
+        ;   white-space: nowrap;
+        ;   overflow: hidden;
+        ;   text-overflow: ellipsis;
+        ;   min-width: 0;
+        ; }
+        ; .tx-detail-value-row {
+        ;   display: flex;
+        ;   align-items: center;
+        ;   gap: 8px;
+        ;   min-width: 0;
+        ; }
+        ; .tx-detail-value-row .tx-copy-btn {
+        ;   flex-shrink: 0;
+        ;   margin-top: 2px;
         ; }
         ;
         ; /* --- Receive overlay --- */
@@ -1281,68 +1437,55 @@
         ;   cursor: pointer;
         ; }
         ;
-        ; /* --- Activity --- */
-        ; .activity-row {
-        ;   text-align: center;
-        ;   padding: 4px 24px 8px;
+        ; /* --- Tab panel --- */
+        ; .tab-panel {
+        ;   flex: 1;
         ;   display: flex;
-        ;   justify-content: center;
-        ;   gap: 8px;
+        ;   flex-direction: column;
+        ;   min-height: 0;
+        ;   margin: 0 24px 24px;
+        ;   background: var(--b1);
+        ;   border: 1px solid var(--b3);
+        ;   border-radius: 16px;
+        ;   overflow: hidden;
         ; }
-        ; .activity-btn {
+        ; .tab-bar {
+        ;   display: flex;
         ;   background: var(--b2);
+        ;   padding: 4px;
+        ;   gap: 0;
+        ; }
+        ; .tab-btn {
+        ;   flex: 1;
+        ;   background: transparent;
         ;   border: none;
-        ;   border-radius: 20px;
-        ;   color: var(--f3);
-        ;   font-size: 12px;
+        ;   border-radius: 12px;
+        ;   color: var(--f4);
+        ;   font-size: 13px;
         ;   font-weight: 500;
-        ;   padding: 5px 14px;
+        ;   padding: 8px 0;
         ;   cursor: pointer;
         ;   font-family: inherit;
         ;   transition: all 0.15s;
         ; }
-        ; .activity-btn:hover {
-        ;   background: var(--b3);
-        ;   color: var(--f1);
+        ; .tab-btn:hover {
+        ;   color: var(--f2);
         ; }
-        ; .activity-overlay {
-        ;   display: none;
-        ;   position: fixed;
-        ;   top: 0; left: 0; right: 0; bottom: 0;
-        ;   background: rgba(0,0,0,0.6);
-        ;   z-index: 100;
-        ;   align-items: center;
-        ;   justify-content: center;
+        ; .tab-btn.active {
+        ;   background: var(--accent-bg);
+        ;   color: var(--accent);
+        ;   font-weight: 600;
         ; }
-        ; .activity-overlay.open {
-        ;   display: flex;
-        ; }
-        ; .activity-modal {
-        ;   background: var(--b0);
-        ;   border-radius: 20px;
-        ;   padding: 28px 24px;
-        ;   max-width: 400px;
-        ;   width: 90%;
-        ;   max-height: 70vh;
-        ;   position: relative;
+        ; .tab-content {
+        ;   flex: 1;
         ;   display: flex;
         ;   flex-direction: column;
+        ;   min-height: 0;
+        ;   overflow-y: auto;
+        ;   padding: 12px 16px;
         ; }
-        ; .activity-close {
-        ;   position: absolute;
-        ;   top: 16px;
-        ;   right: 16px;
-        ;   background: none;
-        ;   border: none;
-        ;   color: var(--f4);
-        ;   font-size: 20px;
-        ;   cursor: pointer;
-        ;   line-height: 1;
-        ; }
-        ; .activity-title {
-        ;   font-size: 16px;
-        ;   font-weight: 600;
-        ;   margin-bottom: 16px;
+        ; .tab-content.hidden {
+        ;   display: none;
         ; }
         ; .activity-empty {
         ;   text-align: center;
@@ -1353,36 +1496,106 @@
         ; .activity-list {
         ;   overflow-y: auto;
         ;   flex: 1;
-        ;   padding: 0 8px;
         ; }
         ; .activity-tx {
         ;   display: flex;
-        ;   align-items: center;
-        ;   justify-content: space-between;
-        ;   padding: 14px 0;
+        ;   flex-direction: row;
+        ;   gap: 12px;
+        ;   padding: 12px 0;
         ;   border-bottom: 1px solid var(--b2);
+        ;   align-items: center;
+        ;   cursor: pointer;
+        ; }
+        ; .activity-tx:hover {
+        ;   opacity: 0.8;
         ; }
         ; .activity-tx:last-child {
         ;   border-bottom: none;
         ; }
-        ; .activity-tx-left {
-        ;   display: flex;
-        ;   flex-direction: column;
-        ;   gap: 3px;
-        ; }
-        ; .activity-tx-dir {
-        ;   font-size: 14px;
-        ;   font-weight: 500;
-        ; }
-        ; .activity-tx-id-row {
+        ; .activity-tx-icon {
+        ;   width: 36px;
+        ;   height: 36px;
+        ;   border-radius: 8px;
         ;   display: flex;
         ;   align-items: center;
-        ;   gap: 4px;
+        ;   justify-content: center;
+        ;   flex-shrink: 0;
         ; }
-        ; .activity-tx-id {
+        ; .activity-tx-icon.tx-received {
+        ;   background: #10b981;
+        ;   color: #fff;
+        ; }
+        ; .activity-tx-icon.tx-sent {
+        ;   background: var(--b3);
+        ;   color: var(--f2);
+        ; }
+        ; .activity-tx-body {
+        ;   display: flex;
+        ;   flex-direction: column;
+        ;   gap: 2px;
+        ;   min-width: 0;
+        ;   flex: 1;
+        ; }
+        ; .activity-tx-addr {
+        ;   font-size: 13px;
+        ;   font-family: monospace;
+        ;   color: var(--f1);
+        ;   white-space: nowrap;
+        ;   overflow: hidden;
+        ;   text-overflow: ellipsis;
+        ; }
+        ; .activity-tx-meta {
+        ;   display: flex;
+        ;   gap: 8px;
+        ;   align-items: center;
+        ; }
+        ; .activity-tx-top {
+        ;   display: flex;
+        ;   justify-content: space-between;
+        ;   align-items: center;
+        ; }
+        ; .activity-tx-value {
+        ;   display: flex;
+        ;   flex-direction: column;
+        ;   align-items: flex-end;
+        ;   flex-shrink: 0;
+        ;   margin-left: auto;
+        ; }
+        ; .activity-tx-amt {
+        ;   font-size: 14px;
+        ;   font-weight: 600;
+        ;   white-space: nowrap;
+        ; }
+        ; .activity-tx-fiat {
+        ;   font-size: 11px;
+        ;   color: var(--f4);
+        ;   white-space: nowrap;
+        ; }
+        ; .activity-tx-amt.tx-sent {
+        ;   color: var(--f1);
+        ; }
+        ; .activity-tx-amt.tx-received {
+        ;   color: #10b981;
+        ; }
+        ; .activity-tx-detail {
+        ;   display: flex;
+        ;   align-items: center;
+        ;   gap: 6px;
+        ;   min-width: 0;
+        ; }
+        ; .activity-tx-label {
+        ;   font-size: 11px;
+        ;   color: var(--f4);
+        ;   flex-shrink: 0;
+        ; }
+        ; .activity-tx-mono {
         ;   font-size: 11px;
         ;   font-family: monospace;
-        ;   color: var(--f4);
+        ;   color: var(--f3);
+        ;   white-space: nowrap;
+        ;   overflow: hidden;
+        ;   text-overflow: ellipsis;
+        ;   min-width: 0;
         ; }
         ; .tx-copy-btn {
         ;   background: none;
@@ -1392,27 +1605,17 @@
         ;   padding: 1px;
         ;   display: flex;
         ;   align-items: center;
+        ;   flex-shrink: 0;
         ;   opacity: 0.5;
         ;   transition: opacity 0.15s;
         ; }
         ; .tx-copy-btn:hover {
         ;   opacity: 1;
         ; }
-        ; .activity-tx-right {
-        ;   text-align: right;
+        ; .activity-tx-bottom {
         ;   display: flex;
-        ;   flex-direction: column;
-        ;   gap: 3px;
-        ; }
-        ; .activity-tx-amt {
-        ;   font-size: 14px;
-        ;   font-weight: 600;
-        ; }
-        ; .tx-sent {
-        ;   color: var(--f1);
-        ; }
-        ; .tx-received {
-        ;   color: #10b981;
+        ;   justify-content: space-between;
+        ;   align-items: center;
         ; }
         ; .activity-tx-status {
         ;   font-size: 11px;
@@ -1420,6 +1623,10 @@
         ; }
         ; .activity-tx-status.pending {
         ;   color: var(--accent);
+        ; }
+        ; .activity-tx-time {
+        ;   font-size: 11px;
+        ;   color: var(--f4);
         ; }
         ;
         ; /* --- Addresses popup --- */
@@ -1608,6 +1815,21 @@
         ;       fmtOpts.style = 'currency';
         ;       fmtOpts.currency = 'USD';
         ;       el.textContent = usd.toLocaleString('en-US', fmtOpts);
+        ;       var rateEl = document.getElementById('btc-rate');
+        ;       if (rateEl) {
+        ;         var rateFmt = new Object();
+        ;         rateFmt.style = 'currency';
+        ;         rateFmt.currency = 'USD';
+        ;         rateFmt.maximumFractionDigits = 0;
+        ;         rateEl.textContent = '1 BTC = ' + price.toLocaleString('en-US', rateFmt);
+        ;       }
+        ;       var txFiats = document.querySelectorAll('.activity-tx-fiat');
+        ;       for (var i = 0; i < txFiats.length; i++) {
+        ;         var s = parseInt(txFiats[i].dataset.sats, 10);
+        ;         if (isNaN(s)) continue;
+        ;         var val = (s / 100000000) * price;
+        ;         txFiats[i].textContent = val.toLocaleString('en-US', fmtOpts);
+        ;       }
         ;     }
         ;     )
         ;     .catch(function(err) {
@@ -1658,7 +1880,42 @@
         ;     flashCheck(btn);
         ;   });
         ; }
+        ; function showTxDetail(row) {
+        ;   var overlay = document.getElementById('tx-detail-overlay');
+        ;   var txid = row.dataset.txid;
+        ;   var addr = row.dataset.addr;
+        ;   var addrLabel = row.dataset.addrLabel;
+        ;   var status = row.dataset.status;
+        ;   var time = row.dataset.time;
+        ;   document.getElementById('tx-detail-txid').textContent = txid;
+        ;   var txidBtn = document.getElementById('tx-detail-txid').parentElement.querySelector('.tx-copy-btn');
+        ;   if (txidBtn) txidBtn.dataset.txid = txid;
+        ;   var addrRow = document.getElementById('tx-detail-addr');
+        ;   if (addr) {
+        ;     addrRow.classList.remove('hidden');
+        ;     document.getElementById('tx-detail-addr-label').textContent = addrLabel;
+        ;     document.getElementById('tx-detail-addr-value').textContent = addr;
+        ;     var addrBtn = addrRow.querySelector('.tx-copy-btn');
+        ;     if (addrBtn) addrBtn.dataset.txid = addr;
+        ;   } else {
+        ;     addrRow.classList.add('hidden');
+        ;   }
+        ;   document.getElementById('tx-detail-status').textContent = status;
+        ;   var timeRow = document.getElementById('tx-detail-time-row');
+        ;   if (time) {
+        ;     timeRow.classList.remove('hidden');
+        ;     document.getElementById('tx-detail-time').textContent = time;
+        ;   } else {
+        ;     timeRow.classList.add('hidden');
+        ;   }
+        ;   overlay.classList.remove('hidden');
+        ; }
+        ; function closeTxDetail(e) {
+        ;   var overlay = document.getElementById('tx-detail-overlay');
+        ;   if (!e || e.target === overlay) overlay.classList.add('hidden');
+        ; }
         ; function copyTxid(btn) {
+        ;   if (event) event.stopPropagation();
         ;   navigator.clipboard.writeText(btn.dataset.txid).then(function() {
         ;     flashCheck(btn, '10');
         ;   });
@@ -1825,21 +2082,12 @@
         ;   });
         ;   input.addEventListener('blur', save);
         ; }
-        ; function toggleActivity() {
-        ;   document.getElementById('activity-overlay').classList.toggle('open');
-        ; }
-        ; function closeActivity(e) {
-        ;   if (e.target === document.getElementById('activity-overlay')) {
-        ;     toggleActivity();
-        ;   }
-        ; }
-        ; function toggleAddresses() {
-        ;   document.getElementById('addresses-overlay').classList.toggle('open');
-        ; }
-        ; function closeAddresses(e) {
-        ;   if (e.target === document.getElementById('addresses-overlay')) {
-        ;     toggleAddresses();
-        ;   }
+        ; function switchTab(tab, btn) {
+        ;   document.getElementById('tab-activity').classList.toggle('hidden', tab !== 'activity');
+        ;   document.getElementById('tab-addresses').classList.toggle('hidden', tab !== 'addresses');
+        ;   var tabs = btn.parentElement.querySelectorAll('.tab-btn');
+        ;   for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
+        ;   btn.classList.add('active');
         ; }
         ; function switchAddrTab(tab, btn) {
         ;   document.getElementById('addr-recv').classList.toggle('hidden', tab !== 'recv');
@@ -1869,8 +2117,8 @@
         ;+  (render-banner backed-up)
         ;+  (render-balance bal-tape bal-sats pending-in pending-out pending-in-tape pending-out-tape)
         ;+  (render-actions)
-        ;+  (render-activity-popup tx-items)
-        ;+  (render-addresses-popup addr-items)
+        ;+  (render-tab-panel tx-items addr-items)
+        ;+  (render-tx-detail-popup)
         ;+  (render-receive-popup)
         ;+  (render-send-popup bal bal-tape)
         ;+  (render-info-popup wal-seed wal-seed-masked backed-up)

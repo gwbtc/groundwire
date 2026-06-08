@@ -469,16 +469,6 @@
     =/  d1  (~(put-addr ac [u.details spv-net]) chain index updated-address-details)
     =/  d2  (~(merge-txs ac [d1 spv-net]) new-transactions-canonical)
     (~(add-tx-addrs ac [d2 spv-net]) new-tx-addresses)
-  ::  Update local-tx status for any matching transactions
-  =.  local-txs.state
-    %-  ~(urn by local-txs.state)
-    |=  [txid=@t ltx=local-tx]
-    =/  canon-tx=(unit transaction)  (~(get by new-transactions-canonical) txid)
-    ?~  canon-tx  ltx
-    ?-  tx-status.u.canon-tx
-      [%confirmed *]  ltx(status %confirmed)
-      [%unconfirmed *]  ltx(status %mempool)
-    ==
   ::  Save and send second SSE update
   =.  accounts.state  (~(put by accounts.state) pubkey updated-details)
   ;<  ~  bind:m  (replace:io !>(state))

@@ -6,7 +6,7 @@
 ::
 +$  tx-status
   $%  [%unconfirmed ~]
-      [%confirmed block-hash=@t block-height=@ud]
+      [%confirmed block-hash=@t block-height=@ud block-time=@ud]
   ==
 ::
 +$  address-details
@@ -70,16 +70,13 @@
       %p2tr          :: BIP86, purpose 86, taproot
   ==
 ::
-+$  broadcast-status
-  $?  %broadcast   :: sent to network, not yet seen in mempool
-      %mempool     :: seen in mempool.space
-      %confirmed   :: included in a block
-  ==
-::
-+$  local-tx
-  $:  raw=@t              :: signed tx hex
-      status=broadcast-status
-      sent=@da            :: when we broadcast
++$  broadcast
+  $:  raw=@t                                    :: signed tx hex
+      sent=@da                                  :: when we broadcast
+      =network                                  :: which network
+      outputs=(list [address=@t amount=@ud])    :: all outputs
+      inputs=(list [address=@t amount=@ud])     :: all inputs we spent
+      change-address=(unit @t)                  :: which output is change
   ==
 ::
 +$  network-details
@@ -219,7 +216,7 @@
       hide-empty-addresses=?
       binding=binding:eyre
       counter=@ud
-      local-txs=(map @t local-tx)
+      broadcasts=(map @t broadcast)
   ==
 ::
 +$  versioned-state

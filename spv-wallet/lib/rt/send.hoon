@@ -478,12 +478,27 @@
       q.data.u.full-file.client-response
       ==
     ~&  >>  "Broadcast result: {<broadcast-result>}"
-    ::  Store local transaction record
+    ::  Store broadcast record
     =/  txid=@t  broadcast-result
     ;<  now=@da  bind:m  get-time:io
-    =.  local-txs.state
-      %+  ~(put by local-txs.state)  txid
-      ^-  local-tx:s  [tx-hex-cord %broadcast now]
+    =/  bc-outputs=(list [address=@t amount=@ud])
+      %+  turn  tx-outputs
+      |=  out=output:ap:tt
+      [address.out amount.out]
+    =/  bc-inputs=(list [address=@t amount=@ud])
+      %+  turn  inputs.u.existing-draft
+      |=  in=utxo-input:drft
+      =/  tx=(unit transaction:s)  (~(get by transactions:ac) txid.in)
+      ?~  tx  ['' amount.in]
+      =/  output=(unit tx-output:s)  (snag-safe vout.in outputs.u.tx)
+      ?~  output  ['' amount.in]
+      [address.u.output amount.in]
+    =/  bc-change=(unit @t)
+      ?~  change.u.existing-draft  ~
+      `address.u.change.u.existing-draft
+    =.  broadcasts.state
+      %+  ~(put by broadcasts.state)  txid
+      ^-  broadcast:s  [tx-hex-cord now active-network.u.details bc-outputs bc-inputs bc-change]
     ::  Clear draft on success
     =/  updated=account-details:s  clear-draft:ac
     =.  accounts.state  (~(put by accounts.state) account-pubkey updated)

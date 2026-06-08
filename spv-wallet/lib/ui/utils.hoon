@@ -12,10 +12,12 @@
   ?~  leaves  0
   =/  [index=@ud =hd-leaf]  i.leaves
   =/  details=address-details  main.hd-leaf
-  ?~  info.details
-    $(leaves t.leaves)
   =/  balance=@ud
-    (sub chain-funded.u.info.details chain-spent.u.info.details)
+    =/  rem=(list [txid=@t vout=@ud value=@ud =tx-status])  utxos.details
+    =/  s=@ud  0
+    |-
+    ?~  rem  s
+    $(rem t.rem, s (add s value.i.rem))
   (add balance $(leaves t.leaves))
 :: Compute total account balance from both receiving and change addresses
 ::

@@ -1,4 +1,4 @@
-/-  *spv-wallet, mcp
+/-  *spv-wallet, mcp, s0=spv-wallet-0
 /+  dbug, sailbox, io=sailboxio, server, multipart,
     ui=ui-spv-wallet, html-utils, json-utils,
     bip39, bip32=bip32-spv, btc=bitcoin, bip329,
@@ -440,26 +440,60 @@
 ++  migrate
   |=  old=vase
   ^-  vase
-  =/  os=versioned-state  (versioned-state q.old)
-  ?-  -.os
-    %1  !>(os)
-    %0  !>  ^-  state-1
-        :*  %1
-            auto-sponsor.os
-            boot.os
-            sponsor-response.os
-            accounts.os
-            watch-only.os
-            signing.os
-            wallets.os
-            labels.os
-            spv.os
-            indexer-subs.os
-            hide-empty-addresses.os
-            binding.os
-            counter.os
-            *(map @t local-tx)
+  =/  ver  -.q.old
+  ?+  ver  old
+    %1  !>(;;(state-1 q.old))
+    %0
+      =/  os=state-0:s0  ;;(state-0:s0 q.old)
+      =/  migrate-status=$-(tx-status:s0 tx-status)
+        |=  old=tx-status:s0
+        ?:  ?=([%unconfirmed ~] old)  old
+        [%confirmed block-hash.old block-height.old 0]
+      =/  migrate-addr=$-(address-details:s0 address-details)
+        |=  ad=address-details:s0
+        %=  ad
+          utxos  %+  turn  utxos.ad
+                 |=  u=[txid=@t vout=@ud value=@ud tx-status=tx-status:s0]
+                 u(tx-status (migrate-status tx-status.u))
         ==
+      =/  migrate-leaf=$-(hd-leaf:s0 hd-leaf)
+        |=  lf=hd-leaf:s0
+        :-  (migrate-addr main.lf)
+        %-  ~(run by script-trees.lf)
+        |=  td=tapscript-details:s0
+        td(address-details (migrate-addr address-details.td))
+      =/  migrate-tx=$-(transaction:s0 transaction)
+        |=  tx=transaction:s0
+        tx(tx-status (migrate-status tx-status.tx))
+      =/  migrate-net=$-(network-details:s0 network-details)
+        |=  nd=network-details:s0
+        %=  nd
+          transactions  (~(run by transactions.nd) migrate-tx)
+          change        (run:((on @ud hd-leaf:s0) gth) change.nd migrate-leaf)
+          receiving     (run:((on @ud hd-leaf:s0) gth) receiving.nd migrate-leaf)
+        ==
+      =/  new-accounts=(map @ux account-details)
+        %-  ~(run by accounts.os)
+        |=  ad=account-details:s0
+        ^-  account-details
+        ad(networks (~(run by networks.ad) migrate-net))
+      !>  ^-  state-1
+      :*  %1
+          auto-sponsor.os
+          boot.os
+          sponsor-response.os
+          new-accounts
+          watch-only.os
+          signing.os
+          wallets.os
+          labels.os
+          spv.os
+          indexer-subs.os
+          hide-empty-addresses.os
+          binding.os
+          counter.os
+          *(map @t broadcast)
+      ==
   ==
 ::
 ++  on-peek
@@ -722,6 +756,52 @@
               ~
             `['change' idx]
           ==
+        ::  Collect addresses from unconfirmed transactions
+        =/  unconf-addrs=(list [chain=@t idx=@ud])
+          =/  txns=(list [txid=@t tx=transaction])  ~(tap by transactions:ac)
+          =/  addrs=(set @t)  ~
+          =.  addrs
+            |-
+            ?~  txns  addrs
+            =/  tx=transaction  tx.i.txns
+            ?.  ?=([%unconfirmed *] tx-status.tx)  $(txns t.txns)
+            =/  out-addrs=(list @t)
+              (turn outputs.tx |=(o=tx-output address.o))
+            =/  in-addrs=(list @t)
+              (murn inputs.tx |=(i=tx-input ?~(prevout.i ~ `address.u.prevout.i)))
+            $(txns t.txns, addrs (~(gas in addrs) (weld out-addrs in-addrs)))
+          ::  Resolve to chain/index via address-cache
+          %+  murn  ~(tap in addrs)
+          |=  addr=@t
+          =/  suffix=(unit address-suffix:hd-path)
+            (~(get by address-cache:ac) addr)
+          ?~  suffix  ~
+          =/  [chain-num=@ud addr-idx=@ud]
+            [q.change.u.suffix q.index.u.suffix]
+          `[?:(=(0 chain-num) 'receiving' 'change') addr-idx]
+        ::  Collect addresses from broadcasts not yet in transaction map
+        =/  broadcast-addrs=(list [chain=@t idx=@ud])
+          =/  bcs=(list [txid=@t bc=broadcast])  ~(tap by broadcasts.state)
+          =/  addrs=(set @t)  ~
+          =.  addrs
+            |-
+            ?~  bcs  addrs
+            =/  [txid=@t bc=broadcast]  i.bcs
+            ?.  =(network.bc active-network.u.det)  $(bcs t.bcs)
+            ?:  (~(has by transactions:ac) txid)  $(bcs t.bcs)
+            =/  out-addrs=(list @t)
+              (turn outputs.bc |=([addr=@t *] addr))
+            =/  in-addrs=(list @t)
+              (turn inputs.bc |=([addr=@t *] addr))
+            $(bcs t.bcs, addrs (~(gas in addrs) (weld out-addrs in-addrs)))
+          %+  murn  ~(tap in addrs)
+          |=  addr=@t
+          =/  suffix=(unit address-suffix:hd-path)
+            (~(get by address-cache:ac) addr)
+          ?~  suffix  ~
+          =/  [chain-num=@ud addr-idx=@ud]
+            [q.change.u.suffix q.index.u.suffix]
+          `[?:(=(0 chain-num) 'receiving' 'change') addr-idx]
         ::  Find next unused receiving index
         =/  next-recv-idx=@ud
           =/  next=(unit @t)
@@ -750,13 +830,23 @@
           =/  [lidx=@ud =hd-leaf]  i.leaves
           ?:  =(address.main.hd-leaf u.next)  lidx
           $(leaves t.leaves)
-        ::  Build refresh list: pending + next unused recv + next unused chng
+        ::  Build refresh list: pending + unconfirmed + broadcast + next unused
         =/  refresh-list=(list [chain=@t idx=@ud])
-          ;:  weld
-            pending-addrs
-            ~[['receiving' next-recv-idx]]
-            ~[['change' next-chng-idx]]
-          ==
+          =/  all=(list [chain=@t idx=@ud])
+            ;:  weld
+              pending-addrs
+              unconf-addrs
+              broadcast-addrs
+              ~[['receiving' next-recv-idx]]
+              ~[['change' next-chng-idx]]
+            ==
+          ::  Deduplicate
+          =/  seen=(set [chain=@t idx=@ud])  ~
+          =/  out=(list [chain=@t idx=@ud])  ~
+          |-
+          ?~  all  (flop out)
+          ?:  (~(has in seen) i.all)  $(all t.all)
+          $(all t.all, seen (~(put in seen) i.all), out [i.all out])
         ::  Refresh all sequentially
         |-
         ?~  refresh-list  (pure:m ~)
@@ -882,16 +972,16 @@
         ::  Build, sign, broadcast
         ;<  ~  bind:m
           (handle-send-actions:rt-send pk ~[['action' 'build-transaction']])
-        ::  Get the txid we just broadcast from local-txs
+        ::  Get the txid we just broadcast from broadcasts
         ;<  state=state-1  bind:m  (get-state-as:io state-1)
         =/  broadcast-txid=@t
-          =/  pairs=(list [@t local-tx])  ~(tap by local-txs.state)
+          =/  pairs=(list [@t broadcast])  ~(tap by broadcasts.state)
           =/  best=[txid=@t sent=@da]  ['' *@da]
           |-
           ?~  pairs  txid.best
-          =/  [txid=@t ltx=local-tx]  i.pairs
-          ?:  (gth sent.ltx sent.best)
-            $(pairs t.pairs, best [txid sent.ltx])
+          =/  [txid=@t bc=broadcast]  i.pairs
+          ?:  (gth sent.bc sent.best)
+            $(pairs t.pairs, best [txid sent.bc])
           $(pairs t.pairs)
         ~&  >  "send-bitcoin: polling for txid {<broadcast-txid>} in {<(lent refresh-list)>} addresses"
         ::  Poll each address until the txid shows up in its transactions

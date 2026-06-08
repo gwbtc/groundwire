@@ -114,9 +114,11 @@
     (mole |.((so:dejs:format (~(got jo:json-utils status-json) /'block_hash'))))
   =/  block-height=(unit @ud)
     (mole |.((ni:dejs:format (~(got jo:json-utils status-json) /'block_height'))))
+  =/  block-time=(unit @ud)
+    (mole |.((ni:dejs:format (~(got jo:json-utils status-json) /'block_time'))))
   ?~  block-hash  ~
   ?~  block-height  ~
-  `[%confirmed u.block-hash u.block-height]
+  `[%confirmed u.block-hash u.block-height (fall block-time 0)]
 ::
 ++  parse-transaction
   |=  tx-json=json
