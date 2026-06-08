@@ -669,16 +669,27 @@
           $(rem t.rem)
         =/  wkey=@ux  ?~(target k.i.wal-list k.u.target)
         =/  wal=wallet  ?~(target v.i.wal-list v.u.target)
-        ::  Preserve saved state when renaming
+        ::  Preserve saved and fee state when renaming
         =/  old-mx=(unit manx)  (de-xml:html name.wal)
         =/  was-saved=?
           ?~  old-mx  %.n
           ?.  =(%simple n.g.u.old-mx)  %.n
           (lien a.g.u.old-mx |=([n=mane v=tape] =(%saved n)))
+        =/  old-fee=(unit tape)
+          ?~  old-mx  ~
+          ?.  =(%simple n.g.u.old-mx)  ~
+          =/  rem=mart  a.g.u.old-mx
+          |-
+          ?~  rem  ~
+          ?:  =(%fee n.i.rem)  `v.i.rem
+          $(rem t.rem)
+        =/  attrs=tape
+          ;:  weld
+            ?:(was-saved " saved" "")
+            ?~(old-fee "" " fee=\"{u.old-fee}\"")
+          ==
         =/  tagged-name=@t
-          ?:  was-saved
-            (crip "<simple saved>{(trip new-name)}</simple>")
-          (crip "<simple>{(trip new-name)}</simple>")
+          (crip "<simple{attrs}>{(trip new-name)}</simple>")
         =.  wallets.state  (~(put by wallets.state) wkey wal(name tagged-name))
         ;<  ~  bind:m  (replace:io !>(state))
         (pure:m ~)
@@ -703,16 +714,62 @@
         ?.  =(%simple n.g.u.mx)  (pure:m ~)
         =/  is-saved=?
           (lien a.g.u.mx |=([n=mane v=tape] =(%saved n)))
+        =/  fee-attr=(unit tape)
+          =/  rem=mart  a.g.u.mx
+          |-
+          ?~  rem  ~
+          ?:  =(%fee n.i.rem)  `v.i.rem
+          $(rem t.rem)
         =/  title=tape
           ?~  c.u.mx  ""
           =/  node=manx  i.c.u.mx
           ?.  =(%$ n.g.node)  ""
           ?~  a.g.node  ""
           v.i.a.g.node
+        =/  attrs=tape
+          ;:  weld
+            ?:(is-saved "" " saved")
+            ?~(fee-attr "" " fee=\"{u.fee-attr}\"")
+          ==
         =/  new-name=@t
-          ?:  is-saved
-            (crip "<simple>{title}</simple>")
-          (crip "<simple saved>{title}</simple>")
+          (crip "<simple{attrs}>{title}</simple>")
+        =.  wallets.state  (~(put by wallets.state) wkey wal(name new-name))
+        ;<  ~  bind:m  (replace:io !>(state))
+        (pure:m ~)
+        ::
+          %set-fee-rate
+        =/  fee=@t  (fall (get-key:kv 'fee-rate' args) '2')
+        ;<  state=state-1  bind:m  (get-state-as:io state-1)
+        =/  wal-list=(list [k=@ux v=wallet])  ~(tap by wallets.state)
+        ?~  wal-list  (pure:m ~)
+        =/  target=(unit [k=@ux v=wallet])
+          =/  rem=(list [k=@ux v=wallet])  wal-list
+          |-
+          ?~  rem  ~
+          =/  mx=(unit manx)  (de-xml:html name.v.i.rem)
+          ?:  ?&(?=(^ mx) =(%simple n.g.u.mx))
+            `i.rem
+          $(rem t.rem)
+        =/  wkey=@ux  ?~(target k.i.wal-list k.u.target)
+        =/  wal=wallet  ?~(target v.i.wal-list v.u.target)
+        =/  mx=(unit manx)  (de-xml:html name.wal)
+        ?~  mx  (pure:m ~)
+        ?.  =(%simple n.g.u.mx)  (pure:m ~)
+        =/  is-saved=?
+          (lien a.g.u.mx |=([n=mane v=tape] =(%saved n)))
+        =/  title=tape
+          ?~  c.u.mx  ""
+          =/  node=manx  i.c.u.mx
+          ?.  =(%$ n.g.node)  ""
+          ?~  a.g.node  ""
+          v.i.a.g.node
+        =/  attrs=tape
+          ;:  weld
+            ?:(is-saved " saved" "")
+            " fee=\"{(trip fee)}\""
+          ==
+        =/  new-name=@t
+          (crip "<simple{attrs}>{title}</simple>")
         =.  wallets.state  (~(put by wallets.state) wkey wal(name new-name))
         ;<  ~  bind:m  (replace:io !>(state))
         (pure:m ~)

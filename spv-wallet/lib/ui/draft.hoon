@@ -57,7 +57,7 @@
 ::
 ++  parse-simple-tag
   |=  name=@t
-  ^-  (unit [saved=? title=tape])
+  ^-  (unit [saved=? fee=@ud title=tape])
   =/  mx=(unit manx)  (de-xml:html name)
   ?~  mx  ~
   ?.  =(%simple n.g.u.mx)  ~
@@ -65,13 +65,31 @@
     %+  lien  a.g.u.mx
     |=  [n=mane v=tape]
     =(%saved n)
+  =/  fee=@ud
+    =/  fee-attr=(unit tape)
+      |-
+      ?~  a.g.u.mx  ~
+      ?:  =(%fee n.i.a.g.u.mx)  `v.i.a.g.u.mx
+      $(a.g.u.mx t.a.g.u.mx)
+    ?~  fee-attr  2
+    (fall (rush (crip u.fee-attr) dem) 2)
   =/  title=tape
     ?~  c.u.mx  ""
     =/  node=manx  i.c.u.mx
     ?.  =(%$ n.g.node)  ""
     ?~  a.g.node  ""
     v.i.a.g.node
-  `[saved title]
+  `[saved fee title]
+::
+++  build-simple-tag
+  |=  [saved=? fee=@ud title=tape]
+  ^-  @t
+  =/  attrs=tape
+    ;:  weld
+      ?:(saved " saved" "")
+      ?:(=(fee 2) "" " fee=\"{(a-co:co fee)}\"")
+    ==
+  (crip "<simple{attrs}>{title}</simple>")
 ::
 ++  is-simple
   |=  name=@t
@@ -128,6 +146,11 @@
   =/  backed-up=?
     ?~  simple  %.n
     (is-saved name.val.u.simple)
+  =/  fee-rate=@ud
+    ?~  simple  2
+    =/  parsed  (parse-simple-tag name.val.u.simple)
+    ?~  parsed  2
+    fee.u.parsed
   ::  Collect all accounts from the simple wallet with their networks
   ::  Mainnet accounts first
   =/  all-acct-details=(list account-details)
@@ -379,7 +402,7 @@
     :-  (render-addr-list (tap:((on @ud hd-leaf) gth) receiving:ac) 'receiving' next-recv)
     (render-addr-list (tap:((on @ud hd-leaf) gth) change:ac) 'change' next-chng)
   =/  all-tx-items=(list manx)  (weld pending-items tx-items)
-  =/  body-content=manx  (render-body bal bal-tape bal-sats pending-in pending-out pending-in-tape pending-out-tape wal-name net-label accent accent-hover accent-bg accent-border backed-up wal-seed wal-seed-masked all-tx-items addr-items available-nets)
+  =/  body-content=manx  (render-body bal bal-tape bal-sats pending-in pending-out pending-in-tape pending-out-tape wal-name net-label accent accent-hover accent-bg accent-border backed-up wal-seed wal-seed-masked fee-rate all-tx-items addr-items available-nets)
   body-content
 ::
 ++  text
@@ -707,8 +730,9 @@
   ==
 ::
 ++  render-info-popup
-  |=  [wal-seed=tape wal-seed-masked=tape backed-up=?]
+  |=  [wal-seed=tape wal-seed-masked=tape backed-up=? fee-rate=@ud]
   ^-  manx
+  =/  fee-tape=tape  (a-co:co fee-rate)
   ;div#info-overlay.info-overlay(onclick "closeInfo(event)")
     ;div.info-modal
       ;button.info-close(onclick "toggleInfo()"): ×
@@ -732,6 +756,13 @@
           ;span.info-saved-text: I've saved my recovery phrase
         ==
       ==
+      ;div.info-section
+        ;div.info-label: Fee Rate (sat/vB)
+        ;div.info-fee-row
+          ;input#info-fee.info-fee-input(type "number", min "1", value fee-tape);
+          ;button.info-fee-save(onclick "saveFeeRate()"): Save
+        ==
+      ==
     ==
   ==
 ::
@@ -752,6 +783,7 @@
           backed-up=?
           wal-seed=tape
           wal-seed-masked=tape
+          fee-rate=@ud
           tx-items=(list manx)
           addr-items=[recv=(list manx) chng=(list manx)]
           available-nets=(list network)
@@ -1417,6 +1449,39 @@
         ;   color: var(--f4);
         ;   line-height: 1.4;
         ; }
+        ; .info-fee-row {
+        ;   display: flex;
+        ;   align-items: center;
+        ;   gap: 10px;
+        ;   padding: 4px 0;
+        ; }
+        ; .info-fee-input {
+        ;   width: 70px;
+        ;   padding: 6px 10px;
+        ;   border: 1px solid var(--b3);
+        ;   border-radius: 8px;
+        ;   background: var(--b1);
+        ;   color: var(--f1);
+        ;   font-size: 14px;
+        ;   font-family: inherit;
+        ; }
+        ; .info-fee-input:focus {
+        ;   outline: none;
+        ;   border-color: var(--accent);
+        ; }
+        ; .info-fee-save {
+        ;   padding: 6px 14px;
+        ;   border: none;
+        ;   border-radius: 8px;
+        ;   background: var(--accent);
+        ;   color: white;
+        ;   font-size: 13px;
+        ;   cursor: pointer;
+        ;   font-family: inherit;
+        ; }
+        ; .info-fee-save:hover {
+        ;   background: var(--accent-hover);
+        ; }
         ; .info-saved-row {
         ;   display: flex;
         ;   align-items: center;
@@ -1998,7 +2063,7 @@
         ; function sendBitcoin() {
         ;   var addr = document.getElementById('send-to').value.trim();
         ;   var amtStr = document.getElementById('send-amount').value.trim();
-        ;   var feeRate = '2';
+        ;   var feeRate = document.getElementById('info-fee').value || '2';
         ;   var status = document.getElementById('send-status');
         ;   var btn = document.getElementById('send-btn');
         ;   status.className = 'send-status';
@@ -2109,6 +2174,12 @@
         ;     location.reload();
         ;   });
         ; }
+        ; function saveFeeRate() {
+        ;   var fee = document.getElementById('info-fee').value || '2';
+        ;   walletPost('action=set-fee-rate&fee-rate=' + fee).then(function() {
+        ;     location.reload();
+        ;   });
+        ; }
       ==
     ==
     ;body
@@ -2121,7 +2192,7 @@
         ;+  (render-tx-detail-popup)
         ;+  (render-receive-popup)
         ;+  (render-send-popup bal bal-tape)
-        ;+  (render-info-popup wal-seed wal-seed-masked backed-up)
+        ;+  (render-info-popup wal-seed wal-seed-masked backed-up fee-rate)
       ==
     ==
   ==
