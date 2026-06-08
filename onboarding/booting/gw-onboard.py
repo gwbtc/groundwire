@@ -1446,17 +1446,15 @@ def load_snapshot_file(local_path: str | None, snapshot_url: str = DEFAULT_SNAPS
 
     for attempt in range(1, 4):
         try:
-            print(f"Fetching snapshot from {snapshot_url}")
             resp = requests.get(snapshot_url, timeout=120)
             if resp.ok and resp.content:
                 try:
                     _snapshot_file_to_noun_literal(resp.content)
                 except Exception as e:
-                    print(f"  Failed to deserialize snapshot: {e}")
+                    print(f"ERROR: Failed to deserialize snapshot: {e}")
                     if attempt < 3:
                         time.sleep(2)
                     continue
-                print("Fetched snapshot")
                 return resp.content
             else:
                 print(f"  HTTP {resp.status_code}")
@@ -1472,8 +1470,6 @@ def load_snapshot_file(local_path: str | None, snapshot_url: str = DEFAULT_SNAPS
 def make_snapshot_fyrd(snapshot_file: bytes) -> str:
     """Build a FYRD that pokes %urb-watcher with (unit state:urb)."""
     cued_snapshot = _snapshot_file_to_noun_literal(snapshot_file)
-    # print("cued snapshot:")
-    # print(f"{cued_snapshot}")
     return f""":*  0
                     %fyrd
                     %base
