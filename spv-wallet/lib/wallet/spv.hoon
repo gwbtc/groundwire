@@ -66,7 +66,7 @@
   =/  [validated-header=block-header:bitcoin-spv pow-valid=? work=@ud]
     (validate-header-with-hash:bitcoin-spv header `@ux`computed-hash.header)
   ::  Step 6: Get state and chain to validate
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  chain=spv-chain  (get-chain network spv.state)
   ::  Step 7: Validate hash match and chain connection (pure computations that could fail)
   =/  chain-result=(each [spv-chain @uvI] tang)

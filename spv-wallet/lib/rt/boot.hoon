@@ -56,7 +56,7 @@
   |=  [next=@tas bd=boot-data:s]
   =/  m  (fiber:io ,~)
   ^-  form:m
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   =.  boot.state  `[next bd ~]
   ;<  ~  bind:m  (replace:io !>(state))
   (send-sse-event:io /spv-wallet/progress ~ `'progress-update')
@@ -65,7 +65,7 @@
   |=  [label=term trace=tang]
   =/  m  (fiber:io ,~)
   ^-  form:m
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   ?~  boot.state
     (pure:m ~)
   =.  error.u.boot.state  `[label trace]
@@ -84,7 +84,7 @@
       ::  Refuse to start a new boot if the comet is already confirmed
       ::  on-chain or if the previous boot already finished and is just
       ::  waiting for urb-watcher to catch up.
-      ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+      ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
       ;<  our=@p  bind:m  get-our:io
       ;<  =bowl:gall  bind:m  get-bowl:io
       =/  in-watcher=?
@@ -131,7 +131,7 @@
     ::  Build initial boot-data
     ?^  fief
       ::  Sponsor mode: set auto-sponsor flag
-      ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+      ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
       =.  auto-sponsor.state  %.y
       ;<  ~  bind:m  (replace:io !>(state))
       =|  bd=boot-data:s
@@ -156,7 +156,7 @@
     run-boot
   ::
       %retry
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     ?~  boot.state
       (pure:m ~)
     =.  boot.state  `u.boot.state(error ~)
@@ -166,7 +166,7 @@
   ::
       %cancel
     ~&  "boot[cancel]: canceling boot process"
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =.  boot.state  ~
     ;<  ~  bind:m  (replace:io !>(state))
     ;<  ~  bind:m  (send-sse-event:io /spv-wallet/progress ~ `'progress-update')
@@ -178,7 +178,7 @@
 ++  run-boot
   =/  m  (fiber:io ,~)
   ^-  form:m
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   ?~  boot.state
     (pure:m ~)
   =/  bd=boot-data:s  data.u.boot.state
@@ -213,7 +213,7 @@
   ?:  ?=(%| -.result)
     (store-boot-error %wallet-derivation p.result)
   =/  [pubkey=@ux new-wallet=wallet:s]  p.result
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   =.  wallets.state  (~(put by wallets.state) pubkey new-wallet)
   ;<  ~  bind:m  (replace:io !>(state))
   ;<  ~  bind:m  (send-sse-event:io /spv-wallet/stream ~ `'wallet-list-update')
@@ -236,7 +236,7 @@
     (store-boot-error %account-derivation p.result)
   =/  account-pubkey=@ux  account-pubkey.p.result
   =/  xprv=@t  xprv.p.result
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   =/  wallet=(unit wallet:s)  (~(get by wallets.state) pubkey)
   ?~  wallet
     (store-boot-error %boot-wallet-missing ~['boot wallet not found in state'])
@@ -276,7 +276,7 @@
   ~&  "derived boot address: {(trip address)}"
   ;<  addr-json=json  bind:m  (fetch-address-data address boot-network)
   =/  parsed-info=(unit address-info:s)  (parse-address-info address addr-json)
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   =/  acct-details=account-details:s  (~(got by accounts.state) account-pubkey)
   ;<  now=@da  bind:m  get-time:io
   =/  new-addr=address-details:s  [address `now parsed-info ~ ~]
@@ -300,7 +300,7 @@
   ~&  "found {(scow %ud (lent utxo-list))} UTXOs"
   ?~  utxo-list
     (store-boot-error %no-utxos ~['no UTXOs found at boot address' (crip "address: {(trip address)}")])
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   =/  acct-details=account-details:s  (~(got by accounts.state) account-pubkey)
   =/  addr-unit=(unit address-details:s)
     (~(get-addr ac:wallet-account [acct-details boot-network]) 'receiving' 0)
@@ -373,7 +373,7 @@
   ~&  "boot[sponsor]: sponsor @p from boot-data: {<sponsor>}"
   ;<  our=@p  bind:m  get-our:io
   ~&  "boot[sponsor]: our={<our>}, sending request to [{<sponsor>} %spv-wallet]"
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   =.  sponsor-response.state  ~
   ;<  ~  bind:m  (replace:io !>(state))
   ~&  "boot[sponsor]: firing poke to {<sponsor>} %spv-wallet %fiber-poke %sponsorship-request"
@@ -392,7 +392,7 @@
   ?:  (gte polls 30)
     (store-boot-error %sponsor-timeout ~['sponsor did not respond within 60s'])
   ;<  ~  bind:m  (sleep:io ~s2)
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   ?~  sponsor-response.state
     ~&  "sponsor poll {(scow %ud polls)}: waiting..."
     $(polls +(polls))
@@ -446,7 +446,7 @@
   ::  Store index 1: main address + spawn tapscript
   =/  account-pubkey=@ux  (need account-pubkey.bd)
   =/  acct=account:hd-path  [[%.y 86] [%.y 1] [%.y 0]]
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   =/  acct-details=account-details:s  (~(got by accounts.state) account-pubkey)
   =/  main-addr-1=(each @t tang)
     %-  mule  |.
@@ -628,7 +628,7 @@
   ~&  "reveal destination address (idx 2): {(trip reveal-address)}"
   ::  Store index 2 in account
   =/  account-pubkey=@ux  (need account-pubkey.bd)
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   =/  acct-details=account-details:s  (~(got by accounts.state) account-pubkey)
   ;<  now=@da  bind:m  get-time:io
   =/  addr-2-details=address-details:s  [reveal-address `now ~ *sh-tx-history:indexer:s ~]
@@ -714,7 +714,7 @@
   ;<  addr2-utxos=(list [txid=@t vout=@ud value=@ud tx-status=tx-status:s])  bind:m
     (fetch-utxos reveal-address boot-network)
   ::  Update all addresses in state
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   =/  acct-details=account-details:s  (~(got by accounts.state) account-pubkey)
   ::  Update index 0 (boot address)
   =/  a0=(unit address-details:s)

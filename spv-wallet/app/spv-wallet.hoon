@@ -1,8 +1,8 @@
-/-  *spv-wallet
+/-  *spv-wallet, mcp
 /+  dbug, sailbox, io=sailboxio, server, multipart,
     ui=ui-spv-wallet, html-utils, json-utils,
     bip39, bip32=bip32-spv, btc=bitcoin, bip329,
-    wallet-address, wallet-account, *wallet-mempool-space,
+    wallet-address, wallet-account, seed-phrases, *wallet-mempool-space,
     rt-wallet, rt-account, rt-send, rt-spv, rt-boot, taproot
 /=  t-  /tests/lib/bitcoin-spv
 /=  t-  /tests/lib/seed-phrases
@@ -14,6 +14,174 @@
   |%
   ++  kv    kv:html-utils
   +$  card  card:sailbox
+  ::  Auto-generate a <simple> wallet on first boot.
+  ::  Creates a BIP84 native segwit wallet from entropy so the
+  ::  simple UI (/apps/wallet) has something to show immediately.
+  ::  Skips if a <simple> wallet already exists.
+  ::  Resolve the simple wallet's account pubkey for a given network
+  ::  Falls back to first account if no network match
+  ::
+  ++  resolve-simple-pubkey
+    |=  [state=state-1 req-net=@t]
+    ^-  (unit @ux)
+    =/  wal-list=(list [k=@ux v=wallet])  ~(tap by wallets.state)
+    ?~  wal-list  ~
+    =/  simple=(unit [k=@ux v=wallet])
+      =/  rem=(list [k=@ux v=wallet])  wal-list
+      |-
+      ?~  rem  ~
+      =/  mx=(unit manx)  (de-xml:html name.v.i.rem)
+      ?:  ?&(?=(^ mx) =(%simple n.g.u.mx))
+        `i.rem
+      $(rem t.rem)
+    =/  wal=wallet  ?~(simple v.i.wal-list v.u.simple)
+    =/  acct-pairs=(list [account:hd-path @ux])  ~(tap by accounts.wal)
+    ?~  acct-pairs  ~
+    =/  matched=(unit @ux)
+      =/  rem=(list [account:hd-path @ux])  acct-pairs
+      |-
+      ?~  rem  ~
+      =/  d=(unit account-details)  (~(get by accounts.state) +.i.rem)
+      ?~  d  $(rem t.rem)
+      ?:  =(req-net (crip (trip active-network.u.d)))  `+.i.rem
+      $(rem t.rem)
+    `?~(matched +.i.acct-pairs u.matched)
+  ::
+  ++  ensure-default-wallet
+    |=  state=state-1
+    =/  m  (fiber:io ,~)
+    ^-  form:m
+    ::  Check if a <simple> wallet already exists
+    =/  has-simple=_|
+      %-  ~(rep by wallets.state)
+      |=  [[k=@ux v=wallet] found=_|]
+      ?:  found  %.y
+      =/  mx=(unit manx)  (de-xml:html name.v)
+      ?~  mx  %.n
+      =(%simple n.g.u.mx)
+    ~&  "ensure-default-wallet: has-simple={<has-simple>} wallets={<~(wyt by wallets.state)>}"
+    ?:  has-simple
+      ::  Ensure the simple wallet has both mainnet and testnet3 accounts
+      =/  simple=(unit [k=@ux v=wallet])
+        =/  rem=(list [k=@ux v=wallet])  ~(tap by wallets.state)
+        |-
+        ?~  rem  ~
+        =/  mx=(unit manx)  (de-xml:html name.v.i.rem)
+        ?:  ?&(?=(^ mx) =(%simple n.g.u.mx))
+          `i.rem
+        $(rem t.rem)
+      ?~  simple  (pure:m ~)
+      =/  acct-pairs=(list [account:hd-path @ux])  ~(tap by accounts.v.u.simple)
+      =/  has-main=_|
+        =/  rem  acct-pairs
+        |-
+        ?~  rem  %.n
+        =/  det=(unit account-details)  (~(get by accounts.state) +.i.rem)
+        ?~  det  $(rem t.rem)
+        ?:  =(%main active-network.u.det)  %.y
+        $(rem t.rem)
+      =/  has-testnet=_|
+        =/  rem  acct-pairs
+        |-
+        ?~  rem  %.n
+        =/  det=(unit account-details)  (~(get by accounts.state) +.i.rem)
+        ?~  det  $(rem t.rem)
+        ?:  =(%testnet3 active-network.u.det)  %.y
+        $(rem t.rem)
+      =/  wal=wallet  v.u.simple
+      =/  master  (from-seed:bip32 (seed-to-bytes:wallet-address seed.wal))
+      ;<  state=state-1  bind:m  (get-state-as:io state-1)
+      ?.  has-main
+        =/  derived  (derive-path:master "m/84'/0'/0'")
+        =/  account-pubkey=@ux  public-key:derived
+        =/  xprv=@t  (crip (prv-extended:derived %main))
+        =/  m-acct=account:hd-path  [[%.y 84] [%.y 0] [%.y 0]]
+        =/  new-account=account-details
+          :*  'Bitcoin'
+              `k.u.simple
+              [%xprv xprv]
+              %p2wpkh
+              %main
+              ~
+              [~ ~ ~ ~ ~]
+              %.n
+          ==
+        =.  accounts.wal  (~(put by accounts.wal) m-acct account-pubkey)
+        =.  wallets.state  (~(put by wallets.state) k.u.simple wal)
+        =.  accounts.state  (~(put by accounts.state) account-pubkey new-account)
+        ;<  ~  bind:m  (replace:io !>(state))
+        (pure:m ~)
+      ?.  has-testnet
+        =/  derived  (derive-path:master "m/84'/1'/0'")
+        =/  account-pubkey=@ux  public-key:derived
+        =/  xprv=@t  (crip (prv-extended:derived %testnet))
+        =/  t-acct=account:hd-path  [[%.y 84] [%.y 1] [%.y 0]]
+        =/  new-account=account-details
+          :*  'Bitcoin Testnet'
+              `k.u.simple
+              [%xprv xprv]
+              %p2wpkh
+              %testnet3
+              ~
+              [~ ~ ~ ~ ~]
+              %.n
+          ==
+        =.  accounts.wal  (~(put by accounts.wal) t-acct account-pubkey)
+        =.  wallets.state  (~(put by wallets.state) k.u.simple wal)
+        =.  accounts.state  (~(put by accounts.state) account-pubkey new-account)
+        ;<  ~  bind:m  (replace:io !>(state))
+        (pure:m ~)
+      (pure:m ~)
+    ::  No simple wallet — generate from entropy
+    ~&  "ensure-default-wallet: generating new simple wallet"
+    ;<  eny=@uvJ  bind:m  get-entropy:io
+    =/  generated-seed=cord  (gen-seed:seed-phrases eny %256)
+    =/  =seed  [%t generated-seed]
+    =/  pubkey=@ux  (seed-to-pubkey:wallet-address seed)
+    ::  Create wallet
+    =/  new-wallet=wallet
+      ['<simple>My Wallet</simple>' seed pubkey ~ ~]
+    =/  master  (from-seed:bip32 (seed-to-bytes:wallet-address seed))
+    ::  Derive BIP84 mainnet account: m/84'/0'/0'
+    =/  main-acct=account:hd-path  [[%.y 84] [%.y 0] [%.y 0]]
+    =/  main-derived  (derive-path:master "m/84'/0'/0'")
+    =/  main-account-pubkey=@ux  public-key:main-derived
+    =/  main-xprv=@t  (crip (prv-extended:main-derived %main))
+    =/  main-account=account-details
+      :*  'Bitcoin'
+          `pubkey
+          [%xprv main-xprv]
+          %p2wpkh
+          %main
+          ~
+          [~ ~ ~ ~ ~]
+          %.n
+      ==
+    =.  accounts.new-wallet  (~(put by accounts.new-wallet) main-acct main-account-pubkey)
+    ::  Derive BIP84 testnet account: m/84'/1'/0'
+    =/  test-acct=account:hd-path  [[%.y 84] [%.y 1] [%.y 0]]
+    =/  test-derived  (derive-path:master "m/84'/1'/0'")
+    =/  test-account-pubkey=@ux  public-key:test-derived
+    =/  test-xprv=@t  (crip (prv-extended:test-derived %testnet))
+    =/  test-account=account-details
+      :*  'Bitcoin Testnet'
+          `pubkey
+          [%xprv test-xprv]
+          %p2wpkh
+          %testnet3
+          ~
+          [~ ~ ~ ~ ~]
+          %.n
+      ==
+    =.  accounts.new-wallet  (~(put by accounts.new-wallet) test-acct test-account-pubkey)
+    ::  Save state
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
+    =.  wallets.state  (~(put by wallets.state) pubkey new-wallet)
+    =.  accounts.state
+      %-  ~(gas by accounts.state)
+      ~[[main-account-pubkey main-account] [test-account-pubkey test-account]]
+    ;<  ~  bind:m  (replace:io !>(state))
+    (pure:m ~)
   --
 ^-  agent:gall
 %-  agent:dbug
@@ -22,7 +190,7 @@
 |%
 ++  initial
   ^-  vase
-  =|  state=state-0
+  =|  state=state-1
   =.  binding.state  [~ /spv-wallet]
   !>(state)
   ::  ::
@@ -260,7 +428,7 @@
   ::  ::
   ::  ::  Build final state
   ::  ::
-  ::  =/  final-state=state-0
+  ::  =/  final-state=state-1
   ::    %=  state
   ::      accounts              accounts
   ::      wallets               wallets
@@ -272,17 +440,39 @@
 ++  migrate
   |=  old=vase
   ^-  vase
-  =/  try-new=(unit state-0)  ((soft state-0) q.old)
-  ?^  try-new
-    !>(u.try-new)
-  ~|  "state migration required - please nuke and restart"
-  !!
+  =/  os=versioned-state  (versioned-state q.old)
+  ?-  -.os
+    %1  !>(os)
+    %0  !>  ^-  state-1
+        :*  %1
+            auto-sponsor.os
+            boot.os
+            sponsor-response.os
+            accounts.os
+            watch-only.os
+            signing.os
+            wallets.os
+            labels.os
+            spv.os
+            indexer-subs.os
+            hide-empty-addresses.os
+            binding.os
+            counter.os
+            *(map @t local-tx)
+        ==
+  ==
 ::
 ++  on-peek
   |=  [=bowl:gall state=vase =path]
   ~|  "unexpected scry into {<dap.bowl>} on path {<path>}"
   ?+  path  [~ ~]
     [%x %dbug %state ~]  ``noun+state
+  ::
+      [%x %mcp %tools ~]
+    %-  some
+    %-  some
+    :-  %noun
+    .^(vase %ca /(scot %p our.bowl)/[q.byk.bowl]/(scot %da now.bowl)/fil/mcp-tools/hoon)
   ==
 ::
 ++  process
@@ -294,7 +484,7 @@
   ::
   ?:  ?=(%sponsorship-request mark)
     ~&  "sponsorship request from {<src>}"
-    ;<  state=state-0  bind:m  (get-state-as:io state-0)
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
     ?.  auto-sponsor.state
       ~&  "sponsorship: auto-sponsor disabled, rejecting {<src>}"
       (pure:m ~)
@@ -332,7 +522,7 @@
   ?:  ?=(%sponsorship-response mark)
     =/  [sig=@ height=@ud]  !<([@ @ud] vase)
     ~&  "sponsorship response from {<src>}: sig={<sig>} height={<height>}"
-    ;<  state=state-0  bind:m  (get-state-as:io state-0)
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
     =.  sponsor-response.state  `[sig height]
     ;<  ~  bind:m  (replace:io !>(state))
     (pure:m ~)
@@ -350,6 +540,44 @@
       ?:  !=(our src)
         (give-simple-payload:io (login-redirect:sailbox lin))
       ;<  state=^vase  bind:m  get-state:io
+      ::  Ensure at least one receiving address exists for draft pages
+      ?:  ?&  ?|  ?=([%apps %wallet ~] site.lin)
+                  ?=([%apps %wallet-1 ~] site.lin)
+                  ?=([%apps %wallet-2 ~] site.lin)
+              ==
+          ==
+        =/  st=state-1  !<(state-1 state)
+        =/  req-net=@t
+          (fall (get-key:kv:html-utils 'net' args.lin) 'main')
+        =/  pk-unit=(unit @ux)  (resolve-simple-pubkey st req-net)
+        ?~  pk-unit
+          ;<  =bowl:gall  bind:m  get-bowl:io
+          =/  =simple-payload:http
+            (do-get:rt-wallet bowl state header-list.request.req [ext site]:lin args.lin)
+          (give-simple-payload:io simple-payload)
+        =/  det=(unit account-details)  (~(get by accounts.st) u.pk-unit)
+        ?~  det
+          ;<  =bowl:gall  bind:m  get-bowl:io
+          =/  =simple-payload:http
+            (do-get:rt-wallet bowl state header-list.request.req [ext site]:lin args.lin)
+          (give-simple-payload:io simple-payload)
+        =/  ac  ~(. ac:wallet-account [u.det active-network.u.det])
+        =/  recv-leaves=(list [@ud hd-leaf])
+          (tap:((on @ud hd-leaf) gth) receiving:ac)
+        ?^  recv-leaves
+          ::  Has receiving addresses, render normally
+          ;<  =bowl:gall  bind:m  get-bowl:io
+          =/  =simple-payload:http
+            (do-get:rt-wallet bowl state header-list.request.req [ext site]:lin args.lin)
+          (give-simple-payload:io simple-payload)
+        ::  No receiving addresses — derive index 0 before rendering
+        ;<  ~  bind:m
+          (refresh-account-address:wallet-account u.pk-unit 'receiving' 0)
+        ;<  state=^vase  bind:m  get-state:io
+        ;<  =bowl:gall  bind:m  get-bowl:io
+        =/  =simple-payload:http
+          (do-get:rt-wallet bowl state header-list.request.req [ext site]:lin args.lin)
+        (give-simple-payload:io simple-payload)
       ;<  =bowl:gall  bind:m  get-bowl:io
       =/  =simple-payload:http
         (do-get:rt-wallet bowl state header-list.request.req [ext site]:lin args.lin)
@@ -369,12 +597,12 @@
       ?+  action  !!
           %start
         =.  io  io(hold &) :: claim the mutex
-        ;<  state=state-0  bind:m  (get-state-as:io state-0)
+        ;<  state=state-1  bind:m  (get-state-as:io state-1)
         =.  state  state(counter 0)
         ;<  ~  bind:m  (replace:io !>(state))
         ;<  ~  bind:m  (send-sse-event:io /spv-wallet/timer ~ `'/timer/counter-update')
         |-
-        ;<  state=state-0  bind:m  (get-state-as:io state-0)
+        ;<  state=state-1  bind:m  (get-state-as:io state-1)
         ?:  (gte counter.state 5)
           (pure:m ~)
         ;<  ~  bind:m  (replace:io !>(state(counter +(counter.state))))
@@ -387,6 +615,375 @@
       ::  (handle-boot-actions:rt-boot args)
       (pure:m ~)
     ?+    site  !!
+        [%apps %wallet ~]
+      ::  Simple wallet actions
+      =/  action=@t  (need (get-key:kv 'action' args))
+      ?+  action  !!
+          %rename-wallet
+        =/  new-name=@t  (need (get-key:kv 'name' args))
+        ;<  state=state-1  bind:m  (get-state-as:io state-1)
+        ::  Find the simple wallet or first wallet
+        =/  wal-list=(list [k=@ux v=wallet])  ~(tap by wallets.state)
+        ?~  wal-list  (pure:m ~)
+        =/  target=(unit [k=@ux v=wallet])
+          =/  rem=(list [k=@ux v=wallet])  wal-list
+          |-
+          ?~  rem  ~
+          =/  mx=(unit manx)  (de-xml:html name.v.i.rem)
+          ?:  ?&(?=(^ mx) =(%simple n.g.u.mx))
+            `i.rem
+          $(rem t.rem)
+        =/  wkey=@ux  ?~(target k.i.wal-list k.u.target)
+        =/  wal=wallet  ?~(target v.i.wal-list v.u.target)
+        ::  Preserve saved state when renaming
+        =/  old-mx=(unit manx)  (de-xml:html name.wal)
+        =/  was-saved=?
+          ?~  old-mx  %.n
+          ?.  =(%simple n.g.u.old-mx)  %.n
+          (lien a.g.u.old-mx |=([n=mane v=tape] =(%saved n)))
+        =/  tagged-name=@t
+          ?:  was-saved
+            (crip "<simple saved>{(trip new-name)}</simple>")
+          (crip "<simple>{(trip new-name)}</simple>")
+        =.  wallets.state  (~(put by wallets.state) wkey wal(name tagged-name))
+        ;<  ~  bind:m  (replace:io !>(state))
+        (pure:m ~)
+        ::
+          %toggle-saved
+        ;<  state=state-1  bind:m  (get-state-as:io state-1)
+        =/  wal-list=(list [k=@ux v=wallet])  ~(tap by wallets.state)
+        ?~  wal-list  (pure:m ~)
+        =/  target=(unit [k=@ux v=wallet])
+          =/  rem=(list [k=@ux v=wallet])  wal-list
+          |-
+          ?~  rem  ~
+          =/  mx=(unit manx)  (de-xml:html name.v.i.rem)
+          ?:  ?&(?=(^ mx) =(%simple n.g.u.mx))
+            `i.rem
+          $(rem t.rem)
+        =/  wkey=@ux  ?~(target k.i.wal-list k.u.target)
+        =/  wal=wallet  ?~(target v.i.wal-list v.u.target)
+        ::  Parse current tag and toggle saved flag
+        =/  mx=(unit manx)  (de-xml:html name.wal)
+        ?~  mx  (pure:m ~)
+        ?.  =(%simple n.g.u.mx)  (pure:m ~)
+        =/  is-saved=?
+          (lien a.g.u.mx |=([n=mane v=tape] =(%saved n)))
+        =/  title=tape
+          ?~  c.u.mx  ""
+          =/  node=manx  i.c.u.mx
+          ?.  =(%$ n.g.node)  ""
+          ?~  a.g.node  ""
+          v.i.a.g.node
+        =/  new-name=@t
+          ?:  is-saved
+            (crip "<simple>{title}</simple>")
+          (crip "<simple saved>{title}</simple>")
+        =.  wallets.state  (~(put by wallets.state) wkey wal(name new-name))
+        ;<  ~  bind:m  (replace:io !>(state))
+        (pure:m ~)
+        ::
+          %refresh-wallet
+        ::  Refresh: pending addresses + next unused receiving/change
+        =/  req-net=@t  (fall (get-key:kv 'net' args) 'main')
+        ;<  state=state-1  bind:m  (get-state-as:io state-1)
+        =/  pk-unit=(unit @ux)  (resolve-simple-pubkey state req-net)
+        ?~  pk-unit  (pure:m ~)
+        =/  pk=@ux  u.pk-unit
+        =/  det=(unit account-details)  (~(get by accounts.state) pk)
+        ?~  det
+          ;<  ~  bind:m  (refresh-account-address:wallet-account pk 'receiving' 0)
+          (pure:m ~)
+        =/  ac  ~(. ac:wallet-account [u.det active-network.u.det])
+        ::  Collect addresses with pending mempool activity
+        =/  pending-addrs=(list [chain=@t idx=@ud])
+          =/  recv=(list [@ud hd-leaf])
+            (tap:((on @ud hd-leaf) gth) receiving:ac)
+          =/  chng=(list [@ud hd-leaf])
+            (tap:((on @ud hd-leaf) gth) change:ac)
+          ;:  weld
+            %+  murn  recv
+            |=  [idx=@ud =hd-leaf]
+            =/  info-unit  info.main.hd-leaf
+            ?~  info-unit  ~
+            ?.  ?|  (gth mempool-funded.u.info-unit 0)
+                    (gth mempool-spent.u.info-unit 0)
+                ==
+              ~
+            `['receiving' idx]
+          ::
+            %+  murn  chng
+            |=  [idx=@ud =hd-leaf]
+            =/  info-unit  info.main.hd-leaf
+            ?~  info-unit  ~
+            ?.  ?|  (gth mempool-funded.u.info-unit 0)
+                    (gth mempool-spent.u.info-unit 0)
+                ==
+              ~
+            `['change' idx]
+          ==
+        ::  Find next unused receiving index
+        =/  next-recv-idx=@ud
+          =/  next=(unit @t)
+            (get-next-unused-address:wallet-address receiving:ac)
+          ?~  next
+            (lent (tap:((on @ud hd-leaf) gth) receiving:ac))
+          =/  leaves=(list [@ud hd-leaf])
+            (tap:((on @ud hd-leaf) gth) receiving:ac)
+          |-
+          ?~  leaves
+            (lent (tap:((on @ud hd-leaf) gth) receiving:ac))
+          =/  [lidx=@ud =hd-leaf]  i.leaves
+          ?:  =(address.main.hd-leaf u.next)  lidx
+          $(leaves t.leaves)
+        ::  Find next unused change index
+        =/  next-chng-idx=@ud
+          =/  next=(unit @t)
+            (get-next-unused-address:wallet-address change:ac)
+          ?~  next
+            (lent (tap:((on @ud hd-leaf) gth) change:ac))
+          =/  leaves=(list [@ud hd-leaf])
+            (tap:((on @ud hd-leaf) gth) change:ac)
+          |-
+          ?~  leaves
+            (lent (tap:((on @ud hd-leaf) gth) change:ac))
+          =/  [lidx=@ud =hd-leaf]  i.leaves
+          ?:  =(address.main.hd-leaf u.next)  lidx
+          $(leaves t.leaves)
+        ::  Build refresh list: pending + next unused recv + next unused chng
+        =/  refresh-list=(list [chain=@t idx=@ud])
+          ;:  weld
+            pending-addrs
+            ~[['receiving' next-recv-idx]]
+            ~[['change' next-chng-idx]]
+          ==
+        ::  Refresh all sequentially
+        |-
+        ?~  refresh-list  (pure:m ~)
+        ;<  ~  bind:m
+          (refresh-account-address:wallet-account pk chain.i.refresh-list idx.i.refresh-list)
+        $(refresh-list t.refresh-list)
+        ::
+          %refresh-address
+        ::  Refresh a single address by chain + index
+        =/  chain=@t   (need (get-key:kv 'chain' args))
+        =/  index=@ud  (rash (need (get-key:kv 'index' args)) dem)
+        =/  req-net=@t  (fall (get-key:kv 'net' args) 'main')
+        ;<  state=state-1  bind:m  (get-state-as:io state-1)
+        =/  pk-unit=(unit @ux)  (resolve-simple-pubkey state req-net)
+        ?~  pk-unit  (pure:m ~)
+        ;<  ~  bind:m  (refresh-account-address:wallet-account u.pk-unit chain index)
+        (pure:m ~)
+        ::
+          %send-bitcoin
+        ::  Build, sign, and broadcast a transaction
+        =/  address=@t   (need (get-key:kv 'address' args))
+        =/  amount=@t    (need (get-key:kv 'amount' args))
+        =/  fee-rate=@t  (fall (get-key:kv 'fee-rate' args) '2')
+        =/  req-net=@t   (fall (get-key:kv 'net' args) 'main')
+        ;<  state=state-1  bind:m  (get-state-as:io state-1)
+        =/  pk-unit=(unit @ux)  (resolve-simple-pubkey state req-net)
+        ?~  pk-unit  (pure:m ~)
+        =/  pk=@ux  u.pk-unit
+        ::  Walk change addresses from 0, refresh each, find first unused
+        =/  det=(unit account-details)  (~(get by accounts.state) pk)
+        ?~  det  (pure:m ~)
+        =/  change-idx=@ud  0
+        =/  net=network  active-network.u.det
+        |-
+        =/  change-addr=@t
+          %:  derive-address-from-xkey:wallet-account
+            k.extended-key.u.det  'change'  change-idx
+            script-type.u.det  net
+          ==
+        ;<  data=json  bind:m  (fetch-address-data change-addr net)
+        =/  chain-tc=(unit @ud)
+          %-  mole  |.
+          (ni:dejs:format (~(got jo:json-utils data) /'chain_stats'/'tx_count'))
+        =/  mem-tc=(unit @ud)
+          %-  mole  |.
+          (ni:dejs:format (~(got jo:json-utils data) /'mempool_stats'/'tx_count'))
+        ;<  ~  bind:m  (refresh-account-address:wallet-account pk 'change' change-idx)
+        ?:  (gth (add (fall chain-tc 0) (fall mem-tc 0)) 0)
+          $(change-idx +(change-idx))
+        ::  Chain through existing send handlers:
+        ::  clear-draft → add-output → set-change → auto-select → build
+        ;<  ~  bind:m
+          (handle-send-actions:rt-send pk ~[['action' 'clear-draft']])
+        ;<  ~  bind:m
+          %:  handle-send-actions:rt-send  pk
+            :~  ['action' 'add-output']
+                ['output-address' address]
+                ['output-amount' amount]
+            ==
+          ==
+        ;<  ~  bind:m
+          %:  handle-send-actions:rt-send  pk
+            :~  ['action' 'set-change-config']
+                ['fee-rate' fee-rate]
+                ['change-address' change-addr]
+            ==
+          ==
+        ;<  ~  bind:m
+          (handle-send-actions:rt-send pk ~[['action' 'run-auto-select']])
+        ::  Snapshot input addresses before build clears the draft
+        ;<  state=state-1  bind:m  (get-state-as:io state-1)
+        =/  pre-det=(unit account-details)  (~(get by accounts.state) pk)
+        =/  refresh-list=(list [chain=@t idx=@ud])
+          ?~  pre-det  ~
+          =/  ac  ~(. ac:wallet-account [u.pre-det active-network.u.pre-det])
+          =/  drft  draft:ac
+          ?~  drft
+            ~&  >>>  "send-bitcoin: no draft found, empty refresh-list"
+            ~
+          ~&  >>  "send-bitcoin: draft has {<(lent inputs.u.drft)>} inputs"
+          ~&  >>  "send-bitcoin: transactions map has {<~(wyt by transactions:ac)>} entries"
+          ~&  >>  "send-bitcoin: address-cache has {<~(wyt by address-cache:ac)>} entries"
+          ::  Resolve each input's address via tx data + address-cache
+          =/  result=(list [chain=@t idx=@ud])
+            %+  murn  inputs.u.drft
+            |=  [txid=@t vout=@ud *]
+            ^-  (unit [chain=@t idx=@ud])
+            =/  tx=(unit transaction)  (~(get by transactions:ac) txid)
+            ?~  tx
+              ~&  >>>  "send-bitcoin: tx {<txid>} NOT in transactions map"
+              ~
+            ?.  (lth vout (lent outputs.u.tx))
+              ~&  >>>  "send-bitcoin: vout {<vout>} out of range for tx {<txid>} (has {<(lent outputs.u.tx)>} outputs)"
+              ~
+            =/  addr=@t  address:(snag vout outputs.u.tx)
+            ~&  >>  "send-bitcoin: input {<txid>}:{<vout>} -> addr {<addr>}"
+            =/  suffix=(unit address-suffix:hd-path)
+              (~(get by address-cache:ac) addr)
+            ?~  suffix
+              ~&  >>>  "send-bitcoin: addr {<addr>} NOT in address-cache"
+              ~
+            =/  [chain-num=@ud addr-idx=@ud]
+              [q.change.u.suffix q.index.u.suffix]
+            ~&  >  "send-bitcoin: resolved input -> {?:(=(0 chain-num) "receiving" "change")}/{<addr-idx>}"
+            `[?:(=(0 chain-num) 'receiving' 'change') addr-idx]
+          ~&  >>  "send-bitcoin: input refresh-list: {<result>}"
+          result
+        ::  Add the change address we selected
+        ~&  >>  "send-bitcoin: adding change address at index {<change-idx>}"
+        =/  refresh-list  (snoc refresh-list ['change' change-idx])
+        ::  Add destination if it's ours
+        =/  dest-suffix=(unit address-suffix:hd-path)
+          ?~  pre-det  ~
+          =/  ac  ~(. ac:wallet-account [u.pre-det active-network.u.pre-det])
+          (~(get by address-cache:ac) address)
+        =/  refresh-list
+          ?~  dest-suffix  refresh-list
+          =/  [chain-num=@ud addr-idx=@ud]
+            [q.change.u.dest-suffix q.index.u.dest-suffix]
+          ~&  >>  "send-bitcoin: destination is ours -> {?:(=(0 chain-num) "receiving" "change")}/{<addr-idx>}"
+          (snoc refresh-list [?:(=(0 chain-num) 'receiving' 'change') addr-idx])
+        ~&  >  "send-bitcoin: FINAL refresh-list: {<refresh-list>}"
+        ::  Build, sign, broadcast
+        ;<  ~  bind:m
+          (handle-send-actions:rt-send pk ~[['action' 'build-transaction']])
+        ::  Get the txid we just broadcast from local-txs
+        ;<  state=state-1  bind:m  (get-state-as:io state-1)
+        =/  broadcast-txid=@t
+          =/  pairs=(list [@t local-tx])  ~(tap by local-txs.state)
+          =/  best=[txid=@t sent=@da]  ['' *@da]
+          |-
+          ?~  pairs  txid.best
+          =/  [txid=@t ltx=local-tx]  i.pairs
+          ?:  (gth sent.ltx sent.best)
+            $(pairs t.pairs, best [txid sent.ltx])
+          $(pairs t.pairs)
+        ~&  >  "send-bitcoin: polling for txid {<broadcast-txid>} in {<(lent refresh-list)>} addresses"
+        ::  Poll each address until the txid shows up in its transactions
+        =/  max-polls=@ud  10
+        =/  polls=@ud  0
+        |-
+        ?:  (gte polls max-polls)
+          ~&  >>>  "send-bitcoin: gave up polling after {<max-polls>} attempts"
+          (pure:m ~)
+        ;<  ~  bind:m  (sleep:io ~s3)
+        ::  Refresh all touched addresses
+        =/  rem  refresh-list
+        |-
+        ?~  rem
+          ::  Check if txid is now visible in any address's transactions
+          ;<  state=state-1  bind:m  (get-state-as:io state-1)
+          =/  det=(unit account-details)  (~(get by accounts.state) pk)
+          ?~  det
+            ~&  >>>  "send-bitcoin: account gone during poll"
+            (pure:m ~)
+          =/  ac  ~(. ac:wallet-account [u.det active-network.u.det])
+          ?:  (~(has by transactions:ac) broadcast-txid)
+            ~&  >  "send-bitcoin: txid confirmed in indexer after {<+(polls)>} polls"
+            (pure:m ~)
+          ~&  >>  "send-bitcoin: poll {<+(polls)>}/{<max-polls>}: txid not yet visible"
+          ^$(polls +(polls))
+        =/  [chain=@t idx=@ud]  i.rem
+        ~&  >  "send-bitcoin: refreshing {<chain>}/{<idx>}"
+        ;<  ~  bind:m  (refresh-account-address:wallet-account pk chain idx)
+        $(rem t.rem)
+        ::
+          %get-receive-address
+        ::  Find next unused address by checking mempool.space
+        =/  req-net=@t  (fall (get-key:kv 'net' args) 'main')
+        ;<  state=state-1  bind:m  (get-state-as:io state-1)
+        =/  pk-unit=(unit @ux)  (resolve-simple-pubkey state req-net)
+        ?~  pk-unit
+          %-  give-simple-payload:io
+          [[200 ~[['content-type' 'text/plain']]] `(as-octs:mimes:html '')]
+        =/  det=(unit account-details)  (~(get by accounts.state) u.pk-unit)
+        ?~  det
+          %-  give-simple-payload:io
+          [[200 ~[['content-type' 'text/plain']]] `(as-octs:mimes:html '')]
+        ::  Check local state first to find candidate unused address
+        ::  Only refresh from there forward (skip already-known used addresses)
+        =/  pk=@ux  u.pk-unit
+        =/  net=network  active-network.u.det
+        =/  ac  ~(. ac:wallet-account [u.det active-network.u.det])
+        =/  local-next=(unit @t)  (get-next-unused-address:wallet-address receiving:ac)
+        ::  Find the index of the local candidate (or start at mop size)
+        =/  idx=@ud
+          ?~  local-next
+            ::  No unused in local state — start at end of mop
+            (lent (tap:((on @ud hd-leaf) gth) receiving:ac))
+          ::  Find the index of the candidate address
+          =/  leaves=(list [@ud hd-leaf])
+            (tap:((on @ud hd-leaf) gth) receiving:ac)
+          |-
+          ?~  leaves  (lent (tap:((on @ud hd-leaf) gth) receiving:ac))
+          =/  [lidx=@ud =hd-leaf]  i.leaves
+          ?:  =(address.main.hd-leaf u.local-next)
+            lidx
+          $(leaves t.leaves)
+        ::  Refresh from candidate index forward until confirmed unused
+        |-
+        ;<  ~  bind:m  (refresh-account-address:wallet-account pk 'receiving' idx)
+        ;<  state=state-1  bind:m  (get-state-as:io state-1)
+        =/  det=(unit account-details)  (~(get by accounts.state) pk)
+        ?~  det
+          %-  give-simple-payload:io
+          [[200 ~[['content-type' 'text/plain']]] `(as-octs:mimes:html '')]
+        =/  ac  ~(. ac:wallet-account [u.det active-network.u.det])
+        =/  leaf=(unit hd-leaf)  (get:((on @ud hd-leaf) gth) receiving:ac idx)
+        =/  has-txs=?
+          ?~  leaf  %.n
+          =/  info-unit  info.main.u.leaf
+          ?~  info-unit  %.n
+          ?|  (gth tx-count.u.info-unit 0)
+              (gth mempool-funded.u.info-unit 0)
+              (gth mempool-spent.u.info-unit 0)
+          ==
+        ?:  has-txs
+          ::  Address got used since last check, try next
+          $(idx +(idx))
+        ::  Found unused address — get it from refreshed state
+        =/  addr=@t
+          ?~  leaf  ''
+          address.main.u.leaf
+        %-  give-simple-payload:io
+        [[200 ~[['content-type' 'text/plain']]] `(as-octs:mimes:html addr)]
+      ==
+      ::
         [%spv-wallet ~]
       (handle-wallet-actions:rt-wallet args)
       ::
@@ -408,16 +1005,18 @@
   ?>  =(our src)
   ?+    mark  !!
       %on-init :: sent by sailbox
-    ;<  state=state-0  bind:m  (get-state-as:io state-0)
-    (set-bindings:io ~[binding.state])
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
+    ;<  ~  bind:m  (ensure-default-wallet state)
+    (set-bindings:io ~[binding.state [~ /apps/wallet] [~ /apps/wallet-1] [~ /apps/wallet-2]])
     ::
       %on-load :: sent by sailbox
-    ;<  state=state-0  bind:m  (get-state-as:io state-0)
-    (set-bindings:io ~[binding.state])
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
+    ;<  ~  bind:m  (ensure-default-wallet state)
+    (set-bindings:io ~[binding.state [~ /apps/wallet] [~ /apps/wallet-1] [~ /apps/wallet-2]])
     ::
       %set-binding
     =+  !<(new-binding=binding:eyre vase)
-    ;<  state=state-0  bind:m  (get-state-as:io state-0)
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
     =.  binding.state  new-binding
     ;<  ~  bind:m  (replace:io !>(state))
     (set-bindings:io ~[new-binding])
@@ -460,7 +1059,7 @@
           event=(unit @t)
       ==
   ^-  wain
-  =+  !<(state-0 state)
+  =+  !<(state-1 state)
   ?:  ?=([%spv-wallet %timer ~] site)
     (handle-test-pages-sse:ui bowl state site args id event)
   ?:  ?=([%spv-wallet %progress ~] site)
@@ -478,7 +1077,7 @@
       ?:  =('main' net-str)  %main
       ?:  =('testnet3' net-str)  %testnet3
       ?:  =('testnet4' net-str)  %testnet4
-      %testnet3
+      %main
     (handle-spv-sse:ui bowl state net args id event)
     ::
       [%spv-wallet %stream %wallet @ ~]

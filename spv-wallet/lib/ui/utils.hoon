@@ -27,6 +27,30 @@
   =/  change-balance=@ud  (compute-mop-balance change:ac)
   (add receiving-balance change-balance)
 ::
+++  compute-mop-pending
+  |=  leaf-mop=((mop @ud hd-leaf) gth)
+  ^-  [in=@ud out=@ud]
+  =/  leaves=(list [@ud hd-leaf])
+    (tap:((on @ud hd-leaf) gth) leaf-mop)
+  |-
+  ?~  leaves  [0 0]
+  =/  [index=@ud =hd-leaf]  i.leaves
+  =/  details=address-details  main.hd-leaf
+  ?~  info.details
+    $(leaves t.leaves)
+  =/  funded=@ud  mempool-funded.u.info.details
+  =/  spent=@ud   mempool-spent.u.info.details
+  =/  rest=[in=@ud out=@ud]  $(leaves t.leaves)
+  [(add funded in.rest) (add spent out.rest)]
+::
+++  compute-account-pending
+  |=  account=account-details
+  ^-  [in=@ud out=@ud]
+  =/  ac  ~(. ac:wallet-account [account active-network.account])
+  =/  [ri=@ud ro=@ud]  (compute-mop-pending receiving:ac)
+  =/  [ci=@ud co=@ud]  (compute-mop-pending change:ac)
+  [(add ri ci) (add ro co)]
+::
 ++  join
   |=  [sep=tape strings=(list tape)]
   ^-  tape

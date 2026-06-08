@@ -1,7 +1,7 @@
 /-  s=spv-wallet, urb
 /+  io=sailboxio, html-utils, seed-phrases, sailbox, json-utils, server,
     *wallet-address, *wallet-account, *wallet-discovery,
-    ui=ui-spv-wallet, gw=ui-groundwire
+    ui=ui-spv-wallet, gw=ui-groundwire, draft=ui-draft
 |%
 ::  Helper: Infer script-type from extended key prefix
 ++  prefix-to-script-type
@@ -48,13 +48,13 @@
       [%t seed-phrase]
     =/  pubkey=@ux  (seed-to-pubkey seed)
     =/  new-wallet=wallet:s  [wallet-name seed pubkey ~ ~]
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =.  wallets.state  (~(put by wallets.state) pubkey new-wallet)
     ;<  ~  bind:m  (replace:io !>(state))
     (send-sse-event:io /spv-wallet/stream ~ `'wallet-list-update')
       %add-wallet-from-entropy
     =/  wallet-name=@t  (need (get-key:kv:html-utils 'wallet-name' args))
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     ;<  eny=@uvJ  bind:m  get-entropy:io
     =/  existing-seeds=(set cord)
       %-  ~(gas in *(set cord))
@@ -73,7 +73,7 @@
     ==
       %remove-wallet
     =/  pubkey-to-remove=@ux  (rash (need (get-key:kv:html-utils 'pubkey' args)) hex)
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     ::  If this is the boot wallet, clear boot state
     =/  removed=(unit wallet:s)  (~(get by wallets.state) pubkey-to-remove)
     =?  boot.state  ?&  ?=(^ removed)
@@ -87,7 +87,7 @@
     (send-sse-event:io /spv-wallet/stream ~ `'wallet-list-update')
     ::
       %toggle-empty-addresses
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =.  hide-empty-addresses.state  !hide-empty-addresses.state
     (replace:io !>(state))
     ::
@@ -103,7 +103,7 @@
     ::  Validate xpub and extract pubkey
     =/  account  (from-extended:bip32 xpub-tape)
     =/  pubkey=@ux  public-key:account
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     ::  Get script-type and network from form
     =/  script-type-str=@t  (need (get-key:kv:html-utils 'script-type' args))
     =/  network-str=@t  (need (get-key:kv:html-utils 'network' args))
@@ -153,7 +153,7 @@
     ::  Validate xprv and extract pubkey
     =/  account  (from-extended:bip32 xprv-tape)
     =/  pubkey=@ux  public-key:account
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     ::  Get script-type and network from form
     =/  script-type-str=@t  (need (get-key:kv:html-utils 'script-type' args))
     =/  network-str=@t  (need (get-key:kv:html-utils 'network' args))
@@ -193,7 +193,7 @@
     ::
       %delete-watch-only
     =/  pubkey=@ux  (rash (need (get-key:kv:html-utils 'pubkey' args)) hex)
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     ::  Remove from watch-only set and global accounts map
     =.  watch-only.state  (~(del in watch-only.state) pubkey)
     =.  accounts.state  (~(del by accounts.state) pubkey)
@@ -202,7 +202,7 @@
     ::
       %delete-signing
     =/  pubkey=@ux  (rash (need (get-key:kv:html-utils 'pubkey' args)) hex)
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     ::  Remove from signing set and global accounts map
     =.  signing.state  (~(del in signing.state) pubkey)
     =.  accounts.state  (~(del by accounts.state) pubkey)
@@ -221,7 +221,7 @@
     ::  Get account path from form
     =/  path-str=@t  (need (get-key:kv:html-utils 'account-path' args))
     ::  Get state and wallet
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  wallet=(unit wallet:s)  (~(get by wallets.state) pubkey)
     ?~  wallet
       ~|  "wallet not found"  !!
@@ -268,7 +268,7 @@
     =/  new-account=account:hd-path
       [[%.y purpose-val] [%.y coin-type-val] [%.y account-val]]
     ::  Get state and add account
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  wallet=(unit wallet:s)  (~(get by wallets.state) pubkey)
     ?~  wallet
       ~|  "wallet not found"  !!
@@ -345,7 +345,7 @@
     =/  coin-type-val=@ud  (snag 1 parts)
     =/  scan-key=coin-type:hd-path  [[%.y purpose-val] [%.y coin-type-val]]
     ::  Get state and wallet
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  wallet=(unit wallet:s)  (~(get by wallets.state) pubkey)
     ?~  wallet
       ~|  "wallet not found"  !!
@@ -377,7 +377,7 @@
     =/  coin-type-val=@ud  (snag 1 parts)
     =/  scan-key=coin-type:hd-path  [[%.y purpose-val] [%.y coin-type-val]]
     ::  Get state and wallet
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  wallet=(unit wallet:s)  (~(get by wallets.state) pubkey)
     ?~  wallet
       ~|  "wallet not found"  !!
@@ -410,7 +410,7 @@
     =/  coin-type-val=@ud  (snag 1 parts)
     =/  scan-key=coin-type:hd-path  [[%.y purpose-val] [%.y coin-type-val]]
     ::  Get state and wallet
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  wallet=(unit wallet:s)  (~(get by wallets.state) pubkey)
     ?~  wallet
       ~|  "wallet not found"  !!
@@ -440,7 +440,7 @@
   ^-  simple-payload:http
   ?.  =(our src):bowl
     (login-redirect:sailbox [ext site] args)
-  =+  !<(state-0:s state)
+  =+  !<(state-1:s state)
   ::  Check urb-watcher for our point to determine spawn status
   =/  spawn-status=?(%spawned %pending %unspawned)
     =/  in-watcher=?
@@ -452,6 +452,18 @@
     ?:  in-watcher  %spawned
     ?:  ?&(?=(^ boot) =(%done step.u.boot))  %pending
     %unspawned
+  ::  /apps/wallet   -> draft 0
+  ::  /apps/wallet-1 -> draft 1
+  ::  /apps/wallet-2 -> draft 2, etc.
+  ?:  ?=([%apps %wallet ~] site)
+    %-  mime-response:sailbox
+    [/text/html (manx-to-octs:server (draft-page:draft 0 wallets accounts args local-txs))]
+  ?:  ?=([%apps %wallet-1 ~] site)
+    %-  mime-response:sailbox
+    [/text/html (manx-to-octs:server (draft-page:draft 1 wallets accounts args local-txs))]
+  ?:  ?=([%apps %wallet-2 ~] site)
+    %-  mime-response:sailbox
+    [/text/html (manx-to-octs:server (draft-page:draft 2 wallets accounts args local-txs))]
   ::  Handle address data endpoint (returns simple-payload:http)
   ?:  ?=([%spv-wallet %wallet @ %account @ %address @ %data ~] site)
     =/  pubkey=@ux  (rash i.t.site hex)
@@ -466,14 +478,14 @@
     [/text/html (manx-to-octs:server (wallet-page:ui wallets watch-only signing accounts spawn-status boot args))]
       [%spv-wallet %spv ~]
     ::  Network selection list page
-    =/  spv-state=state-0:s  !<(state-0:s state)
+    =/  spv-state=state-1:s  !<(state-1:s state)
     [/text/html (manx-to-octs:server (spv-list-page:ui spv-state))]
       [%spv-wallet %groundwire ~]
     ::  Groundwire management page - ordinal comet identities
-    =/  gw-state=state-0:s  !<(state-0:s state)
+    =/  gw-state=state-1:s  !<(state-1:s state)
     [/text/html (manx-to-octs:server (groundwire-page:gw gw-state))]
       [%spv-wallet %spv @ ~]
-    =/  spv-state=state-0:s  !<(state-0:s state)
+    =/  spv-state=state-1:s  !<(state-1:s state)
     ::  Parse network from path
     =/  net-str=@t  i.t.t.site
     =/  net=network
@@ -492,7 +504,7 @@
     [/text/html (manx-to-octs:server (spv-page:ui spv-state page net))]
       [%spv-wallet %spv %header @ ~]
     =/  hash=@uvI  (rash i.t.t.t.site hex)
-    =/  spv-state=state-0:s  !<(state-0:s state)
+    =/  spv-state=state-1:s  !<(state-1:s state)
     [/text/html (manx-to-octs:server (block-header-detail-page:ui hash spv.spv-state))]
       [%spv-wallet %timer ~]
     [/text/html (manx-to-octs:server timer-page:ui)]

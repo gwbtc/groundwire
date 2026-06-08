@@ -2182,7 +2182,7 @@
           event=(unit @t)
       ==
   ^-  wain
-  =+  !<(state-0:s state)
+  =+  !<(state-1:s state)
   ::  Look up account directly from flat accounts map
   =/  details=(unit account-details)  (~(get by accounts) account-pubkey)
   ?~  details

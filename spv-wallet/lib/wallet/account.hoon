@@ -406,7 +406,7 @@
   =/  m  (fiber:io ,~)
   ^-  form:m
   ::  Get state and account
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   ;<  now=@da  bind:m  get-time:io
   =/  details=(unit account-details)  (~(get by accounts.state) pubkey)
   ?~  details
@@ -446,17 +446,17 @@
   ::  Parse address info (pure)
   =/  parsed-info=(unit address-info)
     (parse-address-info address-cord enriched-data)
-  ::  Fetch UTXOs if address has transactions
+  ::  Fetch UTXOs if address has any activity (confirmed or mempool)
   ;<  utxo-list=(list [txid=@t vout=@ud value=@ud =tx-status])  bind:m
     ?:  ?&  ?=(^ parsed-info)
-            (gth tx-count.u.parsed-info 0)
+            (gth (add tx-count.u.parsed-info mempool-funded.u.parsed-info) 0)
         ==
       (fetch-utxos address-cord active-network.u.details)
     (pure:m ~)
   =/  updated-address-details=address-details
     [address-cord last-check.new-address-details parsed-info indexer-history.new-address-details utxo-list]
   ::  Get fresh state
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  details=(unit account-details)  (~(get by accounts.state) pubkey)
   ?~  details
     ~|  "account not found after fetch"  !!
@@ -469,6 +469,16 @@
     =/  d1  (~(put-addr ac [u.details spv-net]) chain index updated-address-details)
     =/  d2  (~(merge-txs ac [d1 spv-net]) new-transactions-canonical)
     (~(add-tx-addrs ac [d2 spv-net]) new-tx-addresses)
+  ::  Update local-tx status for any matching transactions
+  =.  local-txs.state
+    %-  ~(urn by local-txs.state)
+    |=  [txid=@t ltx=local-tx]
+    =/  canon-tx=(unit transaction)  (~(get by new-transactions-canonical) txid)
+    ?~  canon-tx  ltx
+    ?-  tx-status.u.canon-tx
+      [%confirmed *]  ltx(status %confirmed)
+      [%unconfirmed *]  ltx(status %mempool)
+    ==
   ::  Save and send second SSE update
   =.  accounts.state  (~(put by accounts.state) pubkey updated-details)
   ;<  ~  bind:m  (replace:io !>(state))
@@ -485,7 +495,7 @@
   =/  m  (fiber:io ,~)
   ^-  form:m
   ::  Get state and account
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   ;<  now=@da  bind:m  get-time:io
   =/  details=(unit account-details)  (~(get by accounts.state) pubkey)
   ?~  details
@@ -522,7 +532,7 @@
     [tapscript-addr `now parsed-info ~ utxo-list]
   ~&  >>  "tapscript refresh: updated-addr-details info={<info.updated-addr-details>}"
   ::  Get fresh state
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  fresh-details=(unit account-details)  (~(get by accounts.state) pubkey)
   ?~  fresh-details
     ~|  "account not found after fetch"  !!
@@ -569,7 +579,7 @@
   |=  [pubkey=@ux pid=@ta]
   =/  m  (fiber:io ,~)
   ^-  form:m
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  details=(unit account-details)  (~(get by accounts.state) pubkey)
   ?~  details  ~|("account not found" !!)
   =/  existing-scan=(unit [pid=@ta act=? scn=account-scan])  scan.proc.u.details
@@ -590,7 +600,7 @@
   |=  [pubkey=@ux chain=@t index=@ud pid=@ta]
   =/  m  (fiber:io ,~)
   ^-  form:m
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  details=(unit account-details)  (~(get by accounts.state) pubkey)
   ?~  details  ~|("account not found" !!)
   =/  existing-entry=(unit [pid=@ta act=?])  (~(get by (~(get-proc ac [u.details active-network.u.details]) chain)) index)
@@ -610,7 +620,7 @@
   |=  [pubkey=@ux chain=@t index=@ud]
   =/  m  (fiber:io ,~)
   ^-  form:m
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  details=(unit account-details)  (~(get by accounts.state) pubkey)
   ?~  details  (pure:m ~)
   =/  cleared-details=account-details
@@ -626,7 +636,7 @@
   =/  m  (fiber:io ,~)
   ^-  form:m
   ::  Get state and wallet
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   ;<  now=@da  bind:m  get-time:io
   =/  wallet=(unit wallet)  (~(get by wallets.state) pubkey)
   ?~  wallet
@@ -682,7 +692,7 @@
   =/  updated-address-details=address-details
     [address-cord last-check.new-address-details parsed-info indexer-history.new-address-details utxo-list]
   ::  Get fresh state
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  wallet=(unit ^wallet)  (~(get by wallets.state) pubkey)
   ?~  wallet
     ~|  "wallet not found after fetch"  !!
@@ -721,7 +731,7 @@
   |=  [pubkey=@ux account-path=@t]
   =/  m  (fiber:io ,[account:hd-path @ux account-details])
   ^-  form:m
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  wallet=(unit wallet)  (~(get by wallets.state) pubkey)
   ?~  wallet
     ~|  "wallet not found"  !!
@@ -762,7 +772,7 @@
   |=  [account-pubkey=@ux txid=@t pid=@ta]
   =/  m  (fiber:io ,~)
   ^-  form:m
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  details=(unit account-details)  (~(get by accounts.state) account-pubkey)
   ?~  details  ~|("account not found" !!)
   =/  existing-entry=(unit [pid=@ta act=?])
@@ -782,7 +792,7 @@
   |=  [account-pubkey=@ux txid=@t]
   =/  m  (fiber:io ,~)
   ^-  form:m
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  details=(unit account-details)  (~(get by accounts.state) account-pubkey)
   ?~  details  (pure:m ~)
   =/  cleared-details=account-details
@@ -796,7 +806,7 @@
   |=  [account-pubkey=@ux txid=@t]
   =/  m  (fiber:io ,~)
   ^-  form:m
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  details=(unit account-details)  (~(get by accounts.state) account-pubkey)
   ?~  details  ~|("account not found" !!)
   ::  Validate transaction can be SPV verified (pure)

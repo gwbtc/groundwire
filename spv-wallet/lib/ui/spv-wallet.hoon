@@ -1118,7 +1118,7 @@
           event=(unit @t)
       ==
   ^-  wain
-  =+  !<(state-0 state)
+  =+  !<(state-1 state)
   ?+    site  !!
       [%spv-wallet %timer ~]
     ?+    event  !!
@@ -1595,7 +1595,7 @@
           event=(unit @t)
       ==
   ^-  wain
-  =+  !<(state-0 state)
+  =+  !<(state-1 state)
   ::  Look up account directly from flat accounts map
   =/  details=(unit account-details)  (~(get by accounts) account-pubkey)
   ?~  details
@@ -1896,7 +1896,7 @@
           event=(unit @t)
       ==
   ^-  wain
-  =+  !<(state-0 state)
+  =+  !<(state-1 state)
   ?+    event  !!
       [~ %account-list-update]
     =/  wallet=(unit wallet)  (~(get by wallets) pubkey)

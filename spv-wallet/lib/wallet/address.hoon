@@ -130,7 +130,10 @@
   =/  details=address-details  main.hd-leaf
   =/  has-txs=?
     ?~  info.details  %.n
-    (gth tx-count.u.info.details 0)
+    ?|  (gth tx-count.u.info.details 0)
+        (gth mempool-funded.u.info.details 0)
+        (gth mempool-spent.u.info.details 0)
+    ==
   ?:  has-txs
     ::  Found address with txs - check gap limit
     ?~  last-unused

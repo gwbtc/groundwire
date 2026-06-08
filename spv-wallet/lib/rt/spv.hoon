@@ -75,7 +75,7 @@
     ::  Bitcoin block hashes from APIs are in little-endian format, same as our computed hashes
     =/  block-hash=@uvI  (rash block-hash-text hex)
     ::  Update state with new checkpoint
-    ;<  state=state-0  bind:m  (get-state-as:io state-0)
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
     =/  chain=spv-chain  (get-chain network spv.state)
     =.  checkpoint-height.chain  height
     =.  checkpoint-hash.chain  block-hash
@@ -95,7 +95,7 @@
     =/  [validated-header=block-header:bitcoin-spv pow-valid=? work=@ud]
       (validate-header-with-hash:bitcoin-spv header `@ux`computed-hash.header)
     ::  Get state to validate chain
-    ;<  state=state-0  bind:m  (get-state-as:io state-0)
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
     =/  chain=spv-chain  (get-chain network spv.state)
     ::  Validate chain connection and add header (pure computations that could fail)
     =/  chain-result=(each [spv-chain @uvI] tang)
@@ -143,7 +143,7 @@
     ::  Get hash from form
     =/  hash=@uvI  (rash (need (get-key:kv:html-utils 'hash' args)) hex)
     ::  Get state and header
-    ;<  state=state-0  bind:m  (get-state-as:io state-0)
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
     =/  chain=spv-chain  (get-chain network spv.state)
     =/  header=(unit block-header:bitcoin-spv)  (~(get by headers.chain) hash)
     ?~  header
@@ -213,7 +213,7 @@
     ;<  block-hash-hex=cord  bind:m  (fetch-cord:io hash-url)
     =/  block-hash=@uvI  (rash block-hash-hex hex)
     ::  Get state and check if we have this block header
-    ;<  state=state-0  bind:m  (get-state-as:io state-0)
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
     =/  chain=spv-chain  (get-chain network spv.state)
     =/  header=(unit block-header:bitcoin-spv)  (~(get by headers.chain) block-hash)
     ?~  header
@@ -236,7 +236,7 @@
     ::
       %start-header-sync
     ::  Get current tip height
-    ;<  state=state-0  bind:m  (get-state-as:io state-0)
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
     =/  chain=spv-chain  (get-chain network spv.state)
     ::  Guard: don't start if already running
     ?^  header-sync.chain
@@ -264,7 +264,7 @@
     (run-header-sync network start-height)
     ::
       %pause-header-sync
-    ;<  state=state-0  bind:m  (get-state-as:io state-0)
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
     =/  chain=spv-chain  (get-chain network spv.state)
     ?~  header-sync.chain
       ~|  "no header sync running"  !!
@@ -280,7 +280,7 @@
     (pure:m ~)
     ::
       %resume-header-sync
-    ;<  state=state-0  bind:m  (get-state-as:io state-0)
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
     =/  chain=spv-chain  (get-chain network spv.state)
     ?~  header-sync.chain
       ~|  "no header sync to resume"  !!
@@ -297,7 +297,7 @@
     (run-header-sync network sync-height)
     ::
       %cancel-header-sync
-    ;<  state=state-0  bind:m  (get-state-as:io state-0)
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
     =/  chain=spv-chain  (get-chain network spv.state)
     ?~  header-sync.chain
       (pure:m ~)
@@ -313,7 +313,7 @@
     ::
       %clear-all-headers
     ::  Clear all headers from storage
-    ;<  state=state-0  bind:m  (get-state-as:io state-0)
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
     =/  chain=spv-chain  (get-chain network spv.state)
     =.  headers.chain  ~
     =.  headers-by-height.chain  ~
@@ -326,7 +326,7 @@
       %clear-headers-after
     ::  Clear headers after specified height
     =/  height=@ud  (rash (need (get-key:kv:html-utils 'height' args)) dem)
-    ;<  state=state-0  bind:m  (get-state-as:io state-0)
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
     =/  chain=spv-chain  (get-chain network spv.state)
     ::  Filter out headers with height > specified height
     =/  filtered-headers=(map @uvI block-header:bitcoin-spv)
@@ -351,7 +351,7 @@
       %clear-headers-before
     ::  Clear headers before specified height
     =/  height=@ud  (rash (need (get-key:kv:html-utils 'height' args)) dem)
-    ;<  state=state-0  bind:m  (get-state-as:io state-0)
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
     =/  chain=spv-chain  (get-chain network spv.state)
     ::  Filter out headers with height < specified height
     =/  filtered-headers=(map @uvI block-header:bitcoin-spv)
@@ -389,7 +389,7 @@
   |=  =network
   =/  m  (fiber:io ,@ud)
   ^-  form:m
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  chain=spv-chain  (get-chain network spv.state)
   (pure:m (lent ~(tap by headers.chain)))
 ::
@@ -397,7 +397,7 @@
   |=  [=network hash=@uvI]
   =/  m  (fiber:io ,(unit block-header:bitcoin-spv))
   ^-  form:m
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  chain=spv-chain  (get-chain network spv.state)
   (pure:m (~(get by headers.chain) hash))
 ::
@@ -405,7 +405,7 @@
   |=  =network
   =/  m  (fiber:io ,(unit [key=@ud val=(set @uvI)]))
   ^-  form:m
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  chain=spv-chain  (get-chain network spv.state)
   (pure:m (ram:((on @ud (set @uvI)) lth) headers-by-height.chain))
 ::
@@ -413,7 +413,7 @@
   |=  =network
   =/  m  (fiber:io ,[height=(unit @ud) count=@ud])
   ^-  form:m
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  chain=spv-chain  (get-chain network spv.state)
   =/  tip=(unit [key=@ud val=(set @uvI)])
     (ram:((on @ud (set @uvI)) lth) headers-by-height.chain)
@@ -425,7 +425,7 @@
   |=  [=network height=@ud]
   =/  m  (fiber:io ,(unit (set @uvI)))
   ^-  form:m
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  chain=spv-chain  (get-chain network spv.state)
   (pure:m (get:((on @ud (set @uvI)) lth) headers-by-height.chain height))
 ::
@@ -433,7 +433,7 @@
   |=  =network
   =/  m  (fiber:io ,[@ud @uvI])
   ^-  form:m
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  chain=spv-chain  (get-chain network spv.state)
   (pure:m [checkpoint-height.chain checkpoint-hash.chain])
 ::
@@ -441,7 +441,7 @@
   |=  =network
   =/  m  (fiber:io ,(unit [key=@ud val=(set @uvI)]))
   ^-  form:m
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  chain=spv-chain  (get-chain network spv.state)
   (pure:m (pry:((on @ud (set @uvI)) lth) headers-by-work.chain))
 ::
@@ -454,7 +454,7 @@
   =/  current-height=@ud  start-height
   |-
   ::  Check if sync was cancelled/paused
-  ;<  state=state-0  bind:m  (get-state-as:io state-0)
+  ;<  state=state-1  bind:m  (get-state-as:io state-1)
   =/  chain=spv-chain  (get-chain network spv.state)
   ?~  header-sync.chain
     ::  Sync was cancelled, exit

@@ -356,7 +356,7 @@
   ==
 ::
 ++  spv-list-page
-  |=  state=state-0
+  |=  state=state-1
   ^-  manx
   %-  htmx-page
   :^  "SPV Block Headers"  &  ~
@@ -416,7 +416,7 @@
   ==
 ::
 ++  spv-page
-  |=  [state=state-0 page=@ud net=network]
+  |=  [state=state-1 page=@ud net=network]
   ^-  manx
   =/  chain=spv-chain  (get-spv-chain net spv.state)
   =/  net-str=tape  (scow %tas net)
@@ -569,7 +569,7 @@
           event=(unit @t)
       ==
   ^-  wain
-  =/  st=state-0  !<(state-0 state)
+  =/  st=state-1  !<(state-1 state)
   =/  chain=spv-chain  (get-spv-chain net spv.st)
   ?~  event
     ~

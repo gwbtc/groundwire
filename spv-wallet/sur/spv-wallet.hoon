@@ -70,6 +70,18 @@
       %p2tr          :: BIP86, purpose 86, taproot
   ==
 ::
++$  broadcast-status
+  $?  %broadcast   :: sent to network, not yet seen in mempool
+      %mempool     :: seen in mempool.space
+      %confirmed   :: included in a block
+  ==
+::
++$  local-tx
+  $:  raw=@t              :: signed tx hex
+      status=broadcast-status
+      sent=@da            :: when we broadcast
+  ==
+::
 +$  network-details
   $:  change=((mop @ud hd-leaf) gth)
       receiving=((mop @ud hd-leaf) gth)
@@ -180,22 +192,38 @@
       auto-sponsor=_&
       boot=(unit boot-state)
       sponsor-response=(unit [sig=@ height=@ud])
-      ::  Core wallet state
       accounts=(map @ux account-details)
       watch-only=(set @ux)
       signing=(set @ux)
       wallets=(map @ux wallet)
-      ::  Global labels (BIP-329)
       =labels:bip329
-      ::  SPV block verification (per network)
       spv=(map network spv-chain)
-      ::  Indexer subscriptions (script-hash -> subscription info)
       indexer-subs=(map @ux indexer-sub)
-      ::  User settings
       hide-empty-addresses=?
-      ::  System
       binding=binding:eyre
-      ::  Experimental/testing features
       counter=@ud
+  ==
+::
++$  state-1
+  $:  %1
+      auto-sponsor=_&
+      boot=(unit boot-state)
+      sponsor-response=(unit [sig=@ height=@ud])
+      accounts=(map @ux account-details)
+      watch-only=(set @ux)
+      signing=(set @ux)
+      wallets=(map @ux wallet)
+      =labels:bip329
+      spv=(map network spv-chain)
+      indexer-subs=(map @ux indexer-sub)
+      hide-empty-addresses=?
+      binding=binding:eyre
+      counter=@ud
+      local-txs=(map @t local-tx)
+  ==
+::
++$  versioned-state
+  $%  state-0
+      state-1
   ==
 --

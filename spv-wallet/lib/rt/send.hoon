@@ -21,7 +21,7 @@
   =/  action=@t  (need (get-key:kv:html-utils 'action' args))
   ~&  >>  "handle-send-actions called with action: {<action>}"
   ::  Get state and account details directly
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   =/  details=(unit account-details:s)  (~(get by accounts.state) account-pubkey)
   ?~  details
     ~&  >>>  "account not found for pubkey {<account-pubkey>}"
@@ -478,6 +478,12 @@
       q.data.u.full-file.client-response
       ==
     ~&  >>  "Broadcast result: {<broadcast-result>}"
+    ::  Store local transaction record
+    =/  txid=@t  broadcast-result
+    ;<  now=@da  bind:m  get-time:io
+    =.  local-txs.state
+      %+  ~(put by local-txs.state)  txid
+      ^-  local-tx:s  [tx-hex-cord %broadcast now]
     ::  Clear draft on success
     =/  updated=account-details:s  clear-draft:ac
     =.  accounts.state  (~(put by accounts.state) account-pubkey updated)

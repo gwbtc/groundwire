@@ -19,12 +19,14 @@
   =/  mempool-url=tape  (weld base (trip address))
   ;<  mempool-data=json  bind:m
     ((retry:io json) `5 (fetch-json:io mempool-url))
-  ::  Check if address has transactions
-  =/  tx-count-check=(unit @ud)
-    %-  mole
-    |.
+  ::  Check if address has transactions (confirmed + mempool)
+  =/  chain-tx=(unit @ud)
+    %-  mole  |.
     (ni:dejs:format (~(got jo:json-utils mempool-data) /'chain_stats'/'tx_count'))
-  =/  tx-count-val=@ud  (fall tx-count-check 0)
+  =/  mempool-tx=(unit @ud)
+    %-  mole  |.
+    (ni:dejs:format (~(got jo:json-utils mempool-data) /'mempool_stats'/'tx_count'))
+  =/  tx-count-val=@ud  (add (fall chain-tx 0) (fall mempool-tx 0))
   ::  Fetch transactions if address has history
   ;<  enriched-data=json  bind:m
     =/  m  (fiber:io ,json)

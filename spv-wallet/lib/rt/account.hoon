@@ -13,7 +13,7 @@
   ::  Start scanning loop
   |-
   ::  Get current state
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   =/  details=(unit account-details)  (~(get by accounts.state) pubkey)
   ?~  details
     ~|  "account not found during scan"  !!
@@ -37,7 +37,7 @@
     ::  Continue receiving scan
     ;<  ~  bind:m  (refresh-account-address pubkey 'receiving' idx.scn)
     ::  Get updated state
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=(unit account-details)  (~(get by accounts.state) pubkey)
     ?~  details
       ~|  "account not found after scan"  !!
@@ -71,7 +71,7 @@
     ::  Continue change scan
     ;<  ~  bind:m  (refresh-account-address pubkey 'change' idx.scn)
     ::  Get updated state
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=(unit account-details)  (~(get by accounts.state) pubkey)
     ?~  details
       ~|  "account not found after change scan"  !!
@@ -111,7 +111,7 @@
       %cancel-refresh
     =/  chain=@t  (need (get-key:kv:html-utils 'chain' args))
     =/  index=@ud  (rash (need (get-key:kv:html-utils 'index' args)) dem)
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (need (~(get by accounts.state) pubkey))
     =/  proc-map=(map @ud [pid=@ta act=?])
       (get-proc-map details chain)
@@ -128,7 +128,7 @@
       (send-sse-event:io (account-stream-path pubkey) ~ `%scan-status-update)
     (run-account-full-scan pubkey)
       %cancel-scan
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (need (~(get by accounts.state) pubkey))
     ?~  scan.proc.details
       (pure:m ~)
@@ -140,7 +140,7 @@
     ;<  ~  bind:m  (replace:io !>(state))
     (send-sse-event:io (account-stream-path pubkey) ~ `%scan-status-update)
       %pause-scan
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (need (~(get by accounts.state) pubkey))
     ?~  scan.proc.details
       (pure:m ~)
@@ -154,7 +154,7 @@
     ;<  ~  bind:m  (replace:io !>(state))
     (send-sse-event:io (account-stream-path pubkey) ~ `%scan-status-update)
       %resume-scan
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (need (~(get by accounts.state) pubkey))
     ?~  scan.proc.details
       ~|  "no scan to resume"  !!
@@ -172,7 +172,7 @@
       %verify-transaction
     =/  txid=@t  (need (get-key:kv:html-utils 'txid' args))
     ::  Clear verification status first
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (need (~(get by accounts.state) pubkey))
     =/  cleared-details=account-details
       (~(set-tx-verify ac [details active-network.details]) txid ~)
@@ -188,7 +188,7 @@
     (send-sse-event:io (account-stream-path pubkey) `txid `'tx-verify-update')
       %cancel-verify
     =/  txid=@t  (need (get-key:kv:html-utils 'txid' args))
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (need (~(get by accounts.state) pubkey))
     =/  maybe-entry=(unit [pid=@ta act=?])
       (~(get by tx-verify.proc.details) txid)
@@ -199,7 +199,7 @@
       %pause-refresh
     =/  chain=@t  (need (get-key:kv:html-utils 'chain' args))
     =/  index=@ud  (rash (need (get-key:kv:html-utils 'index' args)) dem)
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (need (~(get by accounts.state) pubkey))
     =/  proc-map=(map @ud [pid=@ta act=?])
       (get-proc-map details chain)
@@ -223,7 +223,7 @@
       %resume-refresh
     =/  chain=@t  (need (get-key:kv:html-utils 'chain' args))
     =/  index=@ud  (rash (need (get-key:kv:html-utils 'index' args)) dem)
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (need (~(get by accounts.state) pubkey))
     =/  proc-map=(map @ud [pid=@ta act=?])
       (get-proc-map details chain)
@@ -250,7 +250,7 @@
     (clear-account-address-pid pubkey chain index)
       %pause-verify
     =/  txid=@t  (need (get-key:kv:html-utils 'txid' args))
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (need (~(get by accounts.state) pubkey))
     =/  maybe-entry=(unit [pid=@ta act=?])
       (~(get by tx-verify.proc.details) txid)
@@ -269,7 +269,7 @@
     (send-sse-event:io (account-stream-path pubkey) `txid `'tx-verify-update')
       %resume-verify
     =/  txid=@t  (need (get-key:kv:html-utils 'txid' args))
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (need (~(get by accounts.state) pubkey))
     =/  maybe-entry=(unit [pid=@ta act=?])
       (~(get by tx-verify.proc.details) txid)
@@ -292,7 +292,7 @@
       %delete-address
     =/  chain=@t  (need (get-key:kv:html-utils 'chain' args))
     =/  index=@ud  (rash (need (get-key:kv:html-utils 'index' args)) dem)
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (need (~(get by accounts.state) pubkey))
     ::  Check if this is the top address (head of mop with gth comparator)
     =/  spv-net  active-network.details
@@ -328,7 +328,7 @@
     =/  chain=@t  (need (get-key:kv:html-utils 'chain' args))
     =/  index=@ud  (rash (need (get-key:kv:html-utils 'index' args)) dem)
     =/  tapscript-addr=@t  (need (get-key:kv:html-utils 'tapscript-addr' args))
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (~(got by accounts.state) pubkey)
     =/  spv-net  active-network.details
     =/  nd  (~(got by networks.details) spv-net)
@@ -362,7 +362,7 @@
     =/  index=@ud  (rash (need (get-key:kv:html-utils 'index' args)) dem)
     =/  tapscript-addr=@t  (need (get-key:kv:html-utils 'tapscript-addr' args))
     =/  new-name=@t  (need (get-key:kv:html-utils 'name' args))
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (~(got by accounts.state) pubkey)
     =/  spv-net  active-network.details
     =/  nd  (~(got by networks.details) spv-net)
@@ -401,7 +401,7 @@
     ::  Set process tracking
     ;<  new-pid=@ta  bind:m  get-pid:io
     ~&  >>  "got new pid: {<new-pid>}"
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (~(got by accounts.state) pubkey)
     ~&  >>  "current tapscript proc: {<tapscript.proc.details>}"
     =/  updated-proc-map=(map @t [pid=@ta act=?])
@@ -418,7 +418,7 @@
     ::  Run the refresh
     ;<  ~  bind:m  (refresh-tapscript-address pubkey chain index tapscript-addr)
     ::  Clear process tracking
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (~(got by accounts.state) pubkey)
     =/  cleared-proc-map=(map @t [pid=@ta act=?])
       (~(del by tapscript.proc.details) tapscript-addr)
@@ -430,7 +430,7 @@
   ::
       %pause-tapscript-refresh
     =/  tapscript-addr=@t  (need (get-key:kv:html-utils 'tapscript-addr' args))
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (~(got by accounts.state) pubkey)
     =/  maybe-entry=(unit [pid=@ta act=?])  (~(get by tapscript.proc.details) tapscript-addr)
     ?~  maybe-entry  (pure:m ~)
@@ -448,7 +448,7 @@
   ::
       %resume-tapscript-refresh
     =/  tapscript-addr=@t  (need (get-key:kv:html-utils 'tapscript-addr' args))
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (~(got by accounts.state) pubkey)
     =/  maybe-entry=(unit [pid=@ta act=?])  (~(get by tapscript.proc.details) tapscript-addr)
     ?~  maybe-entry  (pure:m ~)
@@ -466,7 +466,7 @@
   ::
       %cancel-tapscript-refresh
     =/  tapscript-addr=@t  (need (get-key:kv:html-utils 'tapscript-addr' args))
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (~(got by accounts.state) pubkey)
     =/  maybe-entry=(unit [pid=@ta act=?])  (~(get by tapscript.proc.details) tapscript-addr)
     ?~  maybe-entry  (pure:m ~)
@@ -506,7 +506,7 @@
       $(str t.str, current (snoc current i.str))
     ~&  >>  "Setting labels for {<label-key>}: {<label-list>}"
     ::  Get current state and update global labels
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =.  labels.state  (~(set-texts la:bip329 labels.state) %output label-key label-list)
     ;<  ~  bind:m  (replace:io !>(state))
     (pure:m ~)
@@ -520,7 +520,7 @@
     =/  label-key=@t  (crip "{(trip utxo-txid)}:{(scow %ud utxo-vout)}")
     ~&  >>  "Setting frozen={<frozen>} for {<label-key>}"
     ::  Get current state and update global labels
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =.  labels.state
       ?:  frozen
         (~(freeze la:bip329 labels.state) label-key)
@@ -538,11 +538,11 @@
         %signet    %signet
         %regtest   %regtest
       ==
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (need (~(get by accounts.state) pubkey))
     =/  updated-details=account-details
       details(active-network new-network)
-    =/  new-state=state-0:s
+    =/  new-state=state-1:s
       state(accounts (~(put by accounts.state) pubkey updated-details))
     ;<  ~  bind:m  (replace:io !>(new-state))
     (pure:m ~)
@@ -555,7 +555,7 @@
   ::
       %register-indexer
     ::  Register this account's xpub with the indexer agent
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (need (~(get by accounts.state) pubkey))
     =/  xub=@t
       ?-  -.extended-key.details
@@ -599,7 +599,7 @@
   ::
       %deregister-indexer
     ::  Deregister this account's xpub from the indexer agent
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  details=account-details  (need (~(get by accounts.state) pubkey))
     =/  xub=xpub:indexer
       ?-  -.extended-key.details

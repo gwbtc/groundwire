@@ -11,7 +11,7 @@
 ::  - Various identity management functions
 ::
 ++  groundwire-page
-  |=  state=state-0
+  |=  state=state-1
   ^-  manx
   %-  htmx-page
   :^  "Groundwire Management"  &  ~

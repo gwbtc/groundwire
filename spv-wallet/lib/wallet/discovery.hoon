@@ -33,7 +33,7 @@
     %1  ::  Phase 1 - receiving address scan
       |-
       ::  Update progress in scan map
-      ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+      ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
       =/  wallet=(unit wallet:s)  (~(get by wallets.state) pubkey)
       ?~  wallet
         ~|  "wallet not found during scan progress update"  !!
@@ -53,7 +53,7 @@
       ;<  ~  bind:m
         (refresh-address pubkey account-path 'receiving' idx.scn)
       ::  Get updated state to check tx_count
-      ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+      ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
       =/  wallet=(unit wallet:s)  (~(get by wallets.state) pubkey)
       ?~  wallet
         ~|  "wallet not found during address scan"  !!
@@ -83,7 +83,7 @@
     %2  ::  Phase 2 - change address scan
       |-
       ::  Update progress in scan map
-      ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+      ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
       =/  wallet=(unit wallet:s)  (~(get by wallets.state) pubkey)
       ?~  wallet
         ~|  "wallet not found during scan progress update"  !!
@@ -115,7 +115,7 @@
   ;<  pid=@ta  bind:m  get-pid:io
   =/  scan-key=coin-type:hd-path  [[%.y purpose] [%.y coin-type]]
   ::  Initialize scan entry in wallet
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   =/  wallet=(unit wallet:s)  (~(get by wallets.state) pubkey)
   ?~  wallet
     ~|  "wallet not found at discovery start"  !!
@@ -133,7 +133,7 @@
   =/  acct=account:hd-path  [[%.y purpose] [%.y coin-type] [%.y account-idx]]
   =/  account-path=@t  (crip (format-account-path acct))
   ::  Get current state and check if account exists
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   =/  wallet=(unit wallet:s)  (~(get by wallets.state) pubkey)
   ?~  wallet
     ~|  "wallet not found during discovery"  !!
@@ -189,7 +189,7 @@
   ::  Run scan with current account-scan state
   ;<  ~  bind:m  (scan-account-addresses pubkey account-path scan-key scn.u.scan-entry)
   ::  After scan completes, update progress and check if account is empty
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   =/  wallet=(unit wallet:s)  (~(get by wallets.state) pubkey)
   ?~  wallet
     ~|  "wallet not found after scan"  !!
@@ -217,7 +217,7 @@
   ::  If account is empty (no transactions), stop discovery
   ?.  has-transactions
     ::  Clear scan entry before stopping
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  wallet=(unit wallet:s)  (~(get by wallets.state) pubkey)
     ?~  wallet
       ~|  "wallet not found at discovery end"  !!
@@ -245,7 +245,7 @@
   =/  acct=account:hd-path  [[%.y purpose] [%.y coin-type] [%.y account-idx]]
   =/  account-path=@t  (crip (format-account-path acct))
   ::  Get current state and check if account exists
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   =/  wallet=(unit wallet:s)  (~(get by wallets.state) pubkey)
   ?~  wallet
     ~|  "wallet not found during discovery"  !!
@@ -302,7 +302,7 @@
   ::  Run scan with current account-scan state
   ;<  ~  bind:m  (scan-account-addresses pubkey account-path scan-key scn.u.scan-entry)
   ::  After scan completes, update progress and check if account is empty
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   =/  wallet=(unit wallet:s)  (~(get by wallets.state) pubkey)
   ?~  wallet
     ~|  "wallet not found after scan"  !!
@@ -330,7 +330,7 @@
   ::  If account is empty (no transactions), stop discovery
   ?.  has-transactions
     ::  Clear scan entry before stopping
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  wallet=(unit wallet:s)  (~(get by wallets.state) pubkey)
     ?~  wallet
       ~|  "wallet not found at discovery end"  !!

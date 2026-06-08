@@ -936,7 +936,7 @@
           event=(unit @t)
       ==
   ^-  wain
-  =+  !<(state-0 state)
+  =+  !<(state-1 state)
   =/  details=(unit account-details)  (~(get by accounts) account-pubkey)
   ?~  details
     %-  manx-to-wain:sailbox

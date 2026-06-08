@@ -33,7 +33,7 @@
     ~&  >>  "Subscribing to indexer for address {<address>}"
     ~&  >>  "Script-hash: {<script-hash>}"
     ::  Check if there's already a subscription - if so, kill old fiber first
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  existing=(unit indexer-sub:s)  (~(get by indexer-subs.state) script-hash)
     ;<  ~  bind:m
       ?~  existing  (pure:m ~)
@@ -61,7 +61,7 @@
     =/  address=@t  (need (get-key:kv:html-utils 'address' args))
     =/  script-hash=@ux  (address-to-script-hash address)
     ~&  >>  "Unsubscribing from indexer for address {<address>}"
-    ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+    ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =/  existing=(unit indexer-sub:s)  (~(get by indexer-subs.state) script-hash)
     ::  Kill the fiber if it exists
     ;<  ~  bind:m
@@ -102,7 +102,7 @@
   ;<  =cage  bind:m  (take-fact:io /indexer/sub/(scot %ux script-hash))
   ~&  >>  "Received indexer update: {<p.cage>}"
   ::  Check if we're still subscribed (haven't been removed from state)
-  ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
+  ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
   ?.  (~(has by indexer-subs.state) script-hash)
     ::  We've been unsubscribed, leave and stop
     ~&  >>  "Subscription removed, leaving indexer"
