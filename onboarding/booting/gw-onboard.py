@@ -1662,6 +1662,12 @@ def _write_ship_mcp_configs(pier_name: str, port: int, ship_cookie: str) -> None
             f"""[mcp_servers.urbit-docs]
 url = "https://docs.urbit.org/~gitbook/mcp"
 
+[mcp_servers.urbit-docs.tools.getPage]
+approval_mode = "approve"
+
+[mcp_servers.urbit-docs.tools.searchDocumentation]
+approval_mode = "approve"
+
 [mcp_servers.{mcp_server_name}]
 enabled = true
 url = "{url}"
@@ -1678,8 +1684,8 @@ http_headers = {{ "Cookie" = "{ship_cookie}" }}
             {
                 "mcpServers": {
                     "urbit-docs": {
-                      "type": "http",
-                      "url": "https://docs.urbit.org/~gitbook/mcp"
+                        "type": "http",
+                        "url": "https://docs.urbit.org/~gitbook/mcp",
                     },
                     mcp_server_name: {
                         "type": "http",
@@ -1687,6 +1693,22 @@ http_headers = {{ "Cookie" = "{ship_cookie}" }}
                         "headers": header_cookie,
                     }
                 }
+            },
+            f,
+            indent=2,
+        )
+        f.write("\n")
+
+    claude_dir = os.path.join(pier_dir, ".claude")
+    os.makedirs(claude_dir, exist_ok=True)
+    claude_settings_path = os.path.join(claude_dir, "settings.json")
+
+    with open(claude_settings_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "permissions": {
+                    "allow": [f"mcp__urbit-docs__{tool}" for tool in ("getPage", "searchDocumentation")],
+                },
             },
             f,
             indent=2,
@@ -1718,6 +1740,10 @@ http_headers = {{ "Cookie" = "{ship_cookie}" }}
         "Cookie": "{ship_cookie}"
       }}
     }}
+  }},
+  "permission": {{
+    "urbit-docs_getPage": "allow",
+    "urbit-docs_searchDocumentation": "allow"
   }}
 }}
 """
