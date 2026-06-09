@@ -28,7 +28,8 @@ VENDOR_BASE_DEV_GW := \
 	mar/txt.hoon \
 	sur/asn1.hoon \
 	sur/spider.hoon \
-	sur/verb.hoon
+	sur/verb.hoon \
+	mar/ship.hoon
 
 VENDOR_BTC_WALL_GW := \
 	lib/group.hoon \
@@ -60,7 +61,8 @@ VENDOR_BASE_DEV_SPV := \
 	mar/kelvin.hoon \
 	mar/hoon.hoon \
 	sur/asn1.hoon \
-	sur/spider.hoon
+	sur/spider.hoon \
+	mar/ship.hoon
 
 # Vendor files needed by spv-wallet desk (btc-wall subset)
 VENDOR_BTC_WALL_SPV := \
