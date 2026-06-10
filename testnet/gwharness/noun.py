@@ -2,23 +2,35 @@
 
 Nouns are represented in Python as:
   - atom  -> int  (>= 0)
-  - cell  -> tuple (head, tail)
+  - cell  -> tuple (head, tail)   (2-tuples, right-nested)
 
-This module provides jam/cue (the Urbit noun serialization), newt framing
-(the conn.sock wire format), and helpers for building/walking the noun shapes
-the harness needs (terms, paths, null-terminated lists, treap maps, tapes).
+This module provides jam/cue (noun serialization), mat/rub (length-prefixed
+atom coding), newt framing (the conn.sock wire format), and helpers for
+building/walking the noun shapes the harness needs (terms, paths,
+null-terminated lists, treap maps, tapes, @p).
 
-jam/mat are ported from the golden-fixture-validated implementation in
-causeway/desktop/causeway.py; cue/rub are the exact inverses.
+`jam(noun)` returns little-endian **bytes** (`bytes_to_atom` converts if the
+atom view is wanted); `cue` accepts bytes or an int atom. Both are iterative
+(deep tapes in goof tangs would blow Python's recursion limit) and cue is
+bounds-checked (truncated input raises instead of spinning).
+
+The atom-backref rule matches vere's u3s_jam (pkg/noun/serial.c): an atom is
+re-encoded inline unless it is strictly wider than its backref position;
+cells always backref once seen. Byte-for-byte cross-validated against
+`urbit eval -j -n` / `-c -n` in tests/test_noun.py.
 """
 
 from __future__ import annotations
 
-from typing import Iterator
+from typing import Iterator, Union
+
+from . import obphon
+
+Noun = Union[int, tuple]
 
 
 # ---------------------------------------------------------------------------
-#  mat / rub  (length-prefixed atom coding)
+#  mat / rub  (length-prefixed atom coding, bit-level, LSB-first)
 # ---------------------------------------------------------------------------
 
 def mat(a: int) -> tuple[int, int]:
@@ -28,141 +40,158 @@ def mat(a: int) -> tuple[int, int]:
     value a > 0      -> c zeros, separator 1, (c-1) low bits of b, then b bits
                         of a, where b = a.bit_length(), c = b.bit_length().
     """
+    if a < 0:
+        raise ValueError("atoms are non-negative")
     if a == 0:
         return (1, 1)
     b = a.bit_length()
     c = b.bit_length()
-    p = 2 * c + b
-    bex_c = 1 << c
     low_b = b & ((1 << (c - 1)) - 1) if c > 1 else 0
-    shifted_a = a << (c - 1) if c > 1 else a
-    mixed = low_b ^ shifted_a
-    q = bex_c | (mixed << bex_c.bit_length())
-    return (p, q)
+    mixed = low_b | (a << (c - 1))
+    q = (1 << c) | (mixed << (c + 1))
+    return (2 * c + b, q)
+
+
+def rub(val: int, pos: int, limit: int) -> tuple[int, int]:
+    """Decode a mat-encoded atom from bit `pos` of `val`; `limit` is the
+    total number of valid bits. Returns (atom, new_pos)."""
+    c = 0
+    while not (val >> (pos + c)) & 1:
+        c += 1
+        if pos + c > limit:
+            raise ValueError("rub: truncated mat (ran off end of input)")
+    pos += c + 1
+    if c == 0:
+        return 0, pos
+    low = (val >> pos) & ((1 << (c - 1)) - 1)
+    pos += c - 1
+    b = (1 << (c - 1)) | low
+    if pos + b > limit:
+        raise ValueError("rub: truncated atom body")
+    return (val >> pos) & ((1 << b) - 1), pos + b
 
 
 # ---------------------------------------------------------------------------
-#  jam
+#  jam / cue
 # ---------------------------------------------------------------------------
 
-def jam(noun) -> int:
-    """Serialize a noun to an atom."""
-    bits: list[int] = []
-    pos = 0
-    refs: dict = {}
+class _BitWriter:
+    __slots__ = ("buf", "pos")
 
-    def write_bit(b: int) -> None:
-        nonlocal pos
-        bits.append(1 if b else 0)
-        pos += 1
+    def __init__(self) -> None:
+        self.buf = bytearray()
+        self.pos = 0  # total bits written
 
-    def write_bits(val: int, count: int) -> None:
-        nonlocal pos
-        for i in range(count):
-            bits.append((val >> i) & 1)
-        pos += count
-
-    def write_mat(val: int) -> None:
-        p, q = mat(val)
-        write_bits(q, p)
-
-    def encode(n) -> None:
-        nonlocal pos
-        start = pos
-        if isinstance(n, tuple):
-            if n in refs:
-                write_bit(1)
-                write_bit(1)
-                write_mat(refs[n])
-            else:
-                refs[n] = start
-                write_bit(1)
-                write_bit(0)
-                encode(n[0])
-                encode(n[1])
-        else:
-            if n in refs:
-                n_bits = n.bit_length() if n > 0 else 1
-                ref_bits = refs[n].bit_length() if refs[n] > 0 else 1
-                if n_bits <= ref_bits:
-                    write_bit(0)
-                    write_mat(n)
-                else:
-                    write_bit(1)
-                    write_bit(1)
-                    write_mat(refs[n])
-            else:
-                refs[n] = start
-                write_bit(0)
-                write_mat(n)
-
-    encode(noun)
-    result = 0
-    for i, b in enumerate(bits):
-        result |= b << i
-    return result
-
-
-# ---------------------------------------------------------------------------
-#  cue
-# ---------------------------------------------------------------------------
-
-class _BitReader:
-    __slots__ = ("val", "pos")
-
-    def __init__(self, val: int):
-        self.val = val
-        self.pos = 0
-
-    def bit(self) -> int:
-        b = (self.val >> self.pos) & 1
+    def bit(self, b: int) -> None:
+        if self.pos & 7 == 0:
+            self.buf.append(0)
+        if b:
+            self.buf[-1] |= 1 << (self.pos & 7)
         self.pos += 1
-        return b
 
-    def bits(self, count: int) -> int:
-        out = 0
+    def bits(self, val: int, count: int) -> None:
         for i in range(count):
-            out |= self.bit() << i
-        return out
+            self.bit((val >> i) & 1)
 
-    def rub(self) -> int:
-        c = 0
-        while self.bit() == 0:
-            c += 1
-        if c == 0:
-            return 0
-        low = self.bits(c - 1)
-        b = (1 << (c - 1)) | low
-        return self.bits(b)
+    def mat(self, a: int) -> None:
+        p, q = mat(a)
+        self.bits(q, p)
 
 
-def cue(data: int):
-    """Deserialize an atom back into a noun (int | tuple)."""
-    r = _BitReader(data)
-    refs: dict[int, object] = {}
+def jam(noun: Noun) -> bytes:
+    """Serialize a noun to its jam, as little-endian bytes."""
+    w = _BitWriter()
+    refs: dict = {}
+    stack: list = [noun]
+    while stack:
+        n = stack.pop()
+        if isinstance(n, tuple):
+            if len(n) != 2:
+                raise ValueError(f"cells must be 2-tuples, got {len(n)}-tuple")
+            bak = refs.get(n)
+            if bak is not None:
+                w.bit(1)
+                w.bit(1)
+                w.mat(bak)
+            else:
+                refs[n] = w.pos
+                w.bit(1)
+                w.bit(0)
+                stack.append(n[1])
+                stack.append(n[0])
+        elif isinstance(n, int) and not isinstance(n, bool):
+            if n < 0:
+                raise ValueError("atoms are non-negative")
+            bak = refs.get(n)
+            #  vere (u3s_jam): inline the atom unless it is strictly wider
+            #  than the backref position (met-0 semantics: width of 0 is 0)
+            if bak is not None and n.bit_length() > bak.bit_length():
+                w.bit(1)
+                w.bit(1)
+                w.mat(bak)
+            else:
+                if bak is None:
+                    refs[n] = w.pos
+                w.bit(0)
+                w.mat(n)
+        else:
+            raise TypeError(f"not a noun: {type(n).__name__}")
+    return bytes(w.buf)
 
-    def decode():
-        start = r.pos
-        if r.bit() == 0:                 # 0  -> atom
-            a = r.rub()
-            refs[start] = a
-            return a
-        if r.bit() == 0:                 # 10 -> cell
-            head = decode()
-            tail = decode()
-            cell = (head, tail)
-            refs[start] = cell
-            return cell
-        return refs[r.rub()]             # 11 -> backref
 
-    return decode()
+def cue(data: Union[bytes, bytearray, int]) -> Noun:
+    """Deserialize a jam (little-endian bytes, or the atom as an int)."""
+    if isinstance(data, (bytes, bytearray)):
+        val = int.from_bytes(data, "little")
+        limit = len(data) * 8
+    else:
+        val = int(data)
+        if val < 0:
+            raise ValueError("cue: negative atom")
+        #  a valid jam always ends in a 1 bit, so bit_length is exact
+        limit = val.bit_length()
+    if limit == 0:
+        raise ValueError("cue: empty input")
+    refs: dict[int, Noun] = {}
+    stack: list = []  # frames: [start_pos, head_or_None]
+    pos = 0
+    while True:
+        start = pos
+        if not (val >> pos) & 1:                  # 0   -> atom (mat)
+            noun, pos = rub(val, pos + 1, limit)
+            refs[start] = noun
+        elif not (val >> (pos + 1)) & 1:          # 1,0 -> cell
+            pos += 2
+            stack.append([start, None])
+            continue
+        else:                                     # 1,1 -> backref (mat)
+            bak, pos = rub(val, pos + 2, limit)
+            try:
+                noun = refs[bak]
+            except KeyError:
+                raise ValueError(f"cue: dangling backref to bit {bak}") from None
+        #  a noun is complete; unwind it through pending cell frames
+        while True:
+            if not stack:
+                return noun
+            frame = stack[-1]
+            if frame[1] is None:
+                frame[1] = noun           # head done; tail decodes next
+                break
+            stack.pop()
+            noun = (frame[1], noun)
+            refs[frame[0]] = noun
 
 
 # ---------------------------------------------------------------------------
-#  newt framing  (conn.sock wire format)
+#  newt framing  (conn.sock / `urbit eval -n` wire format)
 # ---------------------------------------------------------------------------
+
+NEWT_TAG = 0x00
+
 
 def jam_to_bytes(atom: int) -> bytes:
+    """A jammed noun held as an int -> minimal little-endian bytes."""
     n = (atom.bit_length() + 7) // 8
     return atom.to_bytes(n, "little") if n > 0 else b"\x00"
 
@@ -172,12 +201,40 @@ def bytes_to_atom(b: bytes) -> int:
 
 
 def newt_frame(payload: bytes) -> bytes:
-    """5-byte header (tag 0x00 + u32 LE length) + payload."""
+    """5-byte header (tag 0x00 + u32 LE byte count) + payload."""
     return b"\x00" + len(payload).to_bytes(4, "little") + payload
 
 
-def newt_encode(noun) -> bytes:
-    return newt_frame(jam_to_bytes(jam(noun)))
+def newt_encode(noun: Noun) -> bytes:
+    """jam a noun and wrap it in a newt frame."""
+    return newt_frame(jam(noun))
+
+
+def read_newt(sock_file) -> bytes:
+    """Read one newt frame from a file-like object; return the payload.
+
+    Raises EOFError on clean EOF before a header, ValueError on a bad tag
+    byte or a truncated frame.
+    """
+    head = _read_exactly(sock_file, 5, allow_empty_eof=True)
+    if head is None:
+        raise EOFError("newt: connection closed")
+    if head[0] != NEWT_TAG:
+        raise ValueError(f"newt: bad tag byte 0x{head[0]:02x}")
+    length = int.from_bytes(head[1:5], "little")
+    return _read_exactly(sock_file, length)
+
+
+def _read_exactly(f, n: int, allow_empty_eof: bool = False):
+    buf = b""
+    while len(buf) < n:
+        chunk = f.read(n - len(buf))
+        if not chunk:
+            if allow_empty_eof and not buf:
+                return None
+            raise ValueError(f"newt: short read ({len(buf)}/{n} bytes)")
+        buf += chunk
+    return buf
 
 
 # ---------------------------------------------------------------------------
@@ -199,15 +256,15 @@ def from_tas(a: int) -> str:
     return a.to_bytes(n, "little").decode("ascii", "replace") if n else ""
 
 
-def patp_to_atom(patp: str) -> int:
-    """@p text -> atom. Defers to urbit-ob via causeway if available; else a
-    minimal decoder for galaxy/star/planet/moon/comet phonetic strings."""
-    from . import obphon
-    return obphon.patp_to_num(patp)
+def from_cord(a: int) -> str:
+    n = (a.bit_length() + 7) // 8
+    return a.to_bytes(n, "little").decode("utf-8", "replace") if n else ""
 
 
-def cell(*items):
+def cell(*items: Noun) -> Noun:
     """Right-folded cell with NO null terminator: cell(a,b,c) -> (a,(b,c))."""
+    if not items:
+        raise ValueError("cell() needs at least one item")
     if len(items) == 1:
         return items[0]
     out = items[-1]
@@ -216,20 +273,28 @@ def cell(*items):
     return out
 
 
-def nlist(items) -> object:
+def nlist(items) -> Noun:
     """Null-terminated list: [i0 i1 ... ~]  ->  (i0,(i1,(...,0)))."""
-    out: object = 0
+    out: Noun = 0
     for x in reversed(list(items)):
         out = (x, out)
     return out
 
 
-def path(*knots: str) -> object:
-    """A path: null-terminated list of @ta knot atoms."""
-    return nlist(tas(k) for k in knots)
+def path(*knots) -> Noun:
+    """A path: null-terminated list of @ta knots. Atom knots pass through.
+
+    path('foo', 'bar') == /foo/bar == [%foo %bar ~]
+    """
+    return nlist(k if isinstance(k, int) else tas(k) for k in knots)
 
 
-def unit(x) -> object:
+def tape(s: str) -> Noun:
+    """str -> tape ((list @tD): null-terminated single-byte atoms)."""
+    return nlist(s.encode("utf-8"))
+
+
+def unit(x: Noun) -> Noun:
     """(some x) -> [~ x] = (0, x);  ~ stays 0 via unit_none."""
     return (0, x)
 
@@ -241,7 +306,7 @@ unit_none = 0
 #  noun walking helpers
 # ---------------------------------------------------------------------------
 
-def list_iter(noun) -> Iterator:
+def list_iter(noun: Noun) -> Iterator[Noun]:
     """Walk a null-terminated list noun, yielding elements."""
     while noun != 0:
         if not isinstance(noun, tuple):
@@ -250,38 +315,50 @@ def list_iter(noun) -> Iterator:
         noun = noun[1]
 
 
-def map_iter(noun) -> Iterator[tuple]:
+def map_iter(noun: Noun) -> Iterator[tuple]:
     """Walk a hoon treap map ((tree (pair key value))), yielding (key, value).
 
-    A node is [n=[key value] l=tree r=tree]; ~ is 0.
+    A node is [n=[key value] l=tree r=tree]; ~ is 0. Iterative — gall maps
+    can be deep.
     """
-    if noun == 0:
-        return
-    if not isinstance(noun, tuple):
-        raise ValueError(f"not a treap: {noun!r}")
-    n, lr = noun
-    l, r = lr
-    key, value = n
-    yield (key, value)
-    yield from map_iter(l)
-    yield from map_iter(r)
+    stack = [noun]
+    while stack:
+        node = stack.pop()
+        if node == 0:
+            continue
+        if not isinstance(node, tuple):
+            raise ValueError(f"not a treap: {node!r}")
+        n, lr = node
+        l, r = lr
+        yield n
+        stack.append(r)
+        stack.append(l)
 
 
-def set_iter(noun) -> Iterator:
+def set_iter(noun: Noun) -> Iterator[Noun]:
     """Walk a hoon treap set ((tree item)), yielding items."""
-    if noun == 0:
-        return
-    n, lr = noun
-    l, r = lr
-    yield n
-    yield from set_iter(l)
-    yield from set_iter(r)
+    yield from map_iter(noun)
 
 
-def from_tape(noun) -> str:
+def from_tape(noun: Noun) -> str:
     """A tape ((list @tD)) -> str."""
     return "".join(chr(c) for c in list_iter(noun))
 
 
-def from_cord(a: int) -> str:
-    return from_tas(a)
+# ---------------------------------------------------------------------------
+#  @p  (phonemic ship names; the ob feistel lives in obphon.py)
+# ---------------------------------------------------------------------------
+
+def patp_int(patp: str) -> int:
+    """@p text like '~sampel-palnet' or a comet -> ship number (atom)."""
+    return obphon.patp_to_num(patp)
+
+
+def patp_str(ship: int) -> str:
+    """Ship number -> @p text (inverse of patp_int)."""
+    return obphon.num_to_patp(ship)
+
+
+#  legacy aliases
+patp_to_atom = patp_int
+atom_to_patp = patp_str

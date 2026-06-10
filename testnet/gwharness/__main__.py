@@ -16,6 +16,8 @@ import sys
 
 from .config import load_config
 from . import btc
+from pathlib import Path as _P
+HERE = _P(__file__).resolve().parent
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -31,8 +33,10 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     if args.cmd == "selftest":
-        from . import selftest
-        return 0 if selftest.run() else 1
+        import subprocess
+        return subprocess.call(
+            [sys.executable, "-m", "pytest", "-q",
+             str(HERE / "tests"), "-k", "not live"])
 
     cfg = load_config(args.config) if args.config else load_config()
     cfg.ensure_dirs()

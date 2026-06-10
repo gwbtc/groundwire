@@ -6,10 +6,13 @@
 PY := python3
 H  := $(PY) -m gwharness
 
-.PHONY: selftest net-up net-down mine info comets scenario scenario-all dashboard tmux results clean
+.PHONY: test selftest net-up net-down mine info comets scenario scenario-all dashboard tmux results clean
 
-selftest:        ## offline plumbing checks (no ship/bitcoind)
-	$(H) selftest
+test:            ## full pytest suite (noun vs vere, bitcoind end-to-end)
+	$(PY) -m pytest gwharness/tests -v
+
+selftest:        ## fast offline plumbing checks (no ship/bitcoind)
+	$(PY) -m pytest gwharness/tests -q -k "not live"
 
 net-up:          ## start regtest bitcoind + funded wallet
 	$(H) net-up
