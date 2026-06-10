@@ -5,21 +5,30 @@ on:
       - main
 
 env:
-  DESK: groundwire
+  TMUX_TAB:  sponsor
+  DESK:      groundwire
   SHIP_HOST: root@143.198.70.9
-  PIER_PATH: /root/.local/share/groundwire-alpha/watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd
-  TMUX_TAB: sponsor
+  DIST_PIER: watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Set PIER_PATH
+        run: echo "PIER_PATH=/root/.local/share/groundwire-alpha/${DIST_PIER}" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build desk
+      - name: Build desks
         run: |
-          make build
+          make spv
+          make groundwire
+
+      - name: Create desk.ship
+        run: |
+          printf '%s\n' "~${DIST_PIER}" > dist-groundwire/desk.ship
+          printf '%s\n' "~${DIST_PIER}" > dist-spv/desk.ship
 
       - name: Setup SSH
         run: |
