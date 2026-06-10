@@ -56,11 +56,26 @@ class ConnSock:
     def alive(self) -> bool:
         return self.sock_path.exists()
 
+    def _connect_path(self) -> str:
+        """macOS AF_UNIX caps the path at ~104 bytes; pier socket paths blow
+        past that. Use the shortest of {absolute, cwd-relative}."""
+        import os
+        ap = str(self.sock_path)
+        try:
+            rp = os.path.relpath(self.sock_path)
+        except ValueError:
+            rp = ap
+        path = rp if len(rp) < len(ap) else ap
+        if len(path) >= 104:
+            raise ConnError(
+                f"conn.sock path too long ({len(path)} >= 104): {path}")
+        return path
+
     def _roundtrip(self, request) -> object:
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.settimeout(self.timeout)
         try:
-            s.connect(str(self.sock_path))
+            s.connect(self._connect_path())
             s.sendall(N.newt_encode(request))
             payload = self._read_frame(s)
         finally:
@@ -132,7 +147,9 @@ class ConnSock:
         """Scry /gx/<agent>/<spur...>; return the result noun, or None."""
         rid = self._next_rid()
         tyl = N.nlist(N.tas(k) for k in spur)
-        once = (N.tas("once"), (N.tas("gx"), (N.tas(agent), tyl)))
+        # arvo +peek (arm 22) takes (each path [%once ...] [%beam ...]); the
+        # %once form is the %| (right) branch of `each`.
+        once = (1, (N.tas("once"), (N.tas("gx"), (N.tas(agent), tyl))))
         req = (rid, (N.tas("peek"), once))
         resp = self._roundtrip(req)
         _, rest = resp
@@ -160,13 +177,17 @@ class ConnSock:
     # -- readiness ----------------------------------------------------------
 
     def wait_ready(self, timeout: float, poll: float = 5.0) -> bool:
+        """Poll until the ship answers a trivial thread. Uses a SHORT per-probe
+        timeout so a busy boot (gw-base.pill loads a large azimuth snapshot,
+        ~minutes unresponsive) is polled responsively instead of blocking the
+        full conn timeout each attempt."""
         deadline = time.time() + timeout
+        probe = ConnSock(self.sock_path.parent.parent, timeout=20)
         while time.time() < deadline:
             if self.sock_path.exists():
                 try:
-                    out = self.khan_eval(
-                        "=/  m  (strand ,vase)  (pure:m !>('ok'))")
-                    if out == N.cord("ok"):
+                    if probe.khan_eval(
+                            "=/  m  (strand ,vase)  (pure:m !>('ok'))") == N.cord("ok"):
                         return True
                 except Exception:
                     pass

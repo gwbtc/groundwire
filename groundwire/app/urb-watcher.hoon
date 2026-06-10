@@ -95,12 +95,18 @@
     :~  :*  %pass  /blocks  %arvo  %k
             %lard  q.byk.bowl
             (get-blocks new-rpc new-urb-state)
-        ==  
-        :*  %pass  /eyre/connect  %arvo  %e 
+        ==
+        :*  %pass  /eyre/connect  %arvo  %e
             %connect  `/apps/urb-watcher  dap.bowl
-        ==  
+        ==
     ==
-  :~  [%pass /init/snapshot %arvo %b %wait (add ~s10 now.bowl)]
+  ::  XX harness branch: ordinary comets stay INERT until a %watcher-config
+  ::  poke points them at a node and starts the block loop. (The mainnet
+  ::  snapshot bootstrap auto-fell into a runaway mainnet self-watch that
+  ::  saturated regtest comets; production snapshot bootstrap is TODO here.)
+  :~  :*  %pass  /eyre/connect  %arvo  %e
+          %connect  `/apps/urb-watcher  dap.bowl
+      ==
   ==
 ::
 ++  on-save

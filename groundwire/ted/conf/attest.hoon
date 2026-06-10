@@ -38,8 +38,10 @@
 |=  args=vase
 =/  m  (strand:strandio ,vase)
 ^-  form:m
+::  The conn.sock %fyrd delivers the input under the %noun mark, so the vase
+::  type is just *; clam the raw noun to our mold rather than !<-nesting it.
 =/  [target=?(%keyfile %peer) =skeleton]
-  (need !<((unit [?(%keyfile %peer) skeleton]) args))
+  (need ;;((unit [?(%keyfile %peer) skeleton]) q.args))
 =/  chain=(list link:sa)
   %+  turn  links.skeleton
   |=  sl=skel-link

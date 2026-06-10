@@ -30,6 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     p_mine = sub.add_parser("mine")
     p_mine.add_argument("n", type=int, nargs="?", default=1)
     sub.add_parser("info")
+    sub.add_parser("m1")
     args = ap.parse_args(argv)
 
     if args.cmd == "selftest":
@@ -61,6 +62,10 @@ def main(argv: list[str] | None = None) -> int:
         hashes = btc.mine(rpc, cfg.wallet, args.n)
         print(f"mined {len(hashes)} block(s); tip {hashes[-1][:16]}…")
         return 0
+
+    if args.cmd == "m1":
+        from .milestones import run_m1
+        return 0 if run_m1(cfg) else 1
 
     if args.cmd == "info":
         rpc = btc.BitcoinRPC(cfg)

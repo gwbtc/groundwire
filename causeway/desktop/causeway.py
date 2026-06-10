@@ -2755,11 +2755,16 @@ def _extract_tx_from_psbt(signed_b64: str) -> tuple[str, str]:
             raise RuntimeError(f"input {i} has no schnorr sig; PSBT not signed")
         raw_tx.vin[i].witness = Witness([tap_key_sig])
     tx_hex = raw_tx.serialize().hex()
-    # txid = double-sha256 of stripped (no-witness) tx, reversed to display order
-    stripped = raw_tx.serialize(segwit=False)
+    # txid = double-sha256 of the stripped (no-witness) tx, reversed to display
+    # order. This embit's Transaction.write_to() takes no segwit kwarg, so we
+    # serialize a witness-cleared copy (no witnesses -> legacy/no-marker form).
+    import copy as _copy
     import hashlib as _hl
-    h1 = _hl.sha256(stripped).digest()
-    h2 = _hl.sha256(h1).digest()
+    bare = _copy.deepcopy(raw_tx)
+    for _vin in bare.vin:
+        _vin.witness = Witness([])
+    stripped = bare.serialize()
+    h2 = _hl.sha256(_hl.sha256(stripped).digest()).digest()
     txid = h2[::-1].hex()
     return txid, tx_hex
 

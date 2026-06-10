@@ -30,6 +30,6 @@ star         = "daplyd"      # mine comets under ~daplyd
 install_spv  = false
 
 [timeouts]
-boot_ready   = 600
+boot_ready   = 1200
 fyrd         = 120
 verify       = 240
