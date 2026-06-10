@@ -37,6 +37,9 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H 143.198.70.9 >> ~/.ssh/known_hosts
 
+      - name: Clear deployed desks
+        run: ssh ${SHIP_HOST} "find ${PIER_PATH}/groundwire ${PIER_PATH}/spv-wallet -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
+
       - name: Deploy Groundwire
         run: scp -r dist-groundwire/* ${SHIP_HOST}:${PIER_PATH}/groundwire/
 
