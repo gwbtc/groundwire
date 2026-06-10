@@ -149,6 +149,22 @@
       ==
     ==
   ::
+  ::  Repoint the watcher at a different Bitcoin node / start block and restart
+  ::  the block loop. Used by the local regtest harness to override the
+  ::  hardcoded mainnet defaults; self-poke only.
+      %noun
+    ?>  =(our.bowl src.bowl)
+    =+  !<([%watcher-config url=@t auth=@t hash=@ux height=@ud] vase)
+    =/  new-rpc=req-to:btcio  [url [%basic auth]]
+    =/  new-urb=state:urb
+      [[hash height] *sont-map:ord *insc-ids:ord *unv-ids:urb]
+    ~&  >  "%urb-watcher: reconfigured to {(trip url)} from block {<height>}"
+    :_  this(rpc new-rpc, urb-state new-urb, conf ~, keyfile ~, pending-keyfile ~, pending ~)
+    :~  :*  %pass  /blocks  %arvo  %k  %lard  q.byk.bowl
+            (get-blocks new-rpc new-urb)
+        ==
+    ==
+  ::
   ::  A remote ship's self-attestation packet, relayed by Ames (placeholder:
   ::  that kernel functionality does not exist yet). Spawn a verification
   ::  thread; every outcome is reported to Ames via %attestation-verdict.
