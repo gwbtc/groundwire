@@ -1,7 +1,8 @@
 ::  taproot.hoon - Taproot script tree utilities
 ::
 ::  Ported into the groundwire desk from spv-wallet/lib/taproot.hoon, trimmed to
-::  the arms %urb-handler needs to VERIFY a confidential comet's commitments:
+::  the arms the self-attestation verifier (lib/self-attestation, used by
+::  %urb-watcher) needs to VERIFY a confidential comet's commitments:
 ::  TapLeaf/TapBranch hashing, BIP-341 key tweaking, and the output-key
 ::  reconstruction used to check that an off-chain-revealed tapleaf was committed
 ::  in an on-chain taproot output. The bech32/address helpers were dropped.

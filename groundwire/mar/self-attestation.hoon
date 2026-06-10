@@ -1,7 +1,8 @@
 ::  mar/self-attestation.hoon
 ::
-::  Mark for poking %urb-handler with a confidential-comet self-attestation
-::  packet, e.g. from dojo: :urb-handler &self-attestation [...]
+::  Mark for poking %urb-watcher with a confidential-comet self-attestation
+::  packet (a remote ship's, relayed by Ames), e.g. from dojo:
+::  :urb-watcher &self-attestation [...]
 ::
 /-  sa=self-attestation
 |_  =self-attestation:sa

@@ -4,6 +4,28 @@
 ::  It fetches Bitcoin blocks on a timer and parses them for Jael events.
 ::  Its helper core at the bottom works in conjunction with lib/urb-core.
 ::
+::  It is also the registered handler agent for CONFIDENTIAL COMETS
+::  (protocol 2.0; see sur/self-attestation and lib/self-attestation):
+::
+::    - A peer's self-attestation packet arrives as a %self-attestation poke
+::      (from Ames, whose side of this does not exist yet -- our pokes to it
+::      use placeholder marks against a nonexistent %ames agent). A khan
+::      thread verifies the packet against the Bitcoin node; on success the
+::      ship's point is stored in urb-state (and thus served to Jael) and its
+::      ownership sat is tracked by the normal block machinery.
+::    - When a tracked confidential sat MOVES with no on-chain sotx, we poke
+::      Ames to request a fresh packet from that ship (%attestation-request);
+::      every remote verification outcome is reported to Ames either way
+::      (%attestation-verdict). If a confidential ship instead continues its
+::      chain with a PUBLIC on-chain reveal, it permanently leaves the
+::      confidential registry and is handled by classic chain-watching.
+::    - The user pokes their OWN chain in as %attestation-keyfile. It is
+::      verified eagerly: a bad keyfile only reports (no state change); a
+::      good one is stored, its sat watched, and re-verified when that sat
+::      is seen moving (failure there is unspecified behavior at launch).
+::    - The snapshot endpoint serves urb-state FILTERED of confidential
+::      ships, so confidential identities propagate only via packets.
+::
 ::  Change new-rpc and start-height in ++init to change the network.
 ::  If you're using this in conjunction with the SPV wallet, that
 ::  will need to be pointed to the same Bitcoin network as this.
@@ -12,22 +34,39 @@
 ::
 ::  You may want to change block-confirmations as well.
 ::
-/-  bitcoin, spider, ord, urb
-/+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb, server
+/-  bitcoin, spider, ord, urb, sa=self-attestation
+/+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb, server,
+    ol=ord, lsa=self-attestation
 ::
 |%
 +$  card  card:agent:gall
-+$  versioned-state  $%(state-0)
+::  Confidential-comet registry entry: the tip sont of the last VERIFIED
+::  self-attestation, and the landing sont we last asked Ames about (so a
+::  move triggers exactly one request, but a second move re-requests).
++$  conf-meta
+  $:  attested=sont:ord
+      requested=(unit sont:ord)
+  ==
++$  versioned-state  $%(state-0 state-1)
 +$  state-0
   $:  %0
       rpc=req-to:btcio
       urb-state=state:urb
   ==
++$  state-1
+  $:  %1
+      rpc=req-to:btcio
+      urb-state=state:urb
+      conf=(map @p conf-meta)                     ::  confidential ships (incl. our own)
+      keyfile=(unit self-attestation:sa)          ::  our own verified chain
+      pending-keyfile=(unit self-attestation:sa)  ::  keyfile poked, verify in flight
+      pending=(set @p)                            ::  in-flight remote verifications
+  ==
 --
 ::
 %-  agent:dbug
 ^-  agent:gall
-=|  state-0
+=|  state-1
 =*  state  -
 %+  verb  &
 =<
@@ -73,12 +112,15 @@
   ^-  (quip card _this)
   =/  old  !<(versioned-state vase)
   ?-    -.old
+      %1
+    `this(state old)
+  ::
       %0
-    :_  this(state old)
+    :_  this(state [%1 rpc.old urb-state.old ~ ~ ~ ~])
     ::  This wasn't bound in our first deployment:
-    :~  :*  %pass  /eyre/connect  %arvo  %e 
+    :~  :*  %pass  /eyre/connect  %arvo  %e
             %connect  `/apps/urb-watcher  dap.bowl
-        ==  
+        ==
     ==
   ==
 ::
@@ -96,13 +138,71 @@
           [%apps %urb-watcher %snapshot ~]
         ::  XX should sign the snapshot with +sign:as:cic
         ::     if this is more than a short-term hack
+        ::  Confidential ships are stripped: their identities propagate
+        ::  only via self-attestation packets, never via snapshots.
         :_  this
         %+  give-simple-payload:app:server
           eyre-id
         ^-  simple-payload:http
-        :_  `(as-octs:mimes:html (jam urb-state))
+        :_  `(as-octs:mimes:html (jam (filter-snapshot urb-state ~(key by conf))))
         [200 ~[['content-type' 'application/x-urb-jam']]]
       ==
+    ==
+  ::
+  ::  A remote ship's self-attestation packet, relayed by Ames (placeholder:
+  ::  that kernel functionality does not exist yet). Spawn a verification
+  ::  thread; every outcome is reported to Ames via %attestation-verdict.
+      %self-attestation
+    =/  sat  !<(self-attestation:sa vase)
+    =*  who  who.sat
+    ?:  =(who our.bowl)
+      %-  (slog leaf+"%urb-watcher: own ship must use %attestation-keyfile" ~)
+      [~[(verdict-poke our.bowl who %.n)] this]
+    ?:  (known-public who)
+      ::  Permanently public per protocol: a ship that has revealed on-chain
+      ::  cannot return to confidential status.
+      %-  (slog leaf+"%urb-watcher: {<who>} is public on-chain; packet refused" ~)
+      [~[(verdict-poke our.bowl who %.n)] this]
+    ?:  (~(has in pending) who)
+      %-  (slog leaf+"%urb-watcher: verification for {<who>} already in flight" ~)
+      `this
+    ?:  (gth (lent chain.sat) 1.024)
+      %-  (slog leaf+"%urb-watcher: chain for {<who>} too long; refused" ~)
+      [~[(verdict-poke our.bowl who %.n)] this]
+    ~&  >  "%urb-watcher: verifying self-attestation for {<who>} ({<(lent chain.sat)>} links)..."
+    :_  this(pending (~(put in pending) who))
+    :~  :*  %pass  /verify/remote/(scot %p who)  %arvo  %k
+            %lard  q.byk.bowl
+            (verify:lsa rpc.state sat (tracked-sont urb-state who))
+        ==
+    ==
+  ::
+  ::  Our own updated attestation keyfile (from the user, e.g. via Causeway).
+  ::  Verified eagerly: a bad keyfile must give feedback WITHOUT changing
+  ::  state; a good one is stored and its sat watched.
+      %attestation-keyfile
+    =/  sat  !<(self-attestation:sa vase)
+    ?.  =(who.sat our.bowl)
+      %-  (slog leaf+"%urb-watcher: keyfile is for {<who.sat>}, not us; refused" ~)
+      `this
+    ?:  (known-public our.bowl)
+      %-  (slog leaf+"%urb-watcher: we are public on-chain; keyfile refused" ~)
+      `this
+    ?^  pending-keyfile
+      ::  One in-flight keyfile verification at a time: the thread result
+      ::  doesn't echo the packet, so a second poke would make the ok-branch
+      ::  store a packet the thread never verified.
+      %-  (slog leaf+"%urb-watcher: a keyfile verification is already in flight; refused" ~)
+      `this
+    ?:  (gth (lent chain.sat) 1.024)
+      %-  (slog leaf+"%urb-watcher: keyfile chain too long; refused" ~)
+      `this
+    ~&  >  "%urb-watcher: verifying attestation keyfile ({<(lent chain.sat)>} links)..."
+    :_  this(pending-keyfile `sat)
+    :~  :*  %pass  /verify/keyfile/new  %arvo  %k
+            %lard  q.byk.bowl
+            (verify:lsa rpc.state sat (tracked-sont urb-state our.bowl))
+        ==
     ==
   ==
 ::
@@ -125,6 +225,15 @@
     ::
       [%x %points ~]
     ``urb-points+!>(unv-ids.urb-state)
+    ::  /x/keyfile — our own attestation keyfile, if any
+    ::  (Ames reads this to serve self-attestation packets to peers.)
+    ::
+      [%x %keyfile ~]
+    ``noun+!>(keyfile)
+    ::  /x/conf — the confidential-comet registry
+    ::
+      [%x %conf ~]
+    ``noun+!>(conf)
   ==
 ::
 ++  on-watch
@@ -134,12 +243,16 @@
       [%http-response *]  `this
   ::
   ::  Jael subscribes to / (aka ~) if it hears
-  ::  that this agent is the default PKI source
+  ::  that this agent is the default PKI source.
+  ::  Local-only: udiffs include confidential ships, whose identities must
+  ::  propagate only via self-attestation packets.
       ~
+    ?>  =(our src):bowl
     `this
   ::
   ::  Jael subcribes to /ship when it hears about a new ship
       [=ship ~]
+    ?>  =(our src):bowl
     :_  this
     :~  :*  %give
             %fact
@@ -192,7 +305,90 @@
     :~  :*  %pass  /blocks  %arvo  %k
             %lard  q.byk.bowl
             (get-blocks [rpc urb-state]:state)
-        == 
+        ==
+    ==
+  ::
+  ::  A remote self-attestation verification thread returned.
+      [%verify %remote @ ~]
+    =/  who  (slav %p i.t.t.wire)
+    =.  pending  (~(del in pending) who)
+    ?+    sign-arvo  (on-arvo:def wire sign-arvo)
+        [%khan %arow *]
+      ?.  -.p.sign-arvo
+        ?>  ?=([%khan %arow %.n *] sign-arvo)
+        %-  (slog leaf+"%urb-watcher: verify thread for {<who>} crashed" +.p.p.sign-arvo)
+        [~[(verdict-poke our.bowl who %.n)] this]
+      ?>  ?=([%khan %arow %.y %noun *] sign-arvo)
+      =/  [%khan %arow %.y %noun =vase]  sign-arvo
+      =/  res  !<(result:sa vase)
+      %-  (slog (report:lsa verdict.res))
+      ?.  ok.verdict.res
+        [~[(verdict-poke our.bowl who %.n)] this]
+      ::  TOCTOU: the ship may have continued publicly while we verified.
+      ::  The packet itself was valid (tell Ames so), but apply nothing.
+      ?:  (known-public who)
+        %-  (slog leaf+"%urb-watcher: {<who>} went public mid-verification; not applying" ~)
+        [~[(verdict-poke our.bowl who %.y)] this]
+      ?~  point.res
+        %-  (slog leaf+"%urb-watcher: {<who>} verified but produced no point; dropping" ~)
+        [~[(verdict-poke our.bowl who %.n)] this]
+      ::  Apply: store the point, track the tip sat, register as confidential,
+      ::  and store the data in Jael (directly if it is already subscribed
+      ::  to this ship, else via %listen and ++on-watch).
+      =/  applied  (apply-verified who u.point.res tip-value.res)
+      =/  jael-cards=(list card)
+        ?:  (~(has in (subs-to-ships sup.bowl)) who)
+          (jael-update (point-to-udiffs who u.point.res block-id.urb-state))
+        ~[(listen-to-urb (silt ~[who]) [%| dap.bowl])]
+      :_  this(urb-state.state -.applied, conf +.applied)
+      [(verdict-poke our.bowl who %.y) jael-cards]
+    ==
+  ::
+  ::  Our own keyfile verification returned (%new = fresh poke,
+  ::  %recheck = re-verification after our sat was seen moving).
+      [%verify %keyfile @ ~]
+    =/  kind  i.t.t.wire
+    ?+    sign-arvo  (on-arvo:def wire sign-arvo)
+        [%khan %arow *]
+      ?.  -.p.sign-arvo
+        ?>  ?=([%khan %arow %.n *] sign-arvo)
+        =/  msg=tank
+          ?:  =(%new kind)
+            leaf+"%urb-watcher: keyfile verification thread crashed"
+          leaf+"%urb-watcher: keyfile re-verification crashed: unspecified behavior"
+        %-  (slog msg +.p.p.sign-arvo)
+        ::  Only a %new outcome owns the pending stash; a returning %recheck
+        ::  must not discard a concurrently-poked fresh keyfile.
+        =?  pending-keyfile  =(%new kind)  ~
+        `this
+      ?>  ?=([%khan %arow %.y %noun *] sign-arvo)
+      =/  [%khan %arow %.y %noun =vase]  sign-arvo
+      =/  res  !<(result:sa vase)
+      %-  (slog (report:lsa verdict.res))
+      ?.  ok.verdict.res
+        ?:  =(%new kind)
+          ::  Bad keyfile: feedback only, NO state change.
+          `this(pending-keyfile ~)
+        ::  Per the protocol, this outcome is unspecified at launch.
+        %-  (slog leaf+"%urb-watcher: own keyfile re-verification failed: unspecified behavior" ~)
+        `this
+      ::  TOCTOU: we may have continued publicly while the thread ran;
+      ::  a public ship cannot return to confidential status.
+      ?:  (known-public our.bowl)
+        %-  (slog leaf+"%urb-watcher: we went public mid-verification; keyfile not applied" ~)
+        =?  pending-keyfile  =(%new kind)  ~
+        `this
+      ?~  point.res
+        =?  pending-keyfile  =(%new kind)  ~
+        `this
+      ::  Good keyfile: store it, track our sat, register as confidential.
+      ::  XX no self-udiffs to Jael: Jael is the SOURCE of our own keys,
+      ::     not a consumer of them; feeding our own point back through
+      ::     %azimuth-udiffs risks fighting its own-ship handling.
+      =?  keyfile  =(%new kind)  pending-keyfile
+      =?  pending-keyfile  =(%new kind)  ~
+      =/  applied  (apply-verified our.bowl u.point.res tip-value.res)
+      `this(urb-state.state -.applied, conf +.applied)
     ==
   ::
   ::  Receive a snapshot from the default sponsor
@@ -213,7 +409,10 @@
         ::     verify here with +sure:as:cic
         =/  new-urb=state:urb  ;;(state:urb (cue q.data.mime-data))
         ~&  >  '%urb-watcher received a snapshot! Now beginning indexing from its latest block.'
-        :_  this(urb-state new-urb)
+        ::  Re-apply any confidential points verified while the snapshot
+        ::  request was in flight (snapshots are served conf-filtered, so
+        ::  a wholesale assignment would drop them unrecoverably).
+        :_  this(urb-state (reapply-conf-points urb-state new-urb))
         :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
             (listen-to-urb ~ [%| dap.bowl])
         ==
@@ -235,11 +434,17 @@
       ?>  ?=([%khan %arow %.y %noun *] sign-arvo)
       =/  [%khan %arow %.y %noun =vase]  sign-arvo
       =/  fx-and-state
-        !<  
+        !<
         [(list [id:block:bitcoin effect:urb]) state:urb]
         vase
+      ::  The thread computed from a snapshot of urb-state taken when it was
+      ::  spawned; confidential points verified and applied while it was in
+      ::  flight would be silently dropped by wholesale assignment. Re-apply
+      ::  them onto the incoming state before anything else.
+      =/  merged=state:urb
+        (reapply-conf-points urb-state.state +.fx-and-state)
       ::  Jael is subscribed to %urb-watcher to receive udiffs for some ships,
-      ::  and it isn't subscribed yet for others. For the ones in fx it is, we 
+      ::  and it isn't subscribed yet for others. For the ones in fx it is, we
       ::  send udiffs. For the ones it isn't subscribed to yet, we tell it to,
       ::  and it will hit ++on-agent to get the udiff afterwards.
       =/  fx-ships=(set ship)
@@ -256,16 +461,7 @@
           ~
         `ship.eu
       ::
-      =/  tracked-ships=(set ship)
-        %-  silt
-        %+  murn
-          ~(val by sup.bowl)
-        |=  [ship =path]
-        ^-  (unit ship)
-        ::  ignore subscriptions that aren't to a /ship
-        ?.  ?=([@p ~] path)
-          ~
-        `i.path
+      =/  tracked-ships=(set ship)  (subs-to-ships sup.bowl)
       ::
       =/  filtered-udiffs=udiffs:point:jael
         %+  murn
@@ -277,22 +473,49 @@
           ~
         `[ship udiff]
       ::
-      :_  this(urb-state.state +.fx-and-state)
-      %+  welp
-        ?.  =(~ fx-ships)
-          ::  don't send a %listen task for ships
-          ::  that Jael is already subscribed to
-          :~  %+  listen-to-urb
-                (~(dif in fx-ships) tracked-ships)
-              [%| dap.bowl]
+      ::  Scan the confidential registry against the merged state: detect
+      ::  public continuations, confidential sat moves (-> ask Ames for a
+      ::  fresh packet), and our own sat moving (-> re-verify the keyfile).
+      =/  scan  (scan-conf fx-ships merged bowl)
+      =/  recheck-cards=(list card)
+        ?~  keyfile  ~
+        ?.  &(own-moved.scan !own-public.scan)  ~
+        :_  ~
+        :*  %pass  /verify/keyfile/recheck  %arvo  %k
+            %lard  q.byk.bowl
+            (verify:lsa rpc.state u.keyfile (tracked-sont merged our.bowl))
+        ==
+      ::
+      :_  %_  this
+            urb-state.state  merged
+            conf             conf.scan
+            keyfile          ?:(own-public.scan ~ keyfile)
           ==
-        ~
-      :-  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
-      (jael-update filtered-udiffs)
+      ;:  welp
+        ^-  (list card)
+        ?:  =(~ fx-ships)  ~
+        ::  don't send a %listen task for ships
+        ::  that Jael is already subscribed to
+        ~[(listen-to-urb (~(dif in fx-ships) tracked-ships) [%| dap.bowl])]
+      ::
+        ~[[%pass /timer %arvo %b %wait (add ~s30 now.bowl)]]
+        (jael-update filtered-udiffs)
+        cards.scan
+        recheck-cards
+      ==
     ==
   ==
 ::
-++  on-agent  on-agent:def
+++  on-agent
+  |=  [=wire =sign:agent:gall]
+  ^-  (quip card _this)
+  ?+    wire  (on-agent:def wire sign)
+    ::  Placeholder Ames pokes inevitably nack (the %ames agent doesn't
+    ::  exist yet); swallow them quietly.
+      [%ames *]
+    ?.  ?=(%poke-ack -.sign)  (on-agent:def wire sign)
+    `this
+  ==
 ++  on-leave  on-leave:def
 ++  on-fail   on-fail:def
 --
@@ -305,7 +528,207 @@
   :~  :*  %pass  /blocks  %arvo  %k
           %lard  q.byk.bowl
           (get-blocks [rpc urb-state]:state)
-      == 
+      ==
+  ==
+::
+::  Confidential-comet helpers.
+::
+::  Is this ship known to be PUBLIC on-chain? (In unv-ids but not in the
+::  confidential registry: it spawned or continued via an on-chain reveal,
+::  which is permanent per the protocol.)
+++  known-public
+  |=  who=@p
+  ^-  ?
+  ?&  (~(has by unv-ids.urb-state) who)
+      !(~(has by conf) who)
+  ==
+::
+::  The sont we currently track for a ship, for the verifier's tracked-tip
+::  reconciliation. ~ if untracked or lost ([0x0 0 0] is urb-core's
+::  landed-in-the-miner-fee sentinel, meaningless to compare against).
+++  tracked-sont
+  |=  [st=state:urb who=@p]
+  ^-  (unit sont:ord)
+  ?~  point=(~(get by unv-ids.st) who)  ~
+  ?:  =([0x0 0 0] sont.own.u.point)  ~
+  `sont.own.u.point
+::
+::  Apply a verified attestation: store the point, drop any previously
+::  tracked sat, track the tip sat (with its REAL on-chain output value --
+::  find-block-reveals reuses it for sum-in math), and register the ship in
+::  the confidential registry. Produces the new [urb-state conf].
+++  apply-verified
+  |=  [who=@p new=point:urb tip-value=@ud]
+  ^-  [state:urb (map @p conf-meta)]
+  =/  st  urb-state
+  =/  old  (~(get by unv-ids.st) who)
+  =.  sont-map.st
+    ?~  old  sont-map.st
+    ?:  =(sont.own.u.old sont.own.new)  sont-map.st
+    ?:  =([0x0 0 0] sont.own.u.old)  sont-map.st
+    (del:si:ol sont-map.st [txid vout off]:sont.own.u.old)
+  =.  unv-ids.st  (~(put by unv-ids.st) who new)
+  =.  sont-map.st
+    %:  put-com:si:ol
+        sont-map.st
+        txid.sont.own.new
+        vout.sont.own.new
+        off.sont.own.new
+        tip-value
+        who
+    ==
+  [st (~(put by conf) who [attested=sont.own.new requested=~])]
+::
+::  Re-apply confidential points onto a block thread's result state. The
+::  thread computed from a snapshot; any point applied by a verification
+::  that completed while it was in flight is missing from the thread's
+::  unv-ids and would be silently dropped by wholesale assignment. A ship
+::  the thread DOES know wins as-is (it may have tracked the sat's moves).
+::  XX residual windows, accepted for the prototype: a restored sat that
+::  moved within the very blocks the thread processed points at a spent
+::  output until the next packet; a RE-verification (already-known ship)
+::  completing mid-flight is reverted, after which the scan re-requests a
+::  packet -- chatty but convergent.
+++  reapply-conf-points
+  |=  [old=state:urb new=state:urb]
+  ^-  state:urb
+  =/  entries  ~(tap by conf)
+  |-
+  ?~  entries  new
+  =/  [who=@p meta=conf-meta]  i.entries
+  ?:  (~(has by unv-ids.new) who)
+    $(entries t.entries)
+  =/  point  (~(get by unv-ids.old) who)
+  ?~  point
+    $(entries t.entries)
+  ~&  >>  "%urb-watcher: restoring {<who>}, clobbered by the block thread"
+  =/  sont  sont.own.u.point
+  =.  unv-ids.new  (~(put by unv-ids.new) who u.point)
+  =/  vm
+    ?:  =([0x0 0 0] sont)  ~
+    (get-vout:si:ol sont-map.old [txid vout]:sont)
+  =?  sont-map.new  ?=(^ vm)
+    (put-com:si:ol sont-map.new txid.sont vout.sont off.sont value.u.vm who)
+  $(entries t.entries)
+::
+::  Scan the confidential registry against post-block state. Classifies
+::  each ship: public continuation (its own on-chain sotx moved its sat),
+::  sponsor-side %point effect (sat unmoved -- stays confidential),
+::  confidential move (sat moved, no sotx -> ask Ames for a fresh packet),
+::  or steady state.
+++  scan-conf
+  |=  [fx-ships=(set ship) st=state:urb =bowl:gall]
+  ^-  [cards=(list card) conf=(map @p conf-meta) own-moved=? own-public=?]
+  =/  entries  ~(tap by conf)
+  =/  new-conf  conf
+  =|  cards=(list card)
+  =|  own-moved=_|
+  =|  own-public=_|
+  |-
+  ?~  entries  [(flop cards) new-conf own-moved own-public]
+  =/  [who=@p meta=conf-meta]  i.entries
+  =/  point  (~(get by unv-ids.st) who)
+  ?~  point
+    %-  (slog leaf+"%urb-watcher: conf ship {<who>} missing from unv-ids; dropping" ~)
+    $(entries t.entries, new-conf (~(del by new-conf) who))
+  =/  now-sont  sont.own.u.point
+  =/  moved=?  !=(now-sont attested.meta)
+  ?:  (~(has in fx-ships) who)
+    ?.  moved
+      ::  A %point effect with the sat unmoved is a sponsor-side action
+      ::  (the parent's %adopt/%reject/%detach): the ship did nothing
+      ::  on-chain itself, so it stays confidential.
+      ::  XX undecidable corner: a sponsor-side action AND a confidential
+      ::     move landing in the same batch misclassifies as public.
+      $(entries t.entries)
+    ::  Public continuation: the ship's own on-chain sotx moved its sat.
+    ::  Permanent; classic chain-watching handles it from here.
+    %-  (slog leaf+"%urb-watcher: {<who>} continued publicly; now a public comet" ~)
+    %=  $
+      entries     t.entries
+      new-conf    (~(del by new-conf) who)
+      own-public  |(own-public =(who our.bowl))
+    ==
+  ?.  moved
+    $(entries t.entries)
+  ::  Confidential move: the tracked sat moved with no on-chain sotx.
+  ::  Ask Ames to request a fresh packet, once per landing sont.
+  ~?  =([0x0 0 0] now-sont)
+    "%urb-watcher: conf ship {<who>}'s sat lost to fee/tracking; requesting anyway"
+  =.  own-moved  |(own-moved =(who our.bowl))
+  ?:  =(who our.bowl)
+    ::  Our own move is handled by the keyfile recheck, not an Ames request.
+    $(entries t.entries)
+  ?:  =(`now-sont requested.meta)
+    $(entries t.entries)
+  %=  $
+    entries   t.entries
+    cards     [(request-poke our.bowl who) cards]
+    new-conf  (~(put by new-conf) who meta(requested `now-sont))
+  ==
+::
+::  Serve urb-state with confidential ships stripped: their points removed
+::  and their sats dropped from the sat index. Conf identities propagate
+::  only via self-attestation packets, never via snapshots.
+::  XX insc-ids is left untouched: confidential chains are key-path-only
+::     spends, which cannot carry inscriptions.
+++  filter-snapshot
+  |=  [st=state:urb conf-ships=(set @p)]
+  ^-  state:urb
+  ?:  =(~ conf-ships)  st
+  =.  unv-ids.st
+    =/  ships  ~(tap in conf-ships)
+    |-  ^+  unv-ids.st
+    ?~  ships  unv-ids.st
+    $(ships t.ships, unv-ids.st (~(del by unv-ids.st) i.ships))
+  =.  sont-map.st
+    =/  entries  ~(tap by sont-map.st)
+    =|  acc=sont-map:ord
+    |-  ^-  sont-map:ord
+    ?~  entries  acc
+    =/  [k=[=txid:ord =vout:ord] vm=vout-map:ord]  i.entries
+    =/  sats
+      %-  ~(gas by *(map off:ord sont-val:ord))
+      %+  skip  ~(tap by sats.vm)
+      |=  [o=off:ord sv=sont-val:ord]
+      &(?=(^ com.sv) (~(has in conf-ships) u.com.sv))
+    ?:  =(~ sats)
+      $(entries t.entries)
+    $(entries t.entries, acc (~(put by acc) k vm(sats sats)))
+  st
+::
+::  The set of ships Jael is subscribed to (via /ship paths).
+::  XX this replaces an inline version that cast the path knot directly to
+::     @p without parsing, so it never matched a real ship.
+++  subs-to-ships
+  |=  sup=bitt:gall
+  ^-  (set ship)
+  %-  silt
+  %+  murn
+    ~(val by sup)
+  |=  [ship =path]
+  ^-  (unit ship)
+  ?.  ?=([@ ~] path)
+    ~
+  (slaw %p i.path)
+::
+::  Placeholder pokes to the (assumed, nonexistent) Ames agent.
+++  request-poke
+  |=  [our=ship who=@p]
+  ^-  card
+  :*  %pass  /ames/request/(scot %p who)
+      %agent  [our %ames]
+      %poke  %attestation-request
+      !>(who)
+  ==
+::
+++  verdict-poke
+  |=  [our=ship who=@p ok=?]
+  ^-  card
+  :*  %pass  /ames/verdict/(scot %p who)
+      %agent  [our %ames]
+      %poke  %attestation-verdict
+      !>([who ok])
   ==
 ::
 ::  Fetch blocks in range(last-processed + 1, latest - block-confirmations)
@@ -558,6 +981,17 @@
     `[ship.eu id %fief fief.pdiff]
   ==
 ::
+::  The four udiffs that describe one point to Jael.
+++  point-to-udiffs
+  |=  [=ship =point:urb =id:block:jael]
+  ^-  udiffs:point:jael
+  =,  point
+  :~  [ship id %keys [life.net (sub (end 3 pass.net) 'a') pass.net] %.y]
+      [ship id %rift rift.net %.y]
+      [ship id %spon ?:(has.sponsor.net `who.sponsor.net ~)]
+      [ship id %fief fief.net]
+  ==
+::
 ++  state-to-udiffs
   |=  urb-state=state:urb
   ^-  udiffs:point:jael
@@ -566,22 +1000,14 @@
   =/  =id:block:jael
     block-id:urb-state
   =/  new-udiffs  *udiffs:point:jael
-  |-  
+  |-
   ^+  new-udiffs
   ?~  points
     new-udiffs
   %=  $
-     points  t.points
-  ::
-     new-udiffs  
-     %+  welp
-      =,  i.points
-      ^-  udiffs:point:jael
-      :~  [ship id %keys [life.net (sub (end 3 pass.net) 'a') pass.net] %.y]
-          [ship id %rift rift.net %.y]
-          [ship id %spon ?:(has.sponsor.net `who.sponsor.net ~)]
-          [ship id %fief fief.net]
-      ==
-    new-udiffs
+    points      t.points
+    new-udiffs  %+  welp
+                  (point-to-udiffs ship.i.points +.i.points id)
+                new-udiffs
   ==
 --

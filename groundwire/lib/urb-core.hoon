@@ -316,6 +316,12 @@
       ::  XX more ordering constraints?
       ?:  ?=(%spawn -.sot)
         ::  ~&  >>  "%urb-core: processing %spawn"
+        ::  XX bat-cnt is dead code: it's reinitialized to 0 and bumped to 1
+        ::     on every loop iteration above, so this check always passes and
+        ::     "spawn must be first in batch" is unenforced on-chain. Fixing it
+        ::     would change which historical reveals are accepted, so it is
+        ::     left as-is; lib/self-attestation enforces the intended rule
+        ::     (+spawn-first-ok) for confidential chains.
         ?.  =(1 bat-cnt)  cor                   :: first sot in batch
         ?^  point  cor                          :: no data for @p yet
         ?:  (~(has by unv-ids) who)  cor        :: no data for @p yet
@@ -593,9 +599,18 @@
         ==
       ::
       ::  A plain ownership transfer: the owner controlled the sat (checked
-      ::  above via is-sont-in-input) and makes no PKI change. Nothing to update
-      ::  on the point; ++update-sonts tracks the sat to its new home afterward.
+      ::  above via is-sont-in-input) and makes no PKI change. ++update-sonts
+      ::  tracks the sat to its new home afterward. We still emit an %owner
+      ::  effect: it carries no Jael udiff (fx-to-udiffs drops %owner), but it
+      ::  marks this as the ship's own on-chain sotx, so a confidential ship
+      ::  publicly revealing a bare %no-op is correctly classified as a public
+      ::  continuation rather than a confidential move.
           %no-op
+        =/  landing
+          %-  index-to-sont-with-coinbase
+          (add running-value off.sont.own.u.point)
+        =.  cor
+          (emit [%point who %owner ?~(landing [0x0 0 0] u.landing)])
         $(sots t.sots)
       ==
       ::

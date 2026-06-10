@@ -89,7 +89,7 @@
       ==
 
     ::
-      ?(%cancel-escape %detach %reject %set-mang)
+      ?(%cancel-escape %detach %reject %set-mang %no-op)
       ~|  %not-supported-by-wallet-core
       !!
     ::

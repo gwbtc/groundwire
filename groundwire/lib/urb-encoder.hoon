@@ -119,6 +119,12 @@
       =+  m=(mat pass.sot)
       [[7 2] [1 breach.sot] m ~]
     ::
+    ::  %no-op: a plain ownership transfer with no PKI change.
+    ::  Confidential comets mark regular sat transfers with this
+    ::  so their attestation chains have no gaps.
+        %no-op
+      [[7 12] [1 0] ~]
+    ::
         %fief
       :+  [7 11]  [1 0]
       ?~  fief.sot  ~[[2 0]]
@@ -316,6 +322,10 @@
       =^  pad=@  cur  (take 0)
       =^  fief=(unit fief:urb)  cur  take-fief
       `[[%fief fief] cur]
+    ::
+        %12
+      =^  pad=@  cur  (take 0)
+      `[[%no-op ~] cur]
     ==
   ::
   ::  Take a bite

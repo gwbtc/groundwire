@@ -270,7 +270,7 @@
     ^-  sont-map:ord
     ?~  b=(~(get by a) [txid vout])  a
     =/  c  (~(del by sats.u.b) off)
-    ?:  =(c ~)  (~(del by a) txid off)
+    ?:  =(c ~)  (~(del by a) txid vout)
     (~(put by a) [txid vout] u.b(sats c))
   --
 ::++  ming

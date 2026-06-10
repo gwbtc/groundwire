@@ -100,6 +100,9 @@
     =/  breach=tape  ?:(breach.sot "breach" "rotate")
     "keys ({breach})"
   ::
+      %no-op
+    "no-op transfer"
+  ::
       %escape
     =/  parent=tape  (scow %p parent.sot)
     "escape to {parent}"
@@ -203,6 +206,14 @@
       ;div
         ;span.f3.s-2(style "opacity: 0.5;"): breach=
         ;span.mono.f3.s-2: {?:(breach.sot "%.y" "%.n")}
+      ==
+    ==
+  ::
+      %no-op
+    ;div.fc.g1
+      ;div
+        ;span.f3.s-2(style "opacity: 0.5;"): skim-sotx=
+        ;span.mono.f3.s-1: %no-op
       ==
     ==
   ::
@@ -334,6 +345,10 @@
       %keys
     :~  ['type' s+'keys']
         ['breach' b+breach.sot]
+    ==
+  ::
+      %no-op
+    :~  ['type' s+'no-op']
     ==
   ::
       %escape
