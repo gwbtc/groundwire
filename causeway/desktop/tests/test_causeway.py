@@ -122,6 +122,61 @@ def test_fief_sotx_variants():
 
 
 # ---------------------------------------------------------------------------
+# %no-op sotx — opcode 12 + 1-bit pad, no payload.
+# Hoon lib/urb-encoder.hoon encodes it as [[7 12] [1 0] ~].
+# ---------------------------------------------------------------------------
+
+
+def _bit(buf: bytes, i: int) -> int:
+    """LSB-first bit i of a byte string (matches BitWriter ordering)."""
+    return (buf[i // 8] >> (i % 8)) & 1
+
+
+def test_no_op_sotx_deterministic_and_nonempty():
+    a = cw.encode_no_op_sotx(comet_p=0xDEAD)
+    b = cw.encode_no_op_sotx(comet_p=0xDEAD)
+    assert a == b
+    assert len(a) > 0
+
+
+def test_no_op_sotx_bit_layout_opcode_12_then_pad():
+    # Outer header for tx_sig=None is [2:0] (no sig) + [128:from_ship].
+    # The skim opcode field begins at bit 130 (2 + 128). It is a 7-bit field
+    # holding 12, then a 1-bit 0 pad at bit 137. Verify with comet_p=0 so the
+    # ship bits don't bleed into the opcode field.
+    out = cw.encode_no_op_sotx(comet_p=0)
+    opcode = 0
+    for k in range(7):
+        opcode |= _bit(out, 130 + k) << k
+    assert opcode == 12, f"opcode field should be 12, got {opcode}"
+    assert _bit(out, 137) == 0, "pad bit after opcode must be 0"
+    # No payload follows: total significant bits = 2 + 128 + 7 + 1 = 138, so the
+    # encoding is 18 bytes with the high bits zero.
+    assert len(out) == 18
+    # Byte 16 carries bits 128..135: ship-low(0,0) then opcode 12=0b0001100
+    # laid LSB-first -> 0,0,1,1,0,0 => 0b00110000 = 0x30.
+    assert out[16] == 0x30
+
+
+def test_no_op_opcode_field_matches_keys_field_structure():
+    # %keys lays [[7 2] [1 breach] ...]; %no-op lays [[7 12] [1 0] ~]. Both put
+    # the 7-bit opcode at bit 130. Decode each and confirm the field semantics.
+    keys = cw.encode_keys_sotx(comet_p=0, pass_atom=0, breach=False)
+    noop = cw.encode_no_op_sotx(comet_p=0)
+    keys_op = sum(_bit(keys, 130 + k) << k for k in range(7))
+    noop_op = sum(_bit(noop, 130 + k) << k for k in range(7))
+    assert keys_op == 2
+    assert noop_op == 12
+
+
+def test_no_op_outer_header_first_byte_is_zero_no_sig():
+    # tx_sig=None means en-sig type 0 (2 bits) + from-ship low bits; with
+    # comet_p=0 the first byte is all zero, same discipline as spawn.
+    out = cw.encode_no_op_sotx(comet_p=0)
+    assert out[0] == 0x00
+
+
+# ---------------------------------------------------------------------------
 # Confidential commit PSBT builder
 # ---------------------------------------------------------------------------
 
@@ -359,3 +414,183 @@ def test_add_tap_merkle_root_hint():
     fake_root = b"\x01" * 32
     cw.add_tap_merkle_root_hint(p, 0, fake_root)
     assert p.inputs[0].taproot_merkle_root == fake_root
+
+
+# ---------------------------------------------------------------------------
+# 2.0 self-attestation keyfile skeleton — build_packet_skeleton
+# ---------------------------------------------------------------------------
+
+
+def _synthetic_proof(i: int, op: str, *, with_blocks: bool = True) -> dict:
+    """A synthetic proof.json dict with distinct, traceable fields per index."""
+    p = {
+        "version": 1,
+        "op": op,
+        "patp": "~sampel-palnet",
+        "commit_txid": f"{i:02x}" * 32,
+        "commit_vout": 0,
+        "commit_value": 1000 - i,
+        "internal_pubkey_hex": f"{i + 0x10:02x}" * 32,  # 32-byte x-only
+        "leaf_version": 192,
+        "leaf_script_hex": f"006303757262{i:02x}68" + "20" + ("ab" * 32) + "ac",
+        "merkle_root_hex": f"{i + 0x20:02x}" * 32,
+        "network": "regtest",
+        "funding": {
+            "txid": f"{i + 0xa0:02x}" * 32,
+            "vout": i,
+            "value": 3400,
+            "path": "m/86h/1h/0h/0/0",
+            "fingerprint_hex": "abcd1234",
+        },
+    }
+    if with_blocks:
+        p["commit_block_hex"] = f"{i + 0x30:02x}" * 32
+        p["funding"]["block_hex"] = f"{i + 0xb0:02x}" * 32
+    return p
+
+
+def test_build_packet_skeleton_one_to_one_links():
+    proofs = [
+        _synthetic_proof(0, "spawn"),
+        _synthetic_proof(1, "keys"),
+        _synthetic_proof(2, "fief"),
+    ]
+    sk = cw.build_packet_skeleton(proofs)
+    # N proofs -> N links, 1:1
+    assert len(sk["links"]) == 3
+    assert sk["who"] == "~sampel-palnet"
+    for i, link in enumerate(sk["links"]):
+        # internal_key gets a 0x02 prefix -> 33-byte compressed key
+        assert link["internal_key_hex"] == "02" + proofs[i]["internal_pubkey_hex"]
+        assert len(bytes.fromhex(link["internal_key_hex"])) == 33
+        assert link["internal_key_hex"].startswith("02")
+        assert link["txid"] == proofs[i]["commit_txid"]
+        assert link["block"] == proofs[i]["commit_block_hex"]
+        assert link["leaf_version"] == proofs[i]["leaf_version"]
+        assert link["leaf_script_hex"] == proofs[i]["leaf_script_hex"]
+
+
+def test_build_packet_skeleton_precommit_and_tip_wired():
+    proofs = [
+        _synthetic_proof(0, "spawn"),
+        _synthetic_proof(1, "no-op"),
+    ]
+    sk = cw.build_packet_skeleton(proofs)
+    # precommit comes from proofs[0].funding
+    assert sk["precommit"]["txid"] == proofs[0]["funding"]["txid"]
+    assert sk["precommit"]["block"] == proofs[0]["funding"]["block_hex"]
+    # tip is the LAST proof's commit output, off=0
+    assert sk["tip"]["txid"] == proofs[-1]["commit_txid"]
+    assert sk["tip"]["vout"] == proofs[-1]["commit_vout"]
+    assert sk["tip"]["off"] == 0
+
+
+def test_build_packet_skeleton_bare_spawn_is_one_link():
+    sk = cw.build_packet_skeleton([_synthetic_proof(0, "spawn")])
+    assert len(sk["links"]) == 1
+    # A bare spawn: tip == the spawn commit output.
+    assert sk["tip"]["txid"] == sk["links"][0]["txid"]
+
+
+def test_build_packet_skeleton_display_order_hex_preserved():
+    # All hex stays display-order: the skeleton must echo the proof bytes verbatim
+    # (apart from the 0x02 internal-key prefix), no byte-reversal.
+    proofs = [_synthetic_proof(0, "spawn")]
+    sk = cw.build_packet_skeleton(proofs)
+    assert sk["links"][0]["txid"] == proofs[0]["commit_txid"]
+    assert sk["tip"]["txid"] == proofs[0]["commit_txid"]
+    assert sk["precommit"]["txid"] == proofs[0]["funding"]["txid"]
+
+
+def test_build_packet_skeleton_rejects_empty():
+    with pytest.raises(ValueError, match=">= 1 proof"):
+        cw.build_packet_skeleton([])
+
+
+def test_build_packet_skeleton_rejects_non_spawn_first():
+    with pytest.raises(ValueError, match="spawn"):
+        cw.build_packet_skeleton([_synthetic_proof(0, "keys")])
+
+
+def test_build_packet_skeleton_rejects_unbroadcast_proof():
+    proofs = [_synthetic_proof(0, "spawn"), _synthetic_proof(1, "keys")]
+    proofs[1]["commit_txid"] = ""  # not yet broadcast
+    with pytest.raises(ValueError, match="commit_txid"):
+        cw.build_packet_skeleton(proofs)
+
+
+def test_build_packet_skeleton_missing_blocks_empty_strings():
+    # Without blockhashes recorded, the skeleton still builds with "" blocks.
+    proofs = [_synthetic_proof(0, "spawn", with_blocks=False)]
+    sk = cw.build_packet_skeleton(proofs)
+    assert sk["links"][0]["block"] == ""
+    assert sk["precommit"]["block"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Network name mapping — CLI names map onto embit's NETWORKS keys.
+# ---------------------------------------------------------------------------
+
+
+def test_embit_network_mapping():
+    assert cw.embit_network("main") == "main"
+    assert cw.embit_network("testnet") == "test"
+    assert cw.embit_network("regtest") == "regtest"
+
+
+def test_regtest_address_is_bcrt():
+    # derive_taproot_address threads the network through to embit.
+    addr = cw.derive_taproot_address(b"\x42" * 32, network="regtest")
+    assert addr.startswith("bcrt1p"), f"expected bcrt1p, got {addr}"
+
+
+def test_keysource_derive_regtest_address():
+    src = cw.parse_key_source(BIP86_XPUB, network="regtest")
+    addr, spk, xonly, path = src.derive_address(0, 0)
+    assert addr.startswith("bcrt1p"), f"expected bcrt1p, got {addr}"
+    assert spk[:2] == bytes([0x51, 0x20])
+
+
+# ---------------------------------------------------------------------------
+# Chain backend seam
+# ---------------------------------------------------------------------------
+
+
+def test_make_backend_selects_core_rpc_for_regtest():
+    b = cw.make_backend("regtest", rpc_url="http://x", rpc_user="u", rpc_pass="p")
+    assert isinstance(b, cw.CoreRpcBackend)
+    assert b.rpc_url == "http://x"
+
+
+def test_make_backend_selects_mempool_for_main_and_testnet():
+    assert isinstance(cw.make_backend("main"), cw.MempoolBackend)
+    assert isinstance(cw.make_backend("testnet"), cw.MempoolBackend)
+
+
+def _regtest_node_up() -> bool:
+    """True if a bitcoind JSON-RPC responds on the default regtest port."""
+    import socket
+    import urllib.parse
+
+    parsed = urllib.parse.urlparse(cw.REGTEST_RPC_URL)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 18549
+    try:
+        with socket.create_connection((host, port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(not _regtest_node_up(), reason="no regtest bitcoind on 127.0.0.1:18549")
+def test_core_rpc_backend_smoke():
+    """Exercise CoreRpcBackend against a live local regtest node (skipped if absent)."""
+    b = cw.CoreRpcBackend(cw.REGTEST_RPC_URL, cw.REGTEST_RPC_USER, cw.REGTEST_RPC_PASS)
+    # getblockcount is a cheap liveness probe via the raw _call path.
+    height = b._call("getblockcount")
+    assert isinstance(height, int)
+    # get_tx on a definitely-absent txid returns None (not an exception).
+    assert b.get_tx("00" * 32) is None
+    # get_utxos on a fresh address returns an empty (or list) result.
+    utxos = b.get_utxos("bcrt1pqqqqqp399et2xygdj5xreqhjjvcmzhxw4aywxecjdzew6hylgvsesf3hn0c")
+    assert isinstance(utxos, list)

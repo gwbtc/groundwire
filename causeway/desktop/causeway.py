@@ -95,6 +95,31 @@ SPONSOR_SHIP = "~daplyd"  # star — comet mines under this
 ESCAPE_SPONSOR = "~linluc-palnus-barpub-dalweg--miptyp-molfer-pitren-daplyd"  # networking sponsor for escape
 BLOCK_CONFIRMATIONS = 2
 
+# Local bitcoind defaults for `--network regtest`. No wallet import needed —
+# we use scantxoutset/sendrawtransaction/getrawtransaction over JSON-RPC.
+REGTEST_RPC_URL = "http://127.0.0.1:18549"
+REGTEST_RPC_USER = "bitcoinrpc"
+REGTEST_RPC_PASS = "bitcoinrpc"
+
+
+# =========================================================================
+#  Network names — CLI uses main|testnet|regtest; embit's NETWORKS keys are
+#  main|test|regtest|signet. Map between them in one place.
+# =========================================================================
+
+
+def embit_network(network: str) -> str:
+    """Map a CLI network name to embit's NETWORKS key.
+
+    embit has no "testnet" key — it's "test". regtest and main pass through.
+    """
+    return {"main": "main", "testnet": "test", "regtest": "regtest"}.get(network, network)
+
+
+def network_coin_type(network: str) -> int:
+    """BIP-44 coin type for a CLI network name: 0 for mainnet, 1 otherwise."""
+    return 0 if network == "main" else 1
+
 
 # =========================================================================
 #  Terminal helpers
@@ -315,6 +340,180 @@ def rpc_call(
     return data.get("result")
 
 
+# =========================================================================
+#  Chain backend seam — abstracts UTXO scan / broadcast / tx-fetch so
+#  mempool.space is NOT load-bearing. main/testnet use MempoolBackend;
+#  regtest uses CoreRpcBackend talking to a local bitcoind over JSON-RPC.
+# =========================================================================
+
+
+class ChainBackend:
+    """Read/write interface to a Bitcoin chain source.
+
+    Implementations normalize their native responses to these shapes:
+      * get_utxos -> list of {"txid", "vout", "value", "confirmed": bool}
+      * broadcast -> txid (display-order hex string)
+      * get_tx    -> verbose getrawtransaction-style dict (or None), always
+        carrying "txid", "vout" (list of {"value","scriptPubKey":{"hex":...}}),
+        "confirmations" (int), and "blockhash" (display-order hex, may be "").
+    """
+
+    def get_utxos(self, address: str) -> list[dict]:
+        raise NotImplementedError
+
+    def broadcast(self, tx_hex: str) -> str:
+        raise NotImplementedError
+
+    def get_tx(self, txid: str) -> dict | None:
+        raise NotImplementedError
+
+
+class MempoolBackend(ChainBackend):
+    """mempool.space REST backend — preserves the original behavior."""
+
+    def __init__(self, base: str = MEMPOOL_API_URL):
+        self.base = base.rstrip("/")
+
+    def get_utxos(self, address: str) -> list[dict]:
+        r = requests.get(f"{self.base}/address/{address}/utxo", timeout=20)
+        r.raise_for_status()
+        out = []
+        for u in r.json():
+            out.append({
+                "txid": u["txid"],
+                "vout": u["vout"],
+                "value": u["value"],
+                "confirmed": u.get("status", {}).get("confirmed", False),
+            })
+        return out
+
+    def broadcast(self, tx_hex: str) -> str:
+        r = requests.post(f"{self.base}/tx", data=tx_hex, timeout=30)
+        if not r.ok:
+            raise RuntimeError(f"broadcast failed: {r.status_code} {r.text}")
+        return r.text.strip()
+
+    def get_tx(self, txid: str) -> dict | None:
+        try:
+            r = requests.get(f"{self.base}/tx/{txid}", timeout=20)
+            if r.status_code == 404:
+                return None
+            r.raise_for_status()
+            tx = r.json()
+        except Exception:
+            return None
+        status = tx.get("status") or {}
+        # mempool.space gives block_height; we can't cheaply turn that into a
+        # confirmation count without /blocks/tip/height, so fetch tip height.
+        confs = 0
+        if status.get("confirmed"):
+            try:
+                tip = requests.get(f"{self.base}/blocks/tip/height", timeout=15)
+                tip.raise_for_status()
+                confs = int(tip.text) - int(status.get("block_height", 0)) + 1
+            except Exception:
+                confs = 1
+        vout = []
+        for o in tx.get("vout", []):
+            vout.append({
+                "value": o.get("value", 0),
+                "scriptPubKey": {"hex": o.get("scriptpubkey", "")},
+            })
+        return {
+            "txid": tx.get("txid", txid),
+            "vout": vout,
+            "confirmations": confs,
+            "blockhash": status.get("block_hash", "") or "",
+        }
+
+
+class CoreRpcBackend(ChainBackend):
+    """Local bitcoind backend over JSON-RPC (stdlib urllib + basic auth).
+
+    Uses scantxoutset (no wallet import), sendrawtransaction, and
+    getrawtransaction(verbose). getrawtransaction returns blockhash +
+    confirmations for confirmed txs without -txindex, since we hand it the
+    chain via scantxoutset / mempool.
+    """
+
+    def __init__(self, rpc_url: str, rpc_user: str, rpc_pass: str, timeout: int = 60):
+        self.rpc_url = rpc_url
+        self.rpc_user = rpc_user
+        self.rpc_pass = rpc_pass
+        self.timeout = timeout
+
+    def _call(self, method: str, params=None):
+        import urllib.request
+
+        payload = json.dumps(
+            {"jsonrpc": "2.0", "id": "causeway", "method": method, "params": params or []}
+        ).encode()
+        token = base64.b64encode(f"{self.rpc_user}:{self.rpc_pass}".encode()).decode()
+        req = urllib.request.Request(
+            self.rpc_url,
+            data=payload,
+            headers={"Content-Type": "application/json", "Authorization": f"Basic {token}"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            data = json.loads(resp.read().decode())
+        if data.get("error"):
+            raise RuntimeError(f"RPC error: {data['error']}")
+        return data.get("result")
+
+    def get_utxos(self, address: str) -> list[dict]:
+        res = self._call("scantxoutset", ["start", [f"addr({address})"]])
+        out = []
+        for u in (res or {}).get("unspents", []):
+            # scantxoutset only returns confirmed UTXOs.
+            out.append({
+                "txid": u["txid"],
+                "vout": u["vout"],
+                "value": int(round(float(u["amount"]) * 100_000_000)),
+                "confirmed": True,
+            })
+        return out
+
+    def broadcast(self, tx_hex: str) -> str:
+        return self._call("sendrawtransaction", [tx_hex])
+
+    def get_tx(self, txid: str) -> dict | None:
+        try:
+            tx = self._call("getrawtransaction", [txid, True])
+        except Exception:
+            return None
+        if not tx:
+            return None
+        # Core already returns vout with scriptPubKey.hex, confirmations, and
+        # blockhash. Normalize values to sats and ensure keys are present.
+        vout = []
+        for o in tx.get("vout", []):
+            spk = o.get("scriptPubKey") or {}
+            vout.append({
+                "value": int(round(float(o.get("value", 0)) * 100_000_000)),
+                "scriptPubKey": {"hex": spk.get("hex", "")},
+            })
+        return {
+            "txid": tx.get("txid", txid),
+            "vout": vout,
+            "confirmations": int(tx.get("confirmations", 0)),
+            "blockhash": tx.get("blockhash", "") or "",
+        }
+
+
+def make_backend(network: str, *, mempool_base: str = MEMPOOL_API_URL,
+                 rpc_url: str | None = None, rpc_user: str | None = None,
+                 rpc_pass: str | None = None) -> ChainBackend:
+    """Construct the right ChainBackend for a CLI network name."""
+    if network == "regtest":
+        return CoreRpcBackend(
+            rpc_url or REGTEST_RPC_URL,
+            rpc_user or REGTEST_RPC_USER,
+            rpc_pass or REGTEST_RPC_PASS,
+        )
+    return MempoolBackend(mempool_base)
+
+
 def request_faucet(address: str, invite: str | None = None) -> str | None:
     """Request sats from the faucet. Returns txid on success, None on failure."""
     try:
@@ -349,15 +548,12 @@ def request_faucet(address: str, invite: str | None = None) -> str | None:
         return None
 
 
-def scan_for_utxo(address: str, **_rpc_kwargs) -> dict | None:
-    """Check mempool.space API for a confirmed UTXO at `address`."""
+def scan_for_utxo(address: str, *, backend: ChainBackend | None = None, **_rpc_kwargs) -> dict | None:
+    """Check the chain backend for a confirmed UTXO at `address`."""
+    backend = backend or MempoolBackend()
     try:
-        resp = requests.get(f"{MEMPOOL_API_URL}/address/{address}/utxo", timeout=15)
-        if not resp.ok:
-            return None
-        utxos = resp.json()
-        for utxo in utxos:
-            if not utxo.get("status", {}).get("confirmed", False):
+        for utxo in backend.get_utxos(address):
+            if not utxo.get("confirmed", False):
                 continue
             if utxo["value"] >= REQUIRED_SATS:
                 return {
@@ -370,12 +566,13 @@ def scan_for_utxo(address: str, **_rpc_kwargs) -> dict | None:
     return None
 
 
-def wait_for_funding(address: str, poll_interval: int = POLL_INTERVAL, **rpc_kwargs) -> dict:
+def wait_for_funding(address: str, poll_interval: int = POLL_INTERVAL,
+                     *, backend: ChainBackend | None = None, **rpc_kwargs) -> dict:
     """Block until a confirmed UTXO with >= REQUIRED_SATS appears at `address`."""
     print(f"\nWaiting for funding transaction to confirm (checking every {poll_interval}s)...")
     start = time.monotonic()
     while True:
-        utxo = scan_for_utxo(address, **rpc_kwargs)
+        utxo = scan_for_utxo(address, backend=backend, **rpc_kwargs)
         if utxo:
             return utxo
         elapsed = int(time.monotonic() - start)
@@ -416,7 +613,7 @@ def make_tweak_expr(txid_hex: str, vout: int, off: int = 0) -> str:
 # =========================================================================
 
 
-def derive_taproot_address(seed_bytes: bytes) -> str:
+def derive_taproot_address(seed_bytes: bytes, network: str = "main") -> str:
     """
     Derive the first taproot receiving address (m/86'/1'/0'/0/0)
     from raw seed bytes, matching what spv-wallet does for @q seeds.
@@ -424,10 +621,11 @@ def derive_taproot_address(seed_bytes: bytes) -> str:
     spv-wallet's seed-to-bytes for %q uses raw atom bytes directly
     as the BIP-32 seed (no BIP-39 mnemonic/PBKDF2 step).
     """
-    root = bip32.HDKey.from_seed(seed_bytes, version=NETWORKS["main"]["xprv"])
+    net = embit_network(network)
+    root = bip32.HDKey.from_seed(seed_bytes, version=NETWORKS[net]["xprv"])
     child = root.derive("m/86h/1h/0h/0/0")
     # BIP-86 taproot: key-path only (empty script tree)
-    addr = script.p2tr(child.key).address(NETWORKS["main"])
+    addr = script.p2tr(child.key).address(NETWORKS[net])
     return addr
 
 
@@ -894,6 +1092,23 @@ def encode_set_mang_sotx(comet_p: int, mang: tuple | None, tx_sig: int | None = 
     return w.to_bytes()
 
 
+def _encode_no_op_skim(w: "BitWriter") -> None:
+    """Encode a %no-op skim. Matches hoon lib/urb-encoder.hoon: [[7 12] [1 0] ~]
+    — opcode 12 in a 7-bit field, then a 1-bit 0 pad, no payload."""
+    w.write(7, 12)  # opcode %no-op
+    w.write(1, 0)   # pad
+
+
+def encode_no_op_sotx(comet_p: int, tx_sig: int | None = None) -> bytes:
+    """%no-op sotx — a plain ownership transfer with no PKI change. Confidential
+    comets mark otherwise-bare sat transfers with this so their attestation
+    chains have no gaps (the 2.0 NO-GAPS rule). Matches hoon's [[7 12] [1 0] ~]."""
+    w = BitWriter()
+    _write_outer_header(w, comet_p, tx_sig)
+    _encode_no_op_skim(w)
+    return w.to_bytes()
+
+
 def wrap_urb_script(data: bytes, xonly_pubkey: bytes) -> bytes:
     """Wrap encoded URB data in a Taproot script envelope.
 
@@ -987,7 +1202,7 @@ def tapscript_address(internal_xonly: bytes, script_bytes: bytes, network: str =
     # Construct P2TR scriptPubKey directly from the tweaked output key
     # (do NOT pass through script.p2tr() which would apply a second tweak)
     sc = script.Script(b"\x51\x20" + output_xonly)
-    return sc.address(NETWORKS[network])
+    return sc.address(NETWORKS[embit_network(network)])
 
 
 # =========================================================================
@@ -1167,9 +1382,9 @@ def request_sponsor_signature(
 # =========================================================================
 
 
-def _derive_key_at_index(seed_bytes: bytes, index: int) -> bip32.HDKey:
+def _derive_key_at_index(seed_bytes: bytes, index: int, network: str = "main") -> bip32.HDKey:
     """Derive BIP-86 key at m/86'/1'/0'/0/<index> from raw seed bytes."""
-    root = bip32.HDKey.from_seed(seed_bytes, version=NETWORKS["main"]["xprv"])
+    root = bip32.HDKey.from_seed(seed_bytes, version=NETWORKS[embit_network(network)]["xprv"])
     return root.derive(f"m/86h/1h/0h/0/{index}")
 
 
@@ -1492,14 +1707,15 @@ def _parse_path(path: str) -> list[int]:
 
 def wait_for_confirmations(
     txid: str, required: int = BLOCK_CONFIRMATIONS,
-    poll_interval: int = POLL_INTERVAL, **rpc_kwargs
+    poll_interval: int = POLL_INTERVAL, *, backend: ChainBackend | None = None, **_rpc_kwargs
 ) -> None:
     """Block until a transaction has at least `required` confirmations."""
+    backend = backend or MempoolBackend()
     print(f"\nWaiting for {required} block confirmation(s) (checking every {poll_interval}s)...")
     start = time.monotonic()
     while True:
         try:
-            tx_info = rpc_call("getrawtransaction", [txid, True], **rpc_kwargs)
+            tx_info = backend.get_tx(txid)
             confs = tx_info.get("confirmations", 0) if tx_info else 0
             if confs >= required:
                 elapsed = int(time.monotonic() - start)
@@ -1741,32 +1957,99 @@ def verify_proof_self(proof: dict) -> tuple[bool, str]:
     return True, "OK"
 
 
-def verify_proof_onchain(proof: dict, *, mempool_base: str = MEMPOOL_API_URL) -> tuple[bool, str]:
-    """Fetch the commit tx from mempool.space and verify its output matches the proof."""
+def verify_proof_onchain(
+    proof: dict, *, mempool_base: str = MEMPOOL_API_URL,
+    backend: ChainBackend | None = None,
+) -> tuple[bool, str]:
+    """Fetch the commit tx from the chain backend and verify its output matches the proof."""
     ok, reason = verify_proof_self(proof)
     if not ok:
         return False, reason
     txid = proof.get("commit_txid")
     if not txid:
         return False, "proof has no commit_txid — was the commit broadcast?"
-    try:
-        r = requests.get(f"{mempool_base}/tx/{txid}", timeout=20)
-        r.raise_for_status()
-        tx = r.json()
-    except Exception as e:
-        return False, f"could not fetch tx {txid}: {e}"
+    backend = backend or MempoolBackend(mempool_base)
+    tx = backend.get_tx(txid)
+    if tx is None:
+        return False, f"could not fetch tx {txid}"
     vout_idx = int(proof.get("commit_vout", 0))
     try:
         vout = tx["vout"][vout_idx]
     except (KeyError, IndexError):
         return False, f"tx {txid} has no vout {vout_idx}"
-    onchain_spk = vout.get("scriptpubkey", "")
+    onchain_spk = (vout.get("scriptPubKey") or {}).get("hex", "")
     if onchain_spk.lower() != proof["commit_script_pubkey_hex"].lower():
         return False, (
             f"on-chain spk {onchain_spk} != proof spk {proof['commit_script_pubkey_hex']}"
         )
-    confs = (tx.get("status") or {}).get("confirmed", False)
-    return True, f"OK ({'confirmed' if confs else 'unconfirmed'})"
+    confs = int(tx.get("confirmations", 0))
+    return True, f"OK ({'confirmed' if confs > 0 else 'unconfirmed'})"
+
+
+# =========================================================================
+#  2.0 self-attestation keyfile — skeleton from an ordered list of proofs
+# =========================================================================
+
+
+def build_packet_skeleton(proofs: list[dict]) -> dict:
+    """Build the 2.0 self-attestation keyfile SKELETON from ordered proofs.
+
+    `proofs` is oldest-first: proofs[0] is the %spawn, then each subsequent
+    management op. The on-ship ted/conf/attest.hoon thread re-derives the
+    `sots` from each leaf script via parse-leaf, so this skeleton carries ONLY
+    on-chain-derivable data — no sotx bytes.
+
+    2.0 rule: each link IS a commit tx revealing ITS OWN sat-carrying output's
+    leaf, so N proofs map to N links 1:1 (link[i] <- proof[i]).
+
+    All hex stays DISPLAY-order (the same form as the proof.json / block
+    explorers). internal_key gets a 0x02 prefix (33-byte compressed, even-y;
+    the verifier lifts the even-y point from the proof's 32-byte x-only key).
+
+    Raises ValueError on: empty proofs, proofs[0].op != "spawn", or any proof
+    missing commit_txid (i.e. not yet broadcast).
+    """
+    if not proofs:
+        raise ValueError("need >= 1 proof to build a packet skeleton")
+    if proofs[0].get("op") != "spawn":
+        raise ValueError(
+            f"proofs[0] must be the spawn op, got op={proofs[0].get('op')!r}"
+        )
+    for i, p in enumerate(proofs):
+        if not p.get("commit_txid"):
+            raise ValueError(
+                f"proofs[{i}] has no commit_txid — broadcast its commit before "
+                "building the keyfile"
+            )
+
+    funding = proofs[0].get("funding", {})
+    links = []
+    for p in proofs:
+        # 33-byte compressed internal key: 0x02 prefix over the 32-byte x-only
+        # key. The verifier lifts the even-y point, matching how the commit
+        # output's taproot tweak is computed (BIP-341 uses even-y internal P).
+        links.append({
+            "txid": p["commit_txid"],
+            "block": p.get("commit_block_hex", ""),
+            "internal_key_hex": "02" + p["internal_pubkey_hex"],
+            "leaf_version": p["leaf_version"],
+            "leaf_script_hex": p["leaf_script_hex"],
+        })
+
+    tip_proof = proofs[-1]
+    return {
+        "who": proofs[0].get("patp", ""),
+        "precommit": {
+            "txid": funding.get("txid", ""),
+            "block": funding.get("block_hex", ""),
+        },
+        "links": links,
+        "tip": {
+            "txid": tip_proof["commit_txid"],
+            "vout": int(tip_proof.get("commit_vout", 0)),
+            "off": 0,
+        },
+    }
 
 
 # =========================================================================
@@ -1796,7 +2079,8 @@ class KeySource:
         """Return (address, scriptPubKey, xonly, full_path) for m/<account>/<change>/<index>."""
         sub = self.xpub.derive([change, index])
         xonly = sub.key.xonly()
-        addr = script.p2tr(sub.key).address(NETWORKS[self.network])
+        net = NETWORKS[embit_network(self.network)]
+        addr = script.p2tr(sub.key).address(net)
         spk = script.p2tr(sub.key).data
         full_path = "m/" + "/".join(_path_to_str(self.account_path + [change, index]).split("/")[1:])
         return addr, spk, xonly, full_path
@@ -1867,17 +2151,19 @@ def scan_addresses(
     n_receive: int = 20,
     n_change: int = 10,
     mempool_base: str = MEMPOOL_API_URL,
+    backend: ChainBackend | None = None,
 ) -> list[dict]:
     """Walk the first n addresses of change 0 and 1, return a flat list of UTXOs.
 
     Each entry includes: {address, scriptpubkey, xonly, path, txid, vout, value, status}.
     """
+    backend = backend or MempoolBackend(mempool_base)
     found: list[dict] = []
     for change, n in ((0, n_receive), (1, n_change)):
         for i in range(n):
             addr, spk, xonly, path = source.derive_address(change, i)
             try:
-                utxos = mempool_get(f"/address/{addr}/utxo", base=mempool_base)
+                utxos = backend.get_utxos(addr)
             except Exception as e:
                 print(f"  warning: failed to fetch UTXOs for {addr}: {e}")
                 continue
@@ -1892,7 +2178,7 @@ def scan_addresses(
                     "txid": u["txid"],
                     "vout": u["vout"],
                     "value": u["value"],
-                    "confirmed": u.get("status", {}).get("confirmed", False),
+                    "confirmed": u.get("confirmed", False),
                 })
     return found
 
@@ -1940,7 +2226,7 @@ def generate_new_mnemonic(*, strength_bits: int = 128) -> str:
 def mnemonic_to_hdkey(mnemonic: str, passphrase: str = "", network: str = "main") -> bip32.HDKey:
     """BIP-39 → HDKey at root."""
     seed = bip39.mnemonic_to_seed(mnemonic, passphrase)
-    return bip32.HDKey.from_seed(seed, version=NETWORKS[network]["xprv"])
+    return bip32.HDKey.from_seed(seed, version=NETWORKS[embit_network(network)]["xprv"])
 
 
 def hdkey_fingerprint(root: bip32.HDKey) -> bytes:
@@ -2023,6 +2309,21 @@ def mine_comet_from_utxo(
 # =========================================================================
 
 
+def rpc_options(f):
+    """Decorator adding --rpc-url/--rpc-user/--rpc-pass for the regtest backend.
+
+    Ignored on main/testnet (which use mempool.space). Defaults point at a
+    local regtest bitcoind.
+    """
+    f = click.option("--rpc-url", default=REGTEST_RPC_URL, show_default=True,
+                     help="bitcoind JSON-RPC URL (regtest backend)")(f)
+    f = click.option("--rpc-user", default=REGTEST_RPC_USER, show_default=True,
+                     help="bitcoind RPC user (regtest backend)")(f)
+    f = click.option("--rpc-pass", default=REGTEST_RPC_PASS, show_default=True,
+                     help="bitcoind RPC password (regtest backend)")(f)
+    return f
+
+
 @click.group()
 @click.version_option("0.1.0")
 def cli():
@@ -2051,15 +2352,17 @@ _MGMT_PRIOR_PROOF_HELP = (
 @click.option("--new-pass-hex", required=True, help="New networking key (pass), hex — derived from your ship's new ring")
 @click.option("--breach", is_flag=True, default=False, help="Bump rift (a breach rekey)")
 @click.option("--fee-rate", type=int, default=2, show_default=True)
-@click.option("--network", type=click.Choice(["main", "testnet"]), default="main", show_default=True)
+@click.option("--network", type=click.Choice(["main", "testnet", "regtest"]), default="main", show_default=True)
 @click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".", show_default=True)
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
-def cmd_rekey(point, prior_proof, new_pass_hex, breach, fee_rate, network, output_dir, mempool_base):
+@rpc_options
+def cmd_rekey(point, prior_proof, new_pass_hex, breach, fee_rate, network, output_dir, mempool_base, rpc_url, rpc_user, rpc_pass):
     """%keys sotx — rotate a comet's networking key. Confidential commit; chains off --prior-proof."""
     comet_p = patp_to_int(point)
     new_pass = int.from_bytes(bytes.fromhex(new_pass_hex), "little")
     attestation = encode_keys_sotx(comet_p=comet_p, pass_atom=new_pass, breach=breach)
-    _run_management_op("keys", point, prior_proof, fee_rate, network, output_dir, mempool_base, attestation)
+    backend = make_backend(network, mempool_base=mempool_base, rpc_url=rpc_url, rpc_user=rpc_user, rpc_pass=rpc_pass)
+    _run_management_op("keys", point, prior_proof, fee_rate, network, output_dir, mempool_base, attestation, backend)
 
 
 @cli.command("escape")
@@ -2068,16 +2371,18 @@ def cmd_rekey(point, prior_proof, new_pass_hex, breach, fee_rate, network, outpu
 @click.option("--prior-proof", required=True, type=click.Path(exists=True, dir_okay=False), help=_MGMT_PRIOR_PROOF_HELP)
 @click.option("--sig-hex", default=None, help="Sponsor's off-chain pre-signature (hex, 64 bytes) — optional")
 @click.option("--fee-rate", type=int, default=2, show_default=True)
-@click.option("--network", type=click.Choice(["main", "testnet"]), default="main", show_default=True)
+@click.option("--network", type=click.Choice(["main", "testnet", "regtest"]), default="main", show_default=True)
 @click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".", show_default=True)
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
-def cmd_escape(point, parent, prior_proof, sig_hex, fee_rate, network, output_dir, mempool_base):
+@rpc_options
+def cmd_escape(point, parent, prior_proof, sig_hex, fee_rate, network, output_dir, mempool_base, rpc_url, rpc_user, rpc_pass):
     """%escape sotx — ask a new parent to adopt you. Chains off --prior-proof."""
     comet_p = patp_to_int(point)
     parent_p = patp_to_int(parent)
     escape_sig = int.from_bytes(bytes.fromhex(sig_hex), "little") if sig_hex else None
     attestation = encode_escape_sotx(comet_p=comet_p, parent_p=parent_p, escape_sig=escape_sig)
-    _run_management_op("escape", point, prior_proof, fee_rate, network, output_dir, mempool_base, attestation)
+    backend = make_backend(network, mempool_base=mempool_base, rpc_url=rpc_url, rpc_user=rpc_user, rpc_pass=rpc_pass)
+    _run_management_op("escape", point, prior_proof, fee_rate, network, output_dir, mempool_base, attestation, backend)
 
 
 @cli.command("cancel-escape")
@@ -2085,15 +2390,17 @@ def cmd_escape(point, parent, prior_proof, sig_hex, fee_rate, network, output_di
 @click.option("--parent", required=True, help="Parent of the escape to cancel")
 @click.option("--prior-proof", required=True, type=click.Path(exists=True, dir_okay=False), help=_MGMT_PRIOR_PROOF_HELP)
 @click.option("--fee-rate", type=int, default=2, show_default=True)
-@click.option("--network", type=click.Choice(["main", "testnet"]), default="main", show_default=True)
+@click.option("--network", type=click.Choice(["main", "testnet", "regtest"]), default="main", show_default=True)
 @click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".", show_default=True)
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
-def cmd_cancel_escape(point, parent, prior_proof, fee_rate, network, output_dir, mempool_base):
+@rpc_options
+def cmd_cancel_escape(point, parent, prior_proof, fee_rate, network, output_dir, mempool_base, rpc_url, rpc_user, rpc_pass):
     """%cancel-escape sotx — rescind a pending escape request. Chains off --prior-proof."""
     comet_p = patp_to_int(point)
     parent_p = patp_to_int(parent)
     attestation = encode_cancel_escape_sotx(comet_p=comet_p, parent_p=parent_p)
-    _run_management_op("cancel-escape", point, prior_proof, fee_rate, network, output_dir, mempool_base, attestation)
+    backend = make_backend(network, mempool_base=mempool_base, rpc_url=rpc_url, rpc_user=rpc_user, rpc_pass=rpc_pass)
+    _run_management_op("cancel-escape", point, prior_proof, fee_rate, network, output_dir, mempool_base, attestation, backend)
 
 
 @cli.command("fief")
@@ -2102,10 +2409,11 @@ def cmd_cancel_escape(point, parent, prior_proof, fee_rate, network, output_dir,
 @click.option("--ip", default=None, help="IPv4 or IPv6 address. Omit to clear fief.")
 @click.option("--port", type=int, default=None, help="Port (required if --ip is given)")
 @click.option("--fee-rate", type=int, default=2, show_default=True)
-@click.option("--network", type=click.Choice(["main", "testnet"]), default="main", show_default=True)
+@click.option("--network", type=click.Choice(["main", "testnet", "regtest"]), default="main", show_default=True)
 @click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".", show_default=True)
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
-def cmd_fief(point, prior_proof, ip, port, fee_rate, network, output_dir, mempool_base):
+@rpc_options
+def cmd_fief(point, prior_proof, ip, port, fee_rate, network, output_dir, mempool_base, rpc_url, rpc_user, rpc_pass):
     """%fief sotx — set or clear a comet's static IP/port fief. Chains off --prior-proof."""
     comet_p = patp_to_int(point)
     if ip is None:
@@ -2123,10 +2431,29 @@ def cmd_fief(point, prior_proof, ip, port, fee_rate, network, output_dir, mempoo
         except ValueError as e:
             raise click.UsageError(f"bad IP address {ip!r}: {e}")
     attestation = encode_fief_sotx(comet_p=comet_p, fief=fief)
-    _run_management_op("fief", point, prior_proof, fee_rate, network, output_dir, mempool_base, attestation)
+    backend = make_backend(network, mempool_base=mempool_base, rpc_url=rpc_url, rpc_user=rpc_user, rpc_pass=rpc_pass)
+    _run_management_op("fief", point, prior_proof, fee_rate, network, output_dir, mempool_base, attestation, backend)
 
 
-def _run_management_op(op: str, point: str, prior_proof_path: str, fee_rate: int, network: str, output_dir: str, mempool_base: str, attestation: bytes) -> None:
+@cli.command("no-op")
+@click.option("--point", required=True, help="Target @p (the comet whose sat is moving)")
+@click.option("--prior-proof", required=True, type=click.Path(exists=True, dir_okay=False), help=_MGMT_PRIOR_PROOF_HELP)
+@click.option("--fee-rate", type=int, default=2, show_default=True)
+@click.option("--network", type=click.Choice(["main", "testnet", "regtest"]), default="main", show_default=True)
+@click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".", show_default=True)
+@click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
+@rpc_options
+def cmd_no_op(point, prior_proof, fee_rate, network, output_dir, mempool_base, rpc_url, rpc_user, rpc_pass):
+    """%no-op sotx — a plain ownership transfer with no PKI change. Keeps a
+    confidential chain gap-free (the 2.0 NO-GAPS rule) when you just move the
+    sat. Chains off --prior-proof."""
+    comet_p = patp_to_int(point)
+    attestation = encode_no_op_sotx(comet_p=comet_p)
+    backend = make_backend(network, mempool_base=mempool_base, rpc_url=rpc_url, rpc_user=rpc_user, rpc_pass=rpc_pass)
+    _run_management_op("no-op", point, prior_proof, fee_rate, network, output_dir, mempool_base, attestation, backend)
+
+
+def _run_management_op(op: str, point: str, prior_proof_path: str, fee_rate: int, network: str, output_dir: str, mempool_base: str, attestation: bytes, backend: ChainBackend | None = None) -> None:
     """Shared flow for management ops: spend the point's current sont (the
     commit output of the prior op, identified by `--prior-proof`), build a new
     confidential commit for `attestation`, await signed PSBT, broadcast, emit
@@ -2153,6 +2480,8 @@ def _run_management_op(op: str, point: str, prior_proof_path: str, fee_rate: int
             f"  prior proof is for {prior['patp']}, not {point}", fg="red"))
         sys.exit(1)
 
+    backend = backend or make_backend(network, mempool_base=mempool_base)
+
     print(f"\n  Chaining from prior {prior.get('op', '?')} op: "
           f"commit={prior.get('commit_txid','?')[:16]}..:{prior.get('commit_vout',0)} "
           f"value={prior.get('commit_value','?')}")
@@ -2165,6 +2494,11 @@ def _run_management_op(op: str, point: str, prior_proof_path: str, fee_rate: int
     )
     proof["op"] = op
     proof["patp"] = point
+    # The funding tx for a management op IS the prior commit. Carry its block
+    # hash forward (verifiers feed it to getrawtransaction's blockhash arg).
+    prior_block = prior.get("commit_block_hex", "")
+    if prior_block:
+        proof["funding"]["block_hex"] = prior_block
 
     os.makedirs(output_dir, exist_ok=True)
     pier = point.lstrip("~")
@@ -2194,11 +2528,23 @@ def _run_management_op(op: str, point: str, prior_proof_path: str, fee_rate: int
 
     print("\n  Broadcasting commit...")
     try:
-        broadcast_id = _broadcast_tx(tx_hex, mempool_base=mempool_base)
+        broadcast_id = _broadcast_tx(tx_hex, backend=backend)
     except Exception as e:
         click.echo(click.style(f"  Broadcast failed: {e}\n  Signed tx hex: {tx_hex}", fg="red"))
         sys.exit(1)
     print(f"  Broadcast: {tx_link(broadcast_id)}")
+
+    # Record the commit's containing-block hash once confirmed: verifiers need
+    # it for getrawtransaction's blockhash arg (the node needs no -txindex).
+    try:
+        block_hex = fetch_block_hex(commit_txid, backend)
+        if block_hex:
+            proof["commit_block_hex"] = block_hex
+            write_proof_json(proof, proof_path)
+            print(f"  Recorded commit block hash in proof: {block_hex[:16]}..")
+    except KeyboardInterrupt:
+        print("\n  Skipped block-hash recording (interrupted). Re-run a verify "
+              "later to backfill commit_block_hex.")
 
     print("\n" + "=" * 60)
     click.echo(click.style(
@@ -2215,25 +2561,29 @@ def _run_management_op(op: str, point: str, prior_proof_path: str, fee_rate: int
 @click.option("--xpub", required=True, help="Taproot xpub, zpub, or BIP-380 descriptor (tr([fp/86h/0h/0h]xpub...)/0/*)")
 @click.option("--invite", default=None, help="Optional faucet invite code (sends 1000 sats to your wallet)")
 @click.option("--fee-rate", type=int, default=2, show_default=True, help="sat/vbyte")
-@click.option("--network", type=click.Choice(["main", "testnet"]), default="main", show_default=True)
+@click.option("--network", type=click.Choice(["main", "testnet", "regtest"]), default="main", show_default=True)
 @click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".", show_default=True, help="Directory to write psbt + proof files")
 @click.option("--miner", default=COMET_MINER_BIN, show_default=True, help="Path to comet_miner binary")
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
-def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base):
+@rpc_options
+def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, rpc_url, rpc_user, rpc_pass):
     """Spawn using a user-provided wallet (xpub / descriptor). You sign the PSBT externally."""
-    run_spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base)
+    backend = make_backend(network, mempool_base=mempool_base, rpc_url=rpc_url, rpc_user=rpc_user, rpc_pass=rpc_pass)
+    run_spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, backend)
 
 
 @spawn.command("generate")
 @click.option("--invite", default=None)
 @click.option("--fee-rate", type=int, default=2, show_default=True)
-@click.option("--network", type=click.Choice(["main", "testnet"]), default="main", show_default=True)
+@click.option("--network", type=click.Choice(["main", "testnet", "regtest"]), default="main", show_default=True)
 @click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".", show_default=True)
 @click.option("--miner", default=COMET_MINER_BIN, show_default=True)
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
-def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base):
+@rpc_options
+def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, rpc_url, rpc_user, rpc_pass):
     """Generate a fresh BIP-39 wallet, fund it, spawn, and emit a boot one-liner."""
-    run_spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base)
+    backend = make_backend(network, mempool_base=mempool_base, rpc_url=rpc_url, rpc_user=rpc_user, rpc_pass=rpc_pass)
+    run_spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, backend)
 
 
 @proof.command("show")
@@ -2246,13 +2596,16 @@ def proof_show(path):
 
 @proof.command("verify")
 @click.argument("path", type=click.Path(exists=True, dir_okay=False))
-@click.option("--onchain/--offline", default=True, help="Check against mempool.space (default) or skip the network check")
+@click.option("--onchain/--offline", default=True, help="Check against the chain backend (default) or skip the network check")
+@click.option("--network", type=click.Choice(["main", "testnet", "regtest"]), default="main", show_default=True)
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
-def proof_verify(path, onchain, mempool_base):
+@rpc_options
+def proof_verify(path, onchain, network, mempool_base, rpc_url, rpc_user, rpc_pass):
     """Verify that a proof.json internally consistent and optionally matches its on-chain commit tx."""
     data = load_proof_json(path)
     if onchain and "commit_txid" in data:
-        ok, reason = verify_proof_onchain(data, mempool_base=mempool_base)
+        backend = make_backend(network, mempool_base=mempool_base, rpc_url=rpc_url, rpc_user=rpc_user, rpc_pass=rpc_pass)
+        ok, reason = verify_proof_onchain(data, mempool_base=mempool_base, backend=backend)
     else:
         ok, reason = verify_proof_self(data)
     if ok:
@@ -2260,6 +2613,52 @@ def proof_verify(path, onchain, mempool_base):
     else:
         click.echo(click.style(f"FAIL — {reason}", fg="red"))
         sys.exit(1)
+
+
+# =========================================================================
+#  packet — build the 2.0 self-attestation keyfile skeleton
+# =========================================================================
+
+
+@cli.group()
+def packet():
+    """Assemble a 2.0 self-attestation keyfile from proof.json files."""
+
+
+@packet.command("build")
+@click.option("--proofs", required=True, multiple=True, type=click.Path(exists=True, dir_okay=False),
+              help="Ordered proof.json files, OLDEST (spawn) first. Repeat the flag per proof.")
+@click.option("--out", required=True, type=click.Path(dir_okay=False),
+              help="Where to write the keyfile skeleton JSON.")
+def packet_build(proofs, out):
+    """Emit the 2.0 self-attestation keyfile SKELETON from ordered proofs.
+
+    Reads proof.json files oldest-first (proofs[0] must be the %spawn), maps
+    each to one link 1:1, and writes a JSON skeleton. The skeleton carries only
+    on-chain-derivable data (no sotx bytes); the on-ship attest thread re-derives
+    sots from each leaf script. A bare spawn is a valid one-link keyfile.
+    """
+    proof_dicts = [load_proof_json(p) for p in proofs]
+    try:
+        skeleton = build_packet_skeleton(proof_dicts)
+    except ValueError as e:
+        click.echo(click.style(f"  cannot build keyfile: {e}", fg="red"))
+        sys.exit(1)
+    with open(out, "w") as f:
+        json.dump(skeleton, f, indent=2, sort_keys=True)
+        f.write("\n")
+    n = len(skeleton["links"])
+    click.echo(click.style(
+        f"  Wrote keyfile skeleton ({n} link{'s' if n != 1 else ''}) for "
+        f"{skeleton['who']} to {out}", fg="green"))
+    missing_blocks = [i for i, lk in enumerate(skeleton["links"]) if not lk["block"]]
+    if missing_blocks or not skeleton["precommit"]["block"]:
+        click.echo(click.style(
+            "  NOTE: some block hashes are empty (links "
+            f"{missing_blocks}, precommit={'set' if skeleton['precommit']['block'] else 'EMPTY'}). "
+            "Verifiers need block hashes for getrawtransaction; re-run the op on a\n"
+            "  confirmed chain, or backfill commit_block_hex / funding.block_hex.",
+            fg="yellow"))
 
 
 # =========================================================================
@@ -2365,19 +2764,43 @@ def _extract_tx_from_psbt(signed_b64: str) -> tuple[str, str]:
     return txid, tx_hex
 
 
-def _broadcast_tx(tx_hex: str, *, mempool_base: str = MEMPOOL_API_URL) -> str:
-    r = requests.post(f"{mempool_base}/tx", data=tx_hex, timeout=30)
-    if not r.ok:
-        raise RuntimeError(f"broadcast failed: {r.status_code} {r.text}")
-    return r.text.strip()
+def _broadcast_tx(tx_hex: str, *, mempool_base: str = MEMPOOL_API_URL,
+                  backend: ChainBackend | None = None) -> str:
+    backend = backend or MempoolBackend(mempool_base)
+    return backend.broadcast(tx_hex)
 
 
-def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str) -> None:
+def fetch_block_hex(txid: str, backend: ChainBackend, *, required: int = 1,
+                    poll_interval: int = POLL_INTERVAL, quiet: bool = False) -> str:
+    """Block until `txid` is confirmed, then return its containing block's hash
+    (display-order hex). Verifiers feed this to getrawtransaction's blockhash
+    arg, so the node needs no -txindex. Returns "" if it never confirms cleanly."""
+    if not quiet:
+        print(f"\n  Waiting for {txid[:12]}.. to confirm so we can record its block hash...")
+    start = time.monotonic()
+    while True:
+        try:
+            tx = backend.get_tx(txid)
+            if tx and int(tx.get("confirmations", 0)) >= required:
+                bh = tx.get("blockhash", "") or ""
+                if not quiet:
+                    print(f"  Confirmed in block {bh[:16]}..")
+                return bh
+        except Exception:
+            pass
+        if not quiet:
+            elapsed = int(time.monotonic() - start)
+            print(f"  not yet confirmed ({elapsed}s elapsed)   ", end="\r")
+        time.sleep(poll_interval)
+
+
+def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, backend: ChainBackend | None = None) -> None:
     print()
     print("=" * 60)
     print("  CAUSEWAY — Confidential Comet Spawn (Connect Wallet)")
     print("=" * 60)
 
+    backend = backend or make_backend(network, mempool_base=mempool_base)
     source = parse_key_source(xpub_str, network=network)
     print(f"\n  Parsed key source: network={source.network}, account={_path_to_str(source.account_path)}")
     print(f"  Master fingerprint: {source.master_fingerprint.hex()}")
@@ -2389,17 +2812,21 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
         ))
 
     # Optionally fund via faucet (we show the first receive address).
+    # The faucet is mainnet-only; skip it on regtest (no faucet there).
     first_addr, _spk, _xonly, _p = source.derive_address(0, 0)
-    if invite:
+    if invite and network != "regtest":
         print(f"\n  Requesting 1000 sats from faucet → {first_addr}")
         fxid = request_faucet(first_addr, invite=invite)
         if fxid:
             print(f"  Faucet sent: {tx_link(fxid)}")
         else:
             print("  Faucet failed (continuing anyway — you can fund manually).")
+    elif invite and network == "regtest":
+        print("\n  (--invite ignored on regtest: no faucet. Fund the address "
+              f"directly: {first_addr})")
 
     print("\n  Scanning for UTXOs...")
-    utxos = scan_addresses(source, mempool_base=mempool_base)
+    utxos = scan_addresses(source, mempool_base=mempool_base, backend=backend)
     utxo = pick_utxo_interactive(utxos)
 
     print(f"\n  Mining comet with tweak from ({utxo['txid']}:{utxo['vout']},0)...")
@@ -2435,6 +2862,15 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     proof["patp"] = comet
     proof["pass_atom_hex"] = hex(pass_atom)
 
+    # Record the funding (precommit) tx's block hash — the spawn keyfile's
+    # precommit.block. The funding UTXO is already confirmed (we scanned it).
+    try:
+        funding_block = fetch_block_hex(utxo["txid"], backend, quiet=True)
+        if funding_block:
+            proof["funding"]["block_hex"] = funding_block
+    except Exception:
+        pass
+
     os.makedirs(output_dir, exist_ok=True)
     pier = comet.lstrip("~")
     psbt_path = os.path.join(output_dir, f"{pier}-spawn.psbt")
@@ -2459,21 +2895,32 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
 
     print("\n  Broadcasting commit...")
     try:
-        broadcast_id = _broadcast_tx(tx_hex, mempool_base=mempool_base)
+        broadcast_id = _broadcast_tx(tx_hex, backend=backend)
     except Exception as e:
         click.echo(click.style(f"  Broadcast failed: {e}\n  Signed tx hex: {tx_hex}", fg="red"))
         sys.exit(1)
     print(f"  Broadcast: {tx_link(broadcast_id)}")
 
+    # Record the commit's block hash once confirmed (verifiers need it).
+    try:
+        block_hex = fetch_block_hex(commit_txid, backend)
+        if block_hex:
+            proof["commit_block_hex"] = block_hex
+            write_proof_json(proof, proof_path)
+            print(f"  Recorded commit block hash in proof: {block_hex[:16]}..")
+    except KeyboardInterrupt:
+        print("\n  Skipped block-hash recording (interrupted).")
+
     _print_boot_oneliner(comet, feed, proof_path)
 
 
-def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str) -> None:
+def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, backend: ChainBackend | None = None) -> None:
     print()
     print("=" * 60)
     print("  CAUSEWAY — Confidential Comet Spawn (Generate New Wallet)")
     print("=" * 60)
 
+    backend = backend or make_backend(network, mempool_base=mempool_base)
     mnemonic = generate_new_mnemonic(strength_bits=128)
     print_seed_box(mnemonic)
     confirm_seed_saved(mnemonic)
@@ -2487,7 +2934,7 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
     first_addr, first_spk, first_xonly, first_path = source.derive_address(0, 0)
     print(f"\n  First receive address: {first_addr}")
 
-    if invite:
+    if invite and network != "regtest":
         print("\n  Requesting 1000 sats from faucet...")
         fxid = request_faucet(first_addr, invite=invite)
         if fxid:
@@ -2495,11 +2942,13 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
         else:
             print("  Faucet failed — please fund the address manually.")
     else:
+        if invite and network == "regtest":
+            print("\n  (--invite ignored on regtest: no faucet.)")
         print(f"\n  Please send >= {REQUIRED_SATS} sats to the above address.")
 
-    print("\n  Polling mempool.space for confirmation...")
+    print("\n  Polling for funding confirmation...")
     while True:
-        utxos = scan_addresses(source, n_receive=5, n_change=2, mempool_base=mempool_base)
+        utxos = scan_addresses(source, n_receive=5, n_change=2, mempool_base=mempool_base, backend=backend)
         confirmed = [u for u in utxos if u["confirmed"]]
         if confirmed:
             utxo = max(confirmed, key=lambda u: u["value"])
@@ -2539,6 +2988,15 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
     proof["patp"] = comet
     proof["pass_atom_hex"] = hex(pass_atom)
 
+    # Record the funding (precommit) tx's block hash — the spawn keyfile's
+    # precommit.block. The funding UTXO is already confirmed (we scanned it).
+    try:
+        funding_block = fetch_block_hex(utxo["txid"], backend, quiet=True)
+        if funding_block:
+            proof["funding"]["block_hex"] = funding_block
+    except Exception:
+        pass
+
     # Sign the PSBT in-process (we have the seed).
     p_signed = psbt_obj
     # Populate sighash, sign with taproot key at the funding derivation.
@@ -2560,11 +3018,21 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
 
     print("\n  Broadcasting commit...")
     try:
-        broadcast_id = _broadcast_tx(tx_hex, mempool_base=mempool_base)
+        broadcast_id = _broadcast_tx(tx_hex, backend=backend)
     except Exception as e:
         click.echo(click.style(f"  Broadcast failed: {e}\n  Signed tx hex: {tx_hex}", fg="red"))
         sys.exit(1)
     print(f"  Broadcast: {tx_link(broadcast_id)}")
+
+    # Record the commit's block hash once confirmed (verifiers need it).
+    try:
+        block_hex = fetch_block_hex(commit_txid, backend)
+        if block_hex:
+            proof["commit_block_hex"] = block_hex
+            write_proof_json(proof, proof_path)
+            print(f"  Recorded commit block hash in proof: {block_hex[:16]}..")
+    except KeyboardInterrupt:
+        print("\n  Skipped block-hash recording (interrupted).")
 
     print("\n  WRITE DOWN YOUR SEED PHRASE AGAIN — last chance:")
     print_seed_box(mnemonic)
