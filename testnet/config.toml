@@ -1,0 +1,35 @@
+# gwharness configuration. Paths may use {gw_root} interpolation.
+
+[paths]
+gw_root      = "/Users/trent/gw-building"
+vere         = "{gw_root}/vere/zig-out/aarch64-macos-none/urbit"
+comet_miner  = "{gw_root}/comet-miner/zig-out/aarch64-macos-none/comet_miner"
+pill         = "{gw_root}/gw-base.pill"
+arvo_dir     = ""                                  # -A kernel sync; "" = pill-only boot
+bitcoind     = "/opt/homebrew/bin/bitcoind"
+bitcoin_cli  = "/opt/homebrew/bin/bitcoin-cli"
+groundwire   = "{gw_root}/groundwire"              # repo root (for `make build`)
+run          = "{gw_root}/groundwire/testnet/run"
+
+[bitcoind]
+# Dedicated port (NOT the user's default 18443) so the harness runs its own
+# isolated regtest node and never touches existing chain state. The watcher
+# is told this URL explicitly via the %watcher-config poke.
+rpcport        = 18549
+rpcuser        = "bitcoinrpc"
+rpcpass        = "bitcoinrpc"
+wallet         = "gw-harness"
+attach         = false       # true = reuse an already-running regtest node
+autominer_secs = 0           # 0 = mine-on-demand only
+
+[net]
+comets       = 2
+ames_base    = 41000         # comet i -> 41000+i
+http_base    = 42000         # comet i -> 42000+i
+star         = "daplyd"      # mine comets under ~daplyd
+install_spv  = false
+
+[timeouts]
+boot_ready   = 600
+fyrd         = 120
+verify       = 240
