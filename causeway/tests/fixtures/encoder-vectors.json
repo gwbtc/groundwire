@@ -1,0 +1,321 @@
+[
+  {
+    "name": "spawn/no-fief/no-vout",
+    "kind": "skim",
+    "input": {
+      "op": "spawn",
+      "pass": {
+        "__bigint__": "366213609593416641547364309524750976439928"
+      },
+      "fief": null,
+      "to": {
+        "spkh": {
+          "__bigint__": "115520583276441115789036455024003198792587894645174502645738895526012167040478"
+        },
+        "off": 0,
+        "tej": 0,
+        "vout": null
+      }
+    },
+    "output_hex": "010017785634120df0fecaefbeadde01ad7f3434c4bbd5f75dd95fd71720426486a8caec0e31537597b9dbfd1f20426486a8caec7f00"
+  },
+  {
+    "name": "spawn/if-fief/vout",
+    "kind": "skim",
+    "input": {
+      "op": "spawn",
+      "pass": {
+        "__bigint__": "366213609593416641547364309524750976439928"
+      },
+      "fief": {
+        "type": "if",
+        "ip": 3232235777,
+        "port": 8443
+      },
+      "to": {
+        "spkh": {
+          "__bigint__": "115520583276441115789036455024003198792587894645174502645738895526012167040478"
+        },
+        "off": 7,
+        "tej": 42,
+        "vout": 3
+      }
+    },
+    "output_hex": "010017785634120df0fecaefbeadde01ad7f343434200015781fc4bbd5f75dd95fd71720426486a8caec0e31537597b9dbfd1f20426486a8caec9f8faad1"
+  },
+  {
+    "name": "spawn/is-fief",
+    "kind": "skim",
+    "input": {
+      "op": "spawn",
+      "pass": {
+        "__bigint__": "366213609593416641547364309524750976439928"
+      },
+      "fief": {
+        "type": "is",
+        "ip": {
+          "__bigint__": "42540488161975842760550356425300246529"
+        },
+        "port": 9000
+      },
+      "to": {
+        "spkh": {
+          "__bigint__": "115520583276441115789036455024003198792587894645174502645738895526012167040478"
+        },
+        "off": 1,
+        "tej": 2,
+        "vout": null
+      }
+    },
+    "output_hex": "010017785634120df0fecaefbeadde01ad7f34343c0000000000000000000000000020000465c4bbd5f75dd95fd71720426486a8caec0e31537597b9dbfd1f20426486a8caecdf24"
+  },
+  {
+    "name": "keys/no-breach",
+    "kind": "skim",
+    "input": {
+      "op": "keys",
+      "pass": {
+        "__bigint__": "366213609593416641547364309524750976439928"
+      },
+      "breach": false
+    },
+    "output_hex": "020017785634120df0fecaefbeadde01ad7f343404"
+  },
+  {
+    "name": "keys/breach",
+    "kind": "skim",
+    "input": {
+      "op": "keys",
+      "pass": {
+        "__bigint__": "366213609593416641547364309524750976439928"
+      },
+      "breach": true
+    },
+    "output_hex": "820017785634120df0fecaefbeadde01ad7f343404"
+  },
+  {
+    "name": "escape/no-sig",
+    "kind": "skim",
+    "input": {
+      "op": "escape",
+      "parent": {
+        "__bigint__": "24197857203266734864716154819477665672"
+      },
+      "sig": null
+    },
+    "output_hex": "038877665544332211f0debc9a7856341200"
+  },
+  {
+    "name": "escape/with-sig",
+    "kind": "skim",
+    "input": {
+      "op": "escape",
+      "parent": 3735928559,
+      "sig": {
+        "__bigint__": "6703903964971298549787012499102923063739682910296196688861780721860882015036773488400937149083451713845015929093243025426876941405973284973216827385442049"
+      }
+    },
+    "output_hex": "03efbeadde00000000000000000000000005bc37af02000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002"
+  },
+  {
+    "name": "cancel-escape/basic",
+    "kind": "skim",
+    "input": {
+      "op": "cancel-escape",
+      "parent": {
+        "__bigint__": "14627333968688430831"
+      }
+    },
+    "output_hex": "04efbeaddebebafeca0000000000000000"
+  },
+  {
+    "name": "adopt/basic",
+    "kind": "skim",
+    "input": {
+      "op": "adopt",
+      "ship": {
+        "__bigint__": "14627333968688430831"
+      }
+    },
+    "output_hex": "05efbeaddebebafeca0000000000000000"
+  },
+  {
+    "name": "reject/basic",
+    "kind": "skim",
+    "input": {
+      "op": "reject",
+      "ship": {
+        "__bigint__": "14627333968688430831"
+      }
+    },
+    "output_hex": "06efbeaddebebafeca0000000000000000"
+  },
+  {
+    "name": "detach/basic",
+    "kind": "skim",
+    "input": {
+      "op": "detach",
+      "ship": {
+        "__bigint__": "14627333968688430831"
+      }
+    },
+    "output_hex": "07efbeaddebebafeca0000000000000000"
+  },
+  {
+    "name": "fief/none",
+    "kind": "skim",
+    "input": {
+      "op": "fief",
+      "fief": null
+    },
+    "output_hex": "0b00"
+  },
+  {
+    "name": "fief/if",
+    "kind": "skim",
+    "input": {
+      "op": "fief",
+      "fief": {
+        "type": "if",
+        "ip": 2130706433,
+        "port": 80
+      }
+    },
+    "output_hex": "0b060000fc410100"
+  },
+  {
+    "name": "fief/is",
+    "kind": "skim",
+    "input": {
+      "op": "fief",
+      "fief": {
+        "type": "is",
+        "ip": 1,
+        "port": 443
+      }
+    },
+    "output_hex": "0b07000000000000000000000000000000ec0600"
+  },
+  {
+    "name": "set-mang/none",
+    "kind": "skim",
+    "input": {
+      "op": "set-mang",
+      "mang": null
+    },
+    "output_hex": "0800"
+  },
+  {
+    "name": "set-mang/sont",
+    "kind": "skim",
+    "input": {
+      "op": "set-mang",
+      "mang": {
+        "type": "sont",
+        "sont": {
+          "txid": {
+            "__bigint__": "7325930874622357983755660180301102383317880054784350052467549279620433125905"
+          },
+          "vout": 0,
+          "off": 0
+        }
+      }
+    },
+    "output_hex": "884488cc105599dd2166aaee3277bbff03048c149d25ae36bffb73eb62da51c9400c"
+  },
+  {
+    "name": "set-mang/pass",
+    "kind": "skim",
+    "input": {
+      "op": "set-mang",
+      "mang": {
+        "type": "pass",
+        "pass": {
+          "__bigint__": "366213609593416641547364309524750976439928"
+        }
+      }
+    },
+    "output_hex": "08f1ac68241ae0fd95df7d5bbd035aff686808000000000000000000000000000000"
+  },
+  {
+    "name": "batch/spawn+escape",
+    "kind": "skim",
+    "input": {
+      "op": "batch",
+      "items": [
+        {
+          "op": "spawn",
+          "pass": {
+            "__bigint__": "366213609593416641547364309524750976439928"
+          },
+          "fief": null,
+          "to": {
+            "spkh": {
+              "__bigint__": "115520583276441115789036455024003198792587894645174502645738895526012167040478"
+            },
+            "off": 0,
+            "tej": 0,
+            "vout": null
+          }
+        },
+        {
+          "op": "escape",
+          "parent": 43707,
+          "sig": {
+            "__bigint__": "6703903964971298549787012499102923063739682910296196688861780721860882015036773488400937149083451713845015929093243025426876941405973284973216827385442049"
+          }
+        }
+      ]
+    },
+    "output_hex": "0a3200e002cf8a46a201de5ff9ddb7d53ba0f58f868678b7fabe2bfbebfa024488cc105599dd2166aaee3277bbff034488cc105599fdcfc0ae2a000000000000000000000000004001efcdab000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000080"
+  },
+  {
+    "name": "full/one-keys",
+    "kind": "full",
+    "input": [
+      {
+        "ship": {
+          "__bigint__": "22774453838368691933757882222884355840"
+        },
+        "sig": null,
+        "skim": {
+          "op": "keys",
+          "pass": {
+            "__bigint__": "366213609593416641547364309524750976439928"
+          },
+          "breach": false
+        }
+      }
+    ],
+    "output_hex": "00fcbb7733efaa6622de995511cd884408005ce059d14834c0fb2bbffbb67a07b4fed1d010"
+  },
+  {
+    "name": "full/two",
+    "kind": "full",
+    "input": [
+      {
+        "ship": 3735928559,
+        "sig": null,
+        "skim": {
+          "op": "fief",
+          "fief": {
+            "type": "if",
+            "ip": 16909060,
+            "port": 22
+          }
+        }
+      },
+      {
+        "ship": 3405705229,
+        "sig": {
+          "__bigint__": "6703903964971298549787012499102923063739682910296196688861780721860882015036773488400937149083451713845015929093243025426876941405973284973216827385442049"
+        },
+        "skim": {
+          "op": "adopt",
+          "ship": 48879
+        }
+      }
+    ],
+    "output_hex": "bcfbb67a0300000000000000000000002c48302010600150c07bf32a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006003bcbf32000000000000000000000040c1bb2f0000000000000000000000000000"
+  }
+]
