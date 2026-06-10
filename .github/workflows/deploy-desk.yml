@@ -6,17 +6,14 @@ on:
 
 env:
   TMUX_TAB:  sponsor
-  DESK:      groundwire
   SHIP_HOST: root@143.198.70.9
+  PIER_PATH: /root/.local/share/groundwire-alpha
   DIST_PIER: watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Set PIER_PATH
-        run: echo "PIER_PATH=/root/.local/share/groundwire-alpha/${DIST_PIER}" >> "$GITHUB_ENV"
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -38,13 +35,13 @@ jobs:
           ssh-keyscan -H 143.198.70.9 >> ~/.ssh/known_hosts
 
       - name: Clear deployed desks
-        run: ssh ${SHIP_HOST} "find ${PIER_PATH}/groundwire ${PIER_PATH}/spv-wallet -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
+        run: ssh ${SHIP_HOST} "find ${PIER_PATH}/${DIST_PIER}/groundwire ${PIER_PATH}/${DIST_PIER}/spv-wallet -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
 
       - name: Deploy Groundwire
-        run: scp -r dist-groundwire/* ${SHIP_HOST}:${PIER_PATH}/groundwire/
+        run: scp -r dist-groundwire/* ${SHIP_HOST}:${PIER_PATH}/${DIST_PIER}/groundwire/
 
       - name: Deploy Wallet
-        run: scp -r dist-spv/* ${SHIP_HOST}:${PIER_PATH}/spv-wallet/
+        run: scp -r dist-spv/* ${SHIP_HOST}:${PIER_PATH}/${DIST_PIER}/spv-wallet/
 
       - name: Commit desk on ship
         run: |
