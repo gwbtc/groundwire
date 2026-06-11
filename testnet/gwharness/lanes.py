@@ -40,9 +40,20 @@ _HI = (
 )
 
 
+def _cord(v: object) -> str:
+    """Decode a khan_eval @t result. The strand returns `!>('hi-ok')`, whose
+    vase value arrives as a raw atom (LSB-first cord bytes); turn it back into
+    the string. Pass through anything already a str (e.g. an error marker)."""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, int):
+        return v.to_bytes((v.bit_length() + 7) // 8, "little").decode("latin-1")
+    return str(v)
+
+
 def hi_probe(ship, peer_patp: str) -> str:
     """Run `|hi peer` on `ship` (pokes the remote %hood over ames). Returns
     'hi-ok' iff the poke is positively acked — i.e. the peer received it.
     Raises ConnError / times out if unreachable."""
     body = _HI.format(tgt=peer_patp)
-    return ship.conn.khan_eval(body)
+    return _cord(ship.conn.khan_eval(body))

@@ -6,7 +6,7 @@
 PY := python3
 H  := $(PY) -m gwharness
 
-.PHONY: test selftest net-up net-down mine info comets scenario scenario-all dashboard tmux results clean
+.PHONY: test selftest net-up net-down mine info m1 m2 scenario scenario-all dashboard tmux results clean
 
 test:            ## full pytest suite (noun vs vere, bitcoind end-to-end)
 	$(PY) -m pytest gwharness/tests -v
@@ -26,13 +26,16 @@ mine:            ## mine N=1 regtest blocks
 info:            ## chain tip + running piers
 	$(H) info
 
-comets:          ## boot N=2 real comets (M1+)
-	$(H) comets $(or $(N),2)
+m1:              ## single comet verifies its own keyfile end-to-end (VALID)
+	$(H) m1
 
-scenario:        ## run scenario S=first-contact (M3+)
-	$(H) scenario $(S)
+m2:              ## two comets: cross-verify packets, inject lanes, |hi both ways
+	$(H) m2
 
-scenario-all:    ## run the full suite (M3+)
+scenario:        ## run only S=name1,name2 from the suite
+	$(H) scenarios --only $(S)
+
+scenario-all:    ## run the full adversarial suite (8 scenarios)
 	$(H) scenario-all
 
 dashboard:       ## serve the live dashboard on :42999 (M4)

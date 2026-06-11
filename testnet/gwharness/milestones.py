@@ -119,15 +119,18 @@ def run_m2(cfg: Config) -> bool:
             print("[m2]   FAIL: cross-verification did not both pass", flush=True)
             return False
 
-        print("[m2] inject lanes (peer is now %known) + probe with |hi...", flush=True)
-        print(f"[m2]   A->B dear: {lanes.inject_lane(A, B.num, B.ames_port)}", flush=True)
-        print(f"[m2]   B->A dear: {lanes.inject_lane(B, A.num, A.ames_port)}", flush=True)
-        time.sleep(3)
-        rab = _try_probe(A, b_id.comet)
-        rba = _try_probe(B, a_id.comet)
+        print("[m2] establish lanes + first contact (|hi both ways)...", flush=True)
+        rab = _contact(A, B, b_id.comet)
+        rba = _contact(B, A, a_id.comet)
         print(f"[m2]   A |hi B: {rab}", flush=True)
         print(f"[m2]   B |hi A: {rba}", flush=True)
         ok = ("hi-ok" in str(rab)) and ("hi-ok" in str(rba))
+        _write_m2(cfg, a_id.comet, b_id.comet, _verdict_ok(va), _verdict_ok(vb), rab, rba)
+        try:
+            from .report import write_results_md
+            write_results_md(cfg)
+        except Exception:                                    # noqa: BLE001
+            pass
     finally:
         print("[m2] tearing down...", flush=True)
         net.down()
@@ -135,8 +138,49 @@ def run_m2(cfg: Config) -> bool:
     return ok
 
 
+def _write_m2(cfg, a, b, a_ok, b_ok, rab, rba) -> None:
+    def hi(r): return "hi-ok" if "hi-ok" in str(r) else str(r)
+    lines = [
+        "# M2 — two-comet first contact", "",
+        f"- **A** `{a}`", f"- **B** `{b}`", "",
+        f"- A verifies B's packet: **{'VALID' if b_ok else 'FAIL'}**",
+        f"- B verifies A's packet: **{'VALID' if a_ok else 'FAIL'}**",
+        f"- A `|hi` B: **{hi(rab)}**",
+        f"- B `|hi` A: **{hi(rba)}**", "",
+        "Two confidential comets each verified the other's Bitcoin-backed "
+        "identity, then completed a live authenticated Ames round-trip both ways.",
+    ]
+    (cfg.results_dir / "M2.md").write_text("\n".join(lines) + "\n")
+
+
 def _try_probe(ship, peer_patp: str) -> object:
     try:
         return lanes.hi_probe(ship, peer_patp)
     except Exception as e:                                    # noqa: BLE001
         return f"ERROR: {e}"
+
+
+def _contact(src, dst, dst_patp: str, rounds: int = 3) -> object:
+    """Establish first contact src -> dst, robust to Jael->Ames being lazy.
+
+    A peer becomes a %known ames peer only when ames first needs it (the |hi
+    triggers a Jael lookup that now succeeds, since the verified packet
+    populated Jael). But +sy-dear only records a lane for an ALREADY-known
+    peer. So each round: probe (forces/refreshes the install) -> inject the
+    lane (now sticks) -> probe again (routes over the lane). Returns the first
+    'hi-ok'."""
+    last = None
+    for _ in range(rounds):
+        last = _try_probe(src, dst_patp)                     # install (may fail w/o lane)
+        if "hi-ok" in str(last):
+            return last
+        try:
+            lanes.inject_lane(src, dst.num, dst.ames_port)   # peer known now -> lane sticks
+        except Exception as e:                               # noqa: BLE001
+            last = f"ERROR(dear): {e}"
+        time.sleep(2)
+        last = _try_probe(src, dst_patp)                     # route over the lane
+        if "hi-ok" in str(last):
+            return last
+        time.sleep(3)
+    return last

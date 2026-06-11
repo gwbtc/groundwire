@@ -49,6 +49,15 @@ def _scenarios(cfg: Config) -> str:
     return "\n".join(lines).strip()
 
 
+def _m2(cfg: Config) -> str:
+    md = cfg.results_dir / "M2.md"
+    if not md.exists():
+        return "_no two-comet run recorded yet — `make m2`._"
+    lines = [l for l in md.read_text(errors="replace").splitlines()
+             if not l.startswith("# ")]
+    return "\n".join(lines).strip()
+
+
 def _chain(cfg: Config) -> str:
     try:
         if not btc.is_running(cfg):
@@ -115,6 +124,10 @@ def write_results_md(cfg: Config) -> Path:
         "for the right reason.")
     parts.append("")
     parts.append(_scenarios(cfg))
+    parts.append("")
+    parts.append("## milestone M2 — two-comet first contact")
+    parts.append("")
+    parts.append(_m2(cfg))
     parts.append("")
     parts.append("## regtest chain")
     parts.append("")
