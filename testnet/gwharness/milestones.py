@@ -160,6 +160,74 @@ def _try_probe(ship, peer_patp: str) -> object:
         return f"ERROR: {e}"
 
 
+def run_gate(cfg: Config, mode: str = "reject") -> bool:
+    """Ames suite gate (Workstream A). A NEW-kernel comet A receives an
+    unverified suite-C peer B's self-attestation and HOLDS it — never trusting
+    the bare Ames packet (the security property: a suite-C comet must prove its
+    Bitcoin ownership, else it could lie about being non-Groundwire). Then:
+      reject  -> inject a negative verdict; B is suspended (the lying-comet case)
+      verify  -> POST B's packet; the jael ride installs B (the honest case)
+    Only A runs the new kernel (-A overlay, compiles arvo ~slow); B sends a
+    standard self-attestation."""
+    arvo = str(cfg.gw_root / "urbit" / "pkg" / "arvo")
+    net = Net(cfg)
+    ok = False
+    try:
+        print("[gate] net up...", flush=True)
+        net.up()
+        a_id = net.spawn_identity()
+        b_id = net.spawn_identity()
+        print(f"[gate]   A (new kernel) = {a_id.comet}", flush=True)
+        print(f"[gate]   B (peer)       = {b_id.comet}", flush=True)
+
+        print("[gate] boot A on the NEW ames kernel (-A overlay; compiles arvo)...", flush=True)
+        A = net.boot_comet(a_id, 0, arvo=arvo)
+        mig = _await_log(A.log, "migrating from state %30 to %31", 180)
+        print(f"[gate]   A migration %30->%31: {mig or 'NOT OBSERVED (fresh boot?)'}", flush=True)
+
+        print("[gate] boot B (stock kernel)...", flush=True)
+        B = net.boot_comet(b_id, 1)
+        for c in (A, B):
+            _await_log(c.log, "reconfigured to", 30)
+
+        # inject lanes both ways so first contact can occur, then A reaches B,
+        # which prompts the self-attestation exchange -> A's gate fires on B.
+        lanes.inject_lane(A, B.num, B.ames_port)
+        lanes.inject_lane(B, A.num, A.ames_port)
+        print("[gate] trigger first contact (A |hi B)...", flush=True)
+        _try_probe(A, b_id.comet)
+        who_b = re.escape(b_id.comet)
+        held = _await_log(A.log, f"holding suite-C comet {who_b}", 120)
+        print(f"[gate]   A HELD suite-C B (not bare-accepted): {bool(held)}", flush=True)
+        if not held:
+            print("[gate]   FAIL: gate never fired; trying B->A as well...", flush=True)
+            _try_probe(B, a_id.comet)
+            held = _await_log(A.log, f"holding suite-C comet {who_b}", 60)
+            if not held:
+                return False
+
+        if mode == "reject":
+            print("[gate] inject NEGATIVE verdict -> suspend...", flush=True)
+            lanes.inject_attest_verdict(A, B.num, ok=False)
+            susp = _await_log(A.log, f"comet {who_b} attestation failed; suspended", 40)
+            print(f"[gate]   B SUSPENDED: {bool(susp)}", flush=True)
+            ok = bool(susp)
+        else:  # verify
+            print("[gate] VERIFY B's packet (POST) -> jael ride installs B...", flush=True)
+            net.peer(A, b_id)
+            verified = _await_log(A.log, f"attestation for {who_b} is VALID", cfg.verify)
+            print(f"[gate]   B Bitcoin-verified by A's watcher: {bool(verified)}", flush=True)
+            time.sleep(8)
+            hi = _contact(A, B, b_id.comet)
+            print(f"[gate]   A |hi B after verification: {hi}", flush=True)
+            ok = bool(verified) and ("hi-ok" in str(hi))
+    finally:
+        print("[gate] tearing down...", flush=True)
+        net.down()
+    print(f"[gate] {'PASS' if ok else 'FAIL'}", flush=True)
+    return ok
+
+
 def _contact(src, dst, dst_patp: str, rounds: int = 3) -> object:
     """Establish first contact src -> dst, robust to Jael->Ames being lazy.
 

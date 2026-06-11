@@ -51,10 +51,10 @@ class Net:
         return chainops.spawn(self.cfg, self.rpc, **kw)
 
     def boot_comet(self, ident: chainops.Identity, index: int,
-                   install: bool = True) -> Comet:
+                   install: bool = True, arvo: str | None = None) -> Comet:
         mined = MinedComet(patp=ident.comet, num=_patp_num(ident.comet),
                            feed=ident.feed, ring=ident.ring, seed="")
-        c = Comet(cfg=self.cfg, index=index, mined=mined)
+        c = Comet(cfg=self.cfg, index=index, mined=mined, arvo=arvo)
         self.comets.append(c)
         c.boot()
         if not c.wait_ready():
@@ -78,6 +78,13 @@ class Net:
     def keyfile(self, c: Comet, ident: chainops.Identity) -> object:
         skel = chainops.build_skeleton(self.cfg, ident)
         return packets.poke_keyfile(c, skel)
+
+    def peer(self, c: Comet, ident: chainops.Identity) -> object:
+        """Deliver `ident`'s packet to comet `c` as a peer (%self-attestation),
+        as Ames would on first contact. On VALID, c's urb-watcher feeds Jael,
+        which installs the peer on c's ames (clearing any suite-C attest hold)."""
+        skel = chainops.build_skeleton(self.cfg, ident)
+        return packets.poke_peer(c, skel)
 
 
 def _patp_num(patp: str) -> int:

@@ -51,6 +51,20 @@ def _cord(v: object) -> str:
     return str(v)
 
 
+def inject_attest_verdict(ship, peer_num: int, ok: bool) -> str:
+    """Inject the kernel task [%attest-verdict ship ok] into ames via conn
+    %ovum — exactly what %urb-watcher's verdict-poke passes once wired, letting
+    the gate test drive verdicts without the desk. ok is a loobean: %.y=0."""
+    card = (N.tas("attest-verdict"), (peer_num, 0 if ok else 1))
+    return ship.conn.ovum("a", ["attest", "verdict"], card)
+
+
+def inject_attest_request(ship, peer_num: int) -> str:
+    """Inject [%attest-request ship] into ames (re-attestation grace)."""
+    card = (N.tas("attest-request"), peer_num)
+    return ship.conn.ovum("a", ["attest", "request"], card)
+
+
 def hi_probe(ship, peer_patp: str) -> str:
     """Run `|hi peer` on `ship` (pokes the remote %hood over ames). Returns
     'hi-ok' iff the poke is positively acked — i.e. the peer received it.

@@ -87,6 +87,7 @@ class Comet:
     index: int
     mined: MinedComet
     proc: subprocess.Popen | None = None
+    arvo: str | None = None   # per-comet -A kernel override (None = cfg.arvo_dir)
     _conn: ConnSock | None = field(default=None, repr=False)
 
     @property
@@ -119,8 +120,9 @@ class Comet:
             "-B", str(self.cfg.pill), "-L", "-p", str(self.ames_port),
             "--http-port", str(self.http_port), "-t",
         ]
-        if self.cfg.arvo_dir:
-            cmd += ["-A", self.cfg.arvo_dir]
+        arvo = self.arvo if self.arvo is not None else self.cfg.arvo_dir
+        if arvo:
+            cmd += ["-A", arvo]
         with open(self.log, "wb") as logf:
             self.proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT)
 
@@ -155,6 +157,19 @@ class Comet:
         c.poke_our("hood", "kiln-commit", f"!>([%{desk} %.n])")
         time.sleep(3)
         c.poke_our("hood", "kiln-install", f"!>([%{desk} our %{desk}])")
+
+    def hot_reload_kernel(self, arvo_src: Path) -> None:
+        """Replace %base with a modified arvo and commit -> incremental
+        recompile + kernel reload (runs the ames %30->%31 migration). Much
+        faster than a -A cold boot: clay diffs against the pill's %base, so only
+        changed files (lull/ames + dependents) recompile."""
+        c = self.conn
+        c.poke_our("hood", "kiln-mount",
+                   "!>([(en-beam [[our %base [%da now]] /]) %base])")
+        self._await_path(self.pier / "base" / "sys.kelvin", 90)
+        subprocess.run(["rsync", "-a", "--delete", f"{arvo_src}/",
+                        f"{self.pier}/base/"], check=True)
+        c.poke_our("hood", "kiln-commit", "!>([%base %.n])")
 
     def _await_path(self, p: Path, timeout: float) -> None:
         deadline = time.time() + timeout

@@ -32,6 +32,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("info")
     sub.add_parser("m1")
     sub.add_parser("m2")
+    p_gate = sub.add_parser("gate")
+    p_gate.add_argument("--mode", default="reject", choices=["reject", "verify"])
     p_scn = sub.add_parser("scenarios")
     p_scn.add_argument("--only", default=None,
                        help="comma-separated scenario names to run")
@@ -78,6 +80,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "m2":
         from .milestones import run_m2
         return 0 if run_m2(cfg) else 1
+
+    if args.cmd == "gate":
+        from .milestones import run_gate
+        return 0 if run_gate(cfg, mode=args.mode) else 1
 
     if args.cmd == "scenarios":
         from .scenarios import run_scenarios
