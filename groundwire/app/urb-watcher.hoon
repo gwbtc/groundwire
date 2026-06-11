@@ -153,6 +153,37 @@
         :_  `(as-octs:mimes:html (jam (filter-snapshot urb-state ~(key by conf))))
         [200 ~[['content-type' 'application/x-urb-jam']]]
       ==
+    ::
+    ::  The harness POSTs a jammed self-attestation SKELETON here (conn %fyrd
+    ::  can't run non-base-desk threads). We cue it, re-derive the sots from
+    ::  each leaf, and self-poke the resulting packet: /keyfile -> our own
+    ::  chain (%attestation-keyfile); /peer -> a peer's packet
+    ::  (%self-attestation).
+        %'POST'
+      ?.  ?|  =([%apps %urb-watcher %keyfile ~] site)
+              =([%apps %urb-watcher %peer ~] site)
+          ==
+        !!
+      =/  is-keyfile  =([%apps %urb-watcher %keyfile ~] site)
+      =/  body  body.request.inbound-request
+      =/  sat-u=(unit self-attestation:sa)
+        ?~  body  ~
+        =/  parsed  (mule |.(;;(skeleton:sa (cue q.u.body))))
+        ?:  ?=(%| -.parsed)  ~
+        (from-skeleton:lsa p.parsed)
+      ?~  sat-u
+        %-  (slog leaf+"%urb-watcher: bad skeleton POST" ~)
+        :_  this
+        (give-simple-payload:app:server eyre-id [[400 ~] ~])
+      =/  poke-mark=@tas  ?:(is-keyfile %attestation-keyfile %self-attestation)
+      :_  this
+      %+  weld
+        (give-simple-payload:app:server eyre-id [[200 ~] ~])
+      ^-  (list card)
+      :~  :*  %pass  /self/attest  %agent  [our.bowl %urb-watcher]
+              %poke  poke-mark  !>(u.sat-u)
+          ==
+      ==
     ==
   ::
   ::  Repoint the watcher at a different Bitcoin node / start block and restart

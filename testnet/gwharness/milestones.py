@@ -1,17 +1,42 @@
-"""Milestone drivers — end-to-end flows that double as smoke tests."""
+"""Milestone drivers — end-to-end flows that double as smoke tests.
+
+Assertions read the pier log (the watcher slogs its report:lsa verdict there);
+gall scries via conn return ~ in this fork, so log-parsing is the assertion
+channel (also what the scenario suite uses).
+"""
 
 from __future__ import annotations
 
+import re
 import time
+from pathlib import Path
 
 from .config import Config
 from .harness import Net
-from . import noun as N
-from . import obphon
+
+
+def _tail_log(path: Path, pattern: str) -> str | None:
+    if not path.exists():
+        return None
+    rx = re.compile(pattern)
+    for line in path.read_text(errors="replace").splitlines():
+        if rx.search(line):
+            return line.strip()
+    return None
+
+
+def _await_log(path: Path, pattern: str, timeout: float, poll: float = 5.0) -> str | None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        hit = _tail_log(path, pattern)
+        if hit:
+            return hit
+        time.sleep(poll)
+    return None
 
 
 def run_m1(cfg: Config) -> bool:
-    """Single comet, self-keyfile verified by its own %urb-watcher."""
+    """Single comet: its own %urb-watcher verifies its keyfile (VALID)."""
     net = Net(cfg)
     ok = False
     try:
@@ -24,32 +49,25 @@ def run_m1(cfg: Config) -> bool:
 
         print("[m1] boot pier + install groundwire desk + config watcher...", flush=True)
         c = net.boot_comet(ident, 0)
-        print(f"[m1]   ready; our = {obphon.num_to_patp(c.our())}", flush=True)
+        print(f"[m1]   ready; pier = {c.pier}", flush=True)
 
-        bid = c.peek("urb-watcher", ["x", "block-id"])
-        print(f"[m1]   /x/block-id = {bid}", flush=True)
-        if bid is None:
-            print("[m1] FAIL: urb-watcher not answering /x/block-id", flush=True)
-            return False
+        cfg_hit = _await_log(c.log, "reconfigured to", 30)
+        print(f"[m1]   {cfg_hit or 'WARN: watcher not reconfigured'}", flush=True)
 
         print("[m1] poke own keyfile...", flush=True)
-        res = net.keyfile(c, ident)
-        print(f"[m1]   keyfile thread -> {N.from_tas(res) if isinstance(res,int) else res}", flush=True)
+        net.keyfile(c, ident)
 
-        target = c.num
-        print(f"[m1] polling /x/conf for {ident.comet} ...", flush=True)
-        for _ in range(40):
-            conf = c.peek("urb-watcher", ["x", "conf"])
-            if conf:
-                keys = [k for k, _ in N.map_iter(conf)]
-                if target in keys:
-                    print(f"[m1]   CONF registered: {ident.comet} self-verified!", flush=True)
-                    ok = True
-                    break
-            time.sleep(6)
-        if not ok:
-            print("[m1] FAIL: comet never appeared in /x/conf "
-                  "(check pier log for report:lsa check lines)", flush=True)
+        who = re.escape(ident.comet)
+        verdict = _await_log(c.log, f"attestation for {who} is (VALID|INVALID)", cfg.verify)
+        if verdict:
+            print(f"[m1]   {verdict}", flush=True)
+            ok = "VALID" in verdict and "INVALID" not in verdict
+            # surface the per-check breakdown either way
+            for line in c.log.read_text(errors="replace").splitlines():
+                if re.search(r"\[(ok|XX)\]", line):
+                    print(f"[m1]     {line.strip()}", flush=True)
+        else:
+            print("[m1]   FAIL: no verdict slogged (verify thread may have crashed)", flush=True)
             print(f"[m1]   pier log: {c.log}", flush=True)
     finally:
         print("[m1] tearing down...", flush=True)
