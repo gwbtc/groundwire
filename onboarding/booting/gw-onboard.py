@@ -1446,17 +1446,15 @@ def load_snapshot_file(local_path: str | None, snapshot_url: str = DEFAULT_SNAPS
 
     for attempt in range(1, 4):
         try:
-            print(f"Fetching snapshot from {snapshot_url}")
             resp = requests.get(snapshot_url, timeout=120)
             if resp.ok and resp.content:
                 try:
                     _snapshot_file_to_noun_literal(resp.content)
                 except Exception as e:
-                    print(f"  Failed to deserialize snapshot: {e}")
+                    print(f"ERROR: Failed to deserialize snapshot: {e}")
                     if attempt < 3:
                         time.sleep(2)
                     continue
-                print("Fetched snapshot")
                 return resp.content
             else:
                 print(f"  HTTP {resp.status_code}")
@@ -1472,8 +1470,6 @@ def load_snapshot_file(local_path: str | None, snapshot_url: str = DEFAULT_SNAPS
 def make_snapshot_fyrd(snapshot_file: bytes) -> str:
     """Build a FYRD that pokes %urb-watcher with (unit state:urb)."""
     cued_snapshot = _snapshot_file_to_noun_literal(snapshot_file)
-    # print("cued snapshot:")
-    # print(f"{cued_snapshot}")
     return f""":*  0
                     %fyrd
                     %base
@@ -1546,6 +1542,38 @@ _IDLE_FYRD = """:*  0
                     (pure:m !>('Success!'))
                     '''
                 =="""
+
+
+def list_installed_desks(vere_bin: str, conn_sock: str) -> str:
+    """Return the decoded FYRD output listing desks installed on the ship."""
+
+    list_desks_thread = """:*  0
+                            %fyrd
+                            %base
+                            %khan-eval
+                            %noun
+                            %ted-eval
+                            :_  :~  /sur/spider/hoon
+                                    /lib/strandio/hoon
+                                ==
+                            '''
+                            =/  m  (strand ,vase)
+                            ;<  desks=(set desk)  bind:m
+                              (scry (set desk) %cd %$ /)
+                            (pure:m !>((crip (tape (join ' ' ~(tap in desks))))))
+                            '''
+                        =="""
+
+    return send_fyrd(vere_bin, conn_sock, list_desks_thread)
+
+
+def _desk_is_listed(desks_output: str, desk: str) -> bool:
+    """Return True if a decoded desk list contains desk with or without a % sigil."""
+
+    if f"%{desk}" in desks_output:
+        return True
+
+    return bool(re.search(rf"(?<![A-Za-z0-9-]){re.escape(desk)}(?![A-Za-z0-9-])", desks_output))
 
 
 def exit_dojo(vere_bin: str, conn_sock: str) -> str:
@@ -1826,9 +1854,19 @@ def print_master_ticket(master_ticket: str) -> None:
     print()
 
 
-def print_boot_success(url: str, master_ticket: str, pier_name: str) -> None:
+def print_boot_success(
+    url: str,
+    master_ticket: str,
+    pier_name: str,
+    installed_landscape: bool,
+    installed_spv: bool,
+    installed_nostrill: bool,
+    installed_mcp: bool,
+) -> None:
     """Print the post-boot success banner."""
+
     port = url.split(":")[-1] if ":" in url else "8080"
+
     print()
     print(f"{_ACCENT}{_BOLD}Your ship was booted and shut down successfully{_NC}")
     print()
@@ -1836,25 +1874,29 @@ def print_boot_success(url: str, master_ticket: str, pier_name: str) -> None:
     print(f"$ cd {os.getcwd()}")
     print(f"$ ./{pier_name}/.run --http-port {port}")
     print()
-    print(f"{_BOLD}What you can do{_NC}")
-    print(f"- Manage your apps at {_LINK}{url}/apps/landscape{_NC}")
-    print(f"- Use your Bitcoin hot wallet at {_LINK}{url}/spv-wallet{_NC}")
-    # print(f"- Chat in P2P groups and DMs at {_LINK}{url}/apps/groups{_NC}")
-    print(f"- Use Nostr at {_LINK}{url}/apps/nostrill{_NC}")
-    print(f"- Connect your AI agent to {_LINK}{url}/mcp{_NC}")
-    print()
     print(f"{_BOLD}To use your ship from the browser, you'll need your web login code{_NC}")
     print("Type +code in your ship's terminal to get your login code at any time")
+
+    if installed_landscape or installed_spv or installed_nostrill or installed_mcp:
+        print()
+        print(f"{_BOLD}What you can do{_NC}")
+        if installed_mcp:
+            print(f"- Connect your AI agent to {_LINK}{url}/mcp{_NC}")
+        if installed_nostrill:
+            print(f"- Use Nostr at {_LINK}{url}/apps/nostrill{_NC}")
+        if installed_landscape:
+            print(f"- Manage your apps at {_LINK}{url}/apps/landscape{_NC}")
+        if installed_spv:
+            print(f"- Use your Bitcoin hot wallet at {_LINK}{url}/spv-wallet{_NC}")
+
+    if installed_mcp:
+        print()
+        print(f"{_BOLD}To use your ship with Codex, Claude Code, or Opencode, run:{_NC}")
+        print(f"$ cd {os.getcwd()}/{pier_name}")
+        print()
+        print("Then run `codex`, `claude`, or `opencode`")
+
     print()
-    print(f"{_BOLD}To use your ship with Codex, Claude Code, or Opencode, run:{_NC}")
-    print(f"$ cd {os.getcwd()}/{pier_name}")
-    print()
-    print("Then run `codex`, `claude`, or `opencode`")
-    print()
-    print(f"{_BOLD}Next steps:{_NC}")
-    print("- Open your SPV wallet and set up your sponsor")
-    print("  - Choose the default sponsor and wait 2 block confirmations")
-    # print("2. Say hi in the Groundwire Foundation group on Tlon")
 
 
 def boot_comet(
@@ -1863,8 +1905,8 @@ def boot_comet(
     vere_bin: str,
     pill: str = GW_PILL,
     snapshot_file: bytes | None = None,
-) -> str:
-    """Boot a comet, wait until idle, kill the process, then return the local URL.
+) -> tuple[str, bool, bool, bool, bool]:
+    """Boot a comet, wait until idle, kill the process, then return the local URL and installed desks.
 
     Starts vere, polls conn.sock until the ship responds to a FYRD, then waits
     for required agents to be running before shutting down cleanly.
@@ -2033,6 +2075,12 @@ def boot_comet(
         proc.kill()
         sys.exit(1)
 
+    installed_desks_output = list_installed_desks(vere_bin, conn_sock)
+    installed_landscape = _desk_is_listed(installed_desks_output, "landscape")
+    installed_spv = _desk_is_listed(installed_desks_output, "spv-wallet")
+    installed_nostrill = _desk_is_listed(installed_desks_output, "nostrill")
+    installed_mcp = _desk_is_listed(installed_desks_output, "mcp")
+
     exit_dojo(vere_bin, conn_sock)
 
     proc.wait()
@@ -2047,7 +2095,7 @@ def boot_comet(
             raise RuntimeError("failed to confirm pier lock release")
         raise RuntimeError(f"pier lock still held by PID {lock_pid}")
 
-    return url
+    return url, installed_landscape, installed_spv, installed_nostrill, installed_mcp
 
 
 # =========================================================================
@@ -2267,14 +2315,28 @@ def main():
             print(step_header(f"Step 4/{total_steps}: Booting your ship"))
             print()
             print("Give it a second...")
-            url = boot_comet(
+            (
+                url,
+                installed_landscape,
+                installed_spv,
+                installed_nostrill,
+                installed_mcp,
+            ) = boot_comet(
                 comet,
                 feed,
                 args.vere,
                 pill=args.pill,
                 snapshot_file=snapshot_file,
             )
-            print_boot_success(url, master_ticket, pier_name=comet.lstrip("~"))
+            print_boot_success(
+                url,
+                master_ticket,
+                pier_name=comet.lstrip("~"),
+                installed_landscape=installed_landscape,
+                installed_spv=installed_spv,
+                installed_nostrill=installed_nostrill,
+                installed_mcp=installed_mcp,
+            )
         return
 
     # Derive the networking key (pass) from the ring
@@ -2366,14 +2428,28 @@ def main():
         print(step_header(f"Step {total_steps}/{total_steps}: Booting your ship"))
         print()
         print("Give it a second...")
-        url = boot_comet(
+        (
+            url,
+            installed_landscape,
+            installed_spv,
+            installed_nostrill,
+            installed_mcp,
+        ) = boot_comet(
             comet,
             feed,
             args.vere,
             pill=args.pill,
             snapshot_file=snapshot_file,
         )
-        print_boot_success(url, master_ticket, pier_name)
+        print_boot_success(
+            url,
+            master_ticket,
+            pier_name,
+            installed_landscape=installed_landscape,
+            installed_spv=installed_spv,
+            installed_nostrill=installed_nostrill,
+            installed_mcp=installed_mcp,
+        )
 
 if __name__ == "__main__":
     try:
