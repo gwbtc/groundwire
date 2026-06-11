@@ -167,9 +167,16 @@ def run_gate(cfg: Config, mode: str = "reject") -> bool:
     Bitcoin ownership, else it could lie about being non-Groundwire). Then:
       reject  -> inject a negative verdict; B is suspended (the lying-comet case)
       verify  -> POST B's packet; the jael ride installs B (the honest case)
-    Only A runs the new kernel (-A overlay, compiles arvo ~slow); B sends a
-    standard self-attestation."""
-    arvo = str(cfg.gw_root / "urbit" / "pkg" / "arvo")
+    Comets boot directly from the fresh %31 pill (gw-base-31.pill, built by
+    build_pill.py) — no -A, no upgrade. Set cfg.pill to the %31 pill first."""
+    new_pill = cfg.gw_root / "gw-base-31.pill"
+    if new_pill.exists():
+        cfg.pill = new_pill
+        print(f"[gate] using %31 pill: {new_pill}", flush=True)
+    else:
+        print(f"[gate] WARNING: {new_pill} not found; comets will boot the OLD "
+              "kernel and the gate will NOT fire. Build it with build_pill.py.",
+              flush=True)
     net = Net(cfg)
     ok = False
     try:
@@ -180,12 +187,10 @@ def run_gate(cfg: Config, mode: str = "reject") -> bool:
         print(f"[gate]   A (new kernel) = {a_id.comet}", flush=True)
         print(f"[gate]   B (peer)       = {b_id.comet}", flush=True)
 
-        print("[gate] boot A on the NEW ames kernel (-A overlay; compiles arvo)...", flush=True)
-        A = net.boot_comet(a_id, 0, arvo=arvo)
-        mig = _await_log(A.log, "migrating from state %30 to %31", 180)
-        print(f"[gate]   A migration %30->%31: {mig or 'NOT OBSERVED (fresh boot?)'}", flush=True)
+        print("[gate] boot A on the NEW %31 kernel (fresh from the pill)...", flush=True)
+        A = net.boot_comet(a_id, 0)
 
-        print("[gate] boot B (stock kernel)...", flush=True)
+        print("[gate] boot B...", flush=True)
         B = net.boot_comet(b_id, 1)
         for c in (A, B):
             _await_log(c.log, "reconfigured to", 30)
