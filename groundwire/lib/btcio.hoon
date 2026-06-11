@@ -100,14 +100,18 @@
       ?~  res  ~
       `[%result u.res]
     ~|  parse-one-response=json
-    =/  error=(unit [id=@t ^json code=@ta mssg=@t])
+    =/  error=(unit [id=@t code=@ta mssg=@t])
       %.  json
       =,  dejs-soft:format
-      ::  A 'result' member is present in the error
-      ::  response when using ganache, even though
-      ::  that goes against the JSON-RPC spec
+      ::  Bitcoin Core OMITS "result" entirely on error (and adds "jsonrpc"),
+      ::  so we must not require a result member here. Requiring it made a
+      ::  failed fetch — e.g. a lying blockhash, "No such transaction found in
+      ::  the provided block" — fail this parse, collapse the batch array to ~,
+      ::  and crash the verify thread with %rpc-result-incomplete-batch instead
+      ::  of returning ~ (a clean fetch failure). `ot` ignores the extra
+      ::  "jsonrpc" key, and any stray "result" some servers send on error.
       ::
-      (ot id+so result+some error+(ot code+no message+so ~) ~)
+      (ot id+so error+(ot code+no message+so ~) ~)
     ?~  error  ~
     =*  err  u.error
     `[%error id.err code.err mssg.err]
@@ -130,6 +134,27 @@
         '2.0'
         'getrawtransaction'
         list+[s+(render-hex-bytes 32 txid) b+| ~]
+    ==
+  ?.  ?=([%result * [%s *]] res)  (pure:m ~)
+  ?~  res=(de:base16:mimes:html p.res.res)  (pure:m ~)
+  (pure:m `[txid (decodew:txu:bc u.res)])
+::
+::  +get-raw-transaction-in-block: getrawtransaction with an explicit
+::  blockhash, so the node can serve the lookup without -txindex. Core
+::  validates the tx's inclusion in the named block, so a lying blockhash
+::  simply fails the fetch.
+::
+++  get-raw-transaction-in-block
+  |=  [=req-to id=(unit @t) txid=@ux block=@ux]
+  =/  m  (strand:strandio (unit tx:bc))
+  ^-  form:m
+  ;<  res=response:rpc  bind:m
+    %+  request-rpc  req-to
+    ^-  request:rpc
+    :*  ?~(id 'get-raw-transaction-in-block' u.id)
+        '2.0'
+        'getrawtransaction'
+        list+[s+(render-hex-bytes 32 txid) b+| s+(render-hex-bytes 32 block) ~]
     ==
   ?.  ?=([%result * [%s *]] res)  (pure:m ~)
   ?~  res=(de:base16:mimes:html p.res.res)  (pure:m ~)
