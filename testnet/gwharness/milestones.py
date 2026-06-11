@@ -167,16 +167,24 @@ def run_gate(cfg: Config, mode: str = "reject") -> bool:
     Bitcoin ownership, else it could lie about being non-Groundwire). Then:
       reject  -> inject a negative verdict; B is suspended (the lying-comet case)
       verify  -> POST B's packet; the jael ride installs B (the honest case)
-    Comets boot directly from the fresh %31 pill (gw-base-31.pill, built by
-    build_pill.py) — no -A, no upgrade. Set cfg.pill to the %31 pill first."""
-    new_pill = cfg.gw_root / "gw-base-31.pill"
+    Comets boot directly from the fresh kelvin-408 pill (gw-base-408.pill, built
+    by build_pill.py from MY arvo) — no -A, no upgrade. Its %base carries my
+    ames, so the comets run my suite gate. Set cfg.pill to it first."""
+    # SOLID pill built from MY arvo (build_solid.py) + the tinnus vere that can
+    # boot it. The bm vere rejects this format and brass pills don't fresh-boot;
+    # the solid pill is the one that runs my %31 ames (verified live).
+    new_pill = cfg.gw_root / "gw-solid-mine.pill"
+    tinnus = cfg.gw_root / "gw-vere-tinnus"
     if new_pill.exists():
         cfg.pill = new_pill
-        print(f"[gate] using %31 pill: {new_pill}", flush=True)
+        print(f"[gate] using my-arvo SOLID pill: {new_pill}", flush=True)
     else:
         print(f"[gate] WARNING: {new_pill} not found; comets will boot the OLD "
-              "kernel and the gate will NOT fire. Build it with build_pill.py.",
+              "kernel and the gate will NOT fire. Build it with build_solid.py.",
               flush=True)
+    if tinnus.exists():
+        cfg.vere = tinnus
+        print(f"[gate] using tinnus vere: {tinnus}", flush=True)
     net = Net(cfg)
     ok = False
     try:
