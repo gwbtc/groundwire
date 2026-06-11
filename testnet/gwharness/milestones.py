@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .config import Config
 from .harness import Net
+from . import chainops, lanes, packets
 
 
 def _tail_log(path: Path, pattern: str) -> str | None:
@@ -74,3 +75,68 @@ def run_m1(cfg: Config) -> bool:
         net.down()
     print(f"[m1] {'PASS' if ok else 'FAIL'}", flush=True)
     return ok
+
+
+def _verdict_ok(line: str | None) -> bool:
+    return bool(line) and "VALID" in line and "INVALID" not in line
+
+
+def run_m2(cfg: Config) -> bool:
+    """Two comets, first contact: each verifies the other's packet (so jael ->
+    ames installs the peer), then we inject lanes and prove a live ames
+    round-trip with `|hi` both ways."""
+    net = Net(cfg)
+    ok = False
+    try:
+        print("[m2] net up...", flush=True)
+        net.up()
+
+        print("[m2] spawn two identities...", flush=True)
+        a_id = net.spawn_identity()
+        b_id = net.spawn_identity()
+        print(f"[m2]   A = {a_id.comet}\n[m2]   B = {b_id.comet}", flush=True)
+
+        print("[m2] boot both comets (install desk + config watcher)...", flush=True)
+        A = net.boot_comet(a_id, 0)
+        B = net.boot_comet(b_id, 1)
+        for c in (A, B):
+            _await_log(c.log, "reconfigured to", 30)
+
+        print("[m2] each comet verifies its OWN keyfile (serve + track self)...", flush=True)
+        net.keyfile(A, a_id)
+        net.keyfile(B, b_id)
+
+        print("[m2] cross-verify packets (A learns B, B learns A)...", flush=True)
+        skel_a = chainops.build_skeleton(cfg, a_id)
+        skel_b = chainops.build_skeleton(cfg, b_id)
+        packets.poke_peer(A, skel_b)
+        packets.poke_peer(B, skel_a)
+        vb = _await_log(A.log, f"attestation for {re.escape(b_id.comet)} is (VALID|INVALID)", cfg.verify)
+        va = _await_log(B.log, f"attestation for {re.escape(a_id.comet)} is (VALID|INVALID)", cfg.verify)
+        print(f"[m2]   A's verdict on B: {vb or 'NONE'}", flush=True)
+        print(f"[m2]   B's verdict on A: {va or 'NONE'}", flush=True)
+        if not (_verdict_ok(vb) and _verdict_ok(va)):
+            print("[m2]   FAIL: cross-verification did not both pass", flush=True)
+            return False
+
+        print("[m2] inject lanes (peer is now %known) + probe with |hi...", flush=True)
+        print(f"[m2]   A->B dear: {lanes.inject_lane(A, B.num, B.ames_port)}", flush=True)
+        print(f"[m2]   B->A dear: {lanes.inject_lane(B, A.num, A.ames_port)}", flush=True)
+        time.sleep(3)
+        rab = _try_probe(A, b_id.comet)
+        rba = _try_probe(B, a_id.comet)
+        print(f"[m2]   A |hi B: {rab}", flush=True)
+        print(f"[m2]   B |hi A: {rba}", flush=True)
+        ok = ("hi-ok" in str(rab)) and ("hi-ok" in str(rba))
+    finally:
+        print("[m2] tearing down...", flush=True)
+        net.down()
+    print(f"[m2] {'PASS' if ok else 'FAIL'}", flush=True)
+    return ok
+
+
+def _try_probe(ship, peer_patp: str) -> object:
+    try:
+        return lanes.hi_probe(ship, peer_patp)
+    except Exception as e:                                    # noqa: BLE001
+        return f"ERROR: {e}"

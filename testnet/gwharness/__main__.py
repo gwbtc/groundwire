@@ -31,6 +31,14 @@ def main(argv: list[str] | None = None) -> int:
     p_mine.add_argument("n", type=int, nargs="?", default=1)
     sub.add_parser("info")
     sub.add_parser("m1")
+    sub.add_parser("m2")
+    p_scn = sub.add_parser("scenarios")
+    p_scn.add_argument("--only", default=None,
+                       help="comma-separated scenario names to run")
+    sub.add_parser("scenario-all")
+    p_dash = sub.add_parser("dashboard")
+    p_dash.add_argument("--port", type=int, default=42999)
+    sub.add_parser("results")
     args = ap.parse_args(argv)
 
     if args.cmd == "selftest":
@@ -66,6 +74,30 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "m1":
         from .milestones import run_m1
         return 0 if run_m1(cfg) else 1
+
+    if args.cmd == "m2":
+        from .milestones import run_m2
+        return 0 if run_m2(cfg) else 1
+
+    if args.cmd == "scenarios":
+        from .scenarios import run_scenarios
+        only = args.only.split(",") if args.only else None
+        return 0 if run_scenarios(cfg, only=only) else 1
+
+    if args.cmd == "scenario-all":
+        from .scenarios import run_scenarios
+        return 0 if run_scenarios(cfg) else 1
+
+    if args.cmd == "dashboard":
+        from .dashboard import serve
+        serve(cfg, port=args.port)
+        return 0
+
+    if args.cmd == "results":
+        from .report import write_results_md
+        path = write_results_md(cfg)
+        print(f"wrote {path}")
+        return 0
 
     if args.cmd == "info":
         rpc = btc.BitcoinRPC(cfg)

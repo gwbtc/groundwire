@@ -20,6 +20,18 @@ from . import noun as N
 from . import obphon
 
 
+def _alive(pid: int) -> bool:
+    """True if `pid` is a live process (signal 0 probes without killing)."""
+    import os
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
 def make_tweak_expr(txid_hex: str, vout: int, off: int = 0) -> str:
     """The hoon tweak expression comet_miner evaluates (matches urb-core /
     lib/self-attestation): (rap 3 ~[%9 ~tyr %urb-watcher %btc %gw %9 <txid> vout off]).
@@ -164,17 +176,36 @@ class Comet:
 
     # -- teardown -----------------------------------------------------------
 
-    def kill(self) -> None:
+    def kill(self, grace: float = 8.0) -> None:
+        """Terminate the pier's vere. SIGTERM first (lets vere snapshot), then
+        escalate to SIGKILL if it's still alive after `grace` — otherwise a
+        slow-shutdown vere keeps holding its ames/http ports and the next comet
+        at the same index can't bind. Scoped strictly to THIS pier's pid."""
+        import os
+        pids: list[int] = []
         lock = self.pier / ".vere.lock"
         if lock.exists():
             try:
-                pid = int(lock.read_text().strip())
-                import os
-                os.kill(pid, signal.SIGTERM)
-            except (ValueError, ProcessLookupError, PermissionError):
+                pids.append(int(lock.read_text().strip()))
+            except (ValueError, OSError):
                 pass
         if self.proc and self.proc.poll() is None:
+            pids.append(self.proc.pid)
+        pids = sorted(set(pids))
+
+        for pid in pids:
             try:
-                self.proc.terminate()
-            except ProcessLookupError:
+                os.kill(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
                 pass
+        deadline = time.time() + grace
+        while time.time() < deadline:
+            if all(not _alive(pid) for pid in pids):
+                return
+            time.sleep(0.5)
+        for pid in pids:
+            if _alive(pid):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass

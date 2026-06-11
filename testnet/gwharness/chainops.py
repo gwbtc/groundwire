@@ -93,6 +93,45 @@ def spawn(cfg: Config, rpc, fund_sats: int = 20_000, fee_rate: int = 2,
     return ident
 
 
+def management_op(cfg: Config, rpc, ident: Identity, op: str = "no-op",
+                  fee_rate: int = 2) -> Identity:
+    """Chain a management op onto an identity's latest commit. Replicates
+    Causeway's _run_management_op non-interactively: spend the point's current
+    sont (the prior op's commit output), build a new confidential commit for
+    `op`'s sotx, broadcast, and append the proof. A %no-op produces a second
+    link with no PKI change — under the latest-sotx-disclosed rule the keyfile
+    now carries two links and the verifier validates the new tip."""
+    cw = _causeway(cfg)
+    backend = _backend(cw, cfg)
+    prior = ident.proofs[-1]
+    comet_p = cw.patp_to_int(ident.comet)
+    if op == "no-op":
+        attestation = cw.encode_no_op_sotx(comet_p=comet_p)
+    else:
+        raise ValueError(f"unsupported management op: {op!r}")
+
+    psbt_obj, proof = cw.build_chained_commit_psbt(
+        prior_proof=prior, new_attestation_bytes=attestation,
+        fee_rate=fee_rate, network="regtest")
+    proof.update(op=op, patp=ident.comet)
+    # The funding tx for a management op IS the prior commit; carry its block
+    # hash forward (the verifier feeds it to getrawtransaction's blockhash arg).
+    prior_block = prior.get("commit_block_hex", "")
+    if prior_block:
+        proof.setdefault("funding", {})["block_hex"] = prior_block
+
+    root = cw.mnemonic_to_hdkey(ident.mnemonic, network="regtest")
+    psbt_obj.sign_with(root)
+    _local_txid, tx_hex = cw._extract_tx_from_psbt(psbt_obj.to_base64())
+    commit_txid = cw._broadcast_tx(tx_hex, backend=backend)
+    proof["commit_txid"] = commit_txid
+    _btc.confirm(rpc, cfg.wallet, 2)
+    _record_block(cw, proof, commit_txid, backend, key="commit_block_hex")
+
+    _save(cfg, ident, proof, op)
+    return ident
+
+
 def _record_block(cw, target: dict, txid: str, backend, key: str) -> None:
     try:
         h = cw.fetch_block_hex(txid, backend, quiet=True)
