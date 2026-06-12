@@ -36,6 +36,26 @@ def _await_log(path: Path, pattern: str, timeout: float, poll: float = 5.0) -> s
     return None
 
 
+def _count_log(path: Path, pattern: str) -> int:
+    if not path.exists():
+        return 0
+    rx = re.compile(pattern)
+    return sum(1 for line in path.read_text(errors="replace").splitlines()
+               if rx.search(line))
+
+
+def _await_count(path: Path, pattern: str, n: int, timeout: float,
+                 poll: float = 5.0) -> bool:
+    """Wait until `pattern` has appeared at least `n` times (for asserting a
+    SECOND verdict/VALID where _await_log would re-match the first)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _count_log(path, pattern) >= n:
+            return True
+        time.sleep(poll)
+    return False
+
+
 def run_m1(cfg: Config) -> bool:
     """Single comet: its own %urb-watcher verifies its keyfile (VALID)."""
     net = Net(cfg)
@@ -242,6 +262,249 @@ def run_gate(cfg: Config, mode: str = "reject") -> bool:
         print("[gate] tearing down...", flush=True)
         net.down()
     print(f"[gate] {'PASS' if ok else 'FAIL'}", flush=True)
+    return ok
+
+
+def _use_my_kernel(cfg: Config) -> None:
+    """Point the harness at MY %31 arvo: the SOLID pill (my ames suite gate)
+    + the tinnus vere that can boot it from a -G feed. (Same override run_gate
+    does; factored out so the genuine-loop milestones share it.)"""
+    new_pill = cfg.gw_root / "gw-solid-mine.pill"
+    tinnus = cfg.gw_root / "gw-vere-tinnus"
+    if new_pill.exists():
+        cfg.pill = new_pill
+        print(f"[boot] my-arvo SOLID pill: {new_pill}", flush=True)
+    else:
+        print(f"[boot] WARNING: {new_pill} missing; comets boot the OLD kernel "
+              "and the gate will NOT fire. Build it with build_solid.py.", flush=True)
+    if tinnus.exists():
+        cfg.vere = tinnus
+        print(f"[boot] tinnus vere: {tinnus}", flush=True)
+
+
+def _boot_pair(cfg: Config, net: Net):
+    """Spawn + boot two real suite-C comets (A first, on the new kernel) on
+    regtest, desk installed + watcher configured. Returns (A, B, a_id, b_id)."""
+    a_id = net.spawn_identity()
+    b_id = net.spawn_identity()
+    print(f"[pair]   A = {a_id.comet}\n[pair]   B = {b_id.comet}", flush=True)
+    A = net.boot_comet(a_id, 0)
+    B = net.boot_comet(b_id, 1)
+    for c in (A, B):
+        _await_log(c.log, "reconfigured to", 30)
+    return A, B, a_id, b_id
+
+
+def run_m5(cfg: Config) -> bool:
+    """GENUINE verification failure -> suspend, driven by the REAL verdict wire
+    (Edit 4) -- no injected verdict.
+
+    A holds suite-C B (the only injected step: B's signed open-packet, since -L
+    blocks cold comet<->comet routing). Then A's OWN %urb-watcher verifies a
+    TAMPERED B packet (bad tip offset) against regtest, returns INVALID, and its
+    +verdict-poke -- now an %arvo %a [%attest-verdict B %.n] task to the ames
+    vane, not a poke to a dead agent -- drives A's kernel to suspend B. The
+    suspend slog is therefore produced by the real watcher->ames path."""
+    _use_my_kernel(cfg)
+    net = Net(cfg)
+    ok = False
+    try:
+        print("[m5] net up...", flush=True)
+        net.up()
+        A, B, a_id, b_id = _boot_pair(cfg, net)
+        who_b = re.escape(b_id.comet)
+
+        print("[m5] trigger gate: inject B's signed open-packet into A...", flush=True)
+        lanes.inject_open_packet(A, B)
+        held = _await_log(A.log, f"holding suite-C comet {who_b}", 60)
+        print(f"[m5]   A HELD suite-C B (not bare-accepted): {bool(held)}", flush=True)
+        if not held:
+            print("[m5]   FAIL: gate never fired", flush=True)
+            return False
+
+        print("[m5] POST a TAMPERED B packet to A's watcher (tip-off+1)...", flush=True)
+        skel_b = chainops.build_skeleton(cfg, b_id)
+        bad = packets.bad_tip_off(skel_b, skel_b["tip"]["off"] + 1)
+        packets.poke_peer(A, bad)
+        invalid = _await_log(A.log, f"attestation for {who_b} is INVALID", cfg.verify)
+        print(f"[m5]   A's watcher returned INVALID: {bool(invalid)}", flush=True)
+        for line in A.log.read_text(errors="replace").splitlines():
+            if re.search(r"\[XX\]", line):
+                print(f"[m5]     {line.strip()}", flush=True)
+        # the REAL verdict-poke %.n (Edit 4) now drives the kernel suspend
+        susp = _await_log(A.log, f"comet {who_b} attestation failed; suspended", 60)
+        print(f"[m5]   B SUSPENDED via REAL verdict task: {bool(susp)}", flush=True)
+        ok = bool(invalid) and bool(susp)
+    finally:
+        print("[m5] tearing down...", flush=True)
+        net.down()
+    print(f"[m5] {'PASS' if ok else 'FAIL'}", flush=True)
+    return ok
+
+
+def run_m3(cfg: Config) -> bool:
+    """GENUINE two-ship attestation THROUGH the suite-gate hold (Edit 4, no
+    injected verdict).
+
+    Each comet HOLDS the other as an unverified suite-C peer (the gate), then
+    its OWN %urb-watcher verifies the peer's REAL packet against regtest. The
+    now-real verdict-poke %.y (an %arvo %a task to the ames vane) clears the
+    hold, and the watcher's jael feed installs the peer (the ride). |hi both
+    ways proves a live authenticated ames round-trip. Only the initial
+    open-packet + lane are injected (the -L loopback catch-22); the verdict and
+    the install are genuine -- this is run_m2 PLUS the suite-gate hold that m2
+    skips, with the verdict no longer injected."""
+    _use_my_kernel(cfg)
+    net = Net(cfg)
+    ok = False
+    try:
+        print("[m3] net up...", flush=True)
+        net.up()
+        A, B, a_id, b_id = _boot_pair(cfg, net)
+        who_a, who_b = re.escape(a_id.comet), re.escape(b_id.comet)
+
+        print("[m3] each comet tracks its own chain (serve + self-track)...", flush=True)
+        net.keyfile(A, a_id)
+        net.keyfile(B, b_id)
+
+        print("[m3] fire BOTH suite gates: each holds the other...", flush=True)
+        lanes.inject_open_packet(A, B)
+        lanes.inject_open_packet(B, A)
+        hb = _await_log(A.log, f"holding suite-C comet {who_b}", 60)
+        ha = _await_log(B.log, f"holding suite-C comet {who_a}", 60)
+        print(f"[m3]   A holds B: {bool(hb)}   B holds A: {bool(ha)}", flush=True)
+        if not (hb and ha):
+            print("[m3]   FAIL: a gate did not fire", flush=True)
+            return False
+
+        print("[m3] each watcher verifies the peer's REAL packet (regtest)...", flush=True)
+        net.peer(A, b_id)
+        net.peer(B, a_id)
+        vb = _await_log(A.log, f"attestation for {who_b} is VALID", cfg.verify)
+        va = _await_log(B.log, f"attestation for {who_a} is VALID", cfg.verify)
+        print(f"[m3]   A verdict on B: {vb or 'NONE'}\n[m3]   B verdict on A: {va or 'NONE'}", flush=True)
+        # the REAL verdict-poke %.y clears each suite-C hold (Edit 4)
+        cb = _await_log(A.log, f"comet {who_b} attestation verified", 40)
+        ca = _await_log(B.log, f"comet {who_a} attestation verified", 40)
+        print(f"[m3]   A cleared hold on B: {bool(cb)}   B cleared hold on A: {bool(ca)}", flush=True)
+
+        print("[m3] establish lanes + first contact (|hi both ways)...", flush=True)
+        rab = _contact(A, B, b_id.comet)
+        rba = _contact(B, A, a_id.comet)
+        print(f"[m3]   A |hi B: {rab}\n[m3]   B |hi A: {rba}", flush=True)
+        ok = (_verdict_ok(vb) and _verdict_ok(va) and bool(cb) and bool(ca)
+              and "hi-ok" in str(rab) and "hi-ok" in str(rba))
+    finally:
+        print("[m3] tearing down...", flush=True)
+        net.down()
+    print(f"[m3] {'PASS' if ok else 'FAIL'}", flush=True)
+    return ok
+
+
+def run_m4(cfg: Config) -> bool:
+    """GENUINE re-attestation after a SECOND Bitcoin transaction (Edit 4).
+
+    B verifies A's 1-link packet (A installed via the jael ride). A then signs a
+    %no-op management op -- a SECOND on-chain commit that MOVES A's ownership
+    sat. B's %urb-watcher block loop detects the confidential move and fires the
+    now-real [%attest-request A] task to its ames vane (-> %grace). B then
+    re-verifies A's UPDATED 2-link packet: VALID, with the tracked sont
+    reconciled as an interior link (tracked-tip). The 2nd tx, the move
+    detection, the request task, and the re-verification are all genuine; only
+    packet DELIVERY is eyre-POST (the /atst transport makes it ames-native)."""
+    _use_my_kernel(cfg)
+    net = Net(cfg)
+    ok = False
+    try:
+        print("[m4] net up...", flush=True)
+        net.up()
+        a_id = net.spawn_identity()
+        b_id = net.spawn_identity()
+        print(f"[m4]   A (1-link) = {a_id.comet}\n[m4]   B (verifier) = {b_id.comet}", flush=True)
+        A = net.boot_comet(a_id, 0)
+        B = net.boot_comet(b_id, 1)
+        for c in (A, B):
+            _await_log(c.log, "reconfigured to", 30)
+        who_a = re.escape(a_id.comet)
+
+        print("[m4] B verifies A's 1-link packet (jael ride installs A)...", flush=True)
+        net.peer(B, a_id)
+        v1 = _await_log(B.log, f"attestation for {who_a} is VALID", cfg.verify)
+        print(f"[m4]   B's first verdict on A: {v1 or 'NONE'}", flush=True)
+        if not _verdict_ok(v1):
+            print("[m4]   FAIL: first verification did not pass", flush=True)
+            return False
+        _contact(B, A, a_id.comet)            # force the install (A known on B)
+
+        print("[m4] SECOND Bitcoin tx: %no-op moves A's ownership sat...", flush=True)
+        chainops.management_op(cfg, net.rpc, a_id, op="no-op")
+
+        print("[m4] await B's watcher detecting the move -> REAL [%attest-request A]...", flush=True)
+        req = _await_log(
+            B.log, f"{who_a} sat moved confidentially; requesting re-attestation", 200)
+        print(f"[m4]   B fired re-attestation request: {bool(req)}", flush=True)
+
+        print("[m4] re-deliver A's UPDATED 2-link packet -> re-verify...", flush=True)
+        net.peer(B, a_id)
+        v2 = _await_count(B.log, f"attestation for {who_a} is VALID", 2, cfg.verify)
+        print(f"[m4]   B re-verified A's 2-link chain (2nd VALID): {bool(v2)}", flush=True)
+        tracked = _count_log(B.log, r"\[ok\] tracked-tip") >= 1
+        print(f"[m4]   tracked-tip reconciled (interior sont): {tracked}", flush=True)
+        ok = bool(req) and bool(v2)
+    finally:
+        print("[m4] tearing down...", flush=True)
+        net.down()
+    print(f"[m4] {'PASS' if ok else 'FAIL'}", flush=True)
+    return ok
+
+
+def run_m6(cfg: Config) -> bool:
+    """GENUINE /atst transport: the packet is FETCHED over Ames, not POSTed.
+
+    B pokes its OWN keyfile so its %urb-watcher can serve it. A then holds
+    suite-C B (the only injected step); A's gate fires +atst-fetch, sending B a
+    plaintext %atst-req at B's lane. B serves its full self-attestation from its
+    own /x/keyfile (the in-kernel %gx scry) and replies to A's lane. A pokes its
+    watcher (%g %deal %noun [%attest-packet]); the watcher verifies and the real
+    verdict clears the hold. The watcher's 'verifying self-attestation' slog with
+    NO eyre POST is the proof the packet arrived over the /atst transport."""
+    _use_my_kernel(cfg)
+    net = Net(cfg)
+    ok = False
+    try:
+        print("[m6] net up...", flush=True)
+        net.up()
+        A, B, a_id, b_id = _boot_pair(cfg, net)
+        who_b = re.escape(b_id.comet)
+
+        print("[m6] B verifies + stores its OWN keyfile (so /atst can serve it)...", flush=True)
+        net.keyfile(B, b_id)
+        kf = _await_log(B.log, f"attestation for {who_b} is VALID", cfg.verify)
+        print(f"[m6]   B's own keyfile stored: {bool(kf)}", flush=True)
+        if not kf:
+            print("[m6]   FAIL: B never stored its keyfile", flush=True)
+            return False
+
+        print("[m6] inject B's open-packet -> A holds B -> A asks B over /atst...", flush=True)
+        lanes.inject_open_packet(A, B)
+        held = _await_log(A.log, f"holding suite-C comet {who_b}", 60)
+        print(f"[m6]   A held suite-C B: {bool(held)}", flush=True)
+        if not held:
+            print("[m6]   FAIL: gate never fired", flush=True)
+            return False
+
+        # NO net.peer(A, ...): the packet must arrive via the /atst transport.
+        print("[m6] await the watcher verifying B WITHOUT any eyre POST...", flush=True)
+        verifying = _await_log(A.log, f"verifying self-attestation for {who_b}", cfg.verify)
+        print(f"[m6]   A's watcher got B's packet over /atst: {bool(verifying)}", flush=True)
+        valid = _await_log(A.log, f"attestation for {who_b} is VALID", cfg.verify)
+        cleared = _await_log(A.log, f"comet {who_b} attestation verified", 40)
+        print(f"[m6]   VALID: {bool(valid)}   hold cleared via real verdict: {bool(cleared)}", flush=True)
+        ok = bool(verifying) and bool(valid) and bool(cleared)
+    finally:
+        print("[m6] tearing down...", flush=True)
+        net.down()
+    print(f"[m6] {'PASS' if ok else 'FAIL'}", flush=True)
     return ok
 
 

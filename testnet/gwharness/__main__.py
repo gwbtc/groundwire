@@ -32,6 +32,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("info")
     sub.add_parser("m1")
     sub.add_parser("m2")
+    sub.add_parser("m3")
+    sub.add_parser("m4")
+    sub.add_parser("m5")
+    sub.add_parser("m6")
     p_gate = sub.add_parser("gate")
     p_gate.add_argument("--mode", default="reject", choices=["reject", "verify"])
     p_scn = sub.add_parser("scenarios")
@@ -80,6 +84,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "m2":
         from .milestones import run_m2
         return 0 if run_m2(cfg) else 1
+
+    if args.cmd == "m3":
+        from .milestones import run_m3
+        return 0 if run_m3(cfg) else 1
+
+    if args.cmd == "m4":
+        from .milestones import run_m4
+        return 0 if run_m4(cfg) else 1
+
+    if args.cmd == "m5":
+        from .milestones import run_m5
+        return 0 if run_m5(cfg) else 1
+
+    if args.cmd == "m6":
+        from .milestones import run_m6
+        return 0 if run_m6(cfg) else 1
 
     if args.cmd == "gate":
         from .milestones import run_gate

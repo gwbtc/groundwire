@@ -7,18 +7,19 @@
 ::  It is also the registered handler agent for CONFIDENTIAL COMETS
 ::  (protocol 2.0; see sur/self-attestation and lib/self-attestation):
 ::
-::    - A peer's self-attestation packet arrives as a %self-attestation poke
-::      (from Ames, whose side of this does not exist yet -- our pokes to it
-::      use placeholder marks against a nonexistent %ames agent). A khan
+::    - A peer's self-attestation packet arrives as a %self-attestation poke:
+::      from Ames (a %g %deal of mark %noun [%attest-packet who packet], once
+::      the /atst transport lands) or from the harness eyre endpoint. A khan
 ::      thread verifies the packet against the Bitcoin node; on success the
 ::      ship's point is stored in urb-state (and thus served to Jael) and its
 ::      ownership sat is tracked by the normal block machinery.
-::    - When a tracked confidential sat MOVES with no on-chain sotx, we poke
-::      Ames to request a fresh packet from that ship (%attestation-request);
-::      every remote verification outcome is reported to Ames either way
-::      (%attestation-verdict). If a confidential ship instead continues its
-::      chain with a PUBLIC on-chain reveal, it permanently leaves the
-::      confidential registry and is handled by classic chain-watching.
+::    - When a tracked confidential sat MOVES with no on-chain sotx, we pass
+::      Ames a [%attest-request who] task to re-request a fresh packet; every
+::      remote verification outcome is passed back as [%attest-verdict who ok]
+::      (see +request-poke/+verdict-poke -- %arvo %a tasks to the ames vane).
+::      If a confidential ship instead continues its chain with a PUBLIC
+::      on-chain reveal, it permanently leaves the confidential registry and
+::      is handled by classic chain-watching.
 ::    - The user pokes their OWN chain in as %attestation-keyfile. It is
 ::      verified eagerly: a bad keyfile only reports (no state change); a
 ::      good one is stored, its sat watched, and re-verified when that sat
@@ -191,6 +192,18 @@
   ::  hardcoded mainnet defaults; self-poke only.
       %noun
     ?>  =(our.bowl src.bowl)
+    ::  Confidential Comets 2.0: Ames relays a peer's self-attestation packet
+    ::  as [%attest-packet who packet] (mark %noun keeps ames free of our sur).
+    ::  Re-poke ourselves with %self-attestation to run the normal remote
+    ::  verify path, which reports the verdict back to ames.
+    =/  gen=*  q.vase
+    ?:  ?=([%attest-packet @ *] gen)
+      =/  sat  ;;(self-attestation:sa +>.gen)
+      :_  this
+      :~  :*  %pass  /self/attest  %agent  [our.bowl %urb-watcher]
+              %poke  %self-attestation  !>(sat)
+          ==
+      ==
     =+  !<([%watcher-config url=@t auth=@t hash=@ux height=@ud] vase)
     =/  new-rpc=req-to:btcio  [url [%basic auth]]
     =/  new-urb=state:urb
@@ -568,16 +581,7 @@
     ==
   ==
 ::
-++  on-agent
-  |=  [=wire =sign:agent:gall]
-  ^-  (quip card _this)
-  ?+    wire  (on-agent:def wire sign)
-    ::  Placeholder Ames pokes inevitably nack (the %ames agent doesn't
-    ::  exist yet); swallow them quietly.
-      [%ames *]
-    ?.  ?=(%poke-ack -.sign)  (on-agent:def wire sign)
-    `this
-  ==
+++  on-agent  on-agent:def
 ++  on-leave  on-leave:def
 ++  on-fail   on-fail:def
 --
@@ -723,6 +727,11 @@
     $(entries t.entries)
   ?:  =(`now-sont requested.meta)
     $(entries t.entries)
+  ::  fire the re-attestation request (a real [%attest-request who] task to
+  ::  the ames vane via +request-poke); slog so the move is observable.
+  %-  %+  slog
+        leaf+"%urb-watcher: {<who>} sat moved confidentially; requesting re-attestation"
+      ~
   %=  $
     entries   t.entries
     cards     [(request-poke our.bowl who) cards]
@@ -774,24 +783,23 @@
     ~
   (slaw %p i.path)
 ::
-::  Placeholder pokes to the (assumed, nonexistent) Ames agent.
+::  Request/verdict passes to the Ames VANE (Confidential Comets 2.0).
+::
+::    Ames holds an unverified suite-C comet until we hand back a verdict, and
+::    (when a tracked sat moves) asks us to re-request a peer's packet. These
+::    are kernel TASKS to %a, not pokes to a gall agent. The %arvo card's wire
+::    is descriptive only: sy-attest-verdict/-request emit on the unix-duct and
+::    /ames, never back on our duct, so no on-arvo response lands here.
+::    `our` is retained for call-site symmetry; it is unused by an %arvo pass.
 ++  request-poke
   |=  [our=ship who=@p]
   ^-  card
-  :*  %pass  /ames/request/(scot %p who)
-      %agent  [our %ames]
-      %poke  %attestation-request
-      !>(who)
-  ==
+  [%pass /attest/request/(scot %p who) %arvo %a [%attest-request who]]
 ::
 ++  verdict-poke
   |=  [our=ship who=@p ok=?]
   ^-  card
-  :*  %pass  /ames/verdict/(scot %p who)
-      %agent  [our %ames]
-      %poke  %attestation-verdict
-      !>([who ok])
-  ==
+  [%pass /attest/verdict/(scot %p who) %arvo %a [%attest-verdict who ok]]
 ::
 ::  Fetch blocks in range(last-processed + 1, latest - block-confirmations)
 ::  from the provided RPC endpoint, then use a stateful 
