@@ -329,6 +329,15 @@
   ^-  (quip card _this)
   ?+    wire  (on-arvo:def wire sign-arvo)
   ::
+  ::  eyre confirmed (or rejected) our /apps/urb-watcher HTTP binding with a
+  ::  %bound gift on /eyre/connect. Nothing to do — but we MUST handle it, or
+  ::  default-agent's `~|…!!` crashes the agent on the %eyre sign (which the
+  ::  408 kernel emits where the old 410 pill did not).
+  ::
+      [%eyre %connect ~]
+    ?.  ?=([%eyre %bound *] sign-arvo)  (on-arvo:def wire sign-arvo)
+    `this
+  ::
   ::  Send the iris snapshot request now that
   ::  the agent is fully initialized.
       [%init %snapshot ~]

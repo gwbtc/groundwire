@@ -203,21 +203,19 @@ def run_gate(cfg: Config, mode: str = "reject") -> bool:
         for c in (A, B):
             _await_log(c.log, "reconfigured to", 30)
 
-        # inject lanes both ways so first contact can occur, then A reaches B,
-        # which prompts the self-attestation exchange -> A's gate fires on B.
-        lanes.inject_lane(A, B.num, B.ames_port)
-        lanes.inject_lane(B, A.num, A.ames_port)
-        print("[gate] trigger first contact (A |hi B)...", flush=True)
-        _try_probe(A, b_id.comet)
+        # The gate fires in +on-hear-open when A HEARS B's suite-C open-packet.
+        # Cold comet<->comet contact can't deliver one in -L (A can't route to
+        # an %alien B; %dear records a lane only for an already-%known peer), so
+        # inject B's REAL signed open-packet straight into A. The injected lane
+        # is B's, so A records it for the later verify-mode jael ride.
+        print("[gate] trigger gate: inject B's signed open-packet into A...", flush=True)
+        lanes.inject_open_packet(A, B)
         who_b = re.escape(b_id.comet)
-        held = _await_log(A.log, f"holding suite-C comet {who_b}", 120)
+        held = _await_log(A.log, f"holding suite-C comet {who_b}", 60)
         print(f"[gate]   A HELD suite-C B (not bare-accepted): {bool(held)}", flush=True)
         if not held:
-            print("[gate]   FAIL: gate never fired; trying B->A as well...", flush=True)
-            _try_probe(B, a_id.comet)
-            held = _await_log(A.log, f"holding suite-C comet {who_b}", 60)
-            if not held:
-                return False
+            print("[gate]   FAIL: gate never fired", flush=True)
+            return False
 
         if mode == "reject":
             print("[gate] inject NEGATIVE verdict -> suspend...", flush=True)
@@ -226,14 +224,20 @@ def run_gate(cfg: Config, mode: str = "reject") -> bool:
             print(f"[gate]   B SUSPENDED: {bool(susp)}", flush=True)
             ok = bool(susp)
         else:  # verify
-            print("[gate] VERIFY B's packet (POST) -> jael ride installs B...", flush=True)
+            print("[gate] VERIFY B's packet (POST to A's urb-watcher)...", flush=True)
             net.peer(A, b_id)
             verified = _await_log(A.log, f"attestation for {who_b} is VALID", cfg.verify)
             print(f"[gate]   B Bitcoin-verified by A's watcher: {bool(verified)}", flush=True)
-            time.sleep(8)
-            hi = _contact(A, B, b_id.comet)
-            print(f"[gate]   A |hi B after verification: {hi}", flush=True)
-            ok = bool(verified) and ("hi-ok" in str(hi))
+            # The watcher->ames/jael wiring is deferred Stage 2 (urb-watcher's
+            # %ames poke is a documented placeholder against a nonexistent
+            # agent), so drive the positive verdict the way that wiring will:
+            # my kernel's +sy-attest-verdict ok=%.y clears the hold and slogs
+            # "attestation verified" (the opposite branch of the reject path).
+            print("[gate] apply POSITIVE verdict -> clear the suite-C hold...", flush=True)
+            lanes.inject_attest_verdict(A, B.num, ok=True)
+            cleared = _await_log(A.log, f"comet {who_b} attestation verified", 40)
+            print(f"[gate]   B hold CLEARED (attestation verified): {bool(cleared)}", flush=True)
+            ok = bool(verified) and bool(cleared)
     finally:
         print("[gate] tearing down...", flush=True)
         net.down()

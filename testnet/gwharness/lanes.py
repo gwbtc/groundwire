@@ -71,3 +71,38 @@ def hi_probe(ship, peer_patp: str) -> str:
     Raises ConnError / times out if unreachable."""
     body = _HI.format(tgt=peer_patp)
     return _cord(ship.conn.khan_eval(body))
+
+
+def open_packet_blob(ship, rcvr_patp: str):
+    """Scry `ship` for its OWN signed self-attestation (open-packet) addressed
+    to rcvr_patp, via the public `/x//attest-packet` ames endpoint added to the
+    kernel. Returns the packet bytes (a big int). The packet is REAL — signed
+    with ship's networking key by the kernel's own +etch-open-packet — so it
+    passes the receiver's +sift-open-packet checks (pubkey hashes to @p +
+    valid ed25519 signature)."""
+    body = (
+        "=/  m  (strand ,vase)  ^-  form:m\n"
+        "  ;<  our=@p  bind:m  get-our\n"
+        "  =/  pax=path  "
+        f"~[(scot %p our) %$ (scot %ud 1) %attest-packet (scot %p {rcvr_patp})]\n"
+        "  =/  blob=@ux  .^(@ux %ax pax)\n"
+        "  (pure:m !>(blob))"
+    )
+    return ship.conn.khan_eval(body)
+
+
+def inject_open_packet(a, b) -> str:
+    """Deliver comet B's signed suite-C open-packet (addressed to A) straight
+    into A's ames as a `%hear`, firing A's +on-hear-open suite gate.
+
+    Why direct injection: on a cold comet<->comet pair in `-L`, A can't route a
+    keys-request to an %alien B (no lane; it'd go to B's unreachable sponsor),
+    and `%dear` only records a lane for an already-%known peer — so the natural
+    |hi flow never elicits B's open-packet. We instead scry B for the exact
+    blob it would have sent and feed it to A. The lane is B's direct lane, so
+    A records it in the attest entry (used later by the verify-mode jael ride).
+    `a`, `b` are Comets."""
+    blob = open_packet_blob(b, a.patp)
+    addr = lane_atom(b.ames_port)
+    card = (N.tas("hear"), ((1, addr), blob))     # [%hear [%| addr] blob]
+    return a.conn.ovum("a", ["ames"], card)
