@@ -434,7 +434,8 @@ def run_m4(cfg: Config) -> bool:
         if not _verdict_ok(v1):
             print("[m4]   FAIL: first verification did not pass", flush=True)
             return False
-        _contact(B, A, a_id.comet)            # force the install (A known on B)
+        # NB: no |hi here -- apply-verified already tracked A's sat in B's conf
+        # registry on the verdict, independent of any ames peer install.
 
         print("[m4] SECOND Bitcoin tx: %no-op moves A's ownership sat...", flush=True)
         chainops.management_op(cfg, net.rpc, a_id, op="no-op")
