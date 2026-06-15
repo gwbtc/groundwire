@@ -1,6 +1,7 @@
 /-  s=spv-wallet, urb
 /+  io=sailboxio, html-utils, seed-phrases, sailbox, json-utils, server,
     *wallet-address, *wallet-account, *wallet-discovery,
+    bip32=bip32-spv,
     ui=ui-spv-wallet, gw=ui-groundwire, draft=ui-draft
 |%
 ::  Helper: Infer script-type from extended key prefix
@@ -47,7 +48,9 @@
         ~|(%invalid-bip39-format !!)
       [%t seed-phrase]
     =/  pubkey=@ux  (seed-to-pubkey seed)
-    =/  new-wallet=wallet:s  [wallet-name seed pubkey ~ ~]
+    =/  master  (from-seed:bip32 (seed-to-bytes seed))
+    =/  master-xpub=@t  (crip (pub-extended:master %main))
+    =/  new-wallet=wallet:s  [wallet-name seed pubkey master-xpub ~ ~]
     ;<  state=state-1:s  bind:m  (get-state-as:io state-1:s)
     =.  wallets.state  (~(put by wallets.state) pubkey new-wallet)
     ;<  ~  bind:m  (replace:io !>(state))
@@ -64,7 +67,9 @@
       `t.seed.v
     =/  generated-seed=cord  (gen-unique:seed-phrases eny %256 existing-seeds)
     =/  pubkey=@ux  (seed-to-pubkey [%t generated-seed])
-    =/  new-wallet=wallet:s  [wallet-name [%t generated-seed] pubkey ~ ~]
+    =/  master  (from-seed:bip32 (seed-to-bytes [%t generated-seed]))
+    =/  master-xpub=@t  (crip (pub-extended:master %main))
+    =/  new-wallet=wallet:s  [wallet-name [%t generated-seed] pubkey master-xpub ~ ~]
     =.  wallets.state  (~(put by wallets.state) pubkey new-wallet)
     ;<  ~  bind:m  (replace:io !>(state))
     %-  send-raw-cards:io
@@ -457,13 +462,13 @@
   ::  /apps/wallet-2 -> draft 2, etc.
   ?:  ?=([%apps %wallet ~] site)
     %-  mime-response:sailbox
-    [/text/html (manx-to-octs:server (draft-page:draft 0 wallets accounts args broadcasts))]
+    [/text/html (manx-to-octs:server (draft-page:draft 0 wallets accounts args broadcasts labels))]
   ?:  ?=([%apps %wallet-1 ~] site)
     %-  mime-response:sailbox
-    [/text/html (manx-to-octs:server (draft-page:draft 1 wallets accounts args broadcasts))]
+    [/text/html (manx-to-octs:server (draft-page:draft 1 wallets accounts args broadcasts labels))]
   ?:  ?=([%apps %wallet-2 ~] site)
     %-  mime-response:sailbox
-    [/text/html (manx-to-octs:server (draft-page:draft 2 wallets accounts args broadcasts))]
+    [/text/html (manx-to-octs:server (draft-page:draft 2 wallets accounts args broadcasts labels))]
   ::  Handle address data endpoint (returns simple-payload:http)
   ?:  ?=([%spv-wallet %wallet @ %account @ %address @ %data ~] site)
     =/  pubkey=@ux  (rash i.t.site hex)

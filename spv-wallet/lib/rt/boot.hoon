@@ -208,7 +208,9 @@
   =/  result=(each [@ux wallet:s] tang)
     %-  mule  |.
     =/  pubkey=@ux  (seed-to-pubkey:wallet-address [%q boot-secret.bd])
-    =/  new-wallet=wallet:s  ['Boot Wallet' [%q boot-secret.bd] pubkey ~ ~]
+    =/  master  (from-seed:bip32 (seed-to-bytes:wallet-address [%q boot-secret.bd]))
+    =/  master-xpub=@t  (crip (pub-extended:master %main))
+    =/  new-wallet=wallet:s  ['Boot Wallet' [%q boot-secret.bd] pubkey master-xpub ~ ~]
     [pubkey new-wallet]
   ?:  ?=(%| -.result)
     (store-boot-error %wallet-derivation p.result)

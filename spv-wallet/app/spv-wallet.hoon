@@ -3,13 +3,17 @@
     ui=ui-spv-wallet, html-utils, json-utils,
     bip39, bip32=bip32-spv, btc=bitcoin, bip329,
     wallet-address, wallet-account, seed-phrases, *wallet-mempool-space,
-    rt-wallet, rt-account, rt-send, rt-spv, rt-boot, taproot
+    rt-wallet, rt-account, rt-send, rt-spv, rt-boot, taproot,
+    draft=ui-draft
 /=  t-  /tests/lib/bitcoin-spv
 /=  t-  /tests/lib/seed-phrases
 /=  t-  /tests/lib/transactions
 /=  t-  /tests/lib/taproot
 /=  m-  /mar/sponsorship-request
 /=  m-  /mar/sponsorship-response
+/=  m-  /mar/address-request
+/=  m-  /mar/address-offer
+/=  f-  /fil/mcp/tools/generate-wallet-2
 =>
   |%
   ++  kv    kv:html-utils
@@ -138,10 +142,11 @@
     =/  generated-seed=cord  (gen-seed:seed-phrases eny %256)
     =/  =seed  [%t generated-seed]
     =/  pubkey=@ux  (seed-to-pubkey:wallet-address seed)
+    =/  master  (from-seed:bip32 (seed-to-bytes:wallet-address seed))
+    =/  master-xpub=@t  (crip (pub-extended:master %main))
     ::  Create wallet
     =/  new-wallet=wallet
-      ['<simple>My Wallet</simple>' seed pubkey ~ ~]
-    =/  master  (from-seed:bip32 (seed-to-bytes:wallet-address seed))
+      ['<simple>My Wallet</simple>' seed pubkey master-xpub ~ ~]
     ::  Derive BIP84 mainnet account: m/84'/0'/0'
     =/  main-acct=account:hd-path  [[%.y 84] [%.y 0] [%.y 0]]
     =/  main-derived  (derive-path:master "m/84'/0'/0'")
@@ -477,6 +482,13 @@
         |=  ad=account-details:s0
         ^-  account-details
         ad(networks (~(run by networks.ad) migrate-net))
+      =/  new-wallets=(map @ux wallet)
+        %-  ~(run by wallets.os)
+        |=  w=wallet:s0
+        ^-  wallet
+        =/  master  (from-seed:bip32 (seed-to-bytes:wallet-address seed.w))
+        =/  master-xpub=@t  (crip (pub-extended:master %main))
+        [name.w seed.w fingerprint.w master-xpub accounts.w scan.w]
       !>  ^-  state-1
       :*  %1
           auto-sponsor.os
@@ -485,7 +497,7 @@
           new-accounts
           watch-only.os
           signing.os
-          wallets.os
+          new-wallets
           labels.os
           spv.os
           indexer-subs.os
@@ -498,6 +510,7 @@
 ::
 ++  on-peek
   |=  [=bowl:gall state=vase =path]
+  ^-  (unit (unit cage))
   ~|  "unexpected scry into {<dap.bowl>} on path {<path>}"
   ?+  path  [~ ~]
     [%x %dbug %state ~]  ``noun+state
@@ -505,8 +518,16 @@
       [%x %mcp %tools ~]
     %-  some
     %-  some
-    :-  %noun
-    .^(vase %ca /(scot %p our.bowl)/[q.byk.bowl]/(scot %da now.bowl)/fil/mcp-tools/hoon)
+    :-  %mcp-tools
+    !>  ^-  (list tool:mcp)
+    %+  turn
+      .^  (list ^path)
+          %ct
+          /(scot %p our.bowl)/[q.byk.bowl]/(scot %da now.bowl)/fil/mcp/tools
+      ==
+    |=  =^path
+    ^-  tool:mcp
+    !<(tool:mcp .^(vase %ca (welp /(scot %p our.bowl)/[q.byk.bowl]/(scot %da now.bowl) path)))
   ==
 ::
 ++  process
@@ -559,6 +580,71 @@
     ;<  state=state-1  bind:m  (get-state-as:io state-1)
     =.  sponsor-response.state  `[sig height]
     ;<  ~  bind:m  (replace:io !>(state))
+    (pure:m ~)
+  ::  Handle address requests from foreign ships
+  ::  Someone is asking us for a receive address
+  ::
+  ?:  ?=(%address-request mark)
+    =/  req-net=network  !<(network vase)
+    ~&  "address-request from {<src>} for {<req-net>}"
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
+    =/  pk-unit=(unit @ux)  (resolve-simple-pubkey state req-net)
+    ?~  pk-unit
+      ~&  >>>  "address-request: no account for {<req-net>}"
+      (pure:m ~)
+    =/  pk=@ux  u.pk-unit
+    =/  det=(unit account-details)  (~(get by accounts.state) pk)
+    ?~  det
+      ~&  >>>  "address-request: account details not found"
+      (pure:m ~)
+    =/  ac  ~(. ac:wallet-account [u.det active-network.u.det])
+    =/  xpub=@t  k.extended-key.u.det
+    =/  offer-idx=@ud
+      (get-next-offer-index:draft receiving:ac labels.state xpub)
+    ::  Derive address at the offer index
+    =/  addr=@t
+      %:  derive-address-from-xkey:wallet-account
+        xpub  'receiving'  offer-idx
+        script-type.u.det  active-network.u.det
+      ==
+    ~&  "address-request: offering index {<offer-idx>} addr {<addr>} to {<src>}"
+    ::  Label it simple:offered:to:~requester
+    =/  lbl=@t  (crip "simple:offered:to:{(scow %p src)}")
+    =.  labels.state  (~(put la:bip329 labels.state) [%addr addr lbl ~ ~])
+    ::  Update last-offered
+    =.  labels.state  (set-last-offered:draft labels.state xpub offer-idx)
+    ;<  ~  bind:m  (replace:io !>(state))
+    ::  Ensure address is derived in our local state
+    ;<  ~  bind:m  (refresh-account-address:wallet-account pk 'receiving' offer-idx)
+    ::  Send address back to requester
+    ;<  ~  bind:m  (poke:io [src %spv-wallet] %address-offer !>([addr req-net]))
+    (pure:m ~)
+  ::  Handle address offers from foreign ships
+  ::  Someone is giving us an address we requested
+  ::
+  ?:  ?=(%address-offer mark)
+    =/  [addr=@t req-net=network]  !<([@t network] vase)
+    ~&  "address-offer from {<src>}: {<addr>} on {<req-net>}"
+    ;<  state=state-1  bind:m  (get-state-as:io state-1)
+    ::  Clear old simple:send:active from all addresses
+    =/  addr-labels=(list [@t (set label-entry:bip329)])
+      ~(tap by addr.labels.state)
+    =.  labels.state
+      |-
+      ?~  addr-labels  labels.state
+      =/  [ref=@t entries=(set label-entry:bip329)]  i.addr-labels
+      =/  has-active=?
+        %+  lien  ~(tap in entries)
+        |=(e=label-entry:bip329 =('simple:send:active' label.e))
+      ?.  has-active  $(addr-labels t.addr-labels)
+      $(addr-labels t.addr-labels, labels.state (~(del la:bip329 labels.state) %addr ref 'simple:send:active'))
+    ::  Label it simple:offered:from:~sender and simple:send:active
+    =/  lbl=@t  (crip "simple:offered:from:{(scow %p src)}")
+    =.  labels.state  (~(put la:bip329 labels.state) [%addr addr lbl ~ ~])
+    =.  labels.state  (~(put la:bip329 labels.state) [%addr addr 'simple:send:active' ~ ~])
+    ;<  ~  bind:m  (replace:io !>(state))
+    ::  Notify UI via SSE
+    ;<  ~  bind:m  (send-sse-event:io /spv-wallet/stream ~ `'address-offer-received')
     (pure:m ~)
   ::  HTTP requests may be unauthenticated (eyre sets src to guest)
   ::  Let the GET handler redirect to login if needed
@@ -656,122 +742,63 @@
           %rename-wallet
         =/  new-name=@t  (need (get-key:kv 'name' args))
         ;<  state=state-1  bind:m  (get-state-as:io state-1)
-        ::  Find the simple wallet or first wallet
-        =/  wal-list=(list [k=@ux v=wallet])  ~(tap by wallets.state)
-        ?~  wal-list  (pure:m ~)
-        =/  target=(unit [k=@ux v=wallet])
-          =/  rem=(list [k=@ux v=wallet])  wal-list
-          |-
-          ?~  rem  ~
-          =/  mx=(unit manx)  (de-xml:html name.v.i.rem)
-          ?:  ?&(?=(^ mx) =(%simple n.g.u.mx))
-            `i.rem
-          $(rem t.rem)
-        =/  wkey=@ux  ?~(target k.i.wal-list k.u.target)
-        =/  wal=wallet  ?~(target v.i.wal-list v.u.target)
-        ::  Preserve saved and fee state when renaming
-        =/  old-mx=(unit manx)  (de-xml:html name.wal)
-        =/  was-saved=?
-          ?~  old-mx  %.n
-          ?.  =(%simple n.g.u.old-mx)  %.n
-          (lien a.g.u.old-mx |=([n=mane v=tape] =(%saved n)))
-        =/  old-fee=(unit tape)
-          ?~  old-mx  ~
-          ?.  =(%simple n.g.u.old-mx)  ~
-          =/  rem=mart  a.g.u.old-mx
-          |-
-          ?~  rem  ~
-          ?:  =(%fee n.i.rem)  `v.i.rem
-          $(rem t.rem)
-        =/  attrs=tape
-          ;:  weld
-            ?:(was-saved " saved" "")
-            ?~(old-fee "" " fee=\"{u.old-fee}\"")
-          ==
+        =/  simple=(unit [key=@ux val=wallet])
+          (find-simple-wallet:draft wallets.state)
+        ?~  simple  (pure:m ~)
         =/  tagged-name=@t
-          (crip "<simple{attrs}>{(trip new-name)}</simple>")
-        =.  wallets.state  (~(put by wallets.state) wkey wal(name tagged-name))
+          (crip "<simple>{(trip new-name)}</simple>")
+        =.  wallets.state
+          (~(put by wallets.state) key.u.simple val.u.simple(name tagged-name))
         ;<  ~  bind:m  (replace:io !>(state))
         (pure:m ~)
         ::
           %toggle-saved
         ;<  state=state-1  bind:m  (get-state-as:io state-1)
-        =/  wal-list=(list [k=@ux v=wallet])  ~(tap by wallets.state)
-        ?~  wal-list  (pure:m ~)
-        =/  target=(unit [k=@ux v=wallet])
-          =/  rem=(list [k=@ux v=wallet])  wal-list
-          |-
-          ?~  rem  ~
-          =/  mx=(unit manx)  (de-xml:html name.v.i.rem)
-          ?:  ?&(?=(^ mx) =(%simple n.g.u.mx))
-            `i.rem
-          $(rem t.rem)
-        =/  wkey=@ux  ?~(target k.i.wal-list k.u.target)
-        =/  wal=wallet  ?~(target v.i.wal-list v.u.target)
-        ::  Parse current tag and toggle saved flag
-        =/  mx=(unit manx)  (de-xml:html name.wal)
-        ?~  mx  (pure:m ~)
-        ?.  =(%simple n.g.u.mx)  (pure:m ~)
-        =/  is-saved=?
-          (lien a.g.u.mx |=([n=mane v=tape] =(%saved n)))
-        =/  fee-attr=(unit tape)
-          =/  rem=mart  a.g.u.mx
-          |-
-          ?~  rem  ~
-          ?:  =(%fee n.i.rem)  `v.i.rem
-          $(rem t.rem)
-        =/  title=tape
-          ?~  c.u.mx  ""
-          =/  node=manx  i.c.u.mx
-          ?.  =(%$ n.g.node)  ""
-          ?~  a.g.node  ""
-          v.i.a.g.node
-        =/  attrs=tape
-          ;:  weld
-            ?:(is-saved "" " saved")
-            ?~(fee-attr "" " fee=\"{u.fee-attr}\"")
-          ==
-        =/  new-name=@t
-          (crip "<simple{attrs}>{title}</simple>")
-        =.  wallets.state  (~(put by wallets.state) wkey wal(name new-name))
+        =/  simple=(unit [key=@ux val=wallet])
+          (find-simple-wallet:draft wallets.state)
+        ?~  simple  (pure:m ~)
+        =/  master-xpub=@t  xpub.val.u.simple
+        =/  saved=?  (get-simple-saved:draft labels.state master-xpub)
+        =.  labels.state  (set-simple-saved:draft labels.state master-xpub !saved)
         ;<  ~  bind:m  (replace:io !>(state))
         (pure:m ~)
         ::
           %set-fee-rate
         =/  fee=@t  (fall (get-key:kv 'fee-rate' args) '2')
+        =/  req-net=@t  (fall (get-key:kv 'net' args) 'main')
         ;<  state=state-1  bind:m  (get-state-as:io state-1)
-        =/  wal-list=(list [k=@ux v=wallet])  ~(tap by wallets.state)
-        ?~  wal-list  (pure:m ~)
-        =/  target=(unit [k=@ux v=wallet])
-          =/  rem=(list [k=@ux v=wallet])  wal-list
-          |-
-          ?~  rem  ~
-          =/  mx=(unit manx)  (de-xml:html name.v.i.rem)
-          ?:  ?&(?=(^ mx) =(%simple n.g.u.mx))
-            `i.rem
-          $(rem t.rem)
-        =/  wkey=@ux  ?~(target k.i.wal-list k.u.target)
-        =/  wal=wallet  ?~(target v.i.wal-list v.u.target)
-        =/  mx=(unit manx)  (de-xml:html name.wal)
-        ?~  mx  (pure:m ~)
-        ?.  =(%simple n.g.u.mx)  (pure:m ~)
-        =/  is-saved=?
-          (lien a.g.u.mx |=([n=mane v=tape] =(%saved n)))
-        =/  title=tape
-          ?~  c.u.mx  ""
-          =/  node=manx  i.c.u.mx
-          ?.  =(%$ n.g.node)  ""
-          ?~  a.g.node  ""
-          v.i.a.g.node
-        =/  attrs=tape
-          ;:  weld
-            ?:(is-saved " saved" "")
-            " fee=\"{(trip fee)}\""
-          ==
-        =/  new-name=@t
-          (crip "<simple{attrs}>{title}</simple>")
-        =.  wallets.state  (~(put by wallets.state) wkey wal(name new-name))
+        =/  pk-unit=(unit @ux)  (resolve-simple-pubkey state req-net)
+        ?~  pk-unit  (pure:m ~)
+        =/  det=(unit account-details)  (~(get by accounts.state) u.pk-unit)
+        ?~  det  (pure:m ~)
+        =/  acct-xpub=@t  k.extended-key.u.det
+        =/  fee-val=@ud  (fall (rush fee dem) 2)
+        =.  labels.state  (set-simple-fee:draft labels.state acct-xpub fee-val)
         ;<  ~  bind:m  (replace:io !>(state))
+        (pure:m ~)
+        ::
+          %request-address
+        ::  Request a receive address from another ship
+        =/  ship-name=@t  (need (get-key:kv 'ship' args))
+        =/  req-net=@t  (fall (get-key:kv 'net' args) 'main')
+        =/  target=@p  (rash ship-name ;~(pfix sig fed:ag))
+        ~&  "request-address: asking {<target>} for {<req-net>} address"
+        ;<  state=state-1  bind:m  (get-state-as:io state-1)
+        ::  Clear old simple:send:active from all addresses
+        =/  addr-labels=(list [@t (set label-entry:bip329)])
+          ~(tap by addr.labels.state)
+        =.  labels.state
+          |-
+          ?~  addr-labels  labels.state
+          =/  [ref=@t entries=(set label-entry:bip329)]  i.addr-labels
+          =/  has-active=?
+            %+  lien  ~(tap in entries)
+            |=(e=label-entry:bip329 =('simple:send:active' label.e))
+          ?.  has-active  $(addr-labels t.addr-labels)
+          $(addr-labels t.addr-labels, labels.state (~(del la:bip329 labels.state) %addr ref 'simple:send:active'))
+        ;<  ~  bind:m  (replace:io !>(state))
+        =/  net=network  ;;(network (crip (trip req-net)))
+        ;<  ~  bind:m  (poke:io [target %spv-wallet] %address-request !>(net))
         (pure:m ~)
         ::
           %refresh-wallet
@@ -1216,6 +1243,21 @@
       ?~(boot ~ error.u.boot)
     (handle-progress-sse:ui prog err event)
   ?:  ?=([%spv-wallet %stream ~] site)
+    ?:  =(`'address-offer-received' event)
+      ::  Return the active send address from labels
+      =/  st=state-1  !<(state-1 state)
+      =/  active-addr=@t
+        =/  addr-list=(list [@t (set label-entry:bip329)])
+          ~(tap by addr.labels.st)
+        |-
+        ?~  addr-list  ''
+        =/  [ref=@t entries=(set label-entry:bip329)]  i.addr-list
+        =/  has-active=?
+          %+  lien  ~(tap in entries)
+          |=(e=label-entry:bip329 =('simple:send:active' label.e))
+        ?:  has-active  ref
+        $(addr-list t.addr-list)
+      ~[active-addr]
     (handle-spv-sse:ui bowl state %main args id event)
   ?+    site  !!
       [%spv-wallet %stream %spv @ ~]

@@ -1,5 +1,5 @@
 /-  *spv-wallet
-/+  feather, *ui-utils, wallet-account, *wallet-address, sailbox
+/+  feather, *ui-utils, wallet-account, *wallet-address, sailbox, bip329
 |%
 ::  Simple bitcoin wallet UI — /apps/wallet
 ::
@@ -18,21 +18,28 @@
           accounts=(map @ux account-details)
           args=(list [key=@t value=@t])
           broadcasts=(map @t broadcast)
+          =labels:bip329
       ==
   ^-  manx
-  ?+  num  (draft-0 wallets accounts args broadcasts)
-    %0  (draft-0 wallets accounts args broadcasts)
+  ?+  num  (draft-0 wallets accounts args broadcasts labels)
+    %0  (draft-0 wallets accounts args broadcasts labels)
   ==
 ::
 ++  format-btc
   |=  sats=@ud
   ^-  tape
-  =/  whole=@ud  (div sats 100.000.000)
-  =/  frac=@ud  (mod sats 100.000.000)
-  =/  frac-tape=tape  (a-co:co frac)
-  =/  pad=@ud  (sub 8 (min 8 (lent frac-tape)))
-  =/  padded=tape  (weld (reap pad '0') frac-tape)
-  (weld (a-co:co whole) (weld "." padded))
+  =/  raw=tape  (a-co:co sats)
+  =/  len=@ud  (lent raw)
+  ?:  (lte len 3)  raw
+  =/  out=tape  ~
+  =/  idx=@ud  0
+  |-
+  ?~  raw  (flop out)
+  =/  rem=@ud  (sub len idx)
+  =.  out  ?:  &((gth idx 0) =(0 (mod rem 3)))
+    [i.raw ',' out]
+  [i.raw out]
+  $(raw t.raw, idx +(idx))
 ::
 ++  total-balance
   |=  accounts=(map @ux account-details)
@@ -108,6 +115,106 @@
   ?~  parsed  (trip name)
   title.u.parsed
 ::
+::  Get last-offered index from xpub labels
+::  Looks for a label like 'simple:last-offered:5' on the xpub
+::
+++  get-last-offered
+  |=  [=labels:bip329 xpub=@t]
+  ^-  (unit @ud)
+  =/  entries=(list label-entry:bip329)
+    ~(tap in (~(get la:bip329 labels) %xpub xpub))
+  =/  prefix=tape  "simple:last-offered:"
+  =/  prefix-len=@ud  (lent prefix)
+  |-
+  ?~  entries  ~
+  =/  lbl=tape  (trip label.i.entries)
+  ?.  =(prefix (scag prefix-len lbl))
+    $(entries t.entries)
+  (rush (crip (slag prefix-len lbl)) dem)
+::  Set last-offered index on xpub label
+::
+++  set-last-offered
+  |=  [=labels:bip329 xpub=@t idx=@ud]
+  ^-  labels:bip329
+  =/  entries=(list label-entry:bip329)
+    ~(tap in (~(get la:bip329 labels) %xpub xpub))
+  =/  prefix=tape  "simple:last-offered:"
+  =/  prefix-len=@ud  (lent prefix)
+  =.  labels
+    |-
+    ?~  entries  labels
+    =/  lbl=tape  (trip label.i.entries)
+    ?:  =(prefix (scag prefix-len lbl))
+      $(entries t.entries, labels (~(del la:bip329 labels) %xpub xpub label.i.entries))
+    $(entries t.entries)
+  (~(put la:bip329 labels) [%xpub xpub (crip "simple:last-offered:{(a-co:co idx)}") ~ ~])
+::  Get the next index to offer an address from
+::  max(first-unused-index, last-offered + 1)
+::
+++  get-next-offer-index
+  |=  $:  leaf-mop=((mop @ud hd-leaf) gth)
+          =labels:bip329
+          xpub=@t
+      ==
+  ^-  @ud
+  =/  unused-idx=@ud
+    =/  ui=(unit @ud)  (get-next-unused-index leaf-mop)
+    ?~  ui
+      (lent (tap:((on @ud hd-leaf) gth) leaf-mop))
+    u.ui
+  =/  last=(unit @ud)  (get-last-offered labels xpub)
+  ?~  last  unused-idx
+  (max unused-idx +(u.last))
+::  Get simple:saved flag from xpub labels
+::
+++  get-simple-saved
+  |=  [=labels:bip329 xpub=@t]
+  ^-  ?
+  =/  entries=(list label-entry:bip329)
+    ~(tap in (~(get la:bip329 labels) %xpub xpub))
+  %+  lien  entries
+  |=(e=label-entry:bip329 =('simple:saved' label.e))
+::  Set simple:saved flag on xpub label
+::
+++  set-simple-saved
+  |=  [=labels:bip329 xpub=@t saved=?]
+  ^-  labels:bip329
+  ?:  saved
+    (~(put la:bip329 labels) [%xpub xpub 'simple:saved' ~ ~])
+  (~(del la:bip329 labels) %xpub xpub 'simple:saved')
+::  Get simple:fee rate from xpub labels (default 2)
+::
+++  get-simple-fee
+  |=  [=labels:bip329 xpub=@t]
+  ^-  @ud
+  =/  entries=(list label-entry:bip329)
+    ~(tap in (~(get la:bip329 labels) %xpub xpub))
+  =/  prefix=tape  "simple:fee:"
+  =/  prefix-len=@ud  (lent prefix)
+  |-
+  ?~  entries  2
+  =/  lbl=tape  (trip label.i.entries)
+  ?.  =(prefix (scag prefix-len lbl))
+    $(entries t.entries)
+  (fall (rush (crip (slag prefix-len lbl)) dem) 2)
+::  Set simple:fee rate on xpub label
+::
+++  set-simple-fee
+  |=  [=labels:bip329 xpub=@t fee=@ud]
+  ^-  labels:bip329
+  =/  entries=(list label-entry:bip329)
+    ~(tap in (~(get la:bip329 labels) %xpub xpub))
+  =/  prefix=tape  "simple:fee:"
+  =/  prefix-len=@ud  (lent prefix)
+  =.  labels
+    |-
+    ?~  entries  labels
+    =/  lbl=tape  (trip label.i.entries)
+    ?:  =(prefix (scag prefix-len lbl))
+      $(entries t.entries, labels (~(del la:bip329 labels) %xpub xpub label.i.entries))
+    $(entries t.entries)
+  (~(put la:bip329 labels) [%xpub xpub (crip "simple:fee:{(a-co:co fee)}") ~ ~])
+::
 ++  find-simple-wallet
   |=  wallets=(map @ux wallet)
   ^-  (unit [key=@ux val=wallet])
@@ -123,6 +230,7 @@
           all-accounts=(map @ux account-details)
           args=(list [key=@t value=@t])
           broadcasts=(map @t broadcast)
+          =labels:bip329
       ==
   ^-  manx
   ::  Find the <simple> wallet, fall back to first wallet
@@ -143,15 +251,7 @@
   =/  wal-seed-masked=tape
     ?~  simple  ""
     (trip (mask-seed-phrase seed.val.u.simple))
-  =/  backed-up=?
-    ?~  simple  %.n
-    (is-saved name.val.u.simple)
-  =/  fee-rate=@ud
-    ?~  simple  2
-    =/  parsed  (parse-simple-tag name.val.u.simple)
-    ?~  parsed  2
-    fee.u.parsed
-  ::  Collect all accounts from the simple wallet with their networks
+::  Collect all accounts from the simple wallet with their networks
   ::  Mainnet accounts first
   =/  all-acct-details=(list account-details)
     ?~  simple  ~
@@ -184,6 +284,14 @@
   =/  net-label=tape
     ?~  acct  "unknown"
     (trip active-network.u.acct)
+  =/  master-xpub=@t
+    ?~  simple  ''
+    xpub.val.u.simple
+  =/  acct-xpub=@t
+    ?~  acct  ''
+    k.extended-key.u.acct
+  =/  backed-up=?  (get-simple-saved labels master-xpub)
+  =/  fee-rate=@ud  (get-simple-fee labels acct-xpub)
   ::  Compute balance and pending for the selected account only
   =/  bal=@ud
     ?~  acct  0
@@ -325,7 +433,7 @@
         ==
         ;div.activity-tx-value
           ;div(class "activity-tx-amt tx-sent")
-            ; -{amt-tape} BTC
+            ; -฿{amt-tape}
           ==
           ;div.activity-tx-fiat(data-sats "{(a-co:co send-amt)}"): ;
         ==
@@ -387,7 +495,7 @@
         ==
         ;div.activity-tx-value
           ;div(class "activity-tx-amt {dir-class}")
-            ; {?:(?=(%sent dir.e) "-" "+")}{amt-tape} BTC
+            ; {?:(?=(%sent dir.e) "-" "+")}฿{amt-tape}
           ==
           ;div.activity-tx-fiat(data-sats "{(a-co:co amt.e)}"): ;
         ==
@@ -552,8 +660,8 @@
   =/  in-sats=tape  ?:(=(0 pending-in) "0" (a-co:co pending-in))
   =/  out-sats=tape  ?:(=(0 pending-out) "0" (a-co:co pending-out))
   =/  uc=tape  ?:(has-pending "unconf-balance" "unconf-balance hidden")
-  =/  in-text=tape  (weld "+" pending-in-tape)
-  =/  out-text=tape  (weld "-" pending-out-tape)
+  =/  in-text=tape  (weld "+฿" pending-in-tape)
+  =/  out-text=tape  (weld "-฿" pending-out-tape)
   ;div
     ;div.balance-section
       ;div.balance-label-row
@@ -566,10 +674,7 @@
           ==
         ==
       ==
-      ;div.balance-amount
-        ;+  (text bal-tape)
-      ==
-      ;div.balance-unit: BTC
+      ;div.balance-amount: ฿{bal-tape}
       ;div.balance-fiat
         ;span#fiat-value(data-sats bal-sats): —
       ==
@@ -585,14 +690,12 @@
               ;span.unconf-amount-in
                 ;+  (text in-text)
               ==
-              ;span.unconf-unit: BTC
             ==
         ;+  ?:  =(0 pending-out)  ;span;
             ;div.unconf-out
               ;span.unconf-amount-out
                 ;+  (text out-text)
               ==
-              ;span.unconf-unit: BTC
             ==
       ==
     ==
@@ -602,7 +705,6 @@
   |=  ~
   ^-  manx
   ;div.action-buttons
-    ;button.action-btn.action-btn-secondary(onclick "toggleReceive()"): Receive
     ;button.action-btn.action-btn-primary(onclick "toggleSend()"): Send
   ==
 ::
@@ -676,32 +778,6 @@
     ==
   ==
 ::
-++  render-receive-popup
-  |=  ~
-  ^-  manx
-  ;div#receive-overlay.receive-overlay(onclick "closeReceive(event)")
-    ;div.receive-modal
-      ;button.receive-close(onclick "toggleReceive()"): ×
-      ;div.receive-title: Receive Bitcoin
-      ;div#receive-spinner.receive-spinner
-        ;div.spinner;
-        ;div.spinner-text: Finding unused address...
-      ==
-      ;div#receive-content.receive-content
-        ;div#receive-qr.receive-qr;
-        ;div.receive-addr-row
-          ;span#receive-addr.receive-addr;
-          ;button#receive-copy-btn.receive-copy(onclick "copyAddr(this)")
-            ;svg(xmlns "http://www.w3.org/2000/svg", viewBox "0 0 24 24", width "16", height "16", fill "none", stroke "currentColor", stroke-width "2", stroke-linecap "round", stroke-linejoin "round")
-              ;rect(x "9", y "9", width "13", height "13", rx "2", ry "2");
-              ;path(d "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1");
-            ==
-          ==
-        ==
-      ==
-      ;div#receive-error.receive-empty;
-    ==
-  ==
 ::
 ++  render-send-popup
   |=  [bal=@ud bal-tape=tape]
@@ -717,13 +793,13 @@
       ;div.send-title: Send Bitcoin
       ;div.send-field
         ;label.send-label: To
-        ;input#send-to.send-input(type "text", placeholder "bc1q...", autocomplete "off");
+        ;input#send-to.send-input(type "text", placeholder "bc1q... or ~ship", autocomplete "off");
       ==
       ;div.send-field
-        ;label.send-label: Amount (BTC)
-        ;input#send-amount.send-input(type "text", placeholder "0.00000000", autocomplete "off");
+        ;label.send-label: Amount (฿)
+        ;input#send-amount.send-input(type "text", placeholder "0", autocomplete "off");
       ==
-      ;div.send-balance: Est. max: {est-max-tape} BTC
+      ;div.send-balance: Est. max: ฿{est-max-tape}
       ;div#send-status.send-status;
       ;button#send-btn.send-btn(onclick "sendBitcoin()"): Send
     ==
@@ -756,12 +832,41 @@
           ;span.info-saved-text: I've saved my recovery phrase
         ==
       ==
+      ;div.info-title: Account Info
       ;div.info-section
         ;div.info-label: Fee Rate (sat/vB)
         ;div.info-fee-row
           ;input#info-fee.info-fee-input(type "number", min "1", value fee-tape);
           ;button.info-fee-save(onclick "saveFeeRate()"): Save
         ==
+      ==
+      ;div.info-section
+        ;div.info-addr-header
+          ;div.info-label: Next Unused Address
+          ;button.info-addr-refresh(onclick "refreshNextAddr()")
+            ;svg(xmlns "http://www.w3.org/2000/svg", viewBox "0 0 24 24", width "14", height "14", fill "none", stroke "currentColor", stroke-width "2", stroke-linecap "round", stroke-linejoin "round")
+              ;path(d "M23 4v6h-6");
+              ;path(d "M1 20v-6h6");
+              ;path(d "M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15");
+            ==
+          ==
+        ==
+        ;div#info-addr-spinner.info-addr-spinner
+          ;div.spinner;
+        ==
+        ;div#info-addr-content.info-addr-content
+          ;div#info-addr-qr.info-addr-qr;
+          ;div.info-addr-row
+            ;span#info-addr-text.info-addr-text;
+            ;button#info-addr-copy.receive-copy(onclick "copyInfoAddr(this)")
+              ;svg(xmlns "http://www.w3.org/2000/svg", viewBox "0 0 24 24", width "16", height "16", fill "none", stroke "currentColor", stroke-width "2", stroke-linecap "round", stroke-linejoin "round")
+                ;rect(x "9", y "9", width "13", height "13", rx "2", ry "2");
+                ;path(d "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1");
+              ==
+            ==
+          ==
+        ==
+        ;div#info-addr-error.info-addr-error;
       ==
     ==
   ==
@@ -883,10 +988,6 @@
         ;   line-height: 1;
         ;   margin-bottom: 6px;
         ; }
-        ; .balance-unit {
-        ;   font-size: 15px;
-        ;   color: var(--f4);
-        ; }
         ; .balance-fiat {
         ;   margin-top: 8px;
         ;   font-size: 14px;
@@ -1004,10 +1105,6 @@
         ;   font-weight: 600;
         ;   color: #ef4444;
         ;   line-height: 1;
-        ; }
-        ; .unconf-unit {
-        ;   font-size: 12px;
-        ;   color: var(--f4);
         ; }
         ;
         ; /* --- Misc --- */
@@ -1140,28 +1237,7 @@
         ;   margin-top: 2px;
         ; }
         ;
-        ; /* --- Receive overlay --- */
-        ; .receive-overlay {
-        ;   display: none;
-        ;   position: fixed;
-        ;   top: 0; left: 0; right: 0; bottom: 0;
-        ;   background: rgba(0,0,0,0.6);
-        ;   z-index: 100;
-        ;   align-items: center;
-        ;   justify-content: center;
-        ; }
-        ; .receive-overlay.open {
-        ;   display: flex;
-        ; }
-        ; .receive-modal {
-        ;   background: var(--b0);
-        ;   border-radius: 20px;
-        ;   padding: 28px 24px;
-        ;   max-width: 360px;
-        ;   width: 90%;
-        ;   text-align: center;
-        ;   position: relative;
-        ; }
+        ; /* --- Shared popup styles --- */
         ; .receive-close {
         ;   position: absolute;
         ;   top: 16px;
@@ -1172,33 +1248,6 @@
         ;   font-size: 20px;
         ;   cursor: pointer;
         ;   line-height: 1;
-        ; }
-        ; .receive-title {
-        ;   font-size: 16px;
-        ;   font-weight: 600;
-        ;   margin-bottom: 20px;
-        ; }
-        ; .receive-qr {
-        ;   display: inline-block;
-        ;   padding: 16px;
-        ;   background: white;
-        ;   border-radius: 12px;
-        ;   margin-bottom: 16px;
-        ; }
-        ; .receive-addr-row {
-        ;   display: flex;
-        ;   align-items: center;
-        ;   gap: 8px;
-        ;   padding: 12px 14px;
-        ;   background: var(--b1);
-        ;   border-radius: 10px;
-        ; }
-        ; .receive-addr {
-        ;   flex: 1;
-        ;   font-family: monospace;
-        ;   font-size: 13px;
-        ;   word-break: break-all;
-        ;   text-align: left;
         ; }
         ; .receive-copy {
         ;   color: var(--f3);
@@ -1214,19 +1263,6 @@
         ; .receive-copy:hover {
         ;   color: var(--accent);
         ; }
-        ; .receive-content {
-        ;   display: none;
-        ; }
-        ; .receive-content.show {
-        ;   display: block;
-        ; }
-        ; .receive-spinner {
-        ;   text-align: center;
-        ;   padding: 32px 0;
-        ; }
-        ; .receive-spinner.hide {
-        ;   display: none;
-        ; }
         ; .spinner {
         ;   width: 28px;
         ;   height: 28px;
@@ -1235,20 +1271,6 @@
         ;   border-radius: 50%;
         ;   animation: spin 0.7s linear infinite;
         ;   margin: 0 auto 12px;
-        ; }
-        ; .spinner-text {
-        ;   font-size: 13px;
-        ;   color: var(--f4);
-        ; }
-        ; .receive-empty {
-        ;   display: none;
-        ;   text-align: center;
-        ;   padding: 24px;
-        ;   color: var(--f4);
-        ;   font-size: 14px;
-        ; }
-        ; .receive-empty.show {
-        ;   display: block;
         ; }
         ;
         ; /* --- Send overlay --- */
@@ -1481,6 +1503,67 @@
         ; }
         ; .info-fee-save:hover {
         ;   background: var(--accent-hover);
+        ; }
+        ; .info-addr-header {
+        ;   display: flex;
+        ;   align-items: center;
+        ;   justify-content: space-between;
+        ; }
+        ; .info-addr-refresh {
+        ;   background: none;
+        ;   border: 1px solid var(--b3);
+        ;   border-radius: 6px;
+        ;   padding: 4px 6px;
+        ;   cursor: pointer;
+        ;   color: var(--f2);
+        ;   display: flex;
+        ;   align-items: center;
+        ; }
+        ; .info-addr-refresh:hover {
+        ;   background: var(--b2);
+        ;   color: var(--f0);
+        ; }
+        ; .info-addr-spinner {
+        ;   display: none;
+        ;   text-align: center;
+        ;   padding: 20px 0;
+        ; }
+        ; .info-addr-spinner.show {
+        ;   display: block;
+        ; }
+        ; .info-addr-content {
+        ;   display: none;
+        ;   text-align: center;
+        ; }
+        ; .info-addr-content.show {
+        ;   display: block;
+        ; }
+        ; .info-addr-qr {
+        ;   display: flex;
+        ;   justify-content: center;
+        ;   margin: 12px 0;
+        ; }
+        ; .info-addr-row {
+        ;   display: flex;
+        ;   align-items: center;
+        ;   justify-content: center;
+        ;   gap: 8px;
+        ;   margin-top: 8px;
+        ; }
+        ; .info-addr-text {
+        ;   font-family: monospace;
+        ;   font-size: 12px;
+        ;   word-break: break-all;
+        ;   color: var(--f1);
+        ; }
+        ; .info-addr-error {
+        ;   display: none;
+        ;   color: var(--red);
+        ;   font-size: 13px;
+        ;   padding: 12px 0;
+        ; }
+        ; .info-addr-error.show {
+        ;   display: block;
         ; }
         ; .info-saved-row {
         ;   display: flex;
@@ -1886,7 +1969,7 @@
         ;         rateFmt.style = 'currency';
         ;         rateFmt.currency = 'USD';
         ;         rateFmt.maximumFractionDigits = 0;
-        ;         rateEl.textContent = '1 BTC = ' + price.toLocaleString('en-US', rateFmt);
+        ;         rateEl.textContent = '100,000,000 \u0E3F = ' + price.toLocaleString('en-US', rateFmt);
         ;       }
         ;       var txFiats = document.querySelectorAll('.activity-tx-fiat');
         ;       for (var i = 0; i < txFiats.length; i++) {
@@ -1940,11 +2023,6 @@
         ;     flashCheck(btn, '14');
         ;   });
         ; }
-        ; function copyAddr(btn) {
-        ;   navigator.clipboard.writeText(btn.dataset.addr).then(function() {
-        ;     flashCheck(btn);
-        ;   });
-        ; }
         ; function showTxDetail(row) {
         ;   var overlay = document.getElementById('tx-detail-overlay');
         ;   var txid = row.dataset.txid;
@@ -1985,54 +2063,6 @@
         ;     flashCheck(btn, '10');
         ;   });
         ; }
-        ; function toggleReceive() {
-        ;   var overlay = document.getElementById('receive-overlay');
-        ;   var isOpen = overlay.classList.contains('open');
-        ;   if (isOpen) {
-        ;     overlay.classList.remove('open');
-        ;     return;
-        ;   }
-        ;   overlay.classList.add('open');
-        ;   document.getElementById('receive-spinner').classList.remove('hide');
-        ;   document.getElementById('receive-content').classList.remove('show');
-        ;   document.getElementById('receive-error').classList.remove('show');
-        ;   var qr = document.getElementById('receive-qr');
-        ;   qr.innerHTML = '';
-        ;   walletPost('action=get-receive-address')
-        ;   .then(function(r) {
-        ;     return r.text();
-        ;   }
-        ;   )
-        ;   .then(function(addr) {
-        ;     addr = addr.trim();
-        ;     if (!addr) {
-        ;       document.getElementById('receive-spinner').classList.add('hide');
-        ;       document.getElementById('receive-error').textContent = 'No address available';
-        ;       document.getElementById('receive-error').classList.add('show');
-        ;       return;
-        ;     }
-        ;     document.getElementById('receive-addr').textContent = addr;
-        ;     document.getElementById('receive-copy-btn').dataset.addr = addr;
-        ;     new QRCode(qr, {
-        ;       text: 'bitcoin:' + addr, width: 200, height: 200
-        ;     }
-        ;     );
-        ;     document.getElementById('receive-spinner').classList.add('hide');
-        ;     document.getElementById('receive-content').classList.add('show');
-        ;   }
-        ;   )
-        ;   .catch(function() {
-        ;     document.getElementById('receive-spinner').classList.add('hide');
-        ;     document.getElementById('receive-error').textContent = 'Failed to fetch address';
-        ;     document.getElementById('receive-error').classList.add('show');
-        ;   }
-        ;   );
-        ; }
-        ; function closeReceive(e) {
-        ;   if (e.target === document.getElementById('receive-overlay')) {
-        ;     toggleReceive();
-        ;   }
-        ; }
         ; function walletPost(params) {
         ;   params += '&net=' + document.querySelector('.wallet-shell').dataset.net;
         ;   return fetch('/apps/wallet', {
@@ -2060,6 +2090,7 @@
         ;     toggleSend();
         ;   }
         ; }
+        ; var addressStream = null;
         ; function sendBitcoin() {
         ;   var addr = document.getElementById('send-to').value.trim();
         ;   var amtStr = document.getElementById('send-amount').value.trim();
@@ -2073,19 +2104,55 @@
         ;     status.textContent = 'Enter a destination address';
         ;     return;
         ;   }
-        ;   var amt = parseFloat(amtStr);
-        ;   if (isNaN(amt) || amt <= 0) {
+        ;   if (addr.startsWith('~')) {
+        ;     btn.disabled = true;
+        ;     status.className = 'send-status pending';
+        ;     status.textContent = 'Requesting address from ' + addr + '...';
+        ;     var net = new URLSearchParams(window.location.search).get('net') || 'main';
+        ;     var body = 'action=request-address&ship=' + encodeURIComponent(addr) + '&net=' + net;
+        ;     walletPost(body).then(function(res) {
+        ;       if (!res.ok) throw new Error('HTTP ' + res.status);
+        ;       if (addressStream) addressStream.close();
+        ;       addressStream = new EventSource('/spv-wallet/stream');
+        ;       addressStream.addEventListener('address-offer-received', function(e) {
+        ;         var receivedAddr = e.data.trim();
+        ;         if (receivedAddr) {
+        ;           document.getElementById('send-to').value = receivedAddr;
+        ;           status.className = 'send-status success';
+        ;           status.textContent = 'Address received from ' + addr + '. Click Send to confirm.';
+        ;           btn.disabled = false;
+        ;           addressStream.close();
+        ;           addressStream = null;
+        ;         }
+        ;       });
+        ;       setTimeout(function() {
+        ;         if (addressStream) {
+        ;           addressStream.close();
+        ;           addressStream = null;
+        ;           status.className = 'send-status error';
+        ;           status.textContent = 'Timed out waiting for address from ' + addr;
+        ;           btn.disabled = false;
+        ;         }
+        ;       }, 60000);
+        ;     }).catch(function(err) {
+        ;       status.className = 'send-status error';
+        ;       status.textContent = 'Request failed: ' + err.message;
+        ;       btn.disabled = false;
+        ;     });
+        ;     return;
+        ;   }
+        ;   var sats = parseInt(amtStr, 10);
+        ;   if (isNaN(sats) || sats <= 0) {
         ;     status.className = 'send-status error';
         ;     status.textContent = 'Enter a valid amount';
         ;     return;
         ;   }
-        ;   var sats = Math.round(amt * 100000000);
         ;   if (sats < 546) {
         ;     status.className = 'send-status error';
-        ;     status.textContent = 'Amount below dust limit (546 sats)';
+        ;     status.textContent = 'Amount below dust limit (546)';
         ;     return;
         ;   }
-        ;   if (!confirm('Send ' + amtStr + ' BTC to ' + addr + '?')) return;
+        ;   if (!confirm('Send ' + sats.toLocaleString() + ' \u0E3F to ' + addr + '?')) return;
         ;   btn.disabled = true;
         ;   status.className = 'send-status pending';
         ;   status.textContent = 'Building & broadcasting...';
@@ -2161,13 +2228,51 @@
         ;   for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
         ;   btn.classList.add('active');
         ; }
+        ; var infoAddrLoaded = false;
         ; function toggleInfo() {
-        ;   document.getElementById('info-overlay').classList.toggle('open');
+        ;   var ov = document.getElementById('info-overlay');
+        ;   var opening = !ov.classList.contains('open');
+        ;   ov.classList.toggle('open');
+        ;   if (opening && !infoAddrLoaded) refreshNextAddr();
         ; }
         ; function closeInfo(e) {
         ;   if (e.target === document.getElementById('info-overlay')) {
         ;     toggleInfo();
         ;   }
+        ; }
+        ; function refreshNextAddr() {
+        ;   infoAddrLoaded = false;
+        ;   document.getElementById('info-addr-spinner').classList.add('show');
+        ;   document.getElementById('info-addr-content').classList.remove('show');
+        ;   document.getElementById('info-addr-error').classList.remove('show');
+        ;   document.getElementById('info-addr-qr').innerHTML = '';
+        ;   walletPost('action=get-receive-address').then(function(r) {
+        ;     return r.text();
+        ;   }).then(function(addr) {
+        ;     addr = addr.trim();
+        ;     document.getElementById('info-addr-spinner').classList.remove('show');
+        ;     if (!addr) {
+        ;       document.getElementById('info-addr-error').textContent = 'No address available';
+        ;       document.getElementById('info-addr-error').classList.add('show');
+        ;       return;
+        ;     }
+        ;     document.getElementById('info-addr-text').textContent = addr;
+        ;     document.getElementById('info-addr-copy').dataset.addr = addr;
+        ;     new QRCode(document.getElementById('info-addr-qr'), {
+        ;       text: 'bitcoin:' + addr, width: 160, height: 160
+        ;     });
+        ;     document.getElementById('info-addr-content').classList.add('show');
+        ;     infoAddrLoaded = true;
+        ;   }).catch(function() {
+        ;     document.getElementById('info-addr-spinner').classList.remove('show');
+        ;     document.getElementById('info-addr-error').textContent = 'Failed to fetch address';
+        ;     document.getElementById('info-addr-error').classList.add('show');
+        ;   });
+        ; }
+        ; function copyInfoAddr(btn) {
+        ;   navigator.clipboard.writeText(btn.dataset.addr).then(function() {
+        ;     flashCheck(btn, '16');
+        ;   });
         ; }
         ; function toggleSaved(cb) {
         ;   walletPost('action=toggle-saved').then(function() {
@@ -2190,7 +2295,6 @@
         ;+  (render-actions)
         ;+  (render-tab-panel tx-items addr-items)
         ;+  (render-tx-detail-popup)
-        ;+  (render-receive-popup)
         ;+  (render-send-popup bal bal-tape)
         ;+  (render-info-popup wal-seed wal-seed-masked backed-up fee-rate)
       ==

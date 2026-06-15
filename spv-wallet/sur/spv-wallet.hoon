@@ -116,6 +116,7 @@
   $:  name=@t
       =seed
       fingerprint=@ux
+      xpub=@t
       accounts=(map account:hd-path @ux)
       scan=(map coin-type:hd-path [pid=@ta act=? idx=@ud scn=account-scan])
   ==

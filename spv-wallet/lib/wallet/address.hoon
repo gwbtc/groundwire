@@ -114,6 +114,34 @@
       (slag 2 (scow %uc (address-p2sh:derived network)))
     (slag 2 (scow %uc (address:derived network)))
   (crip address-str)
+::  Get the index of the next unused address
+::  Returns ~ if gap limit exceeded
+::
+++  get-next-unused-index
+  |=  leaf-mop=((mop @ud hd-leaf) gth)
+  ^-  (unit @ud)
+  =/  leaf-list=(list [@ud hd-leaf])
+    (tap:((on @ud hd-leaf) gth) leaf-mop)
+  =|  last-unused=(unit (pair @ud @t))
+  |-
+  ?~  leaf-list
+    ?~(last-unused ~ `p.u.last-unused)
+  =/  [idx=@ud =hd-leaf]  i.leaf-list
+  =/  details=address-details  main.hd-leaf
+  =/  has-txs=?
+    ?~  info.details  %.n
+    ?|  (gth tx-count.u.info.details 0)
+        (gth mempool-funded.u.info.details 0)
+        (gth mempool-spent.u.info.details 0)
+    ==
+  ?:  has-txs
+    ?~  last-unused
+      ~
+    =/  gap=@ud  (sub p.u.last-unused idx)
+    ?:  (lth gap 20)
+      `p.u.last-unused
+    ~
+  $(leaf-list t.leaf-list, last-unused `[idx address.details])
 ::  Get the next unused address from a map of addresses
 ::  Respects BIP-44 gap limit (20 unused addresses)
 ::
