@@ -1,4 +1,4 @@
-/-  *spv-wallet, mcp, s0=spv-wallet-0
+/-  *spv-wallet, s0=spv-wallet-0
 /+  dbug, sailbox, io=sailboxio, server, multipart,
     ui=ui-spv-wallet, html-utils, json-utils,
     bip39, bip32=bip32-spv, btc=bitcoin, bip329,
@@ -13,7 +13,6 @@
 /=  m-  /mar/sponsorship-response
 /=  m-  /mar/address-request
 /=  m-  /mar/address-offer
-/=  f-  /fil/mcp/tools/generate-wallet-2
 =>
   |%
   ++  kv    kv:html-utils
@@ -514,20 +513,6 @@
   ~|  "unexpected scry into {<dap.bowl>} on path {<path>}"
   ?+  path  [~ ~]
     [%x %dbug %state ~]  ``noun+state
-  ::
-      [%x %mcp %tools ~]
-    %-  some
-    %-  some
-    :-  %mcp-tools
-    !>  ^-  (list tool:mcp)
-    %+  turn
-      .^  (list ^path)
-          %ct
-          /(scot %p our.bowl)/[q.byk.bowl]/(scot %da now.bowl)/fil/mcp/tools
-      ==
-    |=  =^path
-    ^-  tool:mcp
-    !<(tool:mcp .^(vase %ca (welp /(scot %p our.bowl)/[q.byk.bowl]/(scot %da now.bowl) path)))
   ==
 ::
 ++  process
@@ -617,7 +602,7 @@
     ::  Ensure address is derived in our local state
     ;<  ~  bind:m  (refresh-account-address:wallet-account pk 'receiving' offer-idx)
     ::  Send address back to requester
-    ;<  ~  bind:m  (poke:io [src %spv-wallet] %address-offer !>([addr req-net]))
+    ;<  ~  bind:m  (poke:io [src %spv-wallet] %fiber-poke !>(['addr-offer' %address-offer [addr req-net]]))
     (pure:m ~)
   ::  Handle address offers from foreign ships
   ::  Someone is giving us an address we requested
@@ -798,7 +783,7 @@
           $(addr-labels t.addr-labels, labels.state (~(del la:bip329 labels.state) %addr ref 'simple:send:active'))
         ;<  ~  bind:m  (replace:io !>(state))
         =/  net=network  ;;(network (crip (trip req-net)))
-        ;<  ~  bind:m  (poke:io [target %spv-wallet] %address-request !>(net))
+        ;<  ~  bind:m  (poke:io [target %spv-wallet] %fiber-poke !>(['addr-req' %address-request net]))
         (pure:m ~)
         ::
           %refresh-wallet

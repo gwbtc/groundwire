@@ -215,6 +215,23 @@
     $(entries t.entries)
   (~(put la:bip329 labels) [%xpub xpub (crip "simple:fee:{(a-co:co fee)}") ~ ~])
 ::
+::  Resolve an address to a ship name from offered labels
+::  Checks for 'simple:offered:to:~ship' or 'simple:offered:from:~ship'
+::
+++  addr-to-ship
+  |=  [=labels:bip329 addr=@t]
+  ^-  (unit @t)
+  =/  entries=(list label-entry:bip329)
+    ~(tap in (~(get la:bip329 labels) %addr addr))
+  |-
+  ?~  entries  ~
+  =/  lbl=tape  (trip label.i.entries)
+  ?:  =("simple:offered:to:" (scag 18 lbl))
+    `(crip (slag 18 lbl))
+  ?:  =("simple:offered:from:" (scag 20 lbl))
+    `(crip (slag 20 lbl))
+  $(entries t.entries)
+::
 ++  find-simple-wallet
   |=  wallets=(map @ux wallet)
   ^-  (unit [key=@ux val=wallet])
@@ -353,14 +370,13 @@
       $(ins t.ins)
     =/  conf=?  ?=([%confirmed *] tx-status.tx)
     =/  entries=(list [dir=?(%sent %received) amt=@ud conf=? =transaction])
-      ?:  ?&((gth in-val 0) (gth out-val 0))
-        ::  Self-send: show both legs
-        :~  [%received in-val conf tx]
-            [%sent out-val conf tx]
-        ==
       ?:  (gth out-val in-val)
-        ~[[%sent (sub out-val in-val) conf tx]]
-      ~[[%received (sub in-val out-val) conf tx]]
+        =/  gross=@ud  (sub out-val in-val)
+        =/  net=@ud  ?~(fee.tx gross ?:((gth u.fee.tx gross) gross (sub gross u.fee.tx)))
+        ~[[%sent net conf tx]]
+      ?:  (gth in-val out-val)
+        ~[[%received (sub in-val out-val) conf tx]]
+      ~
     $(txns t.txns, acc (weld entries acc))
   ::  Compute pending from unconfirmed transactions in tx-list
   =/  [pending-in=@ud pending-out=@ud]
@@ -402,13 +418,17 @@
       $(outs t.outs, s (add s amount.i.outs))
     =/  amt-tape=tape  (format-btc send-amt)
     ::  Destination: first non-change output
-    =/  dest=tape
+    =/  dest-addr=tape
       =/  outs=(list [address=@t amount=@ud])  outputs.bc
       |-
       ?~  outs  ""
       ?:  ?&(?=(^ change-address.bc) =(address.i.outs u.change-address.bc))
         $(outs t.outs)
       (trip address.i.outs)
+    =/  dest-ship=(unit @t)  (addr-to-ship labels (crip dest-addr))
+    =/  dest=tape
+      ?~  dest-ship  "to {dest-addr}"
+      "to {(trip u.dest-ship)}"
     =/  sent-da=@da  sent.bc
     =/  =date  (yore sent-da)
     =/  [dy=@ud hr=@ud mn=@ud *]  t.date
@@ -416,7 +436,7 @@
       "{(a-co:co m.date)}/{(a-co:co dy)} {(a-co:co hr)}:{?:((lth mn 10) "0" "")}{(a-co:co mn)}"
     =/  txid-full=tape  (trip txid)
     =/  item=manx
-      ;div.activity-tx(onclick "showTxDetail(this)", data-txid txid-full, data-addr dest, data-addr-label "To", data-status "Broadcast", data-time sent-tape)
+      ;div.activity-tx(onclick "showTxDetail(this)", data-txid txid-full, data-addr dest-addr, data-addr-label "To", data-status "Broadcast", data-time sent-tape)
         ;div.activity-tx-icon.tx-sent
           ;svg(xmlns "http://www.w3.org/2000/svg", viewBox "0 0 24 24", width "16", height "16", fill "none", stroke "currentColor", stroke-width "2.5", stroke-linecap "round", stroke-linejoin "round")
             ;line(x1 "12", y1 "19", x2 "12", y2 "5");
@@ -442,9 +462,20 @@
   ::  Pre-render activity items outside sail to avoid fuse-loop
   ::  Sort: pending (unconfirmed) first, then confirmed
   =/  tx-list-sorted=(list [dir=?(%sent %received) amt=@ud conf=? =transaction])
-    %+  weld
-      (skim tx-list |=(e=[* * conf=? *] !conf.e))
-    (skim tx-list |=(e=[* * conf=? *] conf.e))
+    =/  unconf  (skim tx-list |=(e=[* * conf=? *] !conf.e))
+    =/  conf  (skim tx-list |=(e=[* * conf=? *] conf.e))
+    ::  Sort confirmed by block height descending (newest first)
+    =.  conf
+      %+  sort  conf
+      |=  [a=[* * * =transaction] b=[* * * =transaction]]
+      =/  ha=@ud
+        ?.  ?=([%confirmed *] tx-status.transaction.a)  0
+        block-height.tx-status.transaction.a
+      =/  hb=@ud
+        ?.  ?=([%confirmed *] tx-status.transaction.b)  0
+        block-height.tx-status.transaction.b
+      (gth ha hb)
+    (weld unconf conf)
   =/  tx-items=(list manx)
     =/  rem=(list [dir=?(%sent %received) amt=@ud conf=? =transaction])  tx-list-sorted
     =/  items=(list manx)  ~
@@ -460,22 +491,46 @@
       =/  =date  (yore (add ~1970.1.1 (mul bt ~s1)))
       =/  [dy=@ud hr=@ud mn=@ud *]  t.date
       "{(a-co:co m.date)}/{(a-co:co dy)} {(a-co:co hr)}:{?:((lth mn 10) "0" "")}{(a-co:co mn)}"
-    =/  status=tape  ?:(conf.e "Confirmed" "Pending")
-    =/  counterparty=tape
+    =/  status=tape
+      ?.  conf.e  "Pending"
+      ?.  ?=([%confirmed *] tx-status.transaction.e)  "Confirmed"
+      "Block {(a-co:co block-height.tx-status.transaction.e)}"
+    =/  counterparty-addr=tape
       ?:  ?=(%sent dir.e)
-        ::  Sent: first output address
+        ::  Sent: first output NOT to our address (skip change)
         =/  outs=(list tx-output)  outputs.transaction.e
-        ?~(outs "" (trip address.i.outs))
+        |-
+        ?~  outs  ""
+        ?.  (~(has in our-addrs) address.i.outs)
+          (trip address.i.outs)
+        $(outs t.outs)
       ::  Received: first input prevout address
       =/  ins=(list tx-input)  inputs.transaction.e
       |-
       ?~  ins  ""
       ?~  prevout.i.ins  $(ins t.ins)
       (trip address.u.prevout.i.ins)
+    ::  Check if counterparty address resolves to a ship via labels
+    ::  For sent: check destination for simple:offered:from:~ship
+    ::  For received: check our output addresses for simple:offered:to:~ship
+    =/  ship-name=(unit @t)
+      ?:  ?=(%sent dir.e)
+        (addr-to-ship labels (crip counterparty-addr))
+      ::  Received: check each output for offered:to label
+      =/  outs=(list tx-output)  outputs.transaction.e
+      |-
+      ?~  outs  ~
+      =/  found=(unit @t)  (addr-to-ship labels address.i.outs)
+      ?^  found  found
+      $(outs t.outs)
+    =/  dir-prefix=tape  ?:(?=(%sent dir.e) "to " "from ")
+    =/  counterparty=tape
+      ?~  ship-name  "{dir-prefix}{counterparty-addr}"
+      "{dir-prefix}{(trip u.ship-name)}"
     =/  addr-label=tape  ?:(?=(%sent dir.e) "To" "From")
     =/  txid-full=tape  (trip txid.transaction.e)
     =/  item=manx
-      ;div.activity-tx(onclick "showTxDetail(this)", data-txid txid-full, data-addr counterparty, data-addr-label addr-label, data-status status, data-time tx-time)
+      ;div.activity-tx(onclick "showTxDetail(this)", data-txid txid-full, data-addr counterparty-addr, data-addr-label addr-label, data-status status, data-time tx-time)
         ;div(class "activity-tx-icon {dir-class}")
           ;svg(xmlns "http://www.w3.org/2000/svg", viewBox "0 0 24 24", width "16", height "16", fill "none", stroke "currentColor", stroke-width "2.5", stroke-linecap "round", stroke-linejoin "round")
             ;+  ?:  ?=(%sent dir.e)
@@ -753,6 +808,7 @@
               ;path(d "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1");
             ==
           ==
+          ;a.tx-explorer-link.hidden(id "tx-detail-addr-link", href "", target "_blank", rel "noopener"): mempool.space
         ==
       ==
       ;div.tx-detail-row
@@ -765,6 +821,7 @@
               ;path(d "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1");
             ==
           ==
+          ;a.tx-explorer-link.hidden(id "tx-detail-txid-link", href "", target "_blank", rel "noopener"): mempool.space
         ==
       ==
       ;div.tx-detail-row
@@ -1235,6 +1292,15 @@
         ; .tx-detail-value-row .tx-copy-btn {
         ;   flex-shrink: 0;
         ;   margin-top: 2px;
+        ; }
+        ; .tx-explorer-link {
+        ;   flex-shrink: 0;
+        ;   font-size: 11px;
+        ;   color: var(--accent);
+        ;   text-decoration: none;
+        ; }
+        ; .tx-explorer-link:hover {
+        ;   text-decoration: underline;
         ; }
         ;
         ; /* --- Shared popup styles --- */
@@ -2023,6 +2089,14 @@
         ;     flashCheck(btn, '14');
         ;   });
         ; }
+        ; function mempoolBase() {
+        ;   var net = document.querySelector('.wallet-shell').dataset.net;
+        ;   if (net === 'main') return 'https://mempool.space';
+        ;   if (net === 'testnet3') return 'https://mempool.space/testnet';
+        ;   if (net === 'testnet4') return 'https://mempool.space/testnet4';
+        ;   if (net === 'signet') return 'https://mempool.space/signet';
+        ;   return 'https://mempool.space';
+        ; }
         ; function showTxDetail(row) {
         ;   var overlay = document.getElementById('tx-detail-overlay');
         ;   var txid = row.dataset.txid;
@@ -2030,18 +2104,26 @@
         ;   var addrLabel = row.dataset.addrLabel;
         ;   var status = row.dataset.status;
         ;   var time = row.dataset.time;
+        ;   var base = mempoolBase();
         ;   document.getElementById('tx-detail-txid').textContent = txid;
         ;   var txidBtn = document.getElementById('tx-detail-txid').parentElement.querySelector('.tx-copy-btn');
         ;   if (txidBtn) txidBtn.dataset.txid = txid;
+        ;   var txidLink = document.getElementById('tx-detail-txid-link');
+        ;   txidLink.href = base + '/tx/' + txid;
+        ;   txidLink.classList.remove('hidden');
         ;   var addrRow = document.getElementById('tx-detail-addr');
+        ;   var addrLink = document.getElementById('tx-detail-addr-link');
         ;   if (addr) {
         ;     addrRow.classList.remove('hidden');
         ;     document.getElementById('tx-detail-addr-label').textContent = addrLabel;
         ;     document.getElementById('tx-detail-addr-value').textContent = addr;
         ;     var addrBtn = addrRow.querySelector('.tx-copy-btn');
         ;     if (addrBtn) addrBtn.dataset.txid = addr;
+        ;     addrLink.href = base + '/address/' + addr;
+        ;     addrLink.classList.remove('hidden');
         ;   } else {
         ;     addrRow.classList.add('hidden');
+        ;     addrLink.classList.add('hidden');
         ;   }
         ;   document.getElementById('tx-detail-status').textContent = status;
         ;   var timeRow = document.getElementById('tx-detail-time-row');
