@@ -1813,6 +1813,7 @@ _AMES_BAD_PACKET = "ames_pact_free: bad packet type"
 _KILN_MCP_OK = "kiln: merge into %mcp succeeded"
 _KILN_LANDSCAPE_OK = "kiln: merge into %landscape succeeded"
 _KILN_NOSTRILL_OK = "kiln: merge into %nostrill succeeded"
+_KILN_VITRIOL_OK = "kiln: merge into %vitriol succeeded"
 
 
 def _tee_gray(
@@ -1821,11 +1822,12 @@ def _tee_gray(
     mcp_event: "threading.Event | None" = None,
     landscape_event: "threading.Event | None" = None,
     nostrill_event: "threading.Event | None" = None,
+    vitriol_event: "threading.Event | None" = None,
 ) -> None:
     """Re-emit lines from *stream* in gray ANSI.
 
     Sets crash_event on fatal Ames errors and sets desk events when Kiln
-    reports successful merges into %mcp, %landscape, or %nostrill.
+    reports successful merges into %mcp, %landscape, %nostrill, or %vitriol.
     """
     for raw in iter(stream.readline, b""):
         line = raw.decode(errors="replace").rstrip("\n")
@@ -1839,6 +1841,8 @@ def _tee_gray(
             landscape_event.set()
         if nostrill_event is not None and _KILN_NOSTRILL_OK in line:
             nostrill_event.set()
+        if vitriol_event is not None and _KILN_VITRIOL_OK in line:
+            vitriol_event.set()
 
 
 _MUTED = "\033[38;2;90;100;128m"
@@ -1868,6 +1872,7 @@ def print_boot_success(
     installed_spv: bool,
     installed_nostrill: bool,
     installed_mcp: bool,
+    installed_vitriol: bool,
 ) -> None:
     """Print the post-boot success banner."""
 
@@ -1883,7 +1888,11 @@ def print_boot_success(
     print(f"{_BOLD}To use your ship from the browser, you'll need your web login code{_NC}")
     print("Type +code in your ship's terminal to get your login code at any time")
 
-    if installed_landscape or installed_spv or installed_nostrill or installed_mcp:
+    if installed_landscape or \
+       installed_spv or \
+       installed_nostrill or \
+       installed_mcp or \
+       installed_vitriol:
         print()
         print(f"{_BOLD}What you can do{_NC}")
         if installed_mcp:
@@ -1894,6 +1903,8 @@ def print_boot_success(
             print(f"- Manage your apps at {_LINK}{url}/apps/landscape{_NC}")
         if installed_spv:
             print(f"- Use your Bitcoin hot wallet at {_LINK}{url}/spv-wallet{_NC}")
+        if installed_vitriol:
+            print(f"- Sign git commits with your onchain ID at {_LINK}{url}/vitriol{_NC}")
 
     if installed_mcp:
         print()
@@ -1911,7 +1922,7 @@ def boot_comet(
     vere_bin: str,
     pill: str = GW_PILL,
     snapshot_file: bytes | None = None,
-) -> tuple[str, bool, bool, bool, bool]:
+) -> tuple[str, bool, bool, bool, bool, bool]:
     """Boot a comet, wait until idle, kill the process, then return the local URL and installed desks.
 
     Starts vere, polls conn.sock until the ship responds to a FYRD, then waits
@@ -1940,18 +1951,27 @@ def boot_comet(
         threading.Event,
         threading.Event,
         threading.Event,
+        threading.Event,
     ]:
         crash_event = threading.Event()
         mcp_event = threading.Event()
         landscape_event = threading.Event()
         nostrill_event = threading.Event()
+        vitriol_event = threading.Event()
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         threading.Thread(
             target=_tee_gray,
-            args=(p.stdout, crash_event, mcp_event, landscape_event, nostrill_event),
+            args=(
+                p.stdout,
+                crash_event,
+                mcp_event,
+                landscape_event,
+                nostrill_event,
+                vitriol_event,
+            ),
             daemon=True,
         ).start()
-        return p, crash_event, mcp_event, landscape_event, nostrill_event
+        return p, crash_event, mcp_event, landscape_event, nostrill_event, vitriol_event
 
     def _read_lock_pid() -> int | None:
         for _ in range(40):
@@ -2050,7 +2070,9 @@ def boot_comet(
     # Initial boot
     cmd = [vere_bin, "-d", "-w", pier_name, "-B", pill, "-G", feed, "--http-port", str(port)]
     print()
-    proc, crash_event, mcp_event, landscape_event, nostrill_event = _start_proc(cmd)
+    proc, _crash_event, _mcp_event, _landscape_event, _nostrill_event, vitriol_event = _start_proc(
+        cmd
+    )
     _wait_for_sock(proc)
     daemon_pids: set[int] = set()
     lock_pid = _read_lock_pid()
@@ -2086,6 +2108,9 @@ def boot_comet(
     installed_spv = _desk_is_listed(installed_desks_output, "spv-wallet")
     installed_nostrill = _desk_is_listed(installed_desks_output, "nostrill")
     installed_mcp = _desk_is_listed(installed_desks_output, "mcp")
+    installed_vitriol = (
+        _desk_is_listed(installed_desks_output, "vitriol") or vitriol_event.is_set()
+    )
 
     exit_dojo(vere_bin, conn_sock)
 
@@ -2101,7 +2126,7 @@ def boot_comet(
             raise RuntimeError("failed to confirm pier lock release")
         raise RuntimeError(f"pier lock still held by PID {lock_pid}")
 
-    return url, installed_landscape, installed_spv, installed_nostrill, installed_mcp
+    return url, installed_landscape, installed_spv, installed_nostrill, installed_mcp, installed_vitriol
 
 
 # =========================================================================
@@ -2327,6 +2352,7 @@ def main():
                 installed_spv,
                 installed_nostrill,
                 installed_mcp,
+                installed_vitriol,
             ) = boot_comet(
                 comet,
                 feed,
@@ -2342,6 +2368,7 @@ def main():
                 installed_spv=installed_spv,
                 installed_nostrill=installed_nostrill,
                 installed_mcp=installed_mcp,
+                installed_vitriol=installed_vitriol,
             )
         return
 
@@ -2440,6 +2467,7 @@ def main():
             installed_spv,
             installed_nostrill,
             installed_mcp,
+            installed_vitriol,
         ) = boot_comet(
             comet,
             feed,
@@ -2455,6 +2483,7 @@ def main():
             installed_spv=installed_spv,
             installed_nostrill=installed_nostrill,
             installed_mcp=installed_mcp,
+            installed_vitriol=installed_vitriol,
         )
 
 if __name__ == "__main__":
