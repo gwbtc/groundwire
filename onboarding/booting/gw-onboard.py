@@ -1668,6 +1668,12 @@ def _get_ship_cookie_from_login(url: str, login_code: str) -> str:
     return cookie_pair
 
 
+def get_ship_cookie_from_code(url: str, login_code: str) -> str:
+    """Exchange an Eyre web login code for the urbauth cookie pair."""
+
+    return _get_ship_cookie_from_login(url, login_code)
+
+
 def _write_ship_mcp_configs(pier_name: str, port: int, ship_cookie: str) -> None:
     """Write project-scoped MCP configs for local agent CLIs."""
 
@@ -2068,7 +2074,7 @@ def boot_comet(
         sys.exit(1)
 
     try:
-        ship_cookie = _get_ship_cookie_from_login(url, login_code)
+        ship_cookie = get_ship_cookie_from_code(url, login_code)
         _write_ship_mcp_configs(pier_name, port, ship_cookie)
     except Exception as e:
         print(f"ERROR: Failed to generate local MCP config files: {e}")
