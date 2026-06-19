@@ -135,6 +135,26 @@
   ?~  res=(de:base16:mimes:html p.res.res)  (pure:m ~)
   (pure:m `[txid (decodew:txu:bc u.res)])
 ::
+::  +get-raw-transaction-in-block: fetch a tx by txid + its containing block
+::  hash (RPC getrawtransaction with the blockhash arg), so the node needs no
+::  -txindex. Added for the Confidential-Comets 2.0 block-hash keyfile model.
+::
+++  get-raw-transaction-in-block
+  |=  [=req-to id=(unit @t) txid=@ux block=@ux]
+  =/  m  (strand:strandio (unit tx:bc))
+  ^-  form:m
+  ;<  res=response:rpc  bind:m
+    %+  request-rpc  req-to
+    ^-  request:rpc
+    :*  ?~(id 'get-raw-transaction-in-block' u.id)
+        '2.0'
+        'getrawtransaction'
+        list+[s+(render-hex-bytes 32 txid) b+| s+(render-hex-bytes 32 block) ~]
+    ==
+  ?.  ?=([%result * [%s *]] res)  (pure:m ~)
+  ?~  res=(de:base16:mimes:html p.res.res)  (pure:m ~)
+  (pure:m `[txid (decodew:txu:bc u.res)])
+::
 ::  +get-tx-out: query whether a specific output is unspent (RPC gettxout).
 ::
 ::    Produces ~ on RPC error, `%.y if the output is unspent (UTXO present),

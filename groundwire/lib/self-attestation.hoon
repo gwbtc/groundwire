@@ -4,25 +4,36 @@
 ::  See sur/self-attestation for the packet format and protocol rules.
 ::
 ::  %urb-watcher calls ++verify in a khan thread. The strand fetches every
-::  referenced transaction from the Bitcoin node (the node is trusted, the same
-::  trust model as %urb-watcher's block processing) and then runs the pure
+::  referenced transaction from the Bitcoin node, each with its attested
+::  blockhash so the node needs no -txindex (the node is trusted, the same
+::  trust model as %urb-watcher's block processing), and then runs the pure
 ::  verifier ++run-checks, which establishes:
 ::
-::    - genesis: the %spawn's precommit output exists with the attested
-::      scriptPubKey hash, the comet's suite-C networking key encodes the tweak
-::      binding it to that precommit satpoint, who = fig of the key, and the
-::      commit transaction actually SPENDS the precommit satpoint (so precommit
-::      and commit share a controller, mirroring lib/urb-core's %spawn proof);
-::    - per link: the transaction spends the exact sat-carrying output of the
-::      previous transaction (full outpoint, not just txid), that output's
-::      taproot key equals Q recomputed from the off-chain reveal (single-leaf
-::      commitment), the spend is key-path-shaped, the leaf re-parses to
-::      exactly the claimed self-enacted sotx(es), and the sat's offset is
-::      tracked deterministically through the outputs (index-to-sont math, so
-::      one genesis cannot fork into two divergent chains at a multi-output tx);
+::    - genesis: link 0 is the spawn COMMIT transaction. The %spawn's
+::      precommit output exists with the attested scriptPubKey hash, the
+::      comet's suite-C networking key encodes the tweak binding it to that
+::      precommit satpoint, who = fig of the key, and link 0's input 0
+::      actually SPENDS the precommit satpoint (so precommit and commit share
+::      a controller, mirroring lib/urb-core's %spawn proof);
+::    - per link: a link IS a commit transaction. Its input 0 (the
+::      sat-carrying input, by stipulation) key-path-spends the exact
+::      sat-carrying output of the previous link (full outpoint, not just
+::      txid); the link's OWN sat-carrying output's taproot key equals Q
+::      recomputed from the off-chain reveal (single-leaf commitment); the
+::      leaf re-parses to exactly the claimed self-enacted sotx(es); and the
+::      sat's offset is tracked deterministically through the outputs --
+::      input 0 means no input value precedes the sat, so it lands at output
+::      index = its entering offset (index-to-sont math, so one genesis
+::      cannot fork into two divergent chains at a multi-output tx);
 ::    - tip: the sat's final landing equals the claimed tip (txid AND vout AND
 ::      off) and that output is currently unspent; if the caller already tracks
 ::      a sont for this ship, the packet must reconcile with it.
+::
+::  Because each link discloses its OWN output's leaf, the latest sotx (the
+::  tip leaf's) is enacted directly at packet-verification time -- no lag,
+::  and a bare %spawn is a valid one-link keyfile. An on-chain script-path
+::  reveal of the same leaf is what enacts it for chain watchers if the ship
+::  later goes public.
 ::
 ::  On an ok verdict, ++replay-chain folds the chain's sotxes into a point:urb
 ::  (subject-only mirror of process-unv) for storage in unv-ids/Jael.
@@ -122,6 +133,24 @@
   ^-  sotx:urb
   sot.r
 ::
+::  +from-skeleton: build a full self-attestation from an off-ship skeleton,
+::  re-deriving each link's sots from its leaf script (so they match the leaf
+::  by construction). ~ if any leaf is unparsable.
+::
+++  from-skeleton
+  |=  =skeleton:sa
+  ^-  (unit self-attestation:sa)
+  %-  mole
+  |.
+  ^-  self-attestation:sa
+  =/  chain=(list link:sa)
+    %+  turn  links.skeleton
+    |=  sl=skel-link:sa
+    ^-  link:sa
+    =/  parsed  (need (parse-leaf script.sl))
+    [txid.sl block.sl [internal-key.sl [version.sl script.sl]] parsed]
+  [who.skeleton funding.skeleton chain tip.skeleton]
+::
 ::  +singles: flatten a list of raw-sotx, expanding %batch in order and
 ::  carrying the enclosing sotx's ship and sig onto each single.
 ::
@@ -180,6 +209,14 @@
 ::  neither means the verifier is ahead of the packet or the packet describes
 ::  a divergent chain/different sat -- fail either way.
 ::
+::    XX KNOWN GAP (audit P3, tracked-ok-replay-bearer): there is no tip-HEIGHT
+::    monotonicity bound. An interior (older) sont of the SAME true chain passes
+::    `entering`, so a re-attestation that rolls the ship back to a superseded
+::    key/sponsor is blocked only by the tip-unspent check. To make rollback
+::    impossible independent of tip-unspent: store the tip height alongside the
+::    tracked sont (app/urb-watcher-2 state) and require an accepted
+::    re-attestation's tip height >= the stored one (thread it in here).
+::
 ++  tracked-ok
   |=  [tracked=sont:ord tip=sont:ord entering=(list sont:ord)]
   ^-  ?
@@ -188,12 +225,15 @@
   ==
 ::
 ::  +check-spawn: the genesis %spawn / precommit / tweak proof, mirroring
-::  lib/urb-core's on-chain %spawn handling. Returns the precommit satpoint
-::  when every check passes (the caller then proves the commit tx spends it).
+::  lib/urb-core's on-chain %spawn handling. `link0` is the spawn COMMIT
+::  transaction (the chain's first link): its input 0 must spend the attested
+::  precommit satpoint (shared controller -- the ownership leg of urb-core's
+::  %spawn proof). Returns the sat's landing within link 0's own outputs when
+::  every check passes (input 0 means the sat enters at its precommit offset).
 ::
 ++  check-spawn
-  |=  [sat=self-attestation:sa pre=tx:bc]
-  ^-  [checks=(list check:sa) psat=(unit sont:ord)]
+  |=  [sat=self-attestation:sa pre=tx:bc link0=tx:bc]
+  ^-  [checks=(list check:sa) carried=(unit [vout=@ud off=@ud])]
   ?~  chain.sat  [~[['spawn-no-chain' %.n]] ~]
   =/  sots  sots.i.chain.sat
   ?~  sots  [~[['spawn-no-sots' %.n]] ~]
@@ -212,7 +252,7 @@
   ::  XX calc-precommit-sont's total-input-value upper bound is skipped here;
   ::     it would need the precommit's own prevout values.
   =/  off-ok=?  (lte (add off.to.sp tej.to.sp) value.out)
-  =/  psat=sont:ord  [id.pre u.vout.to.sp off.to.sp]
+  =/  psat=sont:ord  [txid.funding.sat u.vout.to.sp off.to.sp]
   ::  The tweak that the networking key must encode (mirrors lib/urb-core).
   =/  tweak
     %+  rap  3
@@ -230,72 +270,49 @@
   ::  and the key must encode the tweak (the key <-> satpoint binding).
   =/  fig-ok=?    =(who.sat fig:ex:cac)
   =/  tweak-ok=?  =(dat.tw.pub:+<:cac tweak)
-  :_  ?:(&(spkh-ok off-ok fig-ok tweak-ok) `psat ~)
+  ::  The spawn commit must SPEND the precommit satpoint at input 0 (the
+  ::  sat-carrying input, by stipulation), and the claimed offset must sit
+  ::  inside the spent precommit output.
+  =/  inp  (snag-input 0 link0)
+  =/  spends-ok=?
+    ?~  inp  %.n
+    ?&  =([txid.u.inp pos.u.inp] [txid.psat vout.psat])
+        (lth off.psat value.out)
+    ==
+  ::  The sat enters link 0 through input 0, so no input value precedes it:
+  ::  it lands at output index = its offset within the precommit output.
+  ::  ~ means it fell into the miner fee -- the sat-thread cannot start.
+  =/  landing  (index-to-sont:uc off.psat os.link0)
+  =/  carried=(unit [vout=@ud off=@ud])
+    ?~  landing  ~
+    `[vout.landing off.landing]
+  :_  ?:(&(spkh-ok off-ok fig-ok tweak-ok spends-ok) carried ~)
   :~  ['spawn-precommit-spkh' spkh-ok]
       ['spawn-precommit-off' off-ok]
       ['spawn-suite-c' %.y]
       ['spawn-fig' fig-ok]
       ['spawn-key-tweak' tweak-ok]
+      ['spawn-spends-precommit' spends-ok]
+      ['spawn-sat-landed' ?=(^ carried)]
   ==
 ::
-::  +apply-commit: prove the commit tx spends the precommit satpoint (so the
-::  two share a controller -- the ownership leg of urb-core's %spawn proof the
-::  prototype was missing) and compute where the sat lands in the commit's
-::  outputs. `prior` is the summed value of the commit's inputs before the
-::  precommit-spending one (~ if unfetchable).
+::  +own-output-checks: the checks every link runs against ITS OWN
+::  sat-carrying output, at the sat's landing [vout off] within this tx:
+::  the off-chain reveal must recompute to the on-chain taproot key at the
+::  landing vout, and the disclosed sots must be nonempty, self-enacted,
+::  and exactly what the committed leaf encodes.
 ::
-++  apply-commit
-  |=  $:  commit=tx:bc
-          psat=sont:ord
-          pre-out-value=@ud
-          prior=(unit @ud)
-      ==
-  ^-  [checks=(list check:sa) csat=(unit [vout=@ud off=@ud])]
-  =/  spends=?
-    %+  lien  is.commit
-    |=  i=inputw:tx:bitcoin
-    =([txid.i pos.i] [txid.psat vout.psat])
-  ?.  &(spends (lth off.psat pre-out-value))
-    [~[['spawn-commit-spends-precommit' %.n]] ~]
-  ?~  prior
-    [~[['spawn-commit-spends-precommit' %.y] ['spawn-commit-prior-values' %.n]] ~]
-  =/  landing  (index-to-sont:uc (add u.prior off.psat) os.commit)
-  ?~  landing
-    [~[['spawn-commit-spends-precommit' %.y] ['spawn-commit-sat-landed' %.n]] ~]
-  :-  ~[['spawn-commit-spends-precommit' %.y] ['spawn-commit-sat-landed' %.y]]
-  `[vout.landing off.landing]
-::
-::  +link-checks: verify one link of the chain. `carried` is the sat's
-::  [vout off] location within prev's outputs; `prior` is the summed value of
-::  this tx's inputs before in.link. Returns the sat's landing in this tx.
-::
-++  link-checks
-  |=  $:  who=@p
-          idx=@ud
-          =link:sa
-          prev=tx:bc
-          this=tx:bc
-          carried=[vout=@ud off=@ud]
-          prior=(unit @ud)
-      ==
-  ^-  [checks=(list check:sa) next=(unit [vout=@ud off=@ud])]
-  =/  inp  (snag-input in.link this)
-  ?~  inp  [~[[(nom idx 'input-index') %.n]] ~]
-  ::  Continuity: this input must spend the exact sat-carrying output of prev
-  ::  (full outpoint -- spending some OTHER output of prev is a fork attempt).
-  =/  cont=?  =([txid.u.inp pos.u.inp] [id.prev vout.carried])
-  ?.  (lth pos.u.inp (lent os.prev))
-    [~[[(nom idx 'continuity') cont] [(nom idx 'prevout-range') %.n]] ~]
-  =/  spent=output:tx:bitcoin  (snag pos.u.inp os.prev)
-  ::  The carried offset must sit inside the spent output (is-sont-in-input).
-  =/  off-ok=?  (lth off.carried value.spent)
+++  own-output-checks
+  |=  [who=@p idx=@ud =link:sa this=tx:bc landing=[vout=@ud off=@ud]]
+  ^-  (list check:sa)
   ::  Commitment: reconstruct the taproot output key from the off-chain reveal
-  ::  (internal key + single leaf) and match the spent output's scriptPubKey.
+  ::  (internal key + single leaf) and match this tx's output at the landing.
   =/  recomputed=@ux  (out-key reveal.link)
-  =/  onchain=(unit @ux)  (p2tr-xonly script-pubkey.spent)
+  =/  onchain=(unit @ux)
+    ?.  (lth vout.landing (lent os.this))  ~
+    =/  out=output:tx:bitcoin  (snag vout.landing os.this)
+    (p2tr-xonly script-pubkey.out)
   =/  commit-ok=?  &(?=(^ onchain) =(u.onchain recomputed))
-  ::  Confidential: the spend must be key-path (single-sig witness).
-  =/  keypath-ok=?  (is-key-path witness.u.inp)
   ::  No gaps: every link carries at least one sotx (%no-op for plain moves).
   =/  nonempty=?  ?=(^ sots.link)
   ::  Self-enacted: every sotx in the chain is from who.
@@ -307,23 +324,59 @@
     =/  parsed  (parse-leaf script.tapleaf.reveal.link)
     ?~  parsed  %.n
     =((turn u.parsed get-sotx) (turn sots.link get-sotx))
-  ::  Track the sat to its deterministic landing output in this tx.
-  ::  ~ means the prior input values were unfetchable, or the sat fell into
-  ::  the miner fee -- either way the single sat-thread cannot continue.
-  =/  landed=(unit [vout=@ud off=@ud])
-    ?~  prior  ~
-    =/  l  (index-to-sont:uc (add u.prior off.carried) os.this)
-    ?~(l ~ `l)
-  :_  landed
-  :~  [(nom idx 'continuity') cont]
-      [(nom idx 'off-range') off-ok]
-      [(nom idx 'commitment') commit-ok]
-      [(nom idx 'key-path') keypath-ok]
+  :~  [(nom idx 'commitment') commit-ok]
       [(nom idx 'sots-nonempty') nonempty]
       [(nom idx 'sots-ship') ship-ok]
       [(nom idx 'sots-match') sots-ok]
-      [(nom idx 'sat-landed') ?=(^ landed)]
   ==
+::
+::  +link-checks: verify one link of the chain. For a non-genesis link,
+::  `carried` is the sat's [vout off] location within prev's outputs: input 0
+::  of this tx must key-path-spend that exact outpoint, and the sat lands in
+::  this tx's outputs at index = off.carried (input 0 carries no preceding
+::  input value). For the genesis link (`genesis`), check-spawn already
+::  proved the precommit spend (a plain wallet spend, with no witness-shape
+::  constraint) and computed the landing; `carried` IS the landing within
+::  this tx, so only the own-output checks remain. Returns the sat's landing.
+::
+++  link-checks
+  |=  $:  who=@p
+          idx=@ud
+          =link:sa
+          prev=tx:bc
+          this=tx:bc
+          carried=[vout=@ud off=@ud]
+          genesis=?
+      ==
+  ^-  [checks=(list check:sa) next=(unit [vout=@ud off=@ud])]
+  ?:  genesis
+    [(own-output-checks who idx link this carried) `carried]
+  ::  The sat-carrying input is input 0, by stipulation.
+  =/  inp  (snag-input 0 this)
+  ?~  inp  [~[[(nom idx 'input-zero') %.n]] ~]
+  ::  Continuity: input 0 must spend the exact sat-carrying output of prev
+  ::  (full outpoint -- spending some OTHER output of prev is a fork attempt).
+  =/  cont=?  =([txid.u.inp pos.u.inp] [id.prev vout.carried])
+  ?.  (lth pos.u.inp (lent os.prev))
+    [~[[(nom idx 'continuity') cont] [(nom idx 'prevout-range') %.n]] ~]
+  =/  spent=output:tx:bitcoin  (snag pos.u.inp os.prev)
+  ::  The carried offset must sit inside the spent output (is-sont-in-input).
+  =/  off-ok=?  (lth off.carried value.spent)
+  ::  Confidential: the spend must be key-path (single-sig witness).
+  =/  keypath-ok=?  (is-key-path witness.u.inp)
+  ::  Track the sat to its deterministic landing output in this tx: input 0
+  ::  means no input value precedes it, so it enters at index off.carried.
+  ::  ~ means it fell into the miner fee -- the sat-thread cannot continue.
+  =/  landed  (index-to-sont:uc off.carried os.this)
+  =/  base=(list check:sa)
+    :~  [(nom idx 'continuity') cont]
+        [(nom idx 'off-range') off-ok]
+        [(nom idx 'key-path') keypath-ok]
+        [(nom idx 'sat-landed') ?=(^ landed)]
+    ==
+  ?~  landed  [base ~]
+  =/  next=[vout=@ud off=@ud]  [vout.landed off.landed]
+  [(weld base (own-output-checks who idx link this next)) `next]
 ::
 ::  +replay-chain: fold the chain's sotxes into a point:urb. A subject-only
 ::  mirror of process-unv in lib/urb-core: sotxes from ships other than who
@@ -334,7 +387,9 @@
 ::  semantics (drop the rest of that raw-sotx's singles, keep state).
 ::
 ++  replay-chain
-  |=  [who=@p chain=(list link:sa) tip=sont:ord]
+  |=  $:  who=@p  chain=(list link:sa)  tip=sont:ord
+          sponsors=(map @p point:urb)  heights=(map @ux @ud)
+      ==
   ^-  (unit point:urb)
   =|  pnt=(unit point:urb)
   =/  links  chain
@@ -343,6 +398,10 @@
   ?~  links
     ?~  pnt  ~
     `u.pnt(sont.own tip)
+  ::  the height of THIS link's block, anchoring any escape-sig freshness
+  ::  window (0 when unknown -- e.g. the RPC path passes no heights, so a
+  ::  signed escape then fails the window and drops, never forging a sponsor).
+  =/  lh=@ud  (~(gut by heights) block.i.links 0)
   =/  sots  sots.i.links
   |-
   ^-  (unit point:urb)
@@ -350,7 +409,7 @@
     ^$(links t.links)
   ?.  =(who ship.sot.i.sots)
     $(sots t.sots)
-  =/  res  (replay-singles who pnt (singles ~[i.sots]))
+  =/  res  (replay-singles who sponsors lh pnt (singles ~[i.sots]))
   ?~  res  ~
   $(sots t.sots, pnt u.res)
 ::
@@ -360,6 +419,8 @@
 ::
 ++  replay-singles
   |=  $:  who=@p
+          sponsors=(map @p point:urb)   ::  known points, for escape-sig verification
+          lh=@ud                        ::  this link's block height (escape-sig window)
           pnt=(unit point:urb)
           sx=(list [=ship sig=(unit @) =single:skim-sotx:urb])
       ==
@@ -397,10 +458,21 @@
     ?:  =(parent.s who)
       $(sx t.sx, pnt `p(sponsor.net [%.y who], escape.net ~))
     ?^  sig.s
-      ::  XX the sponsor's signature is accepted unverified: off-chain we
-      ::     have neither the block-height context for the signed message
-      ::     nor (subject-only) the parent's stored pass to mirror
-      ::     urb-core's veri-octs check.
+      ::  Signed escape: the sponsor must have consented. Mirror urb-core
+      ::  (urb-core.hoon:500-521): look up the candidate sponsor's stored
+      ::  pass and require veri-octs of the sig over (shaz (jam [who h])) for
+      ::  some h in [lh-10, lh+1] (the escape link's block height +/- slack).
+      ::  Unknown sponsor or a sig that verifies for no h -> drop the escape
+      ::  with NO state change (never write an unverified sponsor), exactly as
+      ::  urb-core does. (An unsigned escape falls through to %pending below.)
+      =/  sponsor  (~(get by sponsors) parent.s)
+      ?~  sponsor  $(sx t.sx)
+      =/  cac  (com:nu:cric:crypto pass.net.u.sponsor)
+      =/  lo=@ud  ?:((lth lh 10) 0 (sub lh 10))
+      ?.  %+  lien  (gulf lo +(lh))
+          |=  h=@ud
+          (veri-octs:ed:crypto u.sig.s 512^(shaz (jam [who h])) sgn:ded:ex:cac)
+        $(sx t.sx)
       $(sx t.sx, pnt `p(sponsor.net [%.y parent.s], escape.net ~))
     $(sx t.sx, pnt `p(escape.net `parent.s))
   ::
@@ -434,38 +506,35 @@
 ++  run-checks
   |=  $:  sat=self-attestation:sa
           txl=(list tx:bc)              ::  one per link, in order
-          commit=tx:bc
           pre=tx:bc
           tip-unspent=(unit ?)
           tracked=(unit sont:ord)
-          commit-prior=(unit @ud)
-          link-priors=(list (unit @ud))
+          sponsors=(map @p point:urb)   ::  known points, for escape-sig verification
+          heights=(map @ux @ud)         ::  link block-hash -> height (escape-sig window)
       ==
   ^-  result:sa
   =*  who  who.sat
-  ::  Genesis %spawn / precommit / tweak / fig checks.
-  =/  [checks=(list check:sa) psat=(unit sont:ord)]  (check-spawn sat pre)
-  ?~  psat
-    [[who %.n checks] ~ 0]
-  ::  The commit tx must spend the precommit satpoint; find the sat's landing.
-  =/  pre-out-value=@ud
-    ?.  (lth vout.u.psat (lent os.pre))  0
-    value:(snag vout.u.psat os.pre)
-  =/  [commit-checks=(list check:sa) csat=(unit [vout=@ud off=@ud])]
-    (apply-commit commit u.psat pre-out-value commit-prior)
-  =.  checks  (weld checks commit-checks)
-  ?~  csat
+  ::  Genesis %spawn / precommit / tweak / fig checks, plus the sat's
+  ::  landing within link 0 (the spawn commit) itself.
+  ?~  txl
+    [[who %.n ~[['spawn-no-chain' %.n]]] ~ 0]
+  =/  [checks=(list check:sa) spawn-carried=(unit [vout=@ud off=@ud])]
+    (check-spawn sat pre i.txl)
+  ?~  spawn-carried
     [[who %.n checks] ~ 0]
   ::  The %spawn must head link 0 and appear nowhere else.
   =.  checks  (snoc checks ['spawn-first' (spawn-first-ok chain.sat)])
-  ::  Walk the chain, threading the sat's [vout off] location and collecting
-  ::  each link's entering sont for the tracked-tip reconciliation.
-  =/  links  chain.sat
-  =/  priors  link-priors
+  ::  Walk the chain, threading the sat's [vout off] location: for the
+  ::  genesis link `carried` is its landing within link 0 itself (computed
+  ::  by check-spawn); thereafter it is the entering location within prev's
+  ::  outputs. Each link's own landing sont except the last is collected
+  ::  for the tracked-tip reconciliation.
+  =/  links=(list link:sa)  chain.sat
+  =/  txs=(list tx:bc)  txl
   =/  idx=@ud  0
-  =/  prev=tx:bc  commit
-  =/  carried=[vout=@ud off=@ud]  u.csat
-  =|  entering=(list sont:ord)
+  =/  prev=tx:bc  pre               ::  unused by the genesis link
+  =/  carried=[vout=@ud off=@ud]  u.spawn-carried
+  =|  landings=(list sont:ord)      ::  newest first; head is the tip's
   |-
   ^-  result:sa
   ?~  links
@@ -478,27 +547,28 @@
           ['tip-unspent' =([~ %.y] tip-unspent)]
       ==
     =?  checks  ?=(^ tracked)
-      (snoc checks ['tracked-tip' (tracked-ok u.tracked tip.sat (flop entering))])
+      =/  inner=(list sont:ord)  ?~(landings ~ (flop t.landings))
+      (snoc checks ['tracked-tip' (tracked-ok u.tracked tip.sat inner)])
     =/  ok  (levy checks |=(c=check:sa ok.c))
     :+  [who ok checks]
-      ?.(ok ~ (replay-chain who chain.sat tip.sat))
+      ?.(ok ~ (replay-chain who chain.sat tip.sat sponsors heights))
     ?.  ok  0
     ?.  (lth vout.carried (lent os.prev))  0
     value:(snag vout.carried os.prev)
-  =/  this-tx=tx:bc  (snag idx txl)
-  =/  prior=(unit @ud)  ?~(priors ~ i.priors)
+  ?~  txs  !!                       ::  one tx per link, by construction
+  =/  this-tx=tx:bc  i.txs
   =/  [lchecks=(list check:sa) next=(unit [vout=@ud off=@ud])]
-    (link-checks who idx i.links prev this-tx carried prior)
+    (link-checks who idx i.links prev this-tx carried =(0 idx))
   =.  checks  (weld checks lchecks)
   ?~  next
     [[who %.n checks] ~ 0]
   %=  $
     links     t.links
-    priors    ?~(priors ~ t.priors)
+    txs       t.txs
     idx       +(idx)
     prev      this-tx
     carried   u.next
-    entering  [[id.prev vout.carried off.carried] entering]
+    landings  [[id.this-tx vout.u.next off.u.next] landings]
   ==
 ::
 ::  +fail-result: a result for early structural/fetch failures.
@@ -508,7 +578,9 @@
   ^-  result:sa
   [[who %.n ~[[name %.n]]] ~ 0]
 ::
-::  +fetch-txs: fetch every link's transaction, preserving order.
+::  +fetch-txs: fetch every link's transaction, preserving order. Each tx is
+::  fetched with its attested blockhash, so the node needs no -txindex (Core
+::  validates inclusion; a lying blockhash simply fails the fetch).
 ::
 ++  fetch-txs
   |=  [rpc=req-to:btcio links=(list link:sa)]
@@ -518,42 +590,8 @@
   |-  ^-  form:m
   ?~  links  (pure:m (flop acc))
   ;<  t=(unit tx:bc)  bind:m
-    (get-raw-transaction:btcio rpc ~ txid.i.links)
+    (get-raw-transaction-in-block:btcio rpc ~ txid.i.links block.i.links)
   $(links t.links, acc [t acc])
-::
-::  +prior-sum: sum the prevout values of inputs 0..stop-1 of a tx, fetching
-::  prev txs cache-first. Exact sat tracking needs only the values of inputs
-::  PRECEDING the chain-spending input, so when stop=0 (the comet input first,
-::  the common wallet case) this makes zero RPC calls. ~ stop or any fetch
-::  failure yields a ~ sum (the caller's 'sat-landed' check then fails).
-::
-++  prior-sum
-  |=  $:  rpc=req-to:btcio
-          cache=(map txid:ord tx:bc)
-          =tx:bc
-          stop=(unit @ud)
-      ==
-  =/  m  (strand:strandio ,[(unit @ud) (map txid:ord tx:bc)])
-  ^-  form:m
-  ?~  stop  (pure:m [~ cache])
-  =/  inputs  (scag u.stop is.tx)
-  =|  sum=@ud
-  |-
-  ^-  form:m
-  ?~  inputs  (pure:m [`sum cache])
-  =/  hit  (~(get by cache) txid.i.inputs)
-  ?^  hit
-    ?.  (lth pos.i.inputs (lent os.u.hit))  (pure:m [~ cache])
-    $(inputs t.inputs, sum (add sum value:(snag pos.i.inputs os.u.hit)))
-  ;<  got=(unit tx:bc)  bind:m
-    (get-raw-transaction:btcio rpc ~ txid.i.inputs)
-  ?~  got  (pure:m [~ cache])
-  ?.  (lth pos.i.inputs (lent os.u.got))  (pure:m [~ cache])
-  %=  $
-    inputs  t.inputs
-    cache   (~(put by cache) txid.i.inputs u.got)
-    sum     (add sum value:(snag pos.i.inputs os.u.got))
-  ==
 ::
 ::  +verify: the entry point. Fetch everything from the node, then run the
 ::  pure verifier. `tracked` is the sont the caller already tracks for this
@@ -567,70 +605,22 @@
   =*  who  who.sat
   ?~  chain.sat
     (pure:m !>((fail-result who 'empty-chain')))
+  ;<  pre=(unit tx:bc)  bind:m
+    %:  get-raw-transaction-in-block:btcio
+        rpc  ~  txid.funding.sat  block.funding.sat
+    ==
+  ?~  pre
+    (pure:m !>((fail-result who 'fetch:precommit-tx')))
   ;<  txs=(list (unit tx:bc))  bind:m
     (fetch-txs rpc chain.sat)
   ?:  (lien txs |=(t=(unit tx:bc) ?=(~ t)))
     (pure:m !>((fail-result who 'fetch:chain-tx')))
   =/  txl=(list tx:bc)  (turn txs need)
-  ::  The genesis link spends the spawn COMMIT tx; learn its txid from the
-  ::  genesis input's prevout, then fetch it and the precommit tx.
-  =/  genesis=tx:bc  (snag 0 txl)
-  =/  gin  (snag-input in.i.chain.sat genesis)
-  ?~  gin
-    (pure:m !>((fail-result who 'genesis:input-index')))
-  ;<  commit=(unit tx:bc)  bind:m
-    (get-raw-transaction:btcio rpc ~ txid.u.gin)
-  ?~  commit
-    (pure:m !>((fail-result who 'fetch:commit-tx')))
-  ;<  pre=(unit tx:bc)  bind:m
-    (get-raw-transaction:btcio rpc ~ precommit.sat)
-  ?~  pre
-    (pure:m !>((fail-result who 'fetch:precommit-tx')))
   ;<  tip-unspent=(unit ?)  bind:m
     (get-tx-out:btcio rpc ~ txid.tip.sat vout.tip.sat)
-  ::  Seed the prevout cache with everything already fetched.
-  =/  cache=(map txid:ord tx:bc)
-    %-  ~(gas by *(map txid:ord tx:bc))
-    :*  [id.u.commit u.commit]
-        [id.u.pre u.pre]
-        (turn txl |=(t=tx:bc [id.t t]))
-    ==
-  ::  Locate the commit input that spends the attested precommit output
-  ::  (~ on structural failure; apply-commit then fails cleanly).
-  =/  commit-stop=(unit @ud)
-    ?~  sots.i.chain.sat  ~
-    ?~  spawn=(find-spawn +.sot.i.sots.i.chain.sat)  ~
-    ?~  vout.to.u.spawn  ~
-    =/  want  [precommit.sat u.vout.to.u.spawn]
-    =/  inputs  is.u.commit
-    =|  i=@ud
-    |-  ^-  (unit @ud)
-    ?~  inputs  ~
-    ?:  =([txid.i.inputs pos.i.inputs] want)  `i
-    $(inputs t.inputs, i +(i))
-  ;<  [commit-prior=(unit @ud) cache2=_cache]  bind:m
-    (prior-sum rpc cache u.commit commit-stop)
-  ::  Per-link prior sums (inputs before in.link of each link tx).
-  ::  The cache is threaded as an explicit loop variable: a ;< binding would
-  ::  be reset by the trap recursion and lose updates between iterations.
-  ::  (links is re-widened to list: the ?~ above narrowed chain.sat to lest,
-  ::  which would make the loop's ?~ mint-vain.)
-  =/  links=(list link:sa)  chain.sat
-  =/  ltxs  txl
-  =/  cash  cache2
-  =|  acc=(list (unit @ud))
-  |-
-  ^-  form:m
-  ?~  links
-    =/  =result:sa
-      %:  run-checks
-          sat  txl  u.commit  u.pre
-          tip-unspent  tracked
-          commit-prior  (flop acc)
-      ==
-    (pure:m !>(result))
-  ?~  ltxs  !!
-  ;<  [p=(unit @ud) next-cash=_cache]  bind:m
-    (prior-sum rpc cash i.ltxs `in.i.links)
-  $(links t.links, ltxs t.ltxs, acc [p acc], cash next-cash)
+  ::  The RPC entry passes no sponsor points or link heights, so a signed
+  ::  escape here drops (conservative -- never an unverified sponsor) and an
+  ::  unsigned one goes pending. The %light-client path (lib/lc-attestation
+  ::  +verify-lc) supplies both and performs the full escape-sig verification.
+  (pure:m !>((run-checks sat txl u.pre tip-unspent tracked ~ ~)))
 --
