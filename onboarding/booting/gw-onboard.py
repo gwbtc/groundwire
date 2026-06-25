@@ -17,6 +17,7 @@ import secrets
 import signal
 import shutil
 import socket
+import string
 import subprocess
 import sys
 import threading
@@ -1674,18 +1675,92 @@ def get_ship_cookie_from_code(url: str, login_code: str) -> str:
     return _get_ship_cookie_from_login(url, login_code)
 
 
-def _write_ship_mcp_configs(pier_name: str, port: int, ship_cookie: str) -> None:
+def _resource_path(name: str) -> str:
+    """Return a bundled resource path for dev and PyInstaller builds."""
+
+    base_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.realpath(__file__)))
+    return os.path.join(base_dir, name)
+
+
+def _mcp_server_name_for_pier(pier_name: str) -> str:
+    """Return a short local MCP server name for an Urbit pier."""
+
+    pier_words = [word for word in re.split(r"-+", pier_name) if word]
+    if len(pier_words) > 4:
+        return f"{pier_words[0]}_{pier_words[-1]}"
+    return pier_name
+
+
+def _render_agent_instructions(
+    comet_name: str,
+    mcp_server_name: str,
+    attested_to_bitcoin: bool,
+) -> str:
+    """Render the pier's agent instruction file from the bundled template."""
+
+    if attested_to_bitcoin:
+        groundwire_id_status = (
+            "You have a permanent, sybil-resistant Groundwire ID attested to on the Bitcoin mainnet."
+        )
+    else:
+        groundwire_id_status = (
+            "You do not have a permanent, sybil-resistant Groundwire ID attested to on the Bitcoin mainnet."
+        )
+
+    with open(_resource_path("AGENTS.md"), encoding="utf-8") as f:
+        template = string.Template(f.read())
+
+    return template.safe_substitute(
+        COMET_NAME=comet_name,
+        COMET_SHORTNAME=mcp_server_name,
+        GROUNDWIRE_ID_STATUS=groundwire_id_status,
+    )
+
+
+def _write_agent_instruction_files(
+    pier_dir: str,
+    comet_name: str,
+    mcp_server_name: str,
+    attested_to_bitcoin: bool,
+) -> None:
+    """Create shared agent instruction files in a pier."""
+
+    agents_path = os.path.join(pier_dir, "AGENTS.md")
+    claude_path = os.path.join(pier_dir, "CLAUDE.md")
+
+    if not os.path.exists(agents_path):
+        with open(agents_path, "w", encoding="utf-8") as f:
+            f.write(_render_agent_instructions(comet_name, mcp_server_name, attested_to_bitcoin))
+
+    if os.path.islink(claude_path) and os.readlink(claude_path) == "AGENTS.md":
+        return
+
+    if os.path.islink(claude_path):
+        os.unlink(claude_path)
+
+    if not os.path.exists(claude_path):
+        os.symlink("AGENTS.md", claude_path)
+
+
+def _write_ship_mcp_configs(
+    pier_name: str,
+    port: int,
+    ship_cookie: str,
+    comet_name: str,
+    attested_to_bitcoin: bool,
+) -> None:
     """Write project-scoped MCP configs for local agent CLIs."""
 
     url = f"http://localhost:{port}/mcp"
     header_cookie = {"Cookie": ship_cookie}
     pier_dir = os.path.abspath(pier_name)
-    pier_words = [word for word in re.split(r"-+", pier_name) if word]
-
-    if len(pier_words) > 4:
-        mcp_server_name = f"{pier_words[0]}_{pier_words[-1]}"
-    else:
-        mcp_server_name = pier_name
+    mcp_server_name = _mcp_server_name_for_pier(pier_name)
+    _write_agent_instruction_files(
+        pier_dir,
+        comet_name,
+        mcp_server_name,
+        attested_to_bitcoin,
+    )
 
     codex_dir = os.path.join(pier_dir, ".codex")
     os.makedirs(codex_dir, exist_ok=True)
@@ -1922,6 +1997,7 @@ def boot_comet(
     vere_bin: str,
     pill: str = GW_PILL,
     snapshot_file: bytes | None = None,
+    attested_to_bitcoin: bool = False,
 ) -> tuple[str, bool, bool, bool, bool, bool]:
     """Boot a comet, wait until idle, kill the process, then return the local URL and installed desks.
 
@@ -2097,7 +2173,13 @@ def boot_comet(
 
     try:
         ship_cookie = get_ship_cookie_from_code(url, login_code)
-        _write_ship_mcp_configs(pier_name, port, ship_cookie)
+        _write_ship_mcp_configs(
+            pier_name,
+            port,
+            ship_cookie,
+            comet_name,
+            attested_to_bitcoin,
+        )
     except Exception as e:
         print(f"ERROR: Failed to generate local MCP config files: {e}")
         proc.kill()
@@ -2359,6 +2441,7 @@ def main():
                 args.vere,
                 pill=args.pill,
                 snapshot_file=snapshot_file,
+                attested_to_bitcoin=False,
             )
             print_boot_success(
                 url,
@@ -2474,6 +2557,7 @@ def main():
             args.vere,
             pill=args.pill,
             snapshot_file=snapshot_file,
+            attested_to_bitcoin=True,
         )
         print_boot_success(
             url,
