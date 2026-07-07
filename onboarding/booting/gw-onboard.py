@@ -2,7 +2,7 @@
 """
 gw-onboard.py — Groundwire comet onboarding script
 
-Generates a random @q master ticket, derives a taproot address,
+Generates a random BIP-39 master ticket, derives a taproot address,
 watches Bitcoin Core for funding, mines a comet with the correct tweak,
 boots it, and directs the user to the spv-wallet interface.
 """
@@ -50,7 +50,7 @@ import re
 
 import requests  # must come after CA bundle fix above
 import nacl.bindings
-from embit import bip32, ec, script
+from embit import bip32, bip39, ec, script
 from embit.networks import NETWORKS
 from embit.transaction import Transaction, TransactionInput, TransactionOutput, Witness
 
@@ -435,10 +435,11 @@ def make_tweak_expr(txid_hex: str, vout: int, off: int = 0) -> str:
 def derive_taproot_address(seed_bytes: bytes) -> str:
     """
     Derive the first taproot receiving address (m/86'/1'/0'/0/0)
-    from raw seed bytes, matching what spv-wallet does for @q seeds.
+    from the BIP-39 seed, matching what spv-wallet does for %t seeds.
 
-    spv-wallet's seed-to-bytes for %q uses raw atom bytes directly
-    as the BIP-32 seed (no BIP-39 mnemonic/PBKDF2 step).
+    `seed_bytes` is the 64-byte output of BIP-39's PBKDF2 step
+    (mnemonic_to_seed), NOT the raw entropy. spv-wallet's
+    seed-to-bytes %t arm derives the same way: 64^(to-seed:bip39 mnemonic "").
     """
     root = bip32.HDKey.from_seed(seed_bytes, version=NETWORKS["main"]["xprv"])
     child = root.derive("m/86h/1h/0h/0/0")
@@ -2249,21 +2250,19 @@ def main():
             sys.stdin = open("/dev/tty")  # noqa: SIM115
 
     if args.master_ticket:
-        master_ticket = args.master_ticket
-        try:
-            seed_int = decode_q(master_ticket)
-        except (ValueError, IndexError):
-            print(f"ERROR: Invalid master ticket format: {master_ticket}")
-            print("The ticket should look like: ~sampel-palnet-sampel-palnet")
+        master_ticket = args.master_ticket.strip()
+        if not bip39.mnemonic_is_valid(master_ticket):
+            print(f"ERROR: Invalid master ticket: {master_ticket}")
+            print("The ticket is a 12-word BIP-39 phrase, e.g.:")
+            print("  abandon amount liar amount expire adjust cage candy arch gather drum buyer")
             sys.exit(1)
-        n_bytes = (seed_int.bit_length() + 7) // 8
-        seed_bytes = seed_int.to_bytes(n_bytes, "little")
+        seed_bytes = bip39.mnemonic_to_seed(master_ticket)
         print(f"Resuming with master ticket: {master_ticket}")
         print()
     else:
-        seed_bytes = secrets.token_bytes(16)
-        seed_int = int.from_bytes(seed_bytes, "little")
-        master_ticket = encode_q(seed_int)
+        entropy = secrets.token_bytes(16)
+        master_ticket = bip39.mnemonic_from_bytes(entropy)
+        seed_bytes = bip39.mnemonic_to_seed(master_ticket)
 
         print(step_header(f"Step 1/{total_steps}: Generating master ticket"))
         print()
