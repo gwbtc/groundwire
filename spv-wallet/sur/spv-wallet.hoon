@@ -130,7 +130,7 @@
 ::
 +$  boot-data
   $:  =boot-mode
-      boot-secret=@q
+      boot-secret=@t  :: BIP-39 mnemonic (12-word phrase); PBKDF2 seed via %t path
       fief=(unit fief:urb)
       sponsor=(unit @p)
       ::  Accumulated during boot
