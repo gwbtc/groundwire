@@ -48,8 +48,8 @@ export class UrbCore {
   private constructor(private readonly w: Exports) {}
 
   /** Instantiate from the wasm bytes (Node: readFileSync; browser: fetch()). */
-  static async load(wasm: BufferSource): Promise<UrbCore> {
-    const { instance } = await WebAssembly.instantiate(wasm, {});
+  static async load(wasm: Uint8Array | ArrayBuffer): Promise<UrbCore> {
+    const { instance } = await WebAssembly.instantiate(wasm as BufferSource, {});
     return new UrbCore(instance.exports as unknown as Exports);
   }
 
@@ -98,7 +98,7 @@ export class UrbCore {
     const [pp, pl] = this.put(s.pass);
     const [sp, sl] = this.put(s.spkh);
     let fiefKind = 0;
-    let ip = new Uint8Array(0);
+    let ip: Uint8Array = new Uint8Array(0);
     let port = 0;
     if (s.fief) {
       if (s.fief.type === "if") {
@@ -125,4 +125,19 @@ export class UrbCore {
   selfTest(): string {
     return new TextDecoder().decode(this.take(this.w.self_test()));
   }
+}
+
+// --- shared singleton: initialize once at startup; encoders use it synchronously
+
+let singleton: UrbCore | null = null;
+
+/** Instantiate the shared core once (call at app startup). */
+export async function initUrbCore(wasm: Uint8Array | ArrayBuffer): Promise<UrbCore> {
+  singleton = await UrbCore.load(wasm);
+  return singleton;
+}
+
+/** The initialized core, or `null` if init hasn't run — callers fall back to TS. */
+export function urbCore(): UrbCore | null {
+  return singleton;
 }

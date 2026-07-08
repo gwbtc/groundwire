@@ -1,12 +1,15 @@
 import { describe, expect, test, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { UrbCore } from "../src/wasm/urb-core.js";
+import { encodeSkim } from "../src/protocol/encoder.js";
+import { initUrbCore, urbCore, UrbCore } from "../src/wasm/urb-core.js";
+import type { Fief, SkimSotx } from "../src/protocol/types.js";
 
-// Proves the Passport's `urb/` core, compiled to wasm32, reproduces Causeway's
-// own golden vectors byte-for-byte — the parity that lets the two share one
-// engine. The device is spawn-only, so we exercise the `%spawn` encoder vectors
-// plus the tweak and @p paths.
+// The wasm core is the Passport's `src/urb/` compiled to wasm32. Once it's
+// initialized, `encodeSkim` delegates the consensus-critical %spawn encoding to
+// it (see protocol/encoder.ts). This asserts the *integrated* path reproduces
+// this repo's own golden vectors byte-for-byte — i.e. the shared engine is a
+// drop-in for the TS encoder on the spawn path.
 
 const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 const toBig = (v: unknown): bigint =>
@@ -18,60 +21,56 @@ const leBytes = (n: bigint, len: number): Uint8Array => {
   for (let i = 0; i < len; i++) o[i] = Number((n >> BigInt(8 * i)) & 0xffn);
   return o;
 };
-const minLE = (n: bigint): Uint8Array => {
-  const o: number[] = [];
-  while (n > 0n) { o.push(Number(n & 0xffn)); n >>= 8n; }
-  return new Uint8Array(o);
-};
 
-let core: UrbCore;
+let wasmBytes: Uint8Array;
 beforeAll(async () => {
-  const bytes = readFileSync(resolve(__dirname, "../src/wasm/urb_wasm.wasm"));
-  core = await UrbCore.load(bytes);
+  wasmBytes = readFileSync(resolve(__dirname, "../src/wasm/urb_wasm.wasm"));
+  await initUrbCore(wasmBytes); // after this, encodeSkim() routes %spawn -> wasm
 });
 
 type Fix = { name: string; kind: string; input: any; output_hex: string };
 
-describe("wasm urb/ core ⇄ Causeway golden vectors", () => {
+function toSpawnSkim(inp: any): SkimSotx {
+  const fief: Fief | null =
+    inp.fief === null
+      ? null
+      : inp.fief.type === "if"
+        ? { type: "if", ip: Number(inp.fief.ip), port: Number(inp.fief.port) }
+        : { type: "is", ip: toBig(inp.fief.ip), port: Number(inp.fief.port) };
+  return {
+    op: "spawn",
+    pass: toBig(inp.pass),
+    fief,
+    to: {
+      spkh: leBytes(toBig(inp.to.spkh), 32),
+      off: toBig(inp.to.off),
+      tej: toBig(inp.to.tej),
+      vout: inp.to.vout === null ? null : toBig(inp.to.vout),
+    },
+  };
+}
+
+describe("encodeSkim routes %spawn through the wasm core", () => {
   const all: Fix[] = JSON.parse(
     readFileSync(resolve(__dirname, "fixtures/encoder-vectors.json"), "utf8"),
   );
   const spawns = all.filter((v) => v.kind === "skim" && v.input?.op === "spawn");
 
-  test("has %spawn vectors to check", () => {
+  test("core initialized (so encodeSkim will delegate)", () => {
     expect(spawns.length).toBeGreaterThan(0);
+    expect(urbCore()).not.toBeNull();
   });
 
-  test.each(spawns)("encode_spawn: $name", (v) => {
-    const inp = v.input;
-    const fief =
-      inp.fief === null
-        ? null
-        : inp.fief.type === "if"
-          ? { type: "if" as const, ip: Number(inp.fief.ip), port: Number(inp.fief.port) }
-          : { type: "is" as const, ip: toBig(inp.fief.ip), port: Number(inp.fief.port) };
-    const out = core.encodeSpawn({
-      pass: minLE(toBig(inp.pass)),
-      spkh: leBytes(toBig(inp.to.spkh), 32),
-      off: toBig(inp.to.off),
-      tej: toBig(inp.to.tej),
-      vout: inp.to.vout === null ? null : toBig(inp.to.vout),
-      fief,
-    });
-    expect(hex(out)).toBe(v.output_hex);
+  test.each(spawns)("encodeSkim %spawn: $name", (v) => {
+    expect(hex(encodeSkim(toSpawnSkim(v.input)))).toBe(v.output_hex);
   });
 
-  test("build_tweak_bytes (txid=1, vout=0, off=0)", () => {
+  test("direct binding: tweak + patp + self-check", async () => {
+    const core = await UrbCore.load(wasmBytes);
     expect(hex(core.tweak("00".repeat(31) + "01", 0, 0))).toBe(
       "09997572622d776174636865726274636777090100000000000000000000000000000000000000000000000000000000000000",
     );
-  });
-
-  test("to_patp comet range (512 → ~binzod)", () => {
     expect(core.patp(new Uint8Array([0, 2]))).toBe("~binzod");
-  });
-
-  test("self-check reports all vectors reproduced", () => {
     expect(core.selfTest()).toContain("5/5");
   });
 });

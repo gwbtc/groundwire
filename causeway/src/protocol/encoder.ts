@@ -1,6 +1,17 @@
 import { BitWriter, bytesToAtomLE } from "./bitwriter.js";
 import { OP } from "./opcodes.js";
 import type { Fief, Single, SkimSotx, Sont, Sotx } from "./types.js";
+import { urbCore } from "../wasm/urb-core.js";
+import type { FiefIn } from "../wasm/urb-core.js";
+
+function bigintToLE(n: bigint): Uint8Array {
+  const out: number[] = [];
+  while (n > 0n) {
+    out.push(Number(n & 0xffn));
+    n >>= 8n;
+  }
+  return new Uint8Array(out);
+}
 
 function encodeSig(w: BitWriter, sig: bigint | null): void {
   if (sig === null) {
@@ -117,6 +128,29 @@ function writeSkim(w: BitWriter, sot: SkimSotx): void {
 }
 
 export function encodeSkim(sot: SkimSotx): Uint8Array {
+  // Consensus-critical %spawn encoding runs through the shared wasm core (the
+  // same Rust the Passport signs with) once it's initialized; the TS path below
+  // stays the fallback and covers the other, device-less ops. `turf` fiefs are
+  // unsupported on-device, so they too keep the TS path. Pinned identical by
+  // tests/wasm-parity.spec.ts.
+  const core = urbCore();
+  if (core && sot.op === "spawn" && (sot.fief === null || sot.fief.type !== "turf")) {
+    let fief: FiefIn = null;
+    if (sot.fief) {
+      fief =
+        sot.fief.type === "if"
+          ? { type: "if", ip: sot.fief.ip, port: sot.fief.port }
+          : { type: "is", ip: sot.fief.ip, port: sot.fief.port };
+    }
+    return core.encodeSpawn({
+      pass: bigintToLE(sot.pass),
+      spkh: sot.to.spkh,
+      off: sot.to.off,
+      tej: sot.to.tej,
+      vout: sot.to.vout,
+      fief,
+    });
+  }
   const w = new BitWriter();
   writeSkim(w, sot);
   return w.toBytes();
