@@ -14,6 +14,7 @@ import { formatBootCommand } from "../../spawn/boot-cmd.js";
 import { assembleSpawn } from "../../spawn/assemble.js";
 import { buildTweakBytes } from "../../spawn/tweak.js";
 import { atomToPatp } from "../../protocol/patp.js";
+import { atomToNym } from "../../protocol/nym.js";
 import type { DiscoveredUtxo } from "../../chain/discover.js";
 import { encodePsbtUR } from "../../signing/qr-ur.js";
 import { animateUR } from "../../signing/qr-render.js";
@@ -194,7 +195,10 @@ export function renderSpawn(root: HTMLElement): void {
     status.appendChild(banner("ok",
       `mined in ${(elapsed / 1000).toFixed(1)}s (${mined.tries.toLocaleString()} tries)`));
 
+    // @p drives the escape-sig request, assemble, and the boot command (vere
+    // names the ship by @p); the mnemonym is what the user sees.
     const cometPatp = atomToPatp(mined.comet);
+    const cometNym = atomToNym(mined.comet);
 
     status.appendChild(banner("warn",
       `requesting escape-sig from ${ESCAPE_SPONSOR.slice(0, 14)}…`));
@@ -249,7 +253,7 @@ export function renderSpawn(root: HTMLElement): void {
     savePendingSpawn(persisted);
 
     renderMineCard(mineCard, {
-      cometPatp,
+      cometNym,
       pickedSummary: `${shortTxid(bytesToDisplayHex(picked.txid))}:${picked.vout} (${picked.value} sats)`,
       tries: mined.tries,
       sponsorHeight: sponsorSig.height,
@@ -330,7 +334,7 @@ export function renderSpawn(root: HTMLElement): void {
   function renderResumeCard(el_: HTMLElement, p: PersistedSpawn): void {
     el_.innerHTML = "";
     el_.style.display = "";
-    const cometName = atomToPatp(BigInt(p.mined.comet));
+    const cometName = atomToNym(BigInt(p.mined.comet));
     const ageMin = Math.round((Date.now() - p.createdAt) / 60_000);
     el_.append(
       el("h2", {}, "Pending spawn in progress"),
@@ -379,7 +383,7 @@ export function renderSpawn(root: HTMLElement): void {
 
     status.innerHTML = "";
     status.appendChild(banner("warn",
-      `resuming ${atomToPatp(BigInt(p.mined.comet))} from phase: ${p.phase}…`));
+      `resuming ${atomToNym(BigInt(p.mined.comet))} from phase: ${p.phase}…`));
     mineCard.style.display = "none";
     commitCard.style.display = "none";
     revealCard.style.display = "none";
@@ -390,11 +394,13 @@ export function renderSpawn(root: HTMLElement): void {
     let revealPsbt: Uint8Array;
     let feed: Uint8Array;
     let cometPatp: string;
+    let cometNym: string;
     try {
       commitPsbt = b64Decode(p.commitPsbtB64);
       revealPsbt = b64Decode(p.revealPsbtB64);
       feed = hexToBytes(p.mined.feedHex);
       cometPatp = atomToPatp(BigInt(p.mined.comet));
+      cometNym = atomToNym(BigInt(p.mined.comet));
     } catch (err: any) {
       status.innerHTML = "";
       status.appendChild(banner("err",
@@ -405,7 +411,7 @@ export function renderSpawn(root: HTMLElement): void {
 
     try {
       renderMineCard(mineCard, {
-        cometPatp,
+        cometNym,
         pickedSummary: `${shortTxid(p.picked.txidHex)}:${p.picked.vout} (${p.picked.value} sats)`,
         tries: p.mined.tries,
         sponsorHeight: p.sponsor.height,
@@ -449,7 +455,7 @@ export function renderSpawn(root: HTMLElement): void {
 // resume option — the user may not need to re-authenticate.
 function renderResumeOnly(root: HTMLElement, p: PersistedSpawn): void {
   const card = el("section", { class: "card" });
-  const cometName = atomToPatp(BigInt(p.mined.comet));
+  const cometName = atomToNym(BigInt(p.mined.comet));
   card.append(
     el("h1", {}, "Pending spawn in progress"),
     el("p", { class: "lead" },
@@ -478,7 +484,7 @@ function renderResumeOnly(root: HTMLElement, p: PersistedSpawn): void {
 function renderMineCard(
   card: HTMLElement,
   info: {
-    cometPatp: string;
+    cometNym: string;
     pickedSummary: string;
     tries: number;
     sponsorHeight: number;
@@ -491,7 +497,7 @@ function renderMineCard(
   card.append(
     el("h2", {}, "Mined ✓"),
     kvList([
-      ["Comet", info.cometPatp],
+      ["Comet", info.cometNym],
       ["Funding UTXO", info.pickedSummary],
       ["Mining tries", info.tries.toLocaleString()],
       ["Sponsor escape sig", `valid near block ${info.sponsorHeight}`],

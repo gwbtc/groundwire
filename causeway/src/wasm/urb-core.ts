@@ -28,6 +28,7 @@ interface Exports {
   __dealloc(ptr: number, len: number): void;
   tweak(ptr: number, len: number, vout: bigint, off: bigint): bigint;
   patp(ptr: number, len: number): bigint;
+  nym(ptr: number, len: number): bigint;
   uw(ptr: number, len: number): bigint;
   encode_spawn(
     passP: number, passL: number,
@@ -81,6 +82,14 @@ export class UrbCore {
   patp(atomLE: Uint8Array): string {
     const [p, l] = this.put(atomLE);
     const out = new TextDecoder().decode(this.take(this.w.patp(p, l)));
+    this.w.__dealloc(p, l);
+    return out;
+  }
+
+  /** `to_nym(atomLE)` → the comet's groundwire mnemonym (`..word.word…`). */
+  nym(atomLE: Uint8Array): string {
+    const [p, l] = this.put(atomLE);
+    const out = new TextDecoder().decode(this.take(this.w.nym(p, l)));
     this.w.__dealloc(p, l);
     return out;
   }

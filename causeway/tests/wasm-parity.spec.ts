@@ -71,6 +71,7 @@ describe("encodeSkim routes %spawn through the wasm core", () => {
       "09997572622d776174636865726274636777090100000000000000000000000000000000000000000000000000000000000000",
     );
     expect(core.patp(new Uint8Array([0, 2]))).toBe("~binzod");
-    expect(core.selfTest()).toContain("5/5");
+    expect(core.nym(new Uint8Array(16))).toBe("..abducts"); // 128-bit zero comet
+    expect(core.selfTest()).toContain("6/6");
   });
 });
