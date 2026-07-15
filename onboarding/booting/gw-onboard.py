@@ -1381,42 +1381,12 @@ def send_fyrd(vere_bin: str, conn_sock: str, fyrd_hoon: str, timeout: int = 3) -
     return dec.stdout.decode(errors="replace")
 
 
-def _snapshot_file_to_noun_literal(data: bytes) -> str:
-    """Convert jam bytes to a Hoon noun literal, validating with pynoun."""
+def _validate_snapshot_jam(data: bytes) -> None:
+    """Validate that data is a jammed state noun."""
     jam_atom = int.from_bytes(data, "little") if data else 0
     noun_value = pynoun.cue(jam_atom)
-    # Some snapshot sources provide jam(jam(state:urb)); unwrap nested jam atoms.
-    for _ in range(3):
-        if not isinstance(noun_value, int):
-            break
-        noun_value = pynoun.cue(noun_value)
     if isinstance(noun_value, int):
         raise ValueError("Snapshot did not decode to a state noun")
-    return _hoon_noun_with_dotted_atoms(noun_value)
-
-
-def _format_dotted_decimal_atom(value: int) -> str:
-    """Format a decimal atom with dots every 3 digits."""
-    s = str(value)
-    if len(s) <= 3:
-        return s
-    first = len(s) % 3
-    if first == 0:
-        first = 3
-    out = [s[:first]]
-    for i in range(first, len(s), 3):
-        out.append(s[i:i + 3])
-    return ".".join(out)
-
-
-def _hoon_noun_with_dotted_atoms(n, tail_pos: bool = False) -> str:
-    """Render a pynoun noun using Hoon list syntax with dotted decimal atoms."""
-    if isinstance(n, int):
-        return _format_dotted_decimal_atom(n)
-    if isinstance(n, pynoun.Cell):
-        content = f"{_hoon_noun_with_dotted_atoms(n.head, False)} {_hoon_noun_with_dotted_atoms(n.tail, True)}"
-        return content if tail_pos else f"[{content}]"
-    raise TypeError(f"Unsupported noun type: {type(n)!r}")
 
 
 def load_snapshot_file(local_path: str | None, snapshot_url: str = DEFAULT_SNAPSHOT_URL) -> bytes | None:
@@ -1436,7 +1406,7 @@ def load_snapshot_file(local_path: str | None, snapshot_url: str = DEFAULT_SNAPS
             print(f"ERROR: Snapshot jam file is empty: {local_path}")
             sys.exit(1)
         try:
-            _snapshot_file_to_noun_literal(data)
+            _validate_snapshot_jam(data)
         except Exception as e:
             print(f"ERROR: Snapshot jam file is not valid Urbit jam: {local_path}")
             print(e)
@@ -1449,7 +1419,7 @@ def load_snapshot_file(local_path: str | None, snapshot_url: str = DEFAULT_SNAPS
             resp = requests.get(snapshot_url, timeout=120)
             if resp.ok and resp.content:
                 try:
-                    _snapshot_file_to_noun_literal(resp.content)
+                    _validate_snapshot_jam(resp.content)
                 except Exception as e:
                     print(f"ERROR: Failed to deserialize snapshot: {e}")
                     if attempt < 3:
@@ -1469,7 +1439,11 @@ def load_snapshot_file(local_path: str | None, snapshot_url: str = DEFAULT_SNAPS
 
 def make_snapshot_fyrd(snapshot_file: bytes) -> str:
     """Build a FYRD that pokes %urb-watcher with (unit state:urb)."""
-    cued_snapshot = _snapshot_file_to_noun_literal(snapshot_file)
+    # Validate the jam before embedding it, but let the ship cue it. Expanding
+    # the state into a Hoon noun literal can push the Khan request over 64 KiB
+    # as the snapshot grows.
+    _validate_snapshot_jam(snapshot_file)
+    jam_atom = format_hoon_ux(f"{int.from_bytes(snapshot_file, 'little'):x}")
     return f""":*  0
                     %fyrd
                     %base
@@ -1488,7 +1462,7 @@ def make_snapshot_fyrd(snapshot_file: bytes) -> str:
                       :*  %pass   /start-indexing
                           %agent  [our %urb-watcher]
                           %poke   %urb-start-indexing
-                          !>((some {cued_snapshot}))
+                          !>((some (cue {jam_atom})))
                       ==
                     ;<  ~  bind:m  (take-poke-ack /start-indexing)
                     (pure:m !>(~))
