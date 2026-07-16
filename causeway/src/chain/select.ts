@@ -52,11 +52,15 @@ export function collectSontMapKeys(sontMap: Noun): Set<string> {
 
 // Mempool txid (display-order hex) → Hoon @ux atom hex string, for comparison
 // against sont-map keys (which hold the Hoon atom).
+//
+// Hoon stores txids as DISPLAY-order numerics (lib/bitcoin.hoon flips the
+// wire bytes when parsing / after dsha256), so the atom value is exactly what
+// you read the display hex as: BigInt("0x" + displayHex). The previous
+// little-endian fold produced the wire-order numeric, so no sont-map key ever
+// matched — the inscription filter was inert and the identity sat was offered
+// as spendable fee funding, defeating the app's headline "can't burn your @p".
 export function mempoolTxidToAtomHex(displayHex: string): string {
-  const bytes = hexToBytes(displayHex);
-  let val = 0n;
-  for (let i = bytes.length - 1; i >= 0; i--) val = (val << 8n) | BigInt(bytes[i]!);
-  return val.toString(16);
+  return BigInt("0x" + displayHex.replace(/^0x/, "")).toString(16);
 }
 
 export interface CandidateUtxo extends Utxo {

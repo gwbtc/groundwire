@@ -19,6 +19,13 @@ Passport, Keystone, SeedSigner, and any other wallet that speaks
   sponsor (`escape`/`cancel-escape`/`adopt`/`reject`/`detach`), pin a static
   endpoint (`fief`), or delegate management (`set-mang`).
 
+Groundwire IDs are shown as **mnemonyms** — a BIP-39-style word rendering of the
+comet's 128-bit @p (e.g. `.routine.inhale.regimes.…`) — rather than the scrambled
+`~mosnyt-londen-…` @p. The encoder + wordlist are ported from
+[gwbtc/mnemonyms](https://github.com/gwbtc/mnemonyms) (`src/protocol/mnemonym.ts`,
+cross-checked against the reference vectors). The @p remains the machine identity
+(boot `--comet`, pier name, proof.json, sotx); input fields accept either form.
+
 Every operation:
 
 1. Causeway fetches the urb-watcher snapshot and resolves your point.
@@ -71,8 +78,9 @@ groundwire/groundwire/causeway/
 1. **Export your xpub** from your hardware wallet as a BIP-380 output descriptor
    (most wallets call this "Descriptor" or "BIP-86 Taproot Account"). It looks
    like `tr([a0b1c2d3/86'/0'/0']xpub6...)/0/*`.
-2. **Enter your @p** on the landing page. Causeway fetches the urb-watcher
-   snapshot, locates your point, and pulls your inscription UTXO's auth key.
+2. **Enter your mnemonym** (or @p) on the landing page. Causeway fetches the
+   urb-watcher snapshot, locates your point, and pulls your inscription UTXO's
+   auth key.
 3. **Paste your descriptor.** Causeway derives the first 10 receive and 10
    change addresses on BIP-86 and looks for UTXOs at each. Inscription UTXOs
    are excluded from fee funding.
@@ -99,6 +107,29 @@ curl -fsSL https://groundwire.io/install.sh | sh
 ```
 
 which installs the Groundwire runtime and boots your new comet.
+
+## Protocol status (cc-draft-2)
+
+The confidential-comets kernel spec (`gwbtc/urbit` branch `cyc/cc-draft-2`)
+moved the attestation into the pass itself. Causeway's two front ends now
+straddle the migration:
+
+- **Web app (this SPA)** still runs the *public* spawn flow — commit +
+  on-chain reveal with the legacy v9 tweak (`src/spawn/tweak.ts`) — because
+  the deployed chain watcher (`lib/urb-core`) verifies exactly that. The
+  cc-draft-2 primitives are available (`src/spawn/dat.ts`,
+  `src/spawn/reveal-log.ts`, xtr-aware pass/ring builders in
+  `src/spawn/mine-c.ts`) for when the web flow goes confidential.
+- **Desktop app (`desktop/`)** runs the *confidential* flow and mines with
+  the cc-draft-2 `dat` (mat-encoded `%groundwire` domain + spawn satpoint)
+  by default; `--legacy-tweak` restores v9 for the current e2e harness.
+  `causeway finalize` bakes the off-chain reveal log (`xtr`) into the boot
+  feed after the commit confirms. See
+  `desktop/docs/CONFIDENTIAL-COMETS.md` for the full protocol note and
+  compatibility matrix.
+
+Both `dat` and `xtr` encoders are pinned to `urbit eval` golden vectors in
+`tests/dat.spec.ts` and `desktop/tests/test_causeway.py`.
 
 ## Status
 

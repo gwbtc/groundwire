@@ -1,6 +1,7 @@
 import { el, clearAndAppend, banner, kvList, atomToHex } from "../components.js";
 import { go, getSession } from "../state.js";
 import { atomToPatp } from "../../protocol/patp.js";
+import { atomToMnemonym, displayId } from "../../protocol/mnemonym.js";
 import { lookupPoint } from "../../oracle/point.js";
 
 const OP_LABELS: Array<[string, string, string]> = [
@@ -23,14 +24,19 @@ export function renderDashboard(root: HTMLElement): void {
   if (!point) { go("#/"); return; }
 
   const card = el("section", { class: "card" });
-  card.append(el("h1", {}, atomToPatp(patpAtom)));
+  // The comet's mnemonym is its human name; the @p is kept as a muted
+  // reference (it's what the boot command and other machine tokens use).
+  card.append(
+    el("h1", { class: "mnemonym" }, atomToMnemonym(patpAtom)),
+    el("div", { class: "patp-ref" }, atomToPatp(patpAtom)),
+  );
 
   const meta = kvList([
     ["Block", `${s.snapshot.blockId.num}`],
     ["Rift", `${point.net.rift}`],
     ["Life", `${point.net.life}`],
-    ["Sponsor", atomToPatp(point.net.sponsor.who)],
-    ["Pending escape", point.net.escape ? atomToPatp(point.net.escape) : "—"],
+    ["Sponsor", displayId(point.net.sponsor.who)],
+    ["Pending escape", point.net.escape ? displayId(point.net.escape) : "—"],
     ["Fief", point.net.fief
       ? (point.net.fief.type === "if"
         ? `${((point.net.fief.ip >>> 24) & 0xff)}.${((point.net.fief.ip >>> 16) & 0xff)}.${((point.net.fief.ip >>> 8) & 0xff)}.${(point.net.fief.ip & 0xff)}:${point.net.fief.port}`

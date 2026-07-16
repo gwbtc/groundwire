@@ -1,11 +1,11 @@
 import { base64 } from "@scure/base";
 import { el, clearAndAppend, banner, copyButton, kvList } from "../components.js";
 import { go, getSession } from "../state.js";
-import { atomToPatp, patpToAtom, isPatp } from "../../protocol/patp.js";
+import { atomToMnemonym, abridgeMnemonym, resolveId } from "../../protocol/mnemonym.js";
 import { ops } from "../../ops/index.js";
 import type { OpCtx } from "../../ops/types.js";
 import type { Fief } from "../../protocol/types.js";
-import { deriveKeyInfo } from "../../keys/xpub.js";
+import { findKeyForScript } from "../../keys/xpub.js";
 import { animateUR } from "../../signing/qr-render.js";
 import { encodePsbtUR } from "../../signing/qr-ur.js";
 import { scanPsbtFromCamera } from "../../signing/qr-scan.js";
@@ -25,15 +25,15 @@ const OP_FORMS: Record<string, FormSpec> = {
     { name: "breach", label: "Breach (discontinuity)", kind: "checkbox" },
   ],
   "escape": [
-    { name: "newSponsor", label: "New sponsor @p", kind: "patp", required: true },
+    { name: "newSponsor", label: "New sponsor (mnemonym or @p)", kind: "patp", required: true },
     { name: "sponsorSigHex", label: "Sponsor's off-chain signature (hex, optional)", kind: "text" },
   ],
   "cancel-escape": [
-    { name: "pendingSponsor", label: "Pending sponsor @p", kind: "patp", required: true },
+    { name: "pendingSponsor", label: "Pending sponsor (mnemonym or @p)", kind: "patp", required: true },
   ],
-  "adopt": [{ name: "child", label: "Child @p", kind: "patp", required: true }],
-  "reject": [{ name: "child", label: "Child @p", kind: "patp", required: true }],
-  "detach": [{ name: "child", label: "Child @p", kind: "patp", required: true }],
+  "adopt": [{ name: "child", label: "Child (mnemonym or @p)", kind: "patp", required: true }],
+  "reject": [{ name: "child", label: "Child (mnemonym or @p)", kind: "patp", required: true }],
+  "detach": [{ name: "child", label: "Child (mnemonym or @p)", kind: "patp", required: true }],
   "fief": [
     { name: "ip", label: "IPv4 address (e.g. 1.2.3.4) — leave empty to clear", kind: "text" },
     { name: "port", label: "Port", kind: "number", placeholder: "31337" },
@@ -63,14 +63,14 @@ function buildArgs(opName: string, form: HTMLFormElement): any {
     case "escape": {
       const sigHex = get("sponsorSigHex");
       return {
-        newSponsor: patpToAtom(get("newSponsor")),
+        newSponsor: resolveId(get("newSponsor")),
         sponsorSig: sigHex ? BigInt("0x" + sigHex.replace(/^0x/, "")) : null,
       };
     }
     case "cancel-escape":
-      return { pendingSponsor: patpToAtom(get("pendingSponsor")) };
+      return { pendingSponsor: resolveId(get("pendingSponsor")) };
     case "adopt": case "reject": case "detach":
-      return { child: patpToAtom(get("child")) };
+      return { child: resolveId(get("child")) };
     case "fief": {
       const ipStr = get("ip"); const portStr = get("port");
       if (!ipStr && !portStr) return { fief: null };
@@ -198,7 +198,7 @@ export function renderOp(root: HTMLElement, opName: string): void {
   const card = el("section", { class: "card" });
   card.append(
     el("h1", {}, opName),
-    el("p", {}, `Build a commit + reveal PSBT pair for ${atomToPatp(patpAtom)}.`),
+    el("p", {}, `Build a commit + reveal PSBT pair for ${abridgeMnemonym(atomToMnemonym(patpAtom))}.`),
   );
 
   const form = el("form", { id: "opForm" });
@@ -279,27 +279,44 @@ export function renderOp(root: HTMLElement, opName: string): void {
       const session = s!;
       const keys = session.keys!;
 
+      // The inscription UTXO is the plain BIP-86 P2TR left by the prior op's
+      // reveal; find the wallet key that actually controls it rather than
+      // assuming receive index 0. That key signs the commit input, and (like
+      // the spawn flow) also serves as the commit-output internal key and the
+      // reveal destination, so the sat stays spendable at a known address.
+      const owner = findKeyForScript(keys, auth.utxo.scriptPubKey);
+      if (!owner) {
+        throw new Error(
+          "couldn't find the key controlling your ownership UTXO in the first 40 "
+          + "derivations of either chain — is this the wallet that holds the @p?",
+        );
+      }
+
+      // auth.utxo.txid is DISPLAY order (block-explorer form); @scure/btc-signer
+      // reverses to wire order itself, so pass the display bytes as-is. The old
+      // code reversed here too, producing a commit that spent a nonexistent
+      // outpoint.
+      const txidHex = auth.utxo.txid;
+      const txidBytes = new Uint8Array(32);
+      for (let i = 0; i < 32; i++) {
+        txidBytes[i] = parseInt(txidHex.slice(i * 2, i * 2 + 2), 16);
+      }
+
       ctx = {
         state: session.snapshot,
         patpAtom,
         inscriptionUtxo: {
-          txid: new Uint8Array(32),
+          txid: txidBytes,
           vout: auth.utxo.vout,
           value: BigInt(auth.utxo.value),
           scriptPubKey: auth.utxo.scriptPubKey,
         },
-        fundingKey: deriveKeyInfo(keys, 0, 0),
-        commitKey: deriveKeyInfo(keys, 0, 1),
-        destKey: deriveKeyInfo(keys, 0, 2),
+        fundingKey: owner,
+        commitKey: owner,
+        destKey: owner,
         feeRate: 2,
         mp: session.mp,
       };
-      const txidHex = auth.utxo.txid;
-      const txidBytes = new Uint8Array(32);
-      for (let i = 0; i < 32; i++) {
-        txidBytes[31 - i] = parseInt(txidHex.slice(i * 2, i * 2 + 2), 16);
-      }
-      ctx.inscriptionUtxo.txid = txidBytes;
 
       const mod = (ops as any)[opName];
       const pair = await mod.buildPsbts(args, ctx);

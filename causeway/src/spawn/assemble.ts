@@ -3,7 +3,7 @@
 // deterministic (segwit, witness-excluded) txids Causeway can poll for.
 
 import { sha256 } from "@noble/hashes/sha256";
-import { encodeSkim } from "../protocol/encoder.js";
+import { encodeFull } from "../protocol/encoder.js";
 import type { SkimSotx } from "../protocol/types.js";
 import type { DiscoveredUtxo } from "../chain/discover.js";
 import { deriveKeyInfo } from "../keys/xpub.js";
@@ -16,11 +16,17 @@ import type { MineResult } from "./miner.js";
 import { patpToAtom } from "../protocol/patp.js";
 import { ESCAPE_SPONSOR } from "../chain/sponsor.js";
 
-// spkh = sha256(scriptPubKey || u64le(value))
-// Matches boot.hoon's extract-spawn-fields and urb-core's calc-precommit-sont.
+// spkh = shay((can 3 script-pubkey 8^value ~)) per boot.hoon's
+// extract-spawn-fields / urb-core's calc-precommit-sont. script-pubkey is a
+// big-endian hexb; `can 3` lays its atom out LSB-first, so the hashed byte
+// stream is the script bytes REVERSED, then the 8 little-endian value bytes.
+// Hashing the script in natural (wire) order — as this did — makes the spkh
+// mismatch urb-core for every spawn, silently dropping it after fees are spent.
 export function computeSpkh(scriptPubKey: Uint8Array, valueSats: bigint): Uint8Array {
   const buf = new Uint8Array(scriptPubKey.length + 8);
-  buf.set(scriptPubKey, 0);
+  for (let i = 0; i < scriptPubKey.length; i++) {
+    buf[i] = scriptPubKey[scriptPubKey.length - 1 - i]!; // reverse script bytes
+  }
   let v = valueSats;
   for (let i = 0; i < 8; i++) {
     buf[scriptPubKey.length + i] = Number(v & 0xffn);
@@ -95,7 +101,10 @@ export function assembleSpawn(args: AssembleArgs): AssembledSpawn {
       spkh,
       off: 0n,
       tej: 0n,
-      vout: picked.vout === 0 ? null : BigInt(picked.vout),
+      // urb-core's calc-precommit-sont treats a null pos as undefined behavior
+      // and fails; the vout unit must always be some, including vout 0 (the
+      // common case). Encoding 0 as null silently dropped ~half of spawns.
+      vout: BigInt(picked.vout),
     },
   };
 
@@ -109,7 +118,11 @@ export function assembleSpawn(args: AssembleArgs): AssembledSpawn {
       }
     : spawnSingle;
 
-  const attestation = encodeSkim(sotx);
+  // On-chain unvs carry the full sotx: a [sig ship] header (sig none here;
+  // the comet is the from-ship) precedes the skim. urb-core's parse-roll
+  // consumes that header before the opcode, so a bare skim is unparseable
+  // (and can wedge urb-watcher's block processing on the `!!`).
+  const attestation = encodeFull([{ ship: mined.comet, sig: null, skim: sotx }]);
   const leafScript = urbLeafScript(attestation, commitKey.internalKey);
 
   const funding: Utxo = {

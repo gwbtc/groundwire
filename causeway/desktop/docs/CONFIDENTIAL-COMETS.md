@@ -1,5 +1,48 @@
 # Confidential Comets
 
+> **Protocol update (cc-draft-2).** The kernel-integration spec
+> (`gwbtc/urbit` branch `cyc/cc-draft-2`,
+> `pkg/arvo/doc/spec/confidential-comets.md`) has landed since this
+> document was written, and Causeway now follows it. What changed:
+>
+> - **The tweak (`dat`) format.** A confidential comet's signing-key
+>   tweak is no longer the v9 rap-3 atom. It is now
+>   `(can 0 (mat dom) [256 txid] (mat vout) (mat off) ~)` — the
+>   mat-encoded PKI **domain tag** at bit 0 (the kernel extracts it with
+>   `(rub 0 dat)` in `+pass-pki-dom`; committing it into the name
+>   prevents cross-chain double-boot), followed by the spawn satpoint in
+>   `+en-sont`'s bit layout. Causeway mines with this format by default
+>   (`--legacy-tweak` restores v9); the domain defaults to `%groundwire`,
+>   which the spec designates as the verifier agent's name ("né
+>   %urb-watcher") — domains and agents are 1:1 in draft-2.
+> - **The pass carries the attestation.** The reveal data peers need now
+>   rides *inside the pass* as `xtr` — an off-chain reveal log (jammed
+>   list of `[txid block-hash internal-key tapleaf]` entries, one per
+>   ownership-sat transfer, oldest first). `xtr` is not hashed into the
+>   key, so it grows without changing the `@p`; the kernel ships it
+>   opaquely to the domain agent, and the `%anew` flow refreshes it when
+>   the sat moves. `causeway finalize <proofs…> --feed <feed>` bakes the
+>   log into the boot feed once the commit(s) confirm.
+> - **proof.json survives as the local record** (and the source material
+>   for `xtr` entries), but it is no longer the delivery vehicle: the
+>   handshake artifact is the pass itself, verified by the domain agent
+>   via Jael's `%writ` plumbing.
+> - **Verifier compatibility.** `lib/urb-core` (on-chain public spawns)
+>   and the protocol-2.0 verifier on `hd/cc-e2e` (`check-spawn` in
+>   `lib/self-attestation.hoon`) still expect the **v9** tweak; the
+>   cc-draft-2 kernel requires **mat(dom)** at bit 0. A comet mined one
+>   way will not verify the other way — coordinate which stack you're
+>   targeting, and use `--legacy-tweak` for the current e2e harness. The
+>   agent-side `%jael-writ` decoder for the new format is still TODO
+>   upstream (spec §4 item 3); Causeway's `xtr` encoding is a proposal
+>   pinned by golden vectors on both implementations
+>   (`tests/dat.spec.ts`, `desktop/tests/test_causeway.py`) until the
+>   agent pins its own.
+>
+> The rest of this document describes the flow as originally built; the
+> mechanics (commit-only spends, single-leaf commitment, key-path
+> spendability) are unchanged.
+
 ## The problem
 
 The original Groundwire spawn protocol is a three-transaction chain:
@@ -94,6 +137,10 @@ Field rules:
 | `merkle_root_hex` | hex string (32 B) | yes | Final taproot merkle root. For a single-leaf tree this equals `TapLeafHash(leaf_version, leaf_script)`. Used by the next management op's PSBT as `PSBT_IN_TAP_MERKLE_ROOT`. |
 | `attestation_bytes_hex` | hex string | yes | Raw urb sotx bytes. Redundant with `leaf_script_hex` but convenient. |
 | `pass_atom_hex` | hex string | spawn only | Networking pubkey (pass) derived from the mined ring. Absent for management ops. |
+| `tweak_format` | string | spawn only | `"cc2"` (default, cc-draft-2 `mat(dom)+satpoint` dat) or `"v9"` (`--legacy-tweak`). Additive, v1-compatible. |
+| `dom` | string | cc2 spawns | The PKI domain tag committed into the dat (default `groundwire`). |
+| `block_hash` / `block_height` | hex string / int | after finalize | The commit tx's containing block, recorded by `causeway finalize` once confirmed; feeds the `xtr` reveal-log entry. |
+| `xtr_hex` | hex string | after finalize | The jammed reveal log for the whole proof chain, recorded on the newest proof. |
 | `network` | string | yes | `"main"` or `"testnet"`. |
 | `funding` | object | yes | Provenance of the sat entering this commit: `txid`, `vout`, `value`, `path` (BIP-32), `fingerprint_hex`. Spawn: the user's funding UTXO. Management: the prior commit's output. |
 | `prior_proof` | object | management only | Back-pointer: `{commit_txid, commit_vout}` of the prior proof whose commit output this op spent. Verifiers walk this chain to confirm the sont hasn't forked. |

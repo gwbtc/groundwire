@@ -10,19 +10,25 @@
 import { el, clearAndAppend, banner, kvList, copyButton } from "../components.js";
 import { go, getSession } from "../state.js";
 import { miner } from "../../spawn/miner.js";
-import { formatBootCommand } from "../../spawn/boot-cmd.js";
+import { formatBootCommand, formatBootCommandFromUw, atomToUw, bytesToAtomLE } from "../../spawn/boot-cmd.js";
 import { assembleSpawn } from "../../spawn/assemble.js";
 import { buildTweakBytes } from "../../spawn/tweak.js";
 import { atomToPatp } from "../../protocol/patp.js";
+import { atomToMnemonym, abridgeMnemonym } from "../../protocol/mnemonym.js";
 import type { DiscoveredUtxo } from "../../chain/discover.js";
 import { encodePsbtUR } from "../../signing/qr-ur.js";
 import { animateUR } from "../../signing/qr-render.js";
 import { requestEscapeSig, ESCAPE_SPONSOR } from "../../chain/sponsor.js";
 import {
   savePendingSpawn, loadPendingSpawn, clearPendingSpawn, updatePhase,
+  sponsorSigAgeBlocks,
   b64Encode, b64Decode, bytesToHex, hexToBytes,
   type PersistedSpawn,
 } from "../../spawn/persist.js";
+
+// urb-core accepts a sponsor escape-sig only within ±10 blocks of the block it
+// was issued at. Warn well before that so a slow sign/broadcast doesn't expire it.
+const SPONSOR_SIG_WINDOW_BLOCKS = 10;
 import { formatAccountPath } from "../../keys/xpub.js";
 
 const REVEAL_CONFIRMATIONS = 2;
@@ -194,7 +200,10 @@ export function renderSpawn(root: HTMLElement): void {
     status.appendChild(banner("ok",
       `mined in ${(elapsed / 1000).toFixed(1)}s (${mined.tries.toLocaleString()} tries)`));
 
+    // The @p is the machine identity (sponsor API, feed filename, boot
+    // command); the mnemonym is what we show the user.
     const cometPatp = atomToPatp(mined.comet);
+    const cometMnemo = atomToMnemonym(mined.comet);
 
     status.appendChild(banner("warn",
       `requesting escape-sig from ${ESCAPE_SPONSOR.slice(0, 14)}…`));
@@ -214,8 +223,10 @@ export function renderSpawn(root: HTMLElement): void {
     });
 
     // ---- Persist everything we'd need to resume from a page refresh ----
+    // NB: the feed (which embeds the private seed) is intentionally NOT
+    // persisted; the user must save it from the download below.
     const persisted: PersistedSpawn = {
-      version: 1,
+      version: 2,
       createdAt: Date.now(),
       network: keys.network,
       descriptor: "", // may be empty if user pasted bare xpub; we'd need to thread the raw input through — best-effort
@@ -233,7 +244,6 @@ export function renderSpawn(root: HTMLElement): void {
       mined: {
         comet: mined.comet.toString(),
         pass: mined.pass.toString(),
-        feedHex: bytesToHex(mined.feed),
         tries: mined.tries,
       },
       sponsor: {
@@ -249,6 +259,7 @@ export function renderSpawn(root: HTMLElement): void {
     savePendingSpawn(persisted);
 
     renderMineCard(mineCard, {
+      cometMnemo,
       cometPatp,
       pickedSummary: `${shortTxid(bytesToDisplayHex(picked.txid))}:${picked.vout} (${picked.value} sats)`,
       tries: mined.tries,
@@ -257,9 +268,19 @@ export function renderSpawn(root: HTMLElement): void {
       revealTxidHex: assembled.revealTxidHex,
     });
 
+    // The feed is the comet's private key and is deliberately NOT stored in
+    // this browser. Download it now (as the 0w… atom) so the user can boot —
+    // and resume if the tab is refreshed before the boot step.
+    const feedUw = atomToUw(bytesToAtomLE(mined.feed));
+    downloadBytes(new TextEncoder().encode(feedUw), `${cometPatp}.feed.txt`, "text/plain");
+    mineCard.appendChild(banner("warn",
+      "Downloaded your comet key (feed) as a .txt — KEEP IT SAFE. It is your "
+      + "comet's private key and is not saved anywhere in this browser. You "
+      + "need it to boot, and to resume this spawn if the page reloads."));
+
     renderCommitCard(
       commitCard, assembled.commitPsbt, assembled.commitTxidHex,
-      assembled.revealPsbt,
+      assembled.revealPsbt, sponsorSig.height,
     );
 
     await pollForTx(assembled.commitTxidHex,
@@ -268,6 +289,10 @@ export function renderSpawn(root: HTMLElement): void {
     commitCard.querySelector<HTMLElement>(".qr-meta")!.textContent = "commit seen in mempool ✓";
     updatePhase("commit-broadcast");
 
+    // The escape sig expires ±10 blocks from where it was issued; if the user
+    // took too long to broadcast, warn that the spawn may not register.
+    await warnIfSponsorSigStale(persisted, status);
+
     renderRevealCard(revealCard, assembled.revealPsbt, assembled.revealTxidHex);
 
     await pollForTx(assembled.revealTxidHex,
@@ -275,7 +300,7 @@ export function renderSpawn(root: HTMLElement): void {
       { minConfs: REVEAL_CONFIRMATIONS });
     updatePhase("reveal-confirmed");
 
-    renderBootCard(bootCard, cometPatp, mined.feed);
+    renderBootCard(bootCard, cometMnemo, cometPatp, mined.feed);
 
     // Success terminal — we can clear persistence now.
     clearPendingSpawn();
@@ -330,12 +355,12 @@ export function renderSpawn(root: HTMLElement): void {
   function renderResumeCard(el_: HTMLElement, p: PersistedSpawn): void {
     el_.innerHTML = "";
     el_.style.display = "";
-    const cometName = atomToPatp(BigInt(p.mined.comet));
+    const cometName = atomToMnemonym(BigInt(p.mined.comet));
     const ageMin = Math.round((Date.now() - p.createdAt) / 60_000);
     el_.append(
       el("h2", {}, "Pending spawn in progress"),
       el("p", {},
-        `There's an unfinished spawn for ${cometName} (started ${ageMin} min ago, `
+        `There's an unfinished spawn for ${abridgeMnemonym(cometName)} (started ${ageMin} min ago, `
         + `phase: ${p.phase}). Resume it or discard.`),
       kvList([
         ["Comet", cometName],
@@ -379,7 +404,7 @@ export function renderSpawn(root: HTMLElement): void {
 
     status.innerHTML = "";
     status.appendChild(banner("warn",
-      `resuming ${atomToPatp(BigInt(p.mined.comet))} from phase: ${p.phase}…`));
+      `resuming ${abridgeMnemonym(atomToMnemonym(BigInt(p.mined.comet)))} from phase: ${p.phase}…`));
     mineCard.style.display = "none";
     commitCard.style.display = "none";
     revealCard.style.display = "none";
@@ -388,13 +413,13 @@ export function renderSpawn(root: HTMLElement): void {
 
     let commitPsbt: Uint8Array;
     let revealPsbt: Uint8Array;
-    let feed: Uint8Array;
     let cometPatp: string;
+    let cometMnemo: string;
     try {
       commitPsbt = b64Decode(p.commitPsbtB64);
       revealPsbt = b64Decode(p.revealPsbtB64);
-      feed = hexToBytes(p.mined.feedHex);
       cometPatp = atomToPatp(BigInt(p.mined.comet));
+      cometMnemo = atomToMnemonym(BigInt(p.mined.comet));
     } catch (err: any) {
       status.innerHTML = "";
       status.appendChild(banner("err",
@@ -405,6 +430,7 @@ export function renderSpawn(root: HTMLElement): void {
 
     try {
       renderMineCard(mineCard, {
+        cometMnemo,
         cometPatp,
         pickedSummary: `${shortTxid(p.picked.txidHex)}:${p.picked.vout} (${p.picked.value} sats)`,
         tries: p.mined.tries,
@@ -413,7 +439,7 @@ export function renderSpawn(root: HTMLElement): void {
         revealTxidHex: p.revealTxidHex,
       });
 
-      renderCommitCard(commitCard, commitPsbt, p.commitTxidHex, revealPsbt);
+      renderCommitCard(commitCard, commitPsbt, p.commitTxidHex, revealPsbt, p.sponsor.height);
     } catch (err: any) {
       status.innerHTML = "";
       status.appendChild(banner("err", `render error: ${err.message ?? err}`));
@@ -430,6 +456,7 @@ export function renderSpawn(root: HTMLElement): void {
       { minConfs: 0 });
     commitCard.querySelector<HTMLElement>(".qr-meta")!.textContent = "commit seen in mempool ✓";
     updatePhase("commit-broadcast");
+    await warnIfSponsorSigStale(p, status);
 
     renderRevealCard(revealCard, revealPsbt, p.revealTxidHex);
     revealCard.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -439,7 +466,9 @@ export function renderSpawn(root: HTMLElement): void {
       { minConfs: REVEAL_CONFIRMATIONS });
     updatePhase("reveal-confirmed");
 
-    renderBootCard(bootCard, cometPatp, feed);
+    // The feed isn't persisted (it's the private key), so on a resumed flow
+    // the user re-supplies the copy they saved at mine time.
+    renderBootCard(bootCard, cometMnemo, cometPatp, null);
     bootCard.scrollIntoView({ behavior: "smooth", block: "start" });
     clearPendingSpawn();
   }
@@ -449,7 +478,7 @@ export function renderSpawn(root: HTMLElement): void {
 // resume option — the user may not need to re-authenticate.
 function renderResumeOnly(root: HTMLElement, p: PersistedSpawn): void {
   const card = el("section", { class: "card" });
-  const cometName = atomToPatp(BigInt(p.mined.comet));
+  const cometName = abridgeMnemonym(atomToMnemonym(BigInt(p.mined.comet)));
   card.append(
     el("h1", {}, "Pending spawn in progress"),
     el("p", { class: "lead" },
@@ -478,6 +507,7 @@ function renderResumeOnly(root: HTMLElement, p: PersistedSpawn): void {
 function renderMineCard(
   card: HTMLElement,
   info: {
+    cometMnemo: string;
     cometPatp: string;
     pickedSummary: string;
     tries: number;
@@ -491,7 +521,8 @@ function renderMineCard(
   card.append(
     el("h2", {}, "Mined ✓"),
     kvList([
-      ["Comet", info.cometPatp],
+      ["Comet", info.cometMnemo],
+      ["@p", info.cometPatp],
       ["Funding UTXO", info.pickedSummary],
       ["Mining tries", info.tries.toLocaleString()],
       ["Sponsor escape sig", `valid near block ${info.sponsorHeight}`],
@@ -501,11 +532,30 @@ function renderMineCard(
   );
 }
 
+// If the sponsor escape-sig is older than the acceptance window, tell the user
+// the spawn likely won't get its sponsor. Best-effort — a tip-fetch failure is
+// non-fatal.
+async function warnIfSponsorSigStale(p: PersistedSpawn, status: HTMLElement): Promise<void> {
+  try {
+    const tip = await getSession()?.mp.tipHeight();
+    if (tip === undefined) return;
+    const age = sponsorSigAgeBlocks(p, tip);
+    if (age > SPONSOR_SIG_WINDOW_BLOCKS) {
+      status.appendChild(banner("err",
+        `Your commit was broadcast ${age} blocks after the sponsor signature was `
+        + `issued (block ${p.sponsor.height}); the ±${SPONSOR_SIG_WINDOW_BLOCKS}-block `
+        + `window has passed, so urb-watcher will likely reject the spawn. `
+        + `Start over to get a fresh signature.`));
+    }
+  } catch { /* tip fetch failed — skip the check */ }
+}
+
 function renderCommitCard(
   card: HTMLElement,
   commitPsbt: Uint8Array,
   commitTxidHex: string,
   revealPsbt: Uint8Array,
+  sponsorHeight: number,
 ): void {
   card.innerHTML = "";
   card.style.display = "";
@@ -516,6 +566,10 @@ function renderCommitCard(
     "Paste this into Sparrow (File → Load Transaction → From Text), or scan "
     + "the QR with a wallet that supports UR PSBT imports. Sign the commit "
     + `input, then broadcast. Causeway is watching for ${shortTxid(commitTxidHex)}.`));
+  right.appendChild(banner("warn",
+    `Time-sensitive: broadcast within ~${SPONSOR_SIG_WINDOW_BLOCKS} blocks of `
+    + `block ${sponsorHeight} (about 1½ hours). After that the sponsor escape `
+    + `signature expires and your comet won't get a sponsor.`));
 
   // Prominent warning — save the reveal PSBT BEFORE broadcasting.
   right.appendChild(el("div", { class: "banner warn" },
@@ -568,19 +622,54 @@ function renderRevealCard(
   animateUR(left, stream, { fps: 4, size: 340 });
 }
 
-function renderBootCard(card: HTMLElement, cometPatp: string, feed: Uint8Array): void {
-  const bootCmd = formatBootCommand({ comet: cometPatp, feed });
+// Render the boot card. In the fresh flow `feed` is in memory; on a resumed
+// flow it is null (the feed is never persisted — it embeds the private seed),
+// so we ask the user for the copy they saved at mine time.
+function renderBootCard(
+  card: HTMLElement, cometMnemo: string, cometPatp: string, feed: Uint8Array | null,
+): void {
   card.innerHTML = "";
   card.style.display = "";
   card.append(
     el("h2", {}, "Boot your comet"),
+    el("div", { class: "mnemonym" }, cometMnemo),
     el("p", {},
       "Reveal confirmed. Run this on your own machine (macOS or Linux) to "
-      + "download the Groundwire runtime and launch your ship."),
-    el("pre", { class: "code" }, bootCmd),
-    (() => { const row = el("div", { class: "row" });
-      row.appendChild(copyButton(() => bootCmd, "copy command")); return row; })(),
+      + "download the Groundwire runtime and launch your ship. The command uses "
+      + `your comet's @p (${cometPatp}) — the runtime's machine form of the ID above.`),
   );
+
+  const cmdPre = el("pre", { class: "code" });
+  const cmdRow = el("div", { class: "row" });
+
+  const showCmd = (cmd: string): void => {
+    cmdPre.textContent = cmd;
+    cmdRow.innerHTML = "";
+    cmdRow.appendChild(copyButton(() => cmd, "copy command"));
+  };
+
+  if (feed) {
+    showCmd(formatBootCommand({ comet: cometPatp, feed }));
+    card.append(cmdPre, cmdRow);
+  } else {
+    card.append(banner("warn",
+      "Your feed (the comet's key) wasn't saved in this browser — for your "
+      + "security it is never stored. Paste the feed you downloaded at mine "
+      + "time (the 0w… string) to reproduce your boot command."));
+    const input = el("textarea", { rows: "3", placeholder: "0w…" }) as HTMLTextAreaElement;
+    const go = el("button", { class: "btn primary", type: "button" }, "Show boot command");
+    const err = el("div");
+    go.addEventListener("click", () => {
+      err.innerHTML = "";
+      const uw = input.value.trim();
+      if (!/^0w[0-9a-zA-Z.~-]+$/.test(uw)) {
+        err.appendChild(banner("err", "that doesn't look like a 0w… feed atom"));
+        return;
+      }
+      showCmd(formatBootCommandFromUw({ comet: cometPatp, feedUw: uw }));
+    });
+    card.append(input, go, err, cmdPre, cmdRow);
+  }
 }
 
 function toBase64(b: Uint8Array): string {

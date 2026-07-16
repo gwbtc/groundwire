@@ -102,7 +102,8 @@ def en_single(w: BitWriter, s) -> None:
         else:
             w.write(2, 1); w.write_mat(to["vout"])
     elif op == "keys":
-        w.write(7, 2); w.write(1, 1 if s["breach"] else 0); w.write_mat(s["pass"])
+        # Hoon [1 breach.sot] with loobean %.y=0 → breach=True writes bit 0.
+        w.write(7, 2); w.write(1, 0 if s["breach"] else 1); w.write_mat(s["pass"])
     elif op == "escape":
         w.write(7, 3); w.write(1, 0); w.write(128, s["parent"]); en_sig(w, s["sig"])
     elif op == "cancel-escape":

@@ -5,9 +5,12 @@
 
 const UW_CHARS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-~";
 
-// Encode a bigint as Urbit @uw (base-64, "0v" prefix, dots every 5 chars).
+// Encode a bigint as a canonical Urbit @uw literal (base-64, "0w" prefix,
+// dots every 5 chars). vere's -G parses the feed with (slaw %uw ...), which
+// REJECTS any other prefix — the previous "0v" prefix here produced boot
+// commands vere refused with "dawn: invalid private keys".
 export function atomToUw(a: bigint): string {
-  if (a === 0n) return "0v0";
+  if (a === 0n) return "0w0";
   let digits = "";
   let x = a;
   while (x > 0n) {
@@ -18,7 +21,7 @@ export function atomToUw(a: bigint): string {
   for (let i = digits.length; i > 0; i -= 5) {
     grouped.unshift(digits.slice(Math.max(0, i - 5), i));
   }
-  return "0v" + grouped.join(".");
+  return "0w" + grouped.join(".");
 }
 
 export function bytesToAtomLE(b: Uint8Array): bigint {
@@ -46,8 +49,25 @@ function defaultBootScriptUrl(): string {
 // The copy-paste one-liner. Uses `bash -s --` so the flags are piped into
 // the downloaded script cleanly.
 export function formatBootCommand(opts: BootCmdOpts): string {
+  return formatBootCommandFromUw({
+    comet: opts.comet,
+    feedUw: atomToUw(bytesToAtomLE(opts.feed)),
+    ...(opts.bootScriptUrl ? { bootScriptUrl: opts.bootScriptUrl } : {}),
+    ...(opts.port ? { port: opts.port } : {}),
+  });
+}
+
+export interface BootCmdUwOpts {
+  comet: string;
+  feedUw: string;                 // the 0w… feed atom (vere -G parses via slaw %uw)
+  bootScriptUrl?: string;
+  port?: number;
+}
+
+// Same command from an already-@uw feed — used on a resumed spawn where the
+// feed (a secret) was never persisted and the user re-supplies their saved copy.
+export function formatBootCommandFromUw(opts: BootCmdUwOpts): string {
   const url = opts.bootScriptUrl ?? defaultBootScriptUrl();
-  const feedUw = atomToUw(bytesToAtomLE(opts.feed));
   const portArg = opts.port && opts.port !== 8080 ? ` --port ${opts.port}` : "";
-  return `curl -fsSL ${url} | bash -s -- --comet ${opts.comet} --feed ${feedUw}${portArg}`;
+  return `curl -fsSL ${url} | bash -s -- --comet ${opts.comet} --feed ${opts.feedUw}${portArg}`;
 }

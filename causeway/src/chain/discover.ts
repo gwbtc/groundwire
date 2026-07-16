@@ -36,6 +36,12 @@ export interface DiscoverOpts {
   mp: Mempool;
   sontMap: Noun;
   maxIndex?: number;  // default 20
+  // Display-order "txid:vout" outpoints to always treat as ownership sats
+  // (never spendable funding), regardless of the sont-map. The snapshot lags
+  // the chain, so a just-revealed ownership sat may not be in sont-map yet;
+  // pass the on-chain-resolved ownership UTXO (auth.utxo) here so it can never
+  // be offered as a fee input and burn the @p.
+  protectedOutpoints?: Set<string>;
 }
 
 function hexToBytes(s: string): Uint8Array {
@@ -82,8 +88,12 @@ export async function discoverUtxos(opts: DiscoverOpts): Promise<Discovery> {
         index,
       };
       const key = `${mempoolTxidToAtomHex(u.txid)}:${u.vout}`;
-      if (inscriptionKeys.has(key)) inscriptionUtxos.push(utxo);
-      else fundingUtxos.push(utxo);
+      const outpoint = `${u.txid}:${u.vout}`; // display order
+      if (inscriptionKeys.has(key) || opts.protectedOutpoints?.has(outpoint)) {
+        inscriptionUtxos.push(utxo);
+      } else {
+        fundingUtxos.push(utxo);
+      }
     }
   }
 

@@ -33,6 +33,11 @@ causeway-tui = "causeway_tui:main"
 [tool.setuptools]
 py-modules = ["causeway", "causeway_tui"]
 
+# Vendored mnemonyms reference + wordlist (gwbtc/mnemonyms). Shipped as data
+# files so the installed/ frozen app can render Groundwire IDs as mnemonyms.
+[tool.setuptools.data-files]
+"vendor" = ["vendor/mnemonyms.py", "vendor/mnemonyms-english.txt"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 timeout = 60
