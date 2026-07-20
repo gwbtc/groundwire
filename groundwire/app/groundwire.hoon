@@ -1,8 +1,24 @@
-::  %urb-watcher
+::  %groundwire (né %urb-watcher)
 ::
 ::  This agent is the Groundwire equivalent of %azimuth and %eth-watcher.
 ::  It fetches Bitcoin blocks on a timer and parses them for Jael events.
 ::  Its helper core at the bottom works in conjunction with lib/urb-core.
+::
+::  It is also the verifier agent for the %groundwire PKI domain in the
+::  confidential-comets kernel protocol (see the companion spec
+::  doc/confidential-comets-agent.md and, in gwbtc/urbit,
+::  pkg/arvo/doc/spec/confidential-comets.md).  On boot it registers
+::  itself with Jael via a %anex task, so that when a confidential
+::  (suite-%c) comet self-attests to us, Ames routes the attestation
+::  here as a %jael-writ poke.  We verify it against our own indexed
+::  view of the chain and answer with a %writ-response fact; on success
+::  Jael stores the point and promotes the comet.  A %jael-anew poke
+::  (our own comet asking for a fresh attestation) is answered with an
+::  %anew-response fact carrying the re-encoded pass.
+::
+::  The domain name is this agent's name (1:1 by construction): a comet
+::  commits the tag %groundwire in its key tweak, and Jael derives the
+::  same tag from the gall duct our %anex arrives on.
 ::
 ::  Change new-rpc and start-height in ++init to change the network.
 ::  If you're using this in conjunction with the SPV wallet, that
@@ -36,12 +52,17 @@
 ::
 ++  on-init
   ^-  (quip card _this)
-  :-  ~
-  %=  this
-     rpc  :*  'https://alpha.groundwire.dev/rpc'
-              %basic
-              'mainnetrpcuser:fc3d36ce83e15484e75a658b2a9a8a90a66f4cb017ace74c8631fe082b93adbf'
-          ==
+  ::  register as the verifier agent for our own PKI domain (= our
+  ::  agent name).  Jael watches /writs for %writ-response /
+  ::  %anew-response / %azimuth-udiffs facts.
+  ::
+  :_  %=  this
+        rpc  :*  'https://alpha.groundwire.dev/rpc'
+                 %basic
+                 'mainnetrpcuser:fc3d36ce83e15484e75a658b2a9a8a90a66f4cb017ace74c8631fe082b93adbf'
+             ==
+      ==
+  :~  [%pass /anex %arvo %j %anex /writs]
   ==
 ::
 ++  on-save
@@ -57,6 +78,44 @@
   |=  [=mark =vase]
   ^-  (quip card _this)
   ?+    mark  !!
+      ::  Jael forwards a comet self-attestation for on-chain
+      ::  verification.  We verify against our indexed chain view and
+      ::  answer with a %writ-response fact on /writs; on success Jael
+      ::  stores the point and promotes the comet.
+      ::
+      ::    NB: full variant-B verification (fetch each custody-log tx
+      ::    from a txindexed node and walk the sat, spec S7) is not yet
+      ::    wired here; we consult the point our block-watcher already
+      ::    indexed into urb-state, which is the same trust model
+      ::    ("the agent's own view of the chain") and is what the
+      ::    aqua tests exercise.  XX wire the tx-walk for unindexed or
+      ::    newer-than-indexed attestations.
+      ::
+      %noun
+    =/  poke  !<(jael-poke:urb vase)
+    ?-    -.poke
+        %jael-writ
+      =/  res=(unit point:jael)  (verify-writ [dom who pass]:poke)
+      :_  this
+      :~  :*  %give  %fact  ~[/writs]
+              %writ-response  !>(`writ-response:jael`[dom.poke who.poke res])
+          ==
+      ==
+    ::
+        %jael-anew
+      ::  our own comet asking for a fresh self-attestation.  re-encode
+      ::  our current pass (the block-watcher keeps xtr current); if we
+      ::  don't index ourselves yet, stay silent.
+      ::
+      ?~  pas=(fresh-pass our.bowl)
+        `this
+      :_  this
+      :~  :*  %give  %fact  ~[/writs]
+              %anew-response  !>(`anew-response:jael`[dom.poke u.pas])
+          ==
+      ==
+    ==
+  ::
       %urb-start-indexing
     =/  start-urb  ;;((unit state:urb) !<((unit noun) vase))
     ?~  start-urb
@@ -459,6 +518,51 @@
 ::  fx are urb-core's type for urb effects. 
 ::  udiffs are Jael's type for PKI updates. 
 ::  cards for Jael contain udiffs.
+::  Confidential-comets verifier arms (see on-poke).
+::
+::  +verify-writ: verify a comet's self-attestation against our own
+::  indexed chain view, returning the verified Jael point or ~.
+::
+++  verify-writ
+  |=  [dom=@tas who=ship =pass]
+  ^-  (unit point:jael)
+  ::  1. suite-%c pass, carrying the tweak-committed domain at the head
+  ::     of its tweak data; it must match the domain Jael routed on
+  ::
+  =/  cek  +<:(com:nu:cric:crypto pass)
+  ?.  ?=([%c *] cek)  ~
+  ?.  =(dom `@tas`q:(rub 0 dat.tw.pub.cek))  ~
+  ::  2. the name must be the hash of the tweaked key (Ames/Jael
+  ::     already checked this; re-derive rather than trust)
+  ?.  =(who fig:ex:(com:nu:cric:crypto pass))  ~
+  ::  3. consult our indexed view of this comet's on-chain state
+  ?~  pt=(~(get by unv-ids.urb-state) who)  ~
+  ::  4. the attested messaging key must be the one we've indexed as
+  ::     current (the latest committed state)
+  ?.  =(pass pass.net.u.pt)  ~
+  `(urb-point-to-jael u.pt who)
+::
+::  +fresh-pass: our own current pass, for a %jael-anew refresh
+::
+++  fresh-pass
+  |=  who=ship
+  ^-  (unit pass)
+  ?~  pt=(~(get by unv-ids.urb-state) who)  ~
+  `pass.net.u.pt
+::
+::  +urb-point-to-jael: project a urb $point onto Jael's $point
+::
+++  urb-point-to-jael
+  |=  [pt=point:urb who=ship]
+  ^-  point:jael
+  :*  rift.net.pt
+      life.net.pt
+      (my [life.net.pt (sub (end 3 pass.net.pt) 'a') pass.net.pt] ~)
+      ?:  has.sponsor.net.pt  `who.sponsor.net.pt
+      `(^sein:title who)
+      fief.net.pt
+  ==
+::
 ++  listen-to-urb
   |=  [ships=(set ship) =source:point:jael]
   ^-  card

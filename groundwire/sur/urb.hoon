@@ -8,6 +8,16 @@
 |%
 ::
 +$  unv-ids       (map @p point)
+::  $jael-poke: %noun poke Jael sends the domain's verifier agent in
+::  the confidential-comets protocol.  %jael-writ asks us to verify a
+::  comet's self-attestation ($pass); %jael-anew asks us to re-encode
+::  our own comet's pass with a fresh off-chain reveal log.  see
+::  app/groundwire.hoon and, in gwbtc/urbit, sys/vane/jael.hoon.
+::
++$  jael-poke
+  $%  [%jael-writ dom=@tas who=ship =pass]
+      [%jael-anew dom=@tas]
+  ==
 +$  state
   $:  block-id=id:block:bitcoin
       =sont-map:ord
