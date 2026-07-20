@@ -41,7 +41,7 @@
                 %arvo
                 %k
                 %fard
-                :*  %groundwire
+                :*  %gw-btc
                     %btc-spawn
                     [%noun !>(`[rpc sed i.bat.many])]
                 ==
@@ -56,7 +56,7 @@
               %arvo
               %k
               %fard
-              :*  %groundwire
+              :*  %gw-btc
                   `term`(rap 3 ~[%btc- (head i.bat.many)])
                   [%noun !>(`[rpc sed utxo i.bat.many])]
               ==
@@ -70,7 +70,7 @@
               %arvo
               %k
               %fard
-              [%groundwire %btc-spawn [%noun !>(`[rpc sed many])]]
+              [%gw-btc %btc-spawn [%noun !>(`[rpc sed many])]]
           ==
       ==
     ::
@@ -81,7 +81,7 @@
               %arvo
               %k
               %fard
-              :*  %groundwire
+              :*  %gw-btc
                   `term`(rap 3 ~[%btc- -.many])
                   [%noun !>(`[rpc sed utxo many])]
               ==
@@ -140,11 +140,11 @@
               %k
               %fard
               ?:  =(%spawn -.i.new-batch)
-                :*  %groundwire
+                :*  %gw-btc
                     %btc-spawn
                     [%noun !>(`[rpc sed.pole i.new-batch])]
                 ==
-              :*  %groundwire
+              :*  %gw-btc
                   `term`(rap 3 ~[%btc- (head i.new-batch)])
                   [%noun !>(`[rpc `@uw`(slav %uw sed.pole) utxo i.new-batch])]
               ==

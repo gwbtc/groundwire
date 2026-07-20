@@ -1,24 +1,32 @@
-::  %groundwire (né %urb-watcher)
+::  %gw-btc (né %urb-watcher, né %groundwire)
 ::
 ::  This agent is the Groundwire equivalent of %azimuth and %eth-watcher.
 ::  It fetches Bitcoin blocks on a timer and parses them for Jael events.
 ::  Its helper core at the bottom works in conjunction with lib/urb-core.
 ::
-::  It is also the verifier agent for the %groundwire PKI domain in the
+::  It is also the verifier agent for the %gw-btc PKI domain in the
 ::  confidential-comets kernel protocol (see the companion spec
 ::  doc/confidential-comets-agent.md and, in gwbtc/urbit,
 ::  pkg/arvo/doc/spec/confidential-comets.md).  On boot it registers
 ::  itself with Jael via a %anex task, so that when a confidential
 ::  (suite-%c) comet self-attests to us, Ames routes the attestation
-::  here as a %jael-writ poke.  We verify it against our own indexed
-::  view of the chain and answer with a %writ-response fact; on success
-::  Jael stores the point and promotes the comet.  A %jael-anew poke
-::  (our own comet asking for a fresh attestation) is answered with an
-::  %anew-response fact carrying the re-encoded pass.
+::  here as a %jael-writ poke.  We answer with a %writ-response fact; on
+::  success Jael stores the point and promotes the comet.  Two verify
+::  paths:
+::    - INDEXED (fast, synchronous): the comet did an on-chain reveal our
+::      block-watcher already parsed into unv-ids -- consult that point.
+::    - CONFIDENTIAL (async khan thread): the comet is unknown to our
+::      index, so run lib/gw-verify's full section-7 custody walk against
+::      our bitcoin node, answering with the fact when the thread returns.
+::  A %jael-anew poke (our own comet asking for a fresh attestation) is
+::  answered with an %anew-response fact carrying the re-encoded pass.
 ::
 ::  The domain name is this agent's name (1:1 by construction): a comet
-::  commits the tag %groundwire in its key tweak, and Jael derives the
-::  same tag from the gall duct our %anex arrives on.
+::  commits the tag %gw-btc in its key tweak, and Jael derives the same
+::  tag from the gall duct our %anex arrives on.  Because the tag is
+::  hashed into every comet's signing key (and thus its @p), it names the
+::  Groundwire Bitcoin PKI DOMAIN, not this implementation -- do not
+::  rename it to track code changes.
 ::
 ::  Change new-rpc and start-height in ++init to change the network.
 ::  If you're using this in conjunction with the SPV wallet, that
@@ -30,6 +38,7 @@
 ::
 /-  bitcoin, spider, ord, urb
 /+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb
+/+  gwv=gw-verify
 ::
 |%
 +$  card  card:agent:gall
@@ -95,10 +104,23 @@
     =/  poke  !<(jael-poke:urb vase)
     ?-    -.poke
         %jael-writ
-      =/  res=(unit point:jael)  (verify-writ [dom who pass]:poke)
+      ::  INDEXED fast path: if our block-watcher already parsed this comet's
+      ::  on-chain reveal into unv-ids, verify against that point synchronously.
+      ?^  pt=(~(get by unv-ids.urb-state) who.poke)
+        =/  res=(unit point:jael)  (verify-indexed [dom who pass]:poke u.pt)
+        :_  this
+        :~  :*  %give  %fact  ~[/writs]
+                %writ-response  !>(`writ-response:jael`[dom.poke who.poke res])
+            ==
+        ==
+      ::  CONFIDENTIAL path: the comet is unknown to our index, so run
+      ::  lib/gw-verify's full section-7 custody walk in a khan thread; its
+      ::  %writ-response fact is emitted when the thread returns (see the
+      ::  [%writ @ ~] case in +on-arvo).
       :_  this
-      :~  :*  %give  %fact  ~[/writs]
-              %writ-response  !>(`writ-response:jael`[dom.poke who.poke res])
+      :~  :*  %pass  /writ/(scot %p who.poke)  %arvo  %k
+              %lard  q.byk.bowl
+              (writ-shed [dom who pass]:poke rpc)
           ==
       ==
     ::
@@ -119,14 +141,14 @@
       %urb-start-indexing
     =/  start-urb  ;;((unit state:urb) !<((unit noun) vase))
     ?~  start-urb
-      %-  (slog :_(~ [%leaf "%urb-watcher: indexing from block {<num.block-id:(state:urb default-urb-state)>}"]))
+      %-  (slog :_(~ [%leaf "%gw-btc: indexing from block {<num.block-id:(state:urb default-urb-state)>}"]))
       :_  this(urb-state default-urb-state)
       :~  :*  %pass  /timer
               %arvo  %b
               %wait  now.bowl
           ==
       ==
-    %-  (slog :_(~ [%leaf "%urb-watcher: processing groundwire snapshot ({<~(wyt by unv-ids.u.start-urb)>} points)"]))
+    %-  (slog :_(~ [%leaf "%gw-btc: processing groundwire snapshot ({<~(wyt by unv-ids.u.start-urb)>} points)"]))
     :_  this(urb-state u.start-urb)
     :~  (listen-to-urb ~(key by unv-ids.u.start-urb) [%| dap.bowl])
         :*  %pass  /timer
@@ -204,6 +226,26 @@
   ^-  (quip card _this)
   ?+    wire  (on-arvo:def wire sign-arvo)
   ::
+  ::  A confidential +writ-shed verify thread returned.  Give the
+  ::  %writ-response fact carrying its verdict (or ~ on failure / crash).
+      [%writ @ ~]
+    ?+    sign-arvo  (on-arvo:def wire sign-arvo)
+        [%khan %arow *]
+      =/  who=ship  (slav %p i.t.wire)
+      =/  res=(unit point:jael)
+        ?.  ?=([%khan %arow %.y %noun *] sign-arvo)
+          ::  thread bailed (rpc failure, unparsable packet): report failure.
+          %-  (slog leaf+"%gw-btc: writ verify thread failed for {<who>}" ~)
+          ~
+        =/  [%khan %arow %.y %noun =vase]  sign-arvo
+        !<((unit point:jael) vase)
+      :_  this
+      :~  :*  %give  %fact  ~[/writs]
+              %writ-response  !>(`writ-response:jael`[dap.bowl who res])
+          ==
+      ==
+    ==
+  ::
   ::  Run +get-blocks at regular intervals.
       [%timer ~]
     :_  this
@@ -222,7 +264,7 @@
         [%khan %arow *]
       ?.  -.p.sign-arvo
         ?>  ?=([%khan %arow %.n *] sign-arvo)
-        %-  (slog leaf+"%urb-watcher: thread failed, retrying" +.p.p.sign-arvo)
+        %-  (slog leaf+"%gw-btc: thread failed, retrying" +.p.p.sign-arvo)
         :_  this
         :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
         ==
@@ -232,7 +274,7 @@
         !<  
         [(list [id:block:bitcoin effect:urb]) state:urb]
         vase
-      ::  Jael is subscribed to %urb-watcher to receive udiffs for some ships,
+      ::  Jael is subscribed to %gw-btc to receive udiffs for some ships,
       ::  and it isn't subscribed yet for others. For the ones in fx it is, we 
       ::  send udiffs. For the ones it isn't subscribed to yet, we tell it to,
       ::  and it will hit ++on-agent to get the udiff afterwards.
@@ -373,7 +415,7 @@
     ^$(tx-inputs t.tx-inputs)
   ?.  ?=(%spawn -.i.sots)
     $(sots t.sots)
-  ::  ~&  >>  "%urb-watcher found a spawn!"
+  ::  ~&  >>  "%gw-btc found a spawn!"
   ::  If we found an input with a %spawn, get the tx that generated it
   ;<  commit-tx=(unit tx:bc)  bind:m
     (get-raw-transaction:btcio rpc ~ txid.i.tx-inputs)
@@ -390,7 +432,7 @@
   =/  inputs  is.commit-urb-tx
   |-
   ?~  inputs
-    ::  ~&  >>>  "%urb-watcher: Couldn't find precommit tx."
+    ::  ~&  >>>  "%gw-btc: Couldn't find precommit tx."
     ^$(sots t.sots)
   ;<  precommit-tx=(unit tx:bc)  bind:m
     (get-raw-transaction:btcio rpc ~ txid.i.inputs)
@@ -520,11 +562,12 @@
 ::  cards for Jael contain udiffs.
 ::  Confidential-comets verifier arms (see on-poke).
 ::
-::  +verify-writ: verify a comet's self-attestation against our own
-::  indexed chain view, returning the verified Jael point or ~.
+::  +verify-indexed: verify a comet's self-attestation against a point our
+::  block-watcher already parsed from an on-chain reveal, returning the
+::  verified Jael point or ~.  The caller looked the point up in unv-ids.
 ::
-++  verify-writ
-  |=  [dom=@tas who=ship =pass]
+++  verify-indexed
+  |=  [dom=@tas who=ship =pass pt=point:urb]
   ^-  (unit point:jael)
   ::  1. suite-%c pass, carrying the tweak-committed domain at the head
   ::     of its tweak data; it must match the domain Jael routed on
@@ -535,12 +578,27 @@
   ::  2. the name must be the hash of the tweaked key (Ames/Jael
   ::     already checked this; re-derive rather than trust)
   ?.  =(who fig:ex:(com:nu:cric:crypto pass))  ~
-  ::  3. consult our indexed view of this comet's on-chain state
-  ?~  pt=(~(get by unv-ids.urb-state) who)  ~
-  ::  4. the attested messaging key must be the one we've indexed as
-  ::     current (the latest committed state)
-  ?.  =(pass pass.net.u.pt)  ~
-  `(urb-point-to-jael u.pt who)
+  ::  3. the attested MESSAGING KEY (cry) must match the one we indexed as
+  ::     current.  Compare cry, not the whole pass: the pass's xtr reveal
+  ::     log grows independently of the key, so a whole-pass compare would
+  ::     spuriously reject a comet whose attestation carries a longer log
+  ::     than the (public) reveal we parsed.  (The signing key that fixes
+  ::     the @p is already pinned by the fig check in step 2.)
+  =/  ind  +<:(com:nu:cric:crypto pass.net.pt)
+  ?.  ?=([%c *] ind)  ~
+  ?.  =(cry.pub.cek cry.pub.ind)  ~
+  `(urb-point-to-jael pt who)
+::
+::  +writ-shed: run lib/gw-verify's full section-7 custody walk in a khan
+::  thread (the confidential / unindexed path), producing its verdict as a
+::  vase for the [%writ @ ~] case in +on-arvo.
+::
+++  writ-shed
+  |=  [dom=@tas who=ship =pass rpc=req-to:btcio]
+  ^-  shed:khan
+  =/  m  (strand:strandio ,vase)
+  ;<  res=(unit point:jael)  bind:m  (verify:gwv dom who pass rpc)
+  (pure:m !>(res))
 ::
 ::  +fresh-pass: our own current pass, for a %jael-anew refresh
 ::
