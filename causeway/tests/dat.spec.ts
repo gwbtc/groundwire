@@ -18,20 +18,21 @@ function ux(s: string): bigint {
 }
 
 describe("cc-draft-2 dat", () => {
-  it("matches the %groundwire vout=1 golden vector", () => {
+  it("matches the %gw-btc vout=1 golden vector", () => {
+    // urbit eval: `@ux`(can 0 (mat %gw-btc) [256 <TXID>] (mat 1) (mat 0) ~)
     const exp = ux(
-      "1.d562.5e01.b386.6000.0222.2444.4666.6888.8aaa.accc.ceee" +
-      ".f111.1333.3555.5777.7999.995c.9a5d.d91b.9d5b.dc99.cf80",
+      "7558.9780.6ce1.9800.0088.8911.1199.9a22.22aa.ab33.33bb.bc44" +
+      ".44cc.cd55.55dd.de66.6637.4622.d776.77c0",
     );
     expect(buildDatAtom({ txidHex: TXID, vout: 1 })).toBe(exp);
-    // spec §8 size estimate: ≈45 bytes for a domain tag + satpoint
-    expect(buildDatBytes({ txidHex: TXID, vout: 1 }).length).toBe(45);
+    // spec §8: dom tag + satpoint. "gw-btc" (6 chars) → 40 bytes.
+    expect(buildDatBytes({ txidHex: TXID, vout: 1 }).length).toBe(40);
   });
 
-  it("matches the %groundwire vout=0 golden vector", () => {
+  it("matches the %gw-btc vout=0 golden vector", () => {
     const exp = ux(
-      "7562.5e01.b386.6000.0222.2444.4666.6888.8aaa.accc.ceee" +
-      ".f111.1333.3555.5777.7999.995c.9a5d.d91b.9d5b.dc99.cf80",
+      "1d58.9780.6ce1.9800.0088.8911.1199.9a22.22aa.ab33.33bb.bc44" +
+      ".44cc.cd55.55dd.de66.6637.4622.d776.77c0",
     );
     expect(buildDatAtom({ txidHex: TXID, vout: 0 })).toBe(exp);
   });
@@ -51,10 +52,10 @@ describe("cc-draft-2 dat", () => {
     expect(datPkiDom(dat)).toBe(DEFAULT_PKI_DOM);
   });
 
-  it("mat(%groundwire) matches hoon", () => {
-    const { p, q } = mat(cordToAtom("groundwire"));
-    expect(p).toBe(93);
-    expect(q).toBe(7849075396568004131013906304n);
+  it("mat(%gw-btc) matches hoon", () => {
+    const { p, q } = mat(cordToAtom("gw-btc"));
+    expect(p).toBe(59);
+    expect(q).toBe(447903803404351424n);
   });
 });
 

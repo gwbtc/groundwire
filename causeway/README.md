@@ -121,7 +121,7 @@ straddle the migration:
   `src/spawn/reveal-log.ts`, xtr-aware pass/ring builders in
   `src/spawn/mine-c.ts`) for when the web flow goes confidential.
 - **Desktop app (`desktop/`)** runs the *confidential* flow and mines with
-  the cc-draft-2 `dat` (mat-encoded `%groundwire` domain + spawn satpoint)
+  the cc-draft-2 `dat` (mat-encoded `%gw-btc` domain + spawn satpoint)
   by default; `--legacy-tweak` restores v9 for the current e2e harness.
   `causeway finalize` bakes the off-chain reveal log (`xtr`) into the boot
   feed after the commit confirms. See

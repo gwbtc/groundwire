@@ -12,9 +12,10 @@
 >   `(rub 0 dat)` in `+pass-pki-dom`; committing it into the name
 >   prevents cross-chain double-boot), followed by the spawn satpoint in
 >   `+en-sont`'s bit layout. Causeway mines with this format by default
->   (`--legacy-tweak` restores v9); the domain defaults to `%groundwire`,
->   which the spec designates as the verifier agent's name ("né
->   %urb-watcher") — domains and agents are 1:1 in draft-2.
+>   (`--legacy-tweak` restores v9); the domain defaults to `%gw-btc`,
+>   the Groundwire Bitcoin-PKI verifier agent's name (renamed from
+>   `%urb-watcher` / `%groundwire`) — domains and agents are 1:1 in
+>   draft-2, so the tag *is* the agent name.
 > - **The pass carries the attestation.** The reveal data peers need now
 >   rides *inside the pass* as `xtr` — an off-chain reveal log (jammed
 >   list of `[txid block-hash internal-key tapleaf]` entries, one per
