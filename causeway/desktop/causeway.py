@@ -432,9 +432,10 @@ def make_tweak_expr(txid_hex: str, vout: int, off: int = 0) -> str:
 #  then mat(vout), then mat(off).
 #
 #  The domain tag is 1:1 with the verifier agent's name registered with
-#  Jael via %anex. The spec (§7) names it %groundwire ("né %urb-watcher").
-#  Because dat is hashed into the signing key, the comet's @p commits to
-#  it forever — changing PKI_DOM changes every @p minted with it.
+#  Jael via %anex — the Groundwire Bitcoin-PKI domain agent, %gw-btc
+#  (renamed from %urb-watcher / %groundwire). Because dat is hashed into
+#  the signing key, the comet's @p commits to it forever — changing
+#  PKI_DOM changes every @p minted with it, so it is consensus-critical.
 #
 #  Unlike the v9 rap-3 tweak, the fixed-width txid field means a txid
 #  with leading zero bytes cannot shift the encoding, and the trailing
@@ -442,7 +443,7 @@ def make_tweak_expr(txid_hex: str, vout: int, off: int = 0) -> str:
 # =========================================================================
 
 
-PKI_DOM = "groundwire"
+PKI_DOM = "gw-btc"
 
 
 def make_dat_expr(txid_hex: str, vout: int, off: int = 0, dom: str = PKI_DOM) -> str:

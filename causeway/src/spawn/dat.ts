@@ -15,8 +15,9 @@
 // mat(vout), then mat(off).
 //
 // The domain tag is 1:1 with the verifier agent registered with Jael via
-// %anex; the spec (§7) names it %groundwire ("né %urb-watcher"). dat is
-// hashed into the signing key, so the comet's @p commits to it forever.
+// %anex — %gw-btc, the Groundwire Bitcoin-PKI domain agent (renamed from
+// %urb-watcher / %groundwire). dat is hashed into the signing key, so the
+// comet's @p commits to the tag forever — it is consensus-critical.
 //
 // Unlike the legacy v9 rap-3 tweak (see ./tweak.ts), the fixed-width txid
 // field means a txid with leading zero bytes cannot shift the encoding,
@@ -29,7 +30,7 @@
 import { BitWriter } from "../protocol/bitwriter.js";
 import { rub } from "../protocol/mat.js";
 
-export const DEFAULT_PKI_DOM = "groundwire";
+export const DEFAULT_PKI_DOM = "gw-btc";
 
 // Pack an ASCII term into its Hoon atom (LE bytes).
 export function cordToAtom(s: string): bigint {

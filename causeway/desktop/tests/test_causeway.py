@@ -386,20 +386,21 @@ def _ux(s: str) -> int:
     return int(s.replace(".", ""), 16)
 
 
-def test_dat_atom_vector_groundwire_vout1():
+def test_dat_atom_vector_gwbtc_vout1():
+    # urbit eval: `@ux`(can 0 (mat %gw-btc) [256 <_DAT_TXID>] (mat 1) (mat 0) ~)
     exp = _ux(
-        "1.d562.5e01.b386.6000.0222.2444.4666.6888.8aaa.accc.ceee"
-        ".f111.1333.3555.5777.7999.995c.9a5d.d91b.9d5b.dc99.cf80"
+        "7558.9780.6ce1.9800.0088.8911.1199.9a22.22aa.ab33.33bb.bc44"
+        ".44cc.cd55.55dd.de66.6637.4622.d776.77c0"
     )
     assert cw.build_dat_atom(_DAT_TXID, 1, 0) == exp
-    # spec §8 size estimate: dat ≈ 45 bytes for a domain tag + satpoint
-    assert len(cw.build_dat_bytes(_DAT_TXID, 1, 0)) == 45
+    # dom tag + satpoint; "gw-btc" (6 chars) → 40 bytes.
+    assert len(cw.build_dat_bytes(_DAT_TXID, 1, 0)) == 40
 
 
-def test_dat_atom_vector_groundwire_vout0():
+def test_dat_atom_vector_gwbtc_vout0():
     exp = _ux(
-        "7562.5e01.b386.6000.0222.2444.4666.6888.8aaa.accc.ceee"
-        ".f111.1333.3555.5777.7999.995c.9a5d.d91b.9d5b.dc99.cf80"
+        "1d58.9780.6ce1.9800.0088.8911.1199.9a22.22aa.ab33.33bb.bc44"
+        ".44cc.cd55.55dd.de66.6637.4622.d776.77c0"
     )
     assert cw.build_dat_atom(_DAT_TXID, 0, 0) == exp
 
@@ -417,7 +418,7 @@ def test_dat_expr_matches_atom_semantics():
     # the expression is what comet-miner evaluates via u3v_wish.
     expr = cw.make_dat_expr(_DAT_TXID, 1, 0)
     assert expr == (
-        "(can 0 (mat %groundwire) "
+        "(can 0 (mat %gw-btc) "
         "[256 0xab12.f00d.9c33.0000.1111.2222.3333.4444.5555.6666.7777.8888.9999.aaaa.bbbb.cccc] "
         "(mat 1) (mat 0) ~)"
     )
@@ -427,7 +428,7 @@ def test_dat_domain_is_rub_extractable():
     # The kernel's +pass-pki-dom does (rub 0 dat); the head must decode to the domain tag.
     dat = cw.build_dat_atom(_DAT_TXID, 7, 0)
     _width, dom_atom = cw._hoon_rub(0, dat)
-    assert dom_atom.to_bytes(10, "little").decode() == "groundwire"
+    assert dom_atom.to_bytes(6, "little").decode() == "gw-btc"
 
 
 def test_xtr_jam_vector_single_entry():

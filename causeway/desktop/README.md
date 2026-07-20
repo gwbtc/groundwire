@@ -64,7 +64,7 @@ Each emits `<patp>-<op>-<txid>.proof.json`. To apply the attestation inside your
 ## Finalize — bake the reveal log into your boot feed (cc-draft-2)
 
 Spawns mine with the cc-draft-2 tweak by default (`dat` = mat-encoded
-`%groundwire` domain + spawn satpoint; use `--legacy-tweak` for the old v9
+`%gw-btc` domain + spawn satpoint; use `--legacy-tweak` for the old v9
 format the current e2e harness verifies). Once the commit tx confirms, bake
 the off-chain reveal log (`xtr`) into the feed so the booted ship's pass
 carries its own attestation:
