@@ -402,13 +402,162 @@ def format_hoon_ux(hex_str: str) -> str:
 
 def make_tweak_expr(txid_hex: str, vout: int, off: int = 0) -> str:
     """
-    Build the Hoon expression string for the Groundwire tweak.
+    Build the Hoon expression string for the LEGACY (v9) Groundwire tweak.
 
     comet-miner's --tweak evaluates this via u3v_wish().
     Tweak format v9: (rap 3 ~[%9 ~tyr %urb-watcher %btc %gw %9 txid vout off])
+
+    This is what lib/urb-core (on-chain spawns) and the protocol-2.0
+    self-attestation verifier (hd/cc-e2e check-spawn) expect TODAY. New
+    confidential comets should use make_dat_expr (cc-draft-2) instead.
     """
     txid_ux = format_hoon_ux(txid_hex)
     return f"(rap 3 ~[%9 ~tyr %urb-watcher %btc %gw %9 {txid_ux} {vout} {off}])"
+
+
+# =========================================================================
+#  cc-draft-2 `dat` — the name-committing tweak for confidential comets
+#
+#  Per the kernel spec (gwbtc/urbit cyc/cc-draft-2,
+#  doc/spec/confidential-comets.md + sur/stealth.hoon), a suite-C
+#  confidential comet's tweak data is:
+#
+#      dat = (can 0 (mat dom) [256 txid] (mat vout) (mat off) ~)
+#
+#  i.e. the +mat-encoded PKI domain tag at bit 0 (the kernel extracts it
+#  with (rub 0 dat) in +pass-pki-dom), followed by the spawn satpoint —
+#  the sat's location BEFORE the spawn commit spends it — in the same
+#  bit layout lib/urb-encoder's +en-sont uses: fixed 256-bit txid
+#  (display-hex numeric value, i.e. the @ux a block explorer shows),
+#  then mat(vout), then mat(off).
+#
+#  The domain tag is 1:1 with the verifier agent's name registered with
+#  Jael via %anex. The spec (§7) names it %groundwire ("né %urb-watcher").
+#  Because dat is hashed into the signing key, the comet's @p commits to
+#  it forever — changing PKI_DOM changes every @p minted with it.
+#
+#  Unlike the v9 rap-3 tweak, the fixed-width txid field means a txid
+#  with leading zero bytes cannot shift the encoding, and the trailing
+#  mat always ends in a 1-bit, so the atom's byte length is unambiguous.
+# =========================================================================
+
+
+PKI_DOM = "groundwire"
+
+
+def make_dat_expr(txid_hex: str, vout: int, off: int = 0, dom: str = PKI_DOM) -> str:
+    """Hoon expression for the cc-draft-2 dat, for comet-miner's --tweak flag."""
+    txid_ux = format_hoon_ux(txid_hex)
+    return f"(can 0 (mat %{dom}) [256 {txid_ux}] (mat {vout}) (mat {off}) ~)"
+
+
+def build_dat_atom(txid_hex: str, vout: int, off: int = 0, dom: str = PKI_DOM) -> int:
+    """The cc-draft-2 dat as a Hoon atom (integer). Twin of make_dat_expr."""
+    w = BitWriter()
+    w.write_mat(int.from_bytes(dom.encode("ascii"), "little"))
+    w.write(256, int(txid_hex, 16))
+    w.write_mat(vout)
+    w.write_mat(off)
+    return w.to_int()
+
+
+def build_dat_bytes(txid_hex: str, vout: int, off: int = 0, dom: str = PKI_DOM) -> bytes:
+    """The cc-draft-2 dat as minimal LE atom bytes (what the tweak hash consumes).
+
+    Safe to size from the bit stream: dat always ends in a mat, whose last
+    bit is 1, so ceil(bits/8) equals the atom's minimal byte length.
+    """
+    a = build_dat_atom(txid_hex, vout, off, dom)
+    return a.to_bytes((a.bit_length() + 7) // 8, "little")
+
+
+# =========================================================================
+#  cc-draft-2 `xtr` — the off-chain reveal log riding in the pass
+#
+#  xtr is NOT hashed into the key (the @p commits to ugn+dat only), so it
+#  can grow over the comet's lifetime without changing the name; peers'
+#  domain agents parse it to verify the ownership chain, and the %anew
+#  flow refreshes it when the sat moves.
+#
+#  The kernel treats xtr as opaque bits, and the agent-side decoder is
+#  not yet pinned (spec §4 item 3), so the encoding below is Causeway's
+#  PROPOSAL, chosen to match the spec's fetch-based "variant B" (§8) and
+#  the protocol-2.0 +link shape (sur/self-attestation.hoon on hd/cc-e2e,
+#  minus `sots`, which verifiers re-derive from the leaf script):
+#
+#      xtr = (jam log)
+#      log = (list [txid=@ux block=@ux internal-key=@ux tapleaf=[version=@ux script=octs]])
+#      octs = [wid=@ud dat=@ux]
+#
+#  oldest-first: entry 0 is the spawn commit. txid/block-hash/key/script
+#  atoms are the numeric values of their display hex (hexb:bitcoin
+#  convention). `block` is the containing block's HASH so verifiers can
+#  getrawtransaction without -txindex, exactly like protocol 2.0.
+# =========================================================================
+
+
+def build_xtr_atom(entries: list[dict]) -> int:
+    """Jam the reveal log. Each entry: {txid_hex, block_hash_hex,
+    internal_key_hex (33-byte compressed P), leaf_version, leaf_script_hex}."""
+    log = 0  # ~ (null-terminated list)
+    for e in reversed(entries):
+        script_hex = e["leaf_script_hex"]
+        node = (
+            int(e["txid_hex"], 16),
+            (
+                int(e["block_hash_hex"], 16),
+                (
+                    int(e["internal_key_hex"], 16),
+                    (
+                        int(e["leaf_version"]),
+                        (len(script_hex) // 2, int(script_hex, 16)),
+                    ),
+                ),
+            ),
+        )
+        log = (node, log)
+    return hoon_jam(log)
+
+
+def append_xtr_to_ring(ring_int: int, xtr: int) -> int:
+    """Rebuild a suite-C ring ('C' | sed 64B | mat(dat) | xtr) with the given
+    reveal log appended, mirroring +sec:ex:cric. The miner emits xtr-less
+    rings (xtr can only be built after the spawn commit confirms); the boot
+    feed should carry the baked log so pass.ames-state serves it to peers
+    (spec §2.5). The @p is unchanged: the name commits to ugn+dat only."""
+    assert ring_int & 0xFF == ord("C"), "not a suite-C ring"
+    bod = ring_int >> 8
+    sed = bod & ((1 << 512) - 1)
+    p, dat = _hoon_rub(512, bod)
+    w = BitWriter()
+    w.write(8, ord("C"))
+    w.write(512, sed)
+    w.write_mat(dat)
+    if xtr:
+        w.write(xtr.bit_length(), xtr)
+    return w.to_int()
+
+
+def rebuild_feed(comet_p: int, rift: int, life: int, ring_int: int) -> int:
+    """Re-jam the boot feed noun [[2 0] comet rift [[life ring] 0]] around an
+    updated ring (e.g. after append_xtr_to_ring)."""
+    return hoon_jam(((2, 0), (comet_p, (rift, ((life, ring_int), 0)))))
+
+
+def _hoon_rub(a: int, b: int) -> tuple[int, int]:
+    """Hoon ++rub: decode a mat at bit offset `a` of atom `b` -> (p, q)."""
+    c = 0
+    while ((b >> (a + c)) & 1) == 0:
+        c += 1
+        if c > 2000:
+            raise ValueError("rub: too many zeros")
+    if c == 0:
+        return (1, 0)
+    d = a + c + 1
+    low = (b >> d) & ((1 << (c - 1)) - 1) if c > 1 else 0
+    e = (1 << (c - 1)) + low
+    val = (b >> (d + (c - 1))) & ((1 << e) - 1)
+    return (2 * c + e, val)
 
 
 # =========================================================================
@@ -441,14 +590,41 @@ _UW_MAP = {c: i for i, c in enumerate(_UW_CHARS)}
 
 
 def decode_uw(uw_str: str) -> int:
-    """Decode an Urbit @uw base-64 string to an integer."""
-    s = uw_str.lstrip("0v").replace(".", "")
+    """Decode an Urbit @uw base-64 string to an integer.
+
+    Canonical @uw literals are 0w-prefixed (what comet-miner emits and what
+    vere's -G parses via slaw %uw). NB: the old implementation did
+    lstrip("0v"), which left the 'w' of a 0w prefix in the digit stream and
+    silently corrupted the atom's high bits.
+    """
+    s = uw_str.strip()
+    if s.startswith("0w") or s.startswith("0v"):
+        s = s[2:]
+    s = s.replace(".", "")
     if not s:
         return 0
     result = 0
     for ch in s:
         result = result * 64 + _UW_MAP[ch]
     return result
+
+
+def encode_uw(value: int) -> str:
+    """Encode an integer as a canonical Urbit @uw literal (0w prefix, dots
+    every 5 digits) — the form slaw %uw (vere -G) accepts."""
+    if value == 0:
+        return "0w0"
+    digits = ""
+    v = value
+    while v > 0:
+        digits = _UW_CHARS[v & 63] + digits
+        v >>= 6
+    groups = []
+    i = len(digits)
+    while i > 0:
+        groups.insert(0, digits[max(0, i - 5):i])
+        i -= 5
+    return "0w" + ".".join(groups)
 
 
 # =========================================================================
@@ -546,6 +722,37 @@ def hoon_jam(noun) -> int:
     for i, b in enumerate(bits):
         result |= b << i
     return result
+
+
+def hoon_cue(atom: int):
+    """Cue a jammed atom back into a noun (int for atoms, tuple for cells).
+
+    Inverse of hoon_jam; used by `causeway finalize` to unpack a boot feed.
+    """
+    refs: dict[int, object] = {}
+
+    def rub(pos: int) -> tuple[int, int]:
+        return _hoon_rub(pos, atom)
+
+    def decode(pos: int):
+        start = pos
+        tag0 = (atom >> pos) & 1
+        if tag0 == 0:
+            width, val = rub(pos + 1)
+            refs[start] = val
+            return val, pos + 1 + width
+        tag1 = (atom >> (pos + 1)) & 1
+        if tag1 == 0:
+            head, pos2 = decode(pos + 2)
+            tail, pos3 = decode(pos2)
+            cell = (head, tail)
+            refs[start] = cell
+            return cell, pos3
+        width, ref = rub(pos + 2)
+        return refs[ref], pos + 2 + width
+
+    noun, _end = decode(0)
+    return noun
 
 
 # =========================================================================
@@ -756,7 +963,11 @@ def encode_batch_sotx(
 def _encode_keys_skim(w: "BitWriter", pass_atom: int, breach: bool) -> None:
     """Encode a %keys skim (rekey / breach)."""
     w.write(7, 2)               # opcode %keys
-    w.write(1, 1 if breach else 0)
+    # Hoon writes the breach loobean directly ([1 breach.sot]) and decodes it
+    # as =(0 breach); loobean %.y (true) is 0. So breach=True writes bit 0.
+    # Writing `1 if breach else 0` inverted it: a plain rekey encoded as an
+    # irreversible continuity breach and vice versa.
+    w.write(1, 0 if breach else 1)
     w.write_mat(pass_atom)
 
 
@@ -1018,9 +1229,13 @@ def build_tweak_bytes(txid_hex: str, vout: int, off: int = 0) -> bytes:
     parts.extend(b"btc")              # %btc
     parts.extend(b"gw")               # %gw
     parts.extend(b"\x09")             # %9 (atom 9)
-    # txid as Hoon atom bytes (little-endian, 32 bytes for a 256-bit hash)
+    # txid as Hoon @ atom's MINIMAL little-endian bytes — `rap 3` uses
+    # (met 3 txid), so a txid whose display hex has leading zero bytes
+    # contributes fewer than 32 bytes. A fixed 32 shifts every following
+    # element and mismatches urb-core's tweak for ~1/256 of txids.
     txid_int = int(txid_hex, 16)
-    parts.extend(txid_int.to_bytes(32, "little"))
+    txid_len = (txid_int.bit_length() + 7) // 8
+    parts.extend(txid_int.to_bytes(txid_len, "little"))
     # vout: only add bytes if nonzero (met 3 of 0 = 0)
     if vout > 0:
         n = (vout.bit_length() + 7) // 8
@@ -1032,13 +1247,14 @@ def build_tweak_bytes(txid_hex: str, vout: int, off: int = 0) -> bytes:
     return bytes(parts)
 
 
-def derive_pass_from_ring(ring_uw: str, tweak_bytes: bytes) -> int:
+def derive_pass_from_ring(ring_uw: str, tweak_bytes: bytes | None = None) -> int:
     """Derive the Suite C pass (public networking key) from a ring.
 
     Replicates Hoon's pub:ex:(nol:nu:cric:crypto ring).
 
     ring_uw: the ring value as a @uw string from comet-miner output
-    tweak_bytes: the tweak bytes (from build_tweak_bytes)
+    tweak_bytes: UNUSED (kept for call-site compatibility) — the tweak data
+        (dat) is parsed out of the ring itself, as +nol does.
 
     Returns the pass as a Hoon atom (integer).
     """
@@ -1065,22 +1281,11 @@ def derive_pass_from_ring(ring_uw: str, tweak_bytes: bytes) -> int:
     c_pub, c_sek = hoon_luck_ed(c_seed_atom)
 
     # Extract tweak data from ring: rub at bit 512 of bod
-    # (rub 512 bod) gives [bit_count, tweak_data]
-    def hoon_rub(a, b):
-        c = 0
-        while ((b >> (a + c)) & 1) == 0:
-            c += 1
-            if c > 2000:
-                raise ValueError("too many zeros in rub")
-        if c == 0:
-            return (1, 0)
-        d = a + c + 1
-        low = (b >> d) & ((1 << (c - 1)) - 1) if c > 1 else 0
-        e = (1 << (c - 1)) + low
-        val = (b >> (d + (c - 1))) & ((1 << e) - 1)
-        return (2 * c + e, val)
-
-    _cur, dat = hoon_rub(512, bod)
+    # (rub 512 bod) gives [bit_count, tweak_data]; everything after the
+    # mat is xtr, the off-chain reveal log (cc-draft-2) — empty on
+    # miner-fresh rings, present after append_xtr_to_ring.
+    _cur, dat = _hoon_rub(512, bod)
+    xtr = bod >> (512 + _cur)
 
     # Compute tweak: mit = shax(can(3, [32 pub.s] [(met 3 dat) dat] ~))
     # shax hashes the minimal bytes of the atom
@@ -1095,9 +1300,10 @@ def derive_pass_from_ring(ring_uw: str, tweak_bytes: bytes) -> int:
     tw_point = nacl.bindings.crypto_scalarmult_ed25519_base_noclamp(mit_bytes)
     tweaked_s_pub = nacl.bindings.crypto_core_ed25519_add(s_pub, tw_point)
 
-    # Build pass: 'c' + ugn(untweaked s_pub) + cry(c_pub ed25519) + mat(dat)
-    # From zuse.hoon line 1605: pub [cry=pub.c sgn=pub.t tw=[ugn=pub.s dat=dat xtr=xtr]]
-    # cry is the ed25519 public key from luck, NOT curve25519
+    # Build pass: 'c' + ugn(untweaked s_pub) + cry(c_pub ed25519) + mat(dat) + xtr
+    # From zuse.hoon +pub:ex:cric: pub [cry=pub.c sgn=pub.t tw=[ugn=pub.s dat=dat xtr=xtr]]
+    # cry is the ed25519 public key from luck, NOT curve25519; xtr rides at
+    # its exact bit length ((met 0 xtr)^xtr), omitted entirely when 0.
     mat_p, mat_q = hoon_mat(dat)
 
     w = BitWriter()
@@ -1105,6 +1311,8 @@ def derive_pass_from_ring(ring_uw: str, tweak_bytes: bytes) -> int:
     w.write(256, int.from_bytes(s_pub, "little"))   # ugn = untweaked s_pub
     w.write(256, int.from_bytes(c_pub, "little"))    # cry = ed25519 pub from luck
     w.write(mat_p, mat_q)                                 # mat(dat)
+    if xtr:
+        w.write(xtr.bit_length(), xtr)                    # reveal log (cc-draft-2)
 
     return w.to_int()
 
@@ -1285,15 +1493,14 @@ def build_confidential_commit_psbt(
         _psbt.DerivationPath(funding_fingerprint, _parse_path(funding_path)),
     )
 
-    # BIP-371 output metadata so a watcher / the user's wallet can recognize
-    # the commit output and its derivation (otherwise the tweaked SPK won't
-    # match any standard descriptor address).
-    out0 = p.outputs[0]
-    out0.taproot_internal_key = funding_pubkey
-    out0.taproot_bip32_derivations[funding_pubkey] = (
-        [],
-        _psbt.DerivationPath(funding_fingerprint, _parse_path(funding_path)),
-    )
+    # NB: we deliberately DO NOT set taproot_internal_key / bip32 derivation on
+    # the commit output. Its scriptPubKey is tweaked by the (undisclosed) leaf
+    # hash, but embit can't emit PSBT_OUT_TAP_TREE — so a strict signer that
+    # tried to verify the output as its own would recompute the key from the
+    # internal key + an EMPTY tree, get a mismatch, and flag it as a
+    # change-address substitution (Coldcard/Sparrow output validation). Leaving
+    # it as a foreign output avoids the false alarm; the owner still spends it
+    # next op via the input's PSBT_IN_TAP_MERKLE_ROOT hint (build_chained...).
 
     # Change output metadata (if present) — points at the change address path
     # so the signer treats it as a known-derivation output.
@@ -1423,13 +1630,12 @@ def build_chained_commit_psbt(
         _psbt.DerivationPath(funding_fingerprint, _parse_path(funding_path)),
     )
 
-    # Output metadata: new commit output has the same internal key.
-    out0 = p.outputs[0]
-    out0.taproot_internal_key = internal_pubkey
-    out0.taproot_bip32_derivations[internal_pubkey] = (
-        [],
-        _psbt.DerivationPath(funding_fingerprint, _parse_path(funding_path)),
-    )
+    # As in build_confidential_commit_psbt, DO NOT set taproot_internal_key /
+    # derivation on the leaf-tweaked commit output: without PSBT_OUT_TAP_TREE
+    # (embit can't emit it) a strict signer recomputes the key from the internal
+    # key + empty tree, mismatches the tweaked SPK, and flags a change
+    # substitution. The owner spends this output next op via the input merkle-
+    # root hint, so the output metadata isn't needed.
 
     new_proof = {
         "version": 1,
@@ -1548,6 +1754,133 @@ def patp_to_int(patp: str) -> int:
     # Actually @p uses a Feistel cipher for ships ≤ 32 bits. For comets (128 bits),
     # @p is just the raw bytes in big-endian byte order.
     return int.from_bytes(bytes(raw_bytes), "big")
+
+
+def int_to_patp(atom: int) -> str:
+    """Render a comet @p atom as its @p string. Ported from urbit-ob's `patp`.
+
+    The Feistel scramble (`fein`) applies ONLY to planets [2**16, 2**32); it is
+    identity for galaxies, stars, moons and comets. Causeway only handles comets
+    [2**64, 2**128), so this direct (unscrambled) encoding is exact for our use;
+    it must NOT be used for planet-range atoms. Inverse of patp_to_int here."""
+    dyx = (atom.bit_length() + 7) // 8  # met(3): byte count
+    if dyx <= 1:
+        return "~" + SUFFIXES[atom]      # <=1 byte → lone suffix (~zod, ~nec, …)
+    dyy = (atom.bit_length() + 15) // 16  # met(4): number of 16-bit words
+    res = ""
+    t = atom
+    for timp in range(dyy):
+        word = t & 0xFFFF
+        syl = PREFIXES[(word >> 8) & 0xFF] + SUFFIXES[word & 0xFF]
+        etc = ("" if timp == 0 else "--") if timp % 4 == 0 else "-"
+        res = syl + etc + res
+        t >>= 16
+    return "~" + res
+
+
+# =========================================================================
+#  Mnemonyms — human-memorable rendering of a Groundwire ID
+#
+#  A comet's @p (a 128-bit atom) is rendered as a BIP-39-style "mnemonym":
+#  the atom split into 11-bit groups indexing a 2048-word list, with a SHA-256
+#  checksum, dot-joined, prefixed "." (tweaked/Groundwire) or ".." (untweaked).
+#  Reference + wordlist vendored from gwbtc/mnemonyms in ./vendor. The @p stays
+#  the canonical machine identity (boot --comet, pier name, proof.json, sotx).
+# =========================================================================
+
+import importlib.util as _ilu
+
+COMET_STRENGTH = 128
+COMET_TWEAKED = True
+
+
+def _mnemo_dir() -> str:
+    """Locate the vendored mnemonyms module + wordlist across dev, installed,
+    and frozen (PyInstaller) layouts."""
+    candidates = []
+    with contextlib.suppress(NameError):
+        candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor"))
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(os.path.join(meipass, "vendor"))
+    if getattr(sys, "frozen", False):
+        candidates.append(os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "vendor"))
+    for d in candidates:
+        if os.path.isfile(os.path.join(d, "mnemonyms-english.txt")):
+            return d
+    # Fall back to the first candidate for a clear error at open() time.
+    return candidates[0] if candidates else "vendor"
+
+
+_MNEMO_DIR = _mnemo_dir()
+_mnemo_wordlist_cache: list[str] | None = None
+_mnemo_class = None
+
+
+def _mnemonym_wordlist() -> list[str]:
+    global _mnemo_wordlist_cache
+    if _mnemo_wordlist_cache is None:
+        path = os.path.join(_MNEMO_DIR, "mnemonyms-english.txt")
+        with open(path) as f:
+            _mnemo_wordlist_cache = [w for w in f.read().split("\n") if w]
+    return _mnemo_wordlist_cache
+
+
+def _mnemonym_ctx(tweaked: bool = COMET_TWEAKED, strength: int = COMET_STRENGTH):
+    global _mnemo_class
+    if _mnemo_class is None:
+        spec = _ilu.spec_from_file_location("_gw_mnemonyms", os.path.join(_MNEMO_DIR, "mnemonyms.py"))
+        mod = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _mnemo_class = mod.Mnemonym
+    return _mnemo_class(tweaked=tweaked, strength=strength, wordlist=_mnemonym_wordlist())
+
+
+def atom_to_mnemonym(atom: int, tweaked: bool = COMET_TWEAKED, strength: int = COMET_STRENGTH) -> str:
+    """Render a Groundwire ID atom (e.g. a comet @p) as a mnemonym."""
+    return _mnemonym_ctx(tweaked, strength).to_nym(atom.to_bytes(strength // 8, "big"))
+
+
+def mnemonym_to_atom(nym: str, strength: int = COMET_STRENGTH) -> int:
+    """Decode a mnemonym back to its ID atom (checksum-verified)."""
+    return int(_mnemonym_ctx(COMET_TWEAKED, strength).to_eny(nym.strip()), 16)
+
+
+def patp_to_mnemonym(patp: str) -> str:
+    """Render a comet @p string as its tweaked mnemonym."""
+    return atom_to_mnemonym(patp_to_int(patp))
+
+
+def is_mnemonym(s: str) -> bool:
+    return s.strip().startswith(".")
+
+
+def _split_nym(nym: str) -> tuple[str, list[str]]:
+    prefix = ".." if nym.startswith("..") else "."
+    return prefix, nym[len(prefix):].split(".")
+
+
+def abridge_mnemonym(nym: str) -> str:
+    """Compact form for tight UI: '.first...last' (mirrors +abridge)."""
+    prefix, words = _split_nym(nym)
+    if len(words) <= 2:
+        return nym
+    return f"{prefix}{words[0]}...{words[-1]}"
+
+
+def foreshorten_mnemonym(nym: str) -> str:
+    """Medium form: '.first.second..penultimate.last' (mirrors +foreshorten)."""
+    prefix, words = _split_nym(nym)
+    if len(words) <= 4:
+        return nym
+    return f"{prefix}{words[0]}.{words[1]}..{words[-2]}.{words[-1]}"
+
+
+def resolve_id(entry: str) -> int:
+    """Parse a user-supplied Groundwire ID that may be a mnemonym ('.…') or a
+    @p ('~…'), returning the atom."""
+    entry = entry.strip()
+    return mnemonym_to_atom(entry) if is_mnemonym(entry) else patp_to_int(entry)
 
 
 # =========================================================================
@@ -1944,11 +2277,15 @@ def mnemonic_to_hdkey(mnemonic: str, passphrase: str = "", network: str = "main"
 
 
 def hdkey_fingerprint(root: bip32.HDKey) -> bytes:
-    """4-byte master key fingerprint (hash160 of the compressed pubkey, first 4 bytes)."""
+    """4-byte master key fingerprint (hash160 of the compressed pubkey, first 4 bytes).
+
+    Uses embit's hash160, which falls back to a pure-Python ripemd160 — unlike
+    hashlib.new("ripemd160"), which raises on OpenSSL-3 hosts (Ubuntu 22.04+/
+    Debian 12+) that disable the legacy provider, crashing `spawn generate`.
+    """
+    from embit import hashes as _eh
     compressed = root.key.get_public_key().sec()
-    import hashlib as _hl
-    h = _hl.new("ripemd160", _hl.sha256(compressed).digest()).digest()
-    return h[:4]
+    return _eh.hash160(compressed)[:4]
 
 
 def print_seed_box(mnemonic: str) -> None:
@@ -2012,9 +2349,20 @@ def mine_comet_from_utxo(
     vout: int,
     off: int = 0,
     miner_bin: str = COMET_MINER_BIN,
+    legacy_tweak: bool = False,
+    dom: str = PKI_DOM,
 ) -> dict:
-    """Build a tweak expression for the given funding UTXO and run the comet miner."""
-    tweak_expr = make_tweak_expr(txid_hex, vout, off)
+    """Build a tweak expression for the given funding UTXO and run the comet miner.
+
+    By default the tweak is the cc-draft-2 `dat` (mat-encoded PKI domain +
+    spawn satpoint). Pass legacy_tweak=True for the v9 rap-3 format that
+    lib/urb-core and the protocol-2.0 verifier still expect — required until
+    the kernel/agent migration lands everywhere the comet must verify.
+    """
+    if legacy_tweak:
+        tweak_expr = make_tweak_expr(txid_hex, vout, off)
+    else:
+        tweak_expr = make_dat_expr(txid_hex, vout, off, dom)
     return run_comet_miner(tweak_expr, miner_bin)
 
 
@@ -2046,7 +2394,7 @@ _MGMT_PRIOR_PROOF_HELP = (
 
 
 @cli.command("rekey")
-@click.option("--point", required=True, help="Target @p (the comet being rekeyed)")
+@click.option("--point", required=True, help="Target comet — mnemonym or @p")
 @click.option("--prior-proof", required=True, type=click.Path(exists=True, dir_okay=False), help=_MGMT_PRIOR_PROOF_HELP)
 @click.option("--new-pass-hex", required=True, help="New networking key (pass), hex — derived from your ship's new ring")
 @click.option("--breach", is_flag=True, default=False, help="Bump rift (a breach rekey)")
@@ -2056,6 +2404,7 @@ _MGMT_PRIOR_PROOF_HELP = (
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
 def cmd_rekey(point, prior_proof, new_pass_hex, breach, fee_rate, network, output_dir, mempool_base):
     """%keys sotx — rotate a comet's networking key. Confidential commit; chains off --prior-proof."""
+    point = int_to_patp(resolve_id(point))  # accept mnemonym or @p
     comet_p = patp_to_int(point)
     new_pass = int.from_bytes(bytes.fromhex(new_pass_hex), "little")
     attestation = encode_keys_sotx(comet_p=comet_p, pass_atom=new_pass, breach=breach)
@@ -2063,8 +2412,8 @@ def cmd_rekey(point, prior_proof, new_pass_hex, breach, fee_rate, network, outpu
 
 
 @cli.command("escape")
-@click.option("--point", required=True, help="The escaping @p")
-@click.option("--parent", required=True, help="The requested parent @p")
+@click.option("--point", required=True, help="The escaping comet — mnemonym or @p")
+@click.option("--parent", required=True, help="The requested parent — mnemonym or @p")
 @click.option("--prior-proof", required=True, type=click.Path(exists=True, dir_okay=False), help=_MGMT_PRIOR_PROOF_HELP)
 @click.option("--sig-hex", default=None, help="Sponsor's off-chain pre-signature (hex, 64 bytes) — optional")
 @click.option("--fee-rate", type=int, default=2, show_default=True)
@@ -2073,16 +2422,17 @@ def cmd_rekey(point, prior_proof, new_pass_hex, breach, fee_rate, network, outpu
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
 def cmd_escape(point, parent, prior_proof, sig_hex, fee_rate, network, output_dir, mempool_base):
     """%escape sotx — ask a new parent to adopt you. Chains off --prior-proof."""
+    point = int_to_patp(resolve_id(point))  # accept mnemonym or @p
     comet_p = patp_to_int(point)
-    parent_p = patp_to_int(parent)
+    parent_p = resolve_id(parent)
     escape_sig = int.from_bytes(bytes.fromhex(sig_hex), "little") if sig_hex else None
     attestation = encode_escape_sotx(comet_p=comet_p, parent_p=parent_p, escape_sig=escape_sig)
     _run_management_op("escape", point, prior_proof, fee_rate, network, output_dir, mempool_base, attestation)
 
 
 @cli.command("cancel-escape")
-@click.option("--point", required=True)
-@click.option("--parent", required=True, help="Parent of the escape to cancel")
+@click.option("--point", required=True, help="Target comet — mnemonym or @p")
+@click.option("--parent", required=True, help="Parent to cancel — mnemonym or @p")
 @click.option("--prior-proof", required=True, type=click.Path(exists=True, dir_okay=False), help=_MGMT_PRIOR_PROOF_HELP)
 @click.option("--fee-rate", type=int, default=2, show_default=True)
 @click.option("--network", type=click.Choice(["main", "testnet"]), default="main", show_default=True)
@@ -2090,14 +2440,15 @@ def cmd_escape(point, parent, prior_proof, sig_hex, fee_rate, network, output_di
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
 def cmd_cancel_escape(point, parent, prior_proof, fee_rate, network, output_dir, mempool_base):
     """%cancel-escape sotx — rescind a pending escape request. Chains off --prior-proof."""
+    point = int_to_patp(resolve_id(point))  # accept mnemonym or @p
     comet_p = patp_to_int(point)
-    parent_p = patp_to_int(parent)
+    parent_p = resolve_id(parent)
     attestation = encode_cancel_escape_sotx(comet_p=comet_p, parent_p=parent_p)
     _run_management_op("cancel-escape", point, prior_proof, fee_rate, network, output_dir, mempool_base, attestation)
 
 
 @cli.command("fief")
-@click.option("--point", required=True)
+@click.option("--point", required=True, help="Target comet — mnemonym or @p")
 @click.option("--prior-proof", required=True, type=click.Path(exists=True, dir_okay=False), help=_MGMT_PRIOR_PROOF_HELP)
 @click.option("--ip", default=None, help="IPv4 or IPv6 address. Omit to clear fief.")
 @click.option("--port", type=int, default=None, help="Port (required if --ip is given)")
@@ -2107,6 +2458,7 @@ def cmd_cancel_escape(point, parent, prior_proof, fee_rate, network, output_dir,
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
 def cmd_fief(point, prior_proof, ip, port, fee_rate, network, output_dir, mempool_base):
     """%fief sotx — set or clear a comet's static IP/port fief. Chains off --prior-proof."""
+    point = int_to_patp(resolve_id(point))  # accept mnemonym or @p
     comet_p = patp_to_int(point)
     if ip is None:
         fief = None
@@ -2138,7 +2490,8 @@ def _run_management_op(op: str, point: str, prior_proof_path: str, fee_rate: int
     """
     print()
     print("=" * 60)
-    print(f"  CAUSEWAY — Confidential {op.upper()} for {point}")
+    print(f"  CAUSEWAY — Confidential {op.upper()} for {patp_to_mnemonym(point)}")
+    print(f"  (@p {point})")
     print("=" * 60)
 
     try:
@@ -2202,7 +2555,7 @@ def _run_management_op(op: str, point: str, prior_proof_path: str, fee_rate: int
 
     print("\n" + "=" * 60)
     click.echo(click.style(
-        f"  {op.upper()} attestation broadcast for {point}.\n"
+        f"  {op.upper()} attestation broadcast for {patp_to_mnemonym(point)}.\n"
         f"  Sont chain: {prior.get('commit_txid','?')[:10]}..:0 → {commit_txid[:10]}..:0\n"
         f"  Use {proof_path} as --prior-proof for the NEXT management op.\n"
         f"  Also import into your ship's %spv-wallet state:\n"
@@ -2219,9 +2572,11 @@ def _run_management_op(op: str, point: str, prior_proof_path: str, fee_rate: int
 @click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".", show_default=True, help="Directory to write psbt + proof files")
 @click.option("--miner", default=COMET_MINER_BIN, show_default=True, help="Path to comet_miner binary")
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
-def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base):
+@click.option("--legacy-tweak", is_flag=True, default=False,
+              help="Mine with the v9 rap-3 tweak (pre-cc-draft-2) instead of the mat(dom)+satpoint dat")
+def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, legacy_tweak):
     """Spawn using a user-provided wallet (xpub / descriptor). You sign the PSBT externally."""
-    run_spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base)
+    run_spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, legacy_tweak)
 
 
 @spawn.command("generate")
@@ -2231,9 +2586,11 @@ def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_ba
 @click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".", show_default=True)
 @click.option("--miner", default=COMET_MINER_BIN, show_default=True)
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
-def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base):
+@click.option("--legacy-tweak", is_flag=True, default=False,
+              help="Mine with the v9 rap-3 tweak (pre-cc-draft-2) instead of the mat(dom)+satpoint dat")
+def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, legacy_tweak):
     """Generate a fresh BIP-39 wallet, fund it, spawn, and emit a boot one-liner."""
-    run_spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base)
+    run_spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, legacy_tweak)
 
 
 @proof.command("show")
@@ -2260,6 +2617,78 @@ def proof_verify(path, onchain, mempool_base):
     else:
         click.echo(click.style(f"FAIL — {reason}", fg="red"))
         sys.exit(1)
+
+
+@cli.command("finalize")
+@click.argument("proofs", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--feed", default=None, help="Boot feed (@uw, from the miner) to re-bake with the reveal log")
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Poll until each commit confirms")
+@click.option("--poll-interval", type=int, default=POLL_INTERVAL, show_default=True)
+@click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
+def cmd_finalize(proofs, feed, wait, poll_interval, mempool_base):
+    """Bake the cc-draft-2 reveal log (xtr) into proofs and, optionally, a boot feed.
+
+    Give every proof.json for the point, OLDEST FIRST (spawn first, then each
+    management op). Once each commit has confirmed, its block hash is recorded
+    in the proof, the reveal-log entries are jammed into xtr, and — if --feed
+    is given — the feed is re-encoded with xtr baked into the ring, so the
+    booted ship's pass carries its own attestation (spec §2.5). Without this
+    step the ship boots fine but serves an empty reveal log until an %anew
+    round-trip refreshes it.
+    """
+    chain = [load_proof_json(p) for p in proofs]
+    for i in range(1, len(chain)):
+        prior = chain[i].get("prior_proof") or {}
+        if prior.get("commit_txid") not in (None, "", chain[i - 1].get("commit_txid")):
+            raise click.UsageError(
+                f"{proofs[i]}: prior_proof.commit_txid does not match {proofs[i - 1]} — "
+                "pass the proofs oldest-first, one unbroken chain"
+            )
+
+    entries = []
+    for path, proof in zip(proofs, chain):
+        txid = proof.get("commit_txid")
+        if not txid:
+            raise click.UsageError(f"{path} has no commit_txid — was its commit broadcast?")
+        while True:
+            status = mempool_get(f"/tx/{txid}", base=mempool_base).get("status", {})
+            if status.get("confirmed"):
+                break
+            if not wait:
+                click.echo(click.style(f"  {txid} unconfirmed — rerun once it confirms", fg="red"))
+                sys.exit(1)
+            print(f"  waiting for {txid[:16]}… to confirm ({poll_interval}s)", end="\r")
+            time.sleep(poll_interval)
+        proof["block_hash"] = status["block_hash"]
+        proof["block_height"] = status["block_height"]
+        entries.append(dict(
+            txid_hex=txid,
+            block_hash_hex=proof["block_hash"],
+            # 33-byte compressed internal key, even parity per BIP-341 lift_x —
+            # the same shape as protocol 2.0's reveal (sur/self-attestation).
+            internal_key_hex="02" + proof["internal_pubkey_hex"],
+            leaf_version=int(proof["leaf_version"]),
+            leaf_script_hex=proof["leaf_script_hex"],
+        ))
+        print(f"  {os.path.basename(path)}: confirmed in block {proof['block_height']}")
+
+    xtr = build_xtr_atom(entries)
+    chain[-1]["xtr_hex"] = hex(xtr)
+    for path, proof in zip(proofs, chain):
+        write_proof_json(proof, path)
+    print(f"  reveal log: {len(entries)} entr{'y' if len(entries) == 1 else 'ies'}, "
+          f"xtr = {(xtr.bit_length() + 7) // 8} bytes (recorded in {proofs[-1]})")
+
+    if feed:
+        noun = hoon_cue(decode_uw(feed))
+        try:
+            (_two, _zero), (comet_p, (rift, ((life, ring_int), _nil))) = noun
+        except (TypeError, ValueError):
+            raise click.UsageError("--feed does not cue to a boot feed [[2 0] comet rift [[life ring] 0]]")
+        new_feed = encode_uw(rebuild_feed(comet_p, rift, life, append_xtr_to_ring(ring_int, xtr)))
+        patp = chain[-1].get("patp") or chain[0].get("patp") or "<your-comet>"
+        print("\n  Boot with the xtr-baked feed:")
+        _print_boot_oneliner(patp, new_feed, proofs[-1])
 
 
 # =========================================================================
@@ -2356,12 +2785,11 @@ def _extract_tx_from_psbt(signed_b64: str) -> tuple[str, str]:
             raise RuntimeError(f"input {i} has no schnorr sig; PSBT not signed")
         raw_tx.vin[i].witness = Witness([tap_key_sig])
     tx_hex = raw_tx.serialize().hex()
-    # txid = double-sha256 of stripped (no-witness) tx, reversed to display order
-    stripped = raw_tx.serialize(segwit=False)
-    import hashlib as _hl
-    h1 = _hl.sha256(stripped).digest()
-    h2 = _hl.sha256(h1).digest()
-    txid = h2[::-1].hex()
+    # embit's Transaction.txid() returns the display-order (segwit-stripped)
+    # txid directly. The old code called serialize(segwit=False), which embit
+    # (>=0.8) rejects — TypeError: write_to() takes no 'segwit' kwarg — so every
+    # broadcast path crashed here after signing.
+    txid = raw_tx.txid().hex()
     return txid, tx_hex
 
 
@@ -2372,7 +2800,7 @@ def _broadcast_tx(tx_hex: str, *, mempool_base: str = MEMPOOL_API_URL) -> str:
     return r.text.strip()
 
 
-def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str) -> None:
+def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, legacy_tweak: bool = False) -> None:
     print()
     print("=" * 60)
     print("  CAUSEWAY — Confidential Comet Spawn (Connect Wallet)")
@@ -2402,15 +2830,16 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     utxos = scan_addresses(source, mempool_base=mempool_base)
     utxo = pick_utxo_interactive(utxos)
 
-    print(f"\n  Mining comet with tweak from ({utxo['txid']}:{utxo['vout']},0)...")
-    miner_result = mine_comet_from_utxo(utxo["txid"], utxo["vout"], 0, miner)
+    fmt = "v9" if legacy_tweak else "cc2"
+    print(f"\n  Mining comet with {fmt} tweak from ({utxo['txid']}:{utxo['vout']},0)...")
+    miner_result = mine_comet_from_utxo(utxo["txid"], utxo["vout"], 0, miner, legacy_tweak=legacy_tweak)
     comet = miner_result["comet"]
     feed = miner_result["feed"]
     ring_uw = miner_result.get("ring", "")
-    print(f"  Mined: {comet}")
+    print(f"  Mined: {patp_to_mnemonym(comet)}")
+    print(f"         @p {comet}")
 
-    tweak_raw = build_tweak_bytes(utxo["txid"], utxo["vout"], 0)
-    pass_atom = derive_pass_from_ring(ring_uw, tweak_raw)
+    pass_atom = derive_pass_from_ring(ring_uw)
     comet_p = patp_to_int(comet)
 
     # Build the attestation
@@ -2434,6 +2863,9 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     proof["op"] = "spawn"
     proof["patp"] = comet
     proof["pass_atom_hex"] = hex(pass_atom)
+    proof["tweak_format"] = fmt
+    if not legacy_tweak:
+        proof["dom"] = PKI_DOM
 
     os.makedirs(output_dir, exist_ok=True)
     pier = comet.lstrip("~")
@@ -2468,7 +2900,7 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     _print_boot_oneliner(comet, feed, proof_path)
 
 
-def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str) -> None:
+def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, legacy_tweak: bool = False) -> None:
     print()
     print("=" * 60)
     print("  CAUSEWAY — Confidential Comet Spawn (Generate New Wallet)")
@@ -2508,15 +2940,16 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
         print(f"  No confirmed UTXO yet ({len(utxos)} unconfirmed). Sleeping {POLL_INTERVAL}s...", end="\r")
         time.sleep(POLL_INTERVAL)
 
-    print(f"\n  Mining comet...")
-    miner_result = mine_comet_from_utxo(utxo["txid"], utxo["vout"], 0, miner)
+    fmt = "v9" if legacy_tweak else "cc2"
+    print(f"\n  Mining comet ({fmt} tweak)...")
+    miner_result = mine_comet_from_utxo(utxo["txid"], utxo["vout"], 0, miner, legacy_tweak=legacy_tweak)
     comet = miner_result["comet"]
     feed = miner_result["feed"]
     ring_uw = miner_result.get("ring", "")
-    print(f"  Mined: {comet}")
+    print(f"  Mined: {patp_to_mnemonym(comet)}")
+    print(f"         @p {comet}")
 
-    tweak_raw = build_tweak_bytes(utxo["txid"], utxo["vout"], 0)
-    pass_atom = derive_pass_from_ring(ring_uw, tweak_raw)
+    pass_atom = derive_pass_from_ring(ring_uw)
     comet_p = patp_to_int(comet)
 
     spkh = compute_spkh(utxo["address"], utxo["value"])
@@ -2552,6 +2985,9 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
     signed_b64 = p_signed.to_base64()
     commit_txid, tx_hex = _extract_tx_from_psbt(signed_b64)
 
+    proof["tweak_format"] = fmt
+    if not legacy_tweak:
+        proof["dom"] = PKI_DOM
     proof["commit_txid"] = commit_txid
     os.makedirs(output_dir, exist_ok=True)
     pier = comet.lstrip("~")
@@ -2578,11 +3014,12 @@ def _print_boot_oneliner(comet: str, feed: str, proof_path: str) -> None:
     print("\n" + "=" * 60)
     print("  SPAWN COMPLETE")
     print("=" * 60)
-    print(f"\n  Your comet: {comet}")
+    print(f"\n  Your comet: {patp_to_mnemonym(comet)}")
+    print(f"  @p:         {comet}")
     print(f"  Feed atom: {feed[:60]}{'...' if len(feed) > 60 else ''}")
     print(f"  Proof:     {proof_path}")
     print()
-    print("  To boot:")
+    print("  To boot (the runtime uses the @p as the machine form of your ID):")
     print(f"    curl -fsSL https://groundwire.io/causeway/boot.sh | \\")
     print(f"      bash -s -- --comet {comet} --feed {feed} --proof {proof_path}")
     print()
@@ -2592,6 +3029,12 @@ def _print_boot_oneliner(comet: str, feed: str, proof_path: str) -> None:
         "  comet will boot and claim its identity, but other ships will only\n"
         "  be able to verify the identity once runtime proof-ingest lands.\n",
         fg="yellow",
+    ))
+    click.echo(click.style(
+        "  Once the commit tx confirms, bake the reveal log into your boot\n"
+        "  feed so peers can verify you on first contact (cc-draft-2 §2.5):\n"
+        f"    causeway finalize {proof_path} --feed {feed[:24]}…\n",
+        fg="cyan",
     ))
 
 

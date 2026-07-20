@@ -172,6 +172,25 @@ export function deriveP2TRAddress(src: KeySource, change: number, index: number)
   return p2tr(info.internalKey, undefined, networkBtc(src.network)).address!;
 }
 
+// Locate the wallet key whose BIP-86 P2TR scriptPubKey matches `scriptPubKey`
+// (e.g. the key that controls the inscription UTXO — the plain key-path P2TR
+// left by the prior op's reveal). Scans receive and change chains up to
+// `gapLimit`. Returns the matching KeyInfo, or null if the sat sits at a
+// derivation outside the gap limit (caller should surface that).
+export function findKeyForScript(
+  src: KeySource, scriptPubKey: Uint8Array, gapLimit = 40,
+): KeyInfo | null {
+  const target = Array.from(scriptPubKey).join(",");
+  for (const change of [0, 1] as const) {
+    for (let index = 0; index < gapLimit; index++) {
+      const info = deriveKeyInfo(src, change, index);
+      const script = p2tr(info.internalKey, undefined, networkBtc(src.network)).script;
+      if (Array.from(script).join(",") === target) return info;
+    }
+  }
+  return null;
+}
+
 // Convenience: default account path for a network.
 export function defaultAccountPath(network: BTCNetwork): number[] {
   const coin = network === "main" ? 0 : 1;

@@ -15,6 +15,7 @@
 import { ed25519 } from "@noble/curves/ed25519";
 import { sha256, sha512 } from "@noble/hashes/sha2";
 import { BitWriter, bytesToAtomLE } from "../protocol/bitwriter.js";
+import { rub } from "../protocol/mat.js";
 
 // ed25519 curve order L
 const ED_L = 2n ** 252n + 27742317777372353535851937790883648493n;
@@ -49,20 +50,24 @@ function edLuck(seed32: Uint8Array): Uint8Array {
   return ed25519.getPublicKey(seed32);
 }
 
-// P' = P + s·G where s is a 32-byte scalar interpreted little-endian and
-// reduced mod L.
+// P' = P + s·G. The reference (zuse +scap:ed / urcrypt_ed_add_scalar_public,
+// orlp add_scalar.c) clears bit 255 of the little-endian scalar (n[31] &= 127,
+// i.e. n = scalar mod 2^255) BEFORE the base multiply — it does NOT reduce the
+// full 256-bit scalar mod L. Reducing the whole scalar mod L (the previous
+// behavior) disagrees whenever bit 255 is set (~50% of accepted mines, since
+// 2^255 mod L ≠ 0), producing a tweaked key — and comet @p — that +nol/+com/+fig
+// derive differently from the very ring this miner emits.
 function edAddScalarPublic(pub: Uint8Array, scalarBytes: Uint8Array): Uint8Array {
-  let s = 0n;
+  let n = 0n;
   for (let i = scalarBytes.length - 1; i >= 0; i--) {
-    s = (s << 8n) | BigInt(scalarBytes[i]!);
+    n = (n << 8n) | BigInt(scalarBytes[i]!);
   }
-  s = s % ED_L;
-  const sG = ed25519.ExtendedPoint.BASE.multiply(s === 0n ? 1n : s);
-  // Subtract if s==0 — never happens in practice (SHA-256 output is effectively never 0).
+  n &= (1n << 255n) - 1n; // clear bit 255, matching n[31] &= 127
+  // n·B depends only on n mod L; noble's multiply needs the scalar in [1, L).
+  const s = n % ED_L;
   const P = ed25519.ExtendedPoint.fromHex(pub);
-  const sum = P.add(sG);
-  if (s === 0n) return sum.subtract(ed25519.ExtendedPoint.BASE).toRawBytes();
-  return sum.toRawBytes();
+  if (s === 0n) return P.toRawBytes(); // s·G = identity → P unchanged
+  return P.add(ed25519.ExtendedPoint.BASE.multiply(s)).toRawBytes();
 }
 
 const SALT_CFIG = (() => {
@@ -81,23 +86,50 @@ const SALT_CFIG = (() => {
 // sponsor-signer service and urb-watcher.
 export const REQUIRED_STAR = 0x42cd; // patpToAtom("~daplyd")
 
-// Build the suite-C ring atom bytes: 'C' || ringMaterial || mat(tweakAtom).
-export function buildRingAtomBytes(ringMaterial: Uint8Array, tweakAtom: bigint): Uint8Array {
+// Build the suite-C ring atom bytes: 'C' || ringMaterial || mat(tweakAtom) || xtr.
+// xtr (the cc-draft-2 off-chain reveal log) rides after the mat at its exact
+// bit length, mirroring +sec:ex:cric — omitted entirely when 0.
+export function buildRingAtomBytes(
+  ringMaterial: Uint8Array, tweakAtom: bigint, xtr = 0n,
+): Uint8Array {
   const w = new BitWriter();
   w.write(8, 0x43); // 'C'
   w.write(512, bytesToAtomLE(ringMaterial));
   w.writeMat(tweakAtom);
+  if (xtr !== 0n) w.write(xtr.toString(2).length, xtr);
   return w.toBytes();
 }
 
-// Build the on-chain pass atom: [tag='c' ugn=sPub cry=cPub dat=mat(tweak)]
-export function buildPassAtom(sPub: Uint8Array, cPub: Uint8Array, tweakAtom: bigint): bigint {
+// Build the pass atom: [tag='c' ugn=sPub cry=cPub mat(dat) xtr],
+// mirroring +pub:ex:cric. The comet's name commits to ugn+dat only, so
+// appending xtr later never changes the @p.
+export function buildPassAtom(
+  sPub: Uint8Array, cPub: Uint8Array, tweakAtom: bigint, xtr = 0n,
+): bigint {
   const w = new BitWriter();
   w.write(8, 0x63); // 'c'
   w.write(256, bytesToAtomLE(sPub));
   w.write(256, bytesToAtomLE(cPub));
   w.writeMat(tweakAtom);
+  if (xtr !== 0n) w.write(xtr.toString(2).length, xtr);
   return w.toInt();
+}
+
+// Rebuild a miner-fresh (xtr-less) ring with a reveal log appended. The
+// @p is unchanged — the name commits to ugn+dat only — but the booted
+// ship's pass.ames-state then carries its own attestation (spec §2.5).
+export function appendXtrToRing(ringBytes: Uint8Array, xtr: bigint): Uint8Array {
+  const ring = bytesToAtomLE(ringBytes);
+  if ((ring & 0xffn) !== 0x43n) throw new Error("appendXtrToRing: not a suite-C ring");
+  const bod = ring >> 8n;
+  const sed = bod & ((1n << 512n) - 1n);
+  const { q: dat } = rub(512, bod);
+  const w = new BitWriter();
+  w.write(8, 0x43); // 'C'
+  w.write(512, sed);
+  w.writeMat(dat);
+  if (xtr !== 0n) w.write(xtr.toString(2).length, xtr);
+  return w.toBytes();
 }
 
 export interface MineOpts {
@@ -147,6 +179,18 @@ export async function mineSuiteC(opts: MineOpts): Promise<MineResult> {
     twScaData.set(opts.tweak, 32);
     const twSca = sha256(twScaData);
     const tweakedSPub = edAddScalarPublic(sPub, twSca);
+
+    // The Hoon verifier computes (shaf %cfig sgn) over the tweaked key's
+    // MINIMAL atom bytes (u3r_bytes_all), while this miner (and comet_miner.c)
+    // hash a fixed 32 bytes. They disagree exactly when the tweaked key's high
+    // byte is 0 (~1/256), yielding a comet the network derives differently.
+    // Reject those candidates so the accepted key always has met=32 and all
+    // three (minimal, fixed-32, C miner) agree.
+    if (tweakedSPub[31] === 0) {
+      if (opts.onProgress && tries % 1000 === 0) opts.onProgress(tries);
+      if (tries % yieldEvery === 0) await new Promise((r) => setTimeout(r, 0));
+      continue;
+    }
     const comet = shaf(SALT_CFIG, tweakedSPub);
 
     // Mandatory: comet's first 2 bytes (LE u16) must == ~daplyd (0x42cd).
@@ -206,7 +250,7 @@ export function jamFeed(
 }
 
 // Minimal jam (Hoon ++jam) with back-references.
-function jam(noun: bigint | [any, any]): Uint8Array {
+export function jam(noun: bigint | [any, any]): Uint8Array {
   const w = new BitWriter();
   const refs = new Map<string, number>();
 

@@ -92,6 +92,27 @@ h1 {
   margin-bottom: 0.5rem;
   color: #fff;
 }
+/* Mnemonyms — the human-memorable Groundwire ID. Rendered in the mono face to
+   read as an identifier; wraps at any point since it can be up to 12 words. */
+.mnemonym {
+  font-family: 'Fira Code', 'Source Code Pro', monospace;
+  font-weight: 500;
+  color: var(--primary);
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+h1.mnemonym {
+  font-size: clamp(1.1rem, 2.6vw, 1.7rem);
+  color: #fff;
+  margin-bottom: 0.15rem;
+}
+.patp-ref {
+  font-family: 'Fira Code', 'Source Code Pro', monospace;
+  font-size: 0.8rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  margin-bottom: 0.75rem;
+}
 h2 {
   font-size: 1.25rem;
   text-transform: uppercase;

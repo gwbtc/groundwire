@@ -62,6 +62,7 @@ class FlowState:
     picked_utxo: Optional[dict] = None
     comet: Optional[str] = None
     feed: Optional[str] = None
+    ring: Optional[str] = None
     pass_atom: Optional[int] = None
     attestation: Optional[bytes] = None
     psbt_b64_unsigned: Optional[str] = None
@@ -76,6 +77,9 @@ class FlowState:
     new_pass_hex: Optional[str] = None
     fief_ip: Optional[str] = None
     fief_port: Optional[int] = None
+    # Management ops chain off the point's prior proof (its current on-chain
+    # home), not an arbitrary wallet UTXO — see build_chained_commit_psbt.
+    prior_proof: Optional[dict] = None
     escape_sig_hex: Optional[str] = None
 
 
@@ -342,8 +346,11 @@ class WaitForFundingScreen(BaseScreen):
         )
         yield Footer()
 
+    _superseded: bool = False
+
     def on_mount(self) -> None:
-        self.poll_worker()
+        self._superseded = False
+        self._poll = self.poll_worker()
 
     @work(exclusive=True, thread=True)
     def poll_worker(self) -> None:
@@ -366,10 +373,12 @@ class WaitForFundingScreen(BaseScreen):
                 self.app.call_from_thread(log.write_line, f"Faucet error: {e}")
 
         # Poll mempool until we see a confirmed UTXO on any xpub address.
-        while True:
+        while not self._superseded:
             try:
                 utxos = cw.scan_addresses(state.source, n_receive=5, n_change=2, mempool_base=state.mempool_base)
                 confirmed = [u for u in utxos if u["confirmed"]]
+                if self._superseded:  # user chose the manual path while we scanned
+                    return
                 if confirmed:
                     state.utxos = utxos
                     state.picked_utxo = max(confirmed, key=lambda u: u["value"])
@@ -384,10 +393,20 @@ class WaitForFundingScreen(BaseScreen):
                 self.app.call_from_thread(log.write_line, f"Poll error: {e}")
             time.sleep(cw.POLL_INTERVAL)
 
+    def _stop_polling(self) -> None:
+        # Prevent the background poll from overwriting picked_utxo or pushing a
+        # second MiningScreen once the user has taken the manual path.
+        self._superseded = True
+        worker = getattr(self, "_poll", None)
+        if worker is not None:
+            worker.cancel()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "back":
+            self._stop_polling()
             self.app.pop_screen()
         elif event.button.id == "skip":
+            self._stop_polling()
             self.app.push_screen(UtxoPickerScreen())
 
 
@@ -537,10 +556,10 @@ class MiningScreen(BaseScreen):
             return
         state.comet = result["comet"]
         state.feed = result["feed"]
-        ring_uw = result.get("ring", "")
-        tweak_raw = cw.build_tweak_bytes(u["txid"], u["vout"], 0)
-        state.pass_atom = cw.derive_pass_from_ring(ring_uw, tweak_raw)
-        self.app.call_from_thread(log.write_line, f"Mined {state.comet}")
+        state.ring = result.get("ring", "")
+        state.pass_atom = cw.derive_pass_from_ring(state.ring)
+        self.app.call_from_thread(log.write_line, f"Mined {cw.patp_to_mnemonym(state.comet)}")
+        self.app.call_from_thread(log.write_line, f"  @p {state.comet}")
         self.app.call_from_thread(log.write_line, f"Pass atom: 0x{state.pass_atom:x}")
 
         # Build the %spawn sotx attestation
@@ -604,26 +623,45 @@ class PsbtBuildScreen(BaseScreen):
 
     def build_psbt(self) -> None:
         state: FlowState = self.app.state  # type: ignore[attr-defined]
-        if state.picked_utxo is None or state.source is None or state.attestation is None:
+        if state.source is None or state.attestation is None:
             self.query_one("#status", Static).update("missing prerequisites — go back")
             return
         try:
-            p, proof = cw.build_confidential_commit_psbt(
-                utxo_txid=state.picked_utxo["txid"],
-                utxo_vout=state.picked_utxo["vout"],
-                utxo_value=state.picked_utxo["value"],
-                utxo_script_pubkey=state.picked_utxo["scriptpubkey"],
-                funding_internal_xonly=state.picked_utxo["xonly"],
-                funding_path=state.picked_utxo["path"],
-                funding_fingerprint=state.source.master_fingerprint,
-                attestation_bytes=state.attestation,
-                fee_rate=2,
-                network=state.network,
-            )
+            if state.op_name == "spawn":
+                if state.picked_utxo is None:
+                    self.query_one("#status", Static).update("no funding UTXO — go back")
+                    return
+                p, proof = cw.build_confidential_commit_psbt(
+                    utxo_txid=state.picked_utxo["txid"],
+                    utxo_vout=state.picked_utxo["vout"],
+                    utxo_value=state.picked_utxo["value"],
+                    utxo_script_pubkey=state.picked_utxo["scriptpubkey"],
+                    funding_internal_xonly=state.picked_utxo["xonly"],
+                    funding_path=state.picked_utxo["path"],
+                    funding_fingerprint=state.source.master_fingerprint,
+                    attestation_bytes=state.attestation,
+                    fee_rate=2,
+                    network=state.network,
+                )
+            else:
+                # Management op: chain off the prior proof so the commit spends
+                # the point's current sont (build_chained_commit_psbt), not an
+                # arbitrary wallet UTXO.
+                if state.prior_proof is None:
+                    self.query_one("#status", Static).update("no prior proof — go back")
+                    return
+                p, proof = cw.build_chained_commit_psbt(
+                    prior_proof=state.prior_proof,
+                    new_attestation_bytes=state.attestation,
+                    fee_rate=2,
+                    network=state.network,
+                )
             proof["op"] = state.op_name
             proof["patp"] = state.comet or state.point or ""
             if state.pass_atom is not None:
                 proof["pass_atom_hex"] = hex(state.pass_atom)
+            proof["tweak_format"] = "cc2"
+            proof["dom"] = cw.PKI_DOM
             state.psbt_b64_unsigned = p.to_base64()
             # stash proof temporarily in state via a closure
             self._pending_proof = proof  # type: ignore[attr-defined]
@@ -664,18 +702,24 @@ class PsbtBuildScreen(BaseScreen):
         state: FlowState = self.app.state  # type: ignore[attr-defined]
         status = self.query_one("#status", Static)
         try:
+            # The signed tx's txid is deterministic (segwit), so we know the
+            # commit_txid before broadcasting. Persist the proof FIRST — it is
+            # the only durable record of the attestation/leaf; if we broadcast
+            # first and then crash before writing it, an already-spent sat is
+            # left with no recoverable proof (identity-burning for a spawn).
             commit_txid, tx_hex = cw._extract_tx_from_psbt(state.psbt_b64_signed or "")
-            self.app.call_from_thread(status.update, f"extracted tx — broadcasting {commit_txid}")
-            broadcast_id = cw._broadcast_tx(tx_hex, mempool_base=state.mempool_base)
-            state.commit_txid = broadcast_id
             proof = getattr(self, "_pending_proof", None) or {}
-            proof["commit_txid"] = broadcast_id
+            proof["commit_txid"] = commit_txid
             os.makedirs(state.output_dir, exist_ok=True)
             pier = (state.comet or state.point or "unknown").lstrip("~")
-            suffix = f"{pier}-{state.op_name}-{broadcast_id[:10]}.proof.json"
+            suffix = f"{pier}-{state.op_name}-{commit_txid[:10]}.proof.json"
             proof_path = os.path.join(state.output_dir, suffix)
             cw.write_proof_json(proof, proof_path)
             state.proof_path = proof_path
+
+            self.app.call_from_thread(status.update, f"proof saved — broadcasting {commit_txid}")
+            broadcast_id = cw._broadcast_tx(tx_hex, mempool_base=state.mempool_base)
+            state.commit_txid = broadcast_id
             self.app.call_from_thread(self.app.push_screen, DoneScreen())
         except Exception as e:
             self.app.call_from_thread(status.update, f"broadcast failed: {e}")
@@ -706,9 +750,11 @@ class DoneScreen(BaseScreen):
                 f"curl -fsSL https://groundwire.io/causeway/boot.sh | \\\n"
                 f"  bash -s -- --comet {comet} --feed {feed} --proof {proof_path}"
             )
+            comet_mnemo = cw.patp_to_mnemonym(comet) if comet != "<unknown>" else comet
             yield Vertical(
                 Static("SPAWN COMPLETE", id="title"),
-                Static(f"Comet: {comet}", classes="label"),
+                Static(f"Comet: {comet_mnemo}", classes="label"),
+                Static(f"@p:    {comet}", classes="label"),
                 Static(f"Commit txid: {state.commit_txid}", classes="label"),
                 Static(f"Proof: {proof_path}", classes="label"),
                 Static("Run this to boot:", classes="label"),
@@ -718,13 +764,20 @@ class DoneScreen(BaseScreen):
                     "saved to ~/.groundwire/ but won't propagate via Ames until runtime support lands.",
                     classes="label",
                 ),
+                Static(
+                    f"Once the commit confirms, bake the reveal log into the feed:\n"
+                    f"  causeway finalize {proof_path} --feed <feed>",
+                    classes="label",
+                ),
                 Button("Done  →  back to landing", id="home", variant="primary"),
                 id="panel",
             )
         else:
+            point_mnemo = cw.patp_to_mnemonym(state.point) if state.point else "?"
             yield Vertical(
                 Static(f"{state.op_name.upper()} BROADCAST", id="title"),
-                Static(f"Point: {state.point}", classes="label"),
+                Static(f"Point: {point_mnemo}", classes="label"),
+                Static(f"@p:    {state.point}", classes="label"),
                 Static(f"Commit txid: {state.commit_txid}", classes="label"),
                 Static(f"Proof: {state.proof_path}", classes="label"),
                 Static(
@@ -810,10 +863,12 @@ class ManageFormScreen(BaseScreen):
         yield Header()
         children: list = [
             Static(f"{self.op.upper()} — fill in op fields", id="title"),
-            Static("Target @p:", classes="label"),
-            Input(placeholder="~sampel-palnet", id="point"),
+            Static("Target comet (mnemonym or @p):", classes="label"),
+            Input(placeholder=".routine.inhale… or ~sampel-palnet", id="point"),
             Static("Xpub / descriptor:", classes="label"),
             Input(placeholder="xpub... or tr([fp/86h/0h/0h]xpub...)", id="xpub"),
+            Static("Prior proof.json (spawn's or last op's):", classes="label"),
+            Input(placeholder="/path/to/~sampel-palnet-spawn.proof.json", id="prior-proof"),
         ]
         if self.op == "rekey":
             children += [
@@ -822,7 +877,7 @@ class ManageFormScreen(BaseScreen):
             ]
         elif self.op in ("escape", "cancel-escape"):
             children += [
-                Static("Parent @p:", classes="label"),
+                Static("Parent (mnemonym or @p):", classes="label"),
                 Input(placeholder="~daplyd", id="parent"),
             ]
             if self.op == "escape":
@@ -856,12 +911,28 @@ class ManageFormScreen(BaseScreen):
         state: FlowState = self.app.state  # type: ignore[attr-defined]
         err = self.query_one("#err", Static)
         try:
-            state.point = self.query_one("#point", Input).value.strip()
+            entry = self.query_one("#point", Input).value.strip()
+            # Accept a mnemonym or @p; canonicalize to @p for filenames/proof.
+            state.point = cw.int_to_patp(cw.resolve_id(entry))
             comet_p = cw.patp_to_int(state.point)
             xpub_val = self.query_one("#xpub", Input).value.strip()
             state.source = cw.parse_key_source(xpub_val, network=state.network)
         except Exception as e:
             err.update(f"parse error: {e}")
+            return
+        # Management ops must chain off the point's current on-chain home
+        # (urb-core's is-sont-in-input), so a prior proof is required.
+        prior_path = self.query_one("#prior-proof", Input).value.strip()
+        if not prior_path:
+            err.update("prior proof.json is required — it's how this op spends the point's sat")
+            return
+        try:
+            state.prior_proof = cw.load_proof_json(prior_path)
+            if not state.prior_proof.get("commit_txid"):
+                err.update("prior proof has no commit_txid — was its commit broadcast?")
+                return
+        except Exception as e:
+            err.update(f"couldn't load prior proof: {e}")
             return
         if self.op == "rekey":
             np = self.query_one("#new-pass-hex", Input).value.strip()
@@ -878,13 +949,13 @@ class ManageFormScreen(BaseScreen):
             esc_sig = int.from_bytes(bytes.fromhex(sig_hex), "little") if sig_hex else None
             state.attestation = cw.encode_escape_sotx(
                 comet_p=comet_p,
-                parent_p=cw.patp_to_int(state.parent),
+                parent_p=cw.resolve_id(state.parent),
                 escape_sig=esc_sig,
             )
         elif self.op == "cancel-escape":
             state.parent = self.query_one("#parent", Input).value.strip()
             state.attestation = cw.encode_cancel_escape_sotx(
-                comet_p=comet_p, parent_p=cw.patp_to_int(state.parent)
+                comet_p=comet_p, parent_p=cw.resolve_id(state.parent)
             )
         elif self.op == "fief":
             ip_str = self.query_one("#ip", Input).value.strip()
@@ -898,7 +969,9 @@ class ManageFormScreen(BaseScreen):
             else:
                 ip_int = int(ipaddress.IPv4Address(ip_str)); fief = ("if", ip_int, port)
             state.attestation = cw.encode_fief_sotx(comet_p=comet_p, fief=fief)
-        self.app.push_screen(UtxoPickerScreen())
+        # No UTXO picker for management ops: the commit input is fixed — it's
+        # the prior proof's commit output (the point's current sont).
+        self.app.push_screen(PsbtBuildScreen())
 
 
 # ---------------------------------------------------------------------------

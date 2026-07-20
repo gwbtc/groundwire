@@ -5,32 +5,31 @@ function hex(b: Uint8Array): string {
   return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 }
 
-// Golden vectors from gw-onboard.py:build_tweak_bytes, verified by hand.
-describe("spawn tweak bytes", () => {
-  test("matches Python reference for simple txid", () => {
-    // Python reference output for:
-    //   txid = "00" * 31 + "01"  (display hex → atom byte [01, 00, 00, …, 00])
-    //   vout = 0, off = 0
-    // Expected layout:
-    //   09 99 "urb-watcher" "btc" "gw" 09 <32-byte-atom> <no vout> <no off>
+// Golden vectors from `urbit eval` of the v9 tweak `rap 3` expression, which is
+// what lib/urb-core / the protocol-2.0 verifier check against. `rap 3` uses each
+// atom's MINIMAL bytes: a txid with leading zero display bytes contributes fewer
+// than 32 bytes (the old fixed-32 encoding shifted every following element).
+describe("spawn tweak bytes (v9 legacy)", () => {
+  test("txid=1 matches Hoon (rap 3 ...) minimal bytes", () => {
+    // urbit eval: `@ux`(rap 3 ~[%9 ~tyr %urb-watcher %btc %gw %9 0x1 0 0])
+    //   = 0x109.7767.6374.6272.6568.6374.6177.2d62.7275.9909  (LE bytes below)
     const result = buildTweakBytes({
-      txidHex: "00".repeat(31) + "01",
+      txidHex: "00".repeat(31) + "01", // display 0x00…01 → atom 1 → minimal [01]
       vout: 0,
       off: 0,
     });
     const expected =
-      "09" +
-      "99" +
+      "09" + "99" +
       Buffer.from("urb-watcher").toString("hex") +
       Buffer.from("btc").toString("hex") +
       Buffer.from("gw").toString("hex") +
       "09" +
-      "01" + "00".repeat(31);
+      "01"; // txid atom = 1 → a single byte, not 32
     expect(hex(result)).toBe(expected);
   });
 
-  test("omits vout and off when zero", () => {
-    const withZeros = buildTweakBytes({ txidHex: "00".repeat(32), vout: 0, off: 0 });
+  test("omits vout and off when zero (full 32-byte txid)", () => {
+    const withZeros = buildTweakBytes({ txidHex: "ff".repeat(32), vout: 0, off: 0 });
     // Header(6) + "urb-watcher"(11) + "btc"(3) + "gw"(2) + 09(1) + txid(32) = 55 bytes
     expect(withZeros.length).toBe(1 + 1 + 11 + 3 + 2 + 1 + 32);
   });
@@ -62,12 +61,10 @@ describe("spawn tweak bytes", () => {
     expect(() => buildTweakBytes({ txidHex: "00".repeat(33), vout: 0 })).toThrow();
   });
 
-  // Vectors generated directly from gw-onboard.py's build_tweak_bytes.
-  test("golden: txid=0..1, vout=0, off=0", () => {
+  // Vectors from `urbit eval` of (rap 3 ~[%9 ~tyr %urb-watcher %btc %gw %9 …]).
+  test("golden: txid=0..1, vout=0, off=0 (Hoon minimal bytes)", () => {
     const r = buildTweakBytes({ txidHex: "00".repeat(31) + "01", vout: 0, off: 0 });
-    expect(hex(r)).toBe(
-      "09997572622d776174636865726274636777090100000000000000000000000000000000000000000000000000000000000000",
-    );
+    expect(hex(r)).toBe("09997572622d7761746368657262746367770901");
   });
 
   test("golden: txid=0123..cdef*4, vout=258, off=1", () => {

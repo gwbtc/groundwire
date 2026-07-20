@@ -28,9 +28,12 @@ describe("select", () => {
     expect(keys.size).toBe(0);
   });
 
-  test("mempoolTxidToAtomHex reverses byte order", () => {
-    // Display hex "01020304" = bytes [01, 02, 03, 04]; as LE atom → 0x04030201
-    expect(mempoolTxidToAtomHex("01020304")).toBe("4030201");
+  test("mempoolTxidToAtomHex matches Hoon display-order txid atom", () => {
+    // Hoon stores txids as display-order numerics, so the atom value equals the
+    // display hex read big-endian: "01020304" → 0x01020304.
+    expect(mempoolTxidToAtomHex("01020304")).toBe("1020304");
+    // Real 32-byte txid with a leading zero byte stays lossless.
+    expect(mempoolTxidToAtomHex("00" + "ab".repeat(31))).toBe("ab".repeat(31));
   });
 
   test("addressToScriptPubKey for P2TR (main)", () => {
