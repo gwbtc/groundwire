@@ -18,12 +18,18 @@
 >   draft-2, so the tag *is* the agent name.
 > - **The pass carries the attestation.** The reveal data peers need now
 >   rides *inside the pass* as `xtr` — an off-chain reveal log (jammed
->   list of `[txid block-hash internal-key tapleaf]` entries, one per
->   ownership-sat transfer, oldest first). `xtr` is not hashed into the
->   key, so it grows without changing the `@p`; the kernel ships it
->   opaquely to the domain agent, and the `%anew` flow refreshes it when
->   the sat moves. `causeway finalize <proofs…> --feed <feed>` bakes the
->   log into the boot feed once the commit(s) confirm.
+>   list of `[txid block-height reveal=(unit reveal)]` entries, one per
+>   ownership-sat transfer, oldest first, pinned to the `%gw-btc` agent's
+>   `lib/gw-verify` `$custody-log`). `block-height` locates the tx
+>   (resolved to a hash and fetched in-block, no `-txindex` needed); a
+>   `reveal` (`[internal-key leaf-version leaf-script]`) is present only
+>   on entries that re-attest networking state (spec §2.1 state
+>   commitments — spawn / rekey / escape …), and only the *latest* such
+>   one is authoritative; a bare entry just proves the sat moved. `xtr` is
+>   not hashed into the key, so it grows without changing the `@p`; the
+>   kernel ships it opaquely to the domain agent, and the `%anew` flow
+>   refreshes it when the sat moves. `causeway finalize <proofs…> --feed
+>   <feed>` bakes the log into the boot feed once the commit(s) confirm.
 > - **proof.json survives as the local record** (and the source material
 >   for `xtr` entries), but it is no longer the delivery vehicle: the
 >   handshake artifact is the pass itself, verified by the domain agent

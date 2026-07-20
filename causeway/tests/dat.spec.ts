@@ -61,22 +61,31 @@ describe("cc-draft-2 dat", () => {
 
 describe("cc-draft-2 xtr reveal log", () => {
   const e1 = {
-    txidHex: "ab12", blockHashHex: "bb44", internalKeyHex: "cc55",
-    leafVersion: 0xc0, leafScriptHex: "dd66",
+    txidHex: "ab12", blockHeight: 100,
+    reveal: { internalKeyHex: "cc55", leafVersion: 0xc0, leafScriptHex: "dd66" },
   };
   const e2 = {
-    txidHex: "ab13", blockHashHex: "bb45", internalKeyHex: "cc56",
-    leafVersion: 0xc0, leafScriptHex: "1234",
+    txidHex: "ab13", blockHeight: 101,
+    reveal: { internalKeyHex: "cc56", leafVersion: 0xc0, leafScriptHex: "1234" },
   };
+  // a pure custody transfer: reveal omitted (reveal=~ in $custody-log)
+  const custody = { txidHex: "ab14", blockHeight: 102 };
 
   it("matches the single-entry jam vector", () => {
-    expect(buildXtrAtom([e1])).toBe(ux("2.dd66.0812.1c01.0398.aa10.1bb4.4080.d589.0405"));
+    expect(buildXtrAtom([e1])).toBe(ux("16e.b304.090e.0081.cc55.080c.e4e0.d589.0405"));
   });
 
   it("matches the two-entry jam vector", () => {
     expect(buildXtrAtom([e1, e2])).toBe(ux(
-      "523.4b04.86df.1b98.ac10.1bb4.5080.d589.8405" +
-      ".dd66.0812.1c01.0398.aa10.1bb4.4080.d589.0405",
+      "148.d2c1.21a5.c6e6.2b04.0672.f06a.c4c2.02ee" +
+      ".b304.090e.0081.cc55.080c.e4e0.d589.0405",
+    ));
+  });
+
+  it("matches the custody-only (reveal omitted) jam vector", () => {
+    expect(buildXtrAtom([e1, custody, e2])).toBe(ux(
+      "291.a582.434b.8dcc.5608.0ce5.e0d5.8984.05b3" +
+      ".706a.c502.02ee.b304.090e.0081.cc55.080c.e4e0.d589.0405",
     ));
   });
 

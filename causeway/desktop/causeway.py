@@ -487,34 +487,39 @@ def build_dat_bytes(txid_hex: str, vout: int, off: int = 0, dom: str = PKI_DOM) 
 #  minus `sots`, which verifiers re-derive from the leaf script):
 #
 #      xtr = (jam log)
-#      log = (list [txid=@ux block=@ux internal-key=@ux tapleaf=[version=@ux script=octs]])
-#      octs = [wid=@ud dat=@ux]
+#      log = (list [txid=@ux block-height=@ud reveal=(unit reveal)])
+#      reveal = [internal-key=@ux leaf-version=@ux leaf-script=[wid=@ud dat=@ux]]
 #
-#  oldest-first: entry 0 is the spawn commit. txid/block-hash/key/script
-#  atoms are the numeric values of their display hex (hexb:bitcoin
-#  convention). `block` is the containing block's HASH so verifiers can
-#  getrawtransaction without -txindex, exactly like protocol 2.0.
+#  oldest-first: entry 0 is the spawn commit. `block-height` is the
+#  containing block's HEIGHT; the %gw-btc agent resolves it to a hash and
+#  fetches the tx in-block (no -txindex needed). A `reveal` re-attests
+#  networking state (state commitments, spec §2.1); a bare entry
+#  (reveal=None) is a pure custody transfer. Only the latest state-bearing
+#  entry is authoritative. txid/key/script atoms are numeric values of
+#  their display hex. Pinned to lib/gw-verify's $custody-log (hd/gw-btc).
 # =========================================================================
 
 
 def build_xtr_atom(entries: list[dict]) -> int:
-    """Jam the reveal log. Each entry: {txid_hex, block_hash_hex,
-    internal_key_hex (33-byte compressed P), leaf_version, leaf_script_hex}."""
+    """Jam the reveal log. Each entry: {txid_hex, block_height, reveal}, where
+    reveal is None (pure custody hop) or {internal_key_hex (33-byte compressed
+    P), leaf_version, leaf_script_hex}."""
     log = 0  # ~ (null-terminated list)
     for e in reversed(entries):
-        script_hex = e["leaf_script_hex"]
+        reveal = e.get("reveal")
+        if reveal is None:
+            reveal_noun = 0  # ~
+        else:
+            script_hex = reveal["leaf_script_hex"]
+            tapleaf = (
+                int(reveal["leaf_version"]),
+                (len(script_hex) // 2, int(script_hex, 16)),
+            )
+            # [~ [internal-key leaf-version leaf-script]] — (unit reveal) some
+            reveal_noun = (0, (int(reveal["internal_key_hex"], 16), tapleaf))
         node = (
             int(e["txid_hex"], 16),
-            (
-                int(e["block_hash_hex"], 16),
-                (
-                    int(e["internal_key_hex"], 16),
-                    (
-                        int(e["leaf_version"]),
-                        (len(script_hex) // 2, int(script_hex, 16)),
-                    ),
-                ),
-            ),
+            (int(e["block_height"]), reveal_noun),
         )
         log = (node, log)
     return hoon_jam(log)
@@ -2664,12 +2669,15 @@ def cmd_finalize(proofs, feed, wait, poll_interval, mempool_base):
         proof["block_height"] = status["block_height"]
         entries.append(dict(
             txid_hex=txid,
-            block_hash_hex=proof["block_hash"],
+            block_height=int(proof["block_height"]),
+            # every finalized op re-attests state, so each carries a reveal.
             # 33-byte compressed internal key, even parity per BIP-341 lift_x —
             # the same shape as protocol 2.0's reveal (sur/self-attestation).
-            internal_key_hex="02" + proof["internal_pubkey_hex"],
-            leaf_version=int(proof["leaf_version"]),
-            leaf_script_hex=proof["leaf_script_hex"],
+            reveal=dict(
+                internal_key_hex="02" + proof["internal_pubkey_hex"],
+                leaf_version=int(proof["leaf_version"]),
+                leaf_script_hex=proof["leaf_script_hex"],
+            ),
         ))
         print(f"  {os.path.basename(path)}: confirmed in block {proof['block_height']}")
 

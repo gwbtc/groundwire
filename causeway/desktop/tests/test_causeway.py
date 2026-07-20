@@ -431,24 +431,38 @@ def test_dat_domain_is_rub_extractable():
     assert dom_atom.to_bytes(6, "little").decode() == "gw-btc"
 
 
+def _entry(txid, height, ik, script):
+    return dict(txid_hex=txid, block_height=height,
+                reveal=dict(internal_key_hex=ik, leaf_version=0xC0,
+                            leaf_script_hex=script))
+
+
 def test_xtr_jam_vector_single_entry():
-    xtr = cw.build_xtr_atom([dict(
-        txid_hex="ab12", block_hash_hex="bb44", internal_key_hex="cc55",
-        leaf_version=0xC0, leaf_script_hex="dd66",
-    )])
-    assert xtr == _ux("2.dd66.0812.1c01.0398.aa10.1bb4.4080.d589.0405")
+    xtr = cw.build_xtr_atom([_entry("ab12", 100, "cc55", "dd66")])
+    assert xtr == _ux("16e.b304.090e.0081.cc55.080c.e4e0.d589.0405")
 
 
 def test_xtr_jam_vector_two_entries():
     xtr = cw.build_xtr_atom([
-        dict(txid_hex="ab12", block_hash_hex="bb44", internal_key_hex="cc55",
-             leaf_version=0xC0, leaf_script_hex="dd66"),
-        dict(txid_hex="ab13", block_hash_hex="bb45", internal_key_hex="cc56",
-             leaf_version=0xC0, leaf_script_hex="1234"),
+        _entry("ab12", 100, "cc55", "dd66"),
+        _entry("ab13", 101, "cc56", "1234"),
     ])
     assert xtr == _ux(
-        "523.4b04.86df.1b98.ac10.1bb4.5080.d589.8405"
-        ".dd66.0812.1c01.0398.aa10.1bb4.4080.d589.0405"
+        "148.d2c1.21a5.c6e6.2b04.0672.f06a.c4c2.02ee"
+        ".b304.090e.0081.cc55.080c.e4e0.d589.0405"
+    )
+
+
+def test_xtr_jam_vector_custody_only():
+    # a pure custody transfer carries no reveal (reveal=None -> ~)
+    xtr = cw.build_xtr_atom([
+        _entry("ab12", 100, "cc55", "dd66"),
+        dict(txid_hex="ab14", block_height=102, reveal=None),
+        _entry("ab13", 101, "cc56", "1234"),
+    ])
+    assert xtr == _ux(
+        "291.a582.434b.8dcc.5608.0ce5.e0d5.8984.05b3"
+        ".706a.c502.02ee.b304.090e.0081.cc55.080c.e4e0.d589.0405"
     )
 
 
@@ -461,11 +475,9 @@ def test_ring_xtr_append_and_pass_roundtrip():
     w.write(512, 0xDEAD << 496 | 0xBEEF)  # arbitrary 64-byte seed material
     w.write_mat(dat)
     ring0 = w.to_int()
-    xtr = cw.build_xtr_atom([dict(
-        txid_hex="ab" * 32, block_hash_hex="cd" * 32,
-        internal_key_hex="02" + "ef" * 32, leaf_version=0xC0,
-        leaf_script_hex="0063037572620102ac",
-    )])
+    xtr = cw.build_xtr_atom([
+        _entry("ab" * 32, 123, "02" + "ef" * 32, "0063037572620102ac"),
+    ])
     ring1 = cw.append_xtr_to_ring(ring0, xtr)
 
     bod0, bod1 = ring0 >> 8, ring1 >> 8
