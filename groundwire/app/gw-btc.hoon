@@ -106,7 +106,7 @@
       ::  validates -- so a stale indexed key must NOT hard-fail the writ).
       =/  ind=(unit point:jael)
         ?~  pt=(~(get by unv-ids.urb-state) who.poke)  ~
-        (verify-indexed [dom who pass]:poke u.pt)
+        (verify-indexed dom.poke who.poke pass.poke u.pt)
       ?^  ind
         :_  this
         :~  :*  %give  %fact  ~[/writs]
@@ -121,7 +121,7 @@
       :_  this
       :~  :*  %pass  /writ/(scot %tas dom.poke)/(scot %p who.poke)  %arvo  %k
               %lard  q.byk.bowl
-              (writ-shed [dom who pass]:poke rpc)
+              (writ-shed dom.poke who.poke pass.poke rpc)
           ==
       ==
     ::
@@ -594,7 +594,7 @@
 ::
 ::  +writ-shed: run lib/gw-verify's full section-7 custody walk in a khan
 ::  thread (the confidential / unindexed path), producing its verdict as a
-::  vase for the [%writ @ ~] case in +on-arvo.
+::  vase for the [%writ @ @ ~] case in +on-arvo.
 ::
 ++  writ-shed
   |=  [dom=@tas who=ship =pass rpc=req-to:btcio]

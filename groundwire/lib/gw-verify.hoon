@@ -159,14 +159,17 @@
 ::  otherwise it is dropped, so a %state can never forge a sponsor.
 ::
 ++  parse-state
-  |=  =reveal:urb
+  |=  [who=ship =reveal:urb]
   ^-  (unit gw-state:urb)
   ?~  parsed=(parse-leaf leaf-script.reveal)  ~
   ?~  st=(find-single %state u.parsed)  ~
   ?>  ?=(%state -.u.st)
+  ::  a claimed sponsor is honored only with verified consent; absent or
+  ::  unverified, fall back to the STRUCTURAL sponsor (never a null sponsor
+  ::  to Jael -- see urb-core / fx-to-udiffs), same default as the spawn.
   =/  spo=(unit @p)
-    ?~  sponsor.u.st  ~
-    ?.  (consent-ok u.sponsor.u.st)  ~
+    ?~  sponsor.u.st  `(^sein:title who)
+    ?.  (consent-ok u.sponsor.u.st)  `(^sein:title who)
     `who.u.sponsor.u.st
   `[life=life.u.st key=key.u.st sponsor=spo]
 ::
@@ -272,7 +275,7 @@
     ?~  reveal.entry  `state
     ?~  onchain=(p2tr-at u.this vout.landed)  ~
     ?.  =(u.onchain (out-key u.reveal.entry))  ~
-    (parse-state u.reveal.entry)
+    (parse-state who u.reveal.entry)
   ?~  new-state  ~
   $(entries t.entries, txs t.txs, sont next, state u.new-state)
 ::
