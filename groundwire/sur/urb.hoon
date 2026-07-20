@@ -35,7 +35,9 @@
 ::  re-parse the committed $sotx(es) from the leaf script.
 ::
 +$  reveal
-  $:  internal-key=@ux              ::  P (x-only, 32 bytes)
+  $:  internal-key=@ux              ::  P, 33-byte COMPRESSED (0x02/0x03 ||
+      ::                                x), as lib/taproot's decompress-point
+      ::                                and Causeway's xtr encoder require
       leaf-version=@ux              ::  tapleaf version byte (0xc0)
       leaf-script=hexb:bitcoin      ::  the committed script (an "unv")
   ==

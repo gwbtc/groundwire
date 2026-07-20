@@ -147,20 +147,40 @@
   ?>  ?=(%spawn -.u.sp)
   =/  cek  +<:(com:nu:cric:crypto pass.u.sp)
   ?.  ?=([%c *] cek)  ~
+  ::  bind the committed pass to who: the spawn leaf's OWN pass must
+  ::  fingerprint to the comet's @p, else an attacker could copy a
+  ::  victim's spawn (same dat + public cry) under a fresh ugn / @p and
+  ::  ride the victim's whole chain (sat-reuse identity forgery).
+  ?.  =(who fig:ex:(com:nu:cric:crypto pass.u.sp))  ~
   `[life=1 key=cry.pub.cek sponsor=`(^sein:title who)]
 ::
-::  +parse-state: the networking state a %state leaf re-attests.
-::  A sponsor+consent, when present, is carried through for signature check.
+::  +parse-state: the networking state a %state leaf re-attests.  A claimed
+::  sponsor is honored ONLY if its consent signature verifies (+consent-ok);
+::  otherwise it is dropped, so a %state can never forge a sponsor.
 ::
 ++  parse-state
   |=  =reveal:urb
-  ^-  (unit [gw-state:urb consent=(unit consent:urb)])
+  ^-  (unit gw-state:urb)
   ?~  parsed=(parse-leaf leaf-script.reveal)  ~
   ?~  st=(find-single %state u.parsed)  ~
   ?>  ?=(%state -.u.st)
-  :-  ~
-  :-  [life=life.u.st key=key.u.st sponsor=?~(sponsor.u.st ~ `who.u.sponsor.u.st)]
-  sponsor.u.st
+  =/  spo=(unit @p)
+    ?~  sponsor.u.st  ~
+    ?.  (consent-ok u.sponsor.u.st)  ~
+    `who.u.sponsor.u.st
+  `[life=life.u.st key=key.u.st sponsor=spo]
+::
+::  +consent-ok: does a sponsor's consent signature authorize adopting this
+::  comet?  XX TODO (a deviation we add over spec §7, which records the
+::  sponsor but no consent proof): verify sig over the consent message
+::  against the sponsor's key + a freshness window, à la urb-core's escape
+::  sig.  Until pinned, conservatively REJECT -- a confidential comet
+::  self-sponsors rather than let an unchecked claim install a sponsor.
+::
+++  consent-ok
+  |=  =consent:urb
+  ^-  ?
+  %.n
 ::
 ::  +parse-dat-sont: recover the spawn satpoint committed in the pass tweak.
 ::  dat = (can 0 (mat dom) [256 txid] (mat vout) (mat off) ~) -- so after the
@@ -187,7 +207,10 @@
 ++  parse-custody-log
   |=  xtr=@
   ^-  (unit custody-log:urb)
-  ?:  =(0 xtr)  `~
+  ::  a confidential comet always carries at least entry-0 (the spawn); an
+  ::  empty xtr is not a verifiable log (fail rather than accept an empty
+  ::  chain).
+  ?:  =(0 xtr)  ~
   %-  mole
   |.  ;;(custody-log:urb (cue xtr))
 ::
@@ -213,6 +236,11 @@
   ?~  tx0=i.fetched  ~
   ?~  rev0=reveal.i.log  ~
   ?.  =(id.u.tx0 txid.spawn-sont)  ~
+  ?.  (lth vout.spawn-sont (lent os.u.tx0))  ~
+  ::  the sat's offset must lie within its home output's value (the bound
+  ::  urb-core's is-sont-in-input enforces on chain; interior links get it
+  ::  for free from index-to-sont, but entry-0's offset comes from dat).
+  ?.  (lth off.spawn-sont value:(snag vout.spawn-sont os.u.tx0))  ~
   ?~  onchain0=(p2tr-at u.tx0 vout.spawn-sont)  ~
   ?.  =(u.onchain0 (out-key u.rev0))  ~
   ?~  state0=(parse-spawn-state who u.rev0)  ~
@@ -244,8 +272,7 @@
     ?~  reveal.entry  `state
     ?~  onchain=(p2tr-at u.this vout.landed)  ~
     ?.  =(u.onchain (out-key u.reveal.entry))  ~
-    ?~  ps=(parse-state u.reveal.entry)  ~
-    `-.u.ps
+    (parse-state u.reveal.entry)
   ?~  new-state  ~
   $(entries t.entries, txs t.txs, sont next, state u.new-state)
 ::
@@ -272,13 +299,14 @@
   |=  [dom=@tas who=ship =pass rpc=req-to:btcio]
   =/  m  (strand:strandio ,(unit point:jael))
   ^-  form:m
-  =/  cek  +<:(com:nu:cric:crypto pass)
+  =/  cac  (com:nu:cric:crypto pass)
+  =/  cek  +<:cac
   ?.  ?=([%c *] cek)  (pure:m ~)
   =/  cry  cry.pub.cek
   ::  domain committed in the tweak must match what Jael routed
   ?.  =(dom `@tas`q:(rub 0 dat.tw.pub.cek))  (pure:m ~)
   ::  name must be the fingerprint of the tweaked key (re-derive, don't trust)
-  ?.  =(who fig:ex:(com:nu:cric:crypto pass))  (pure:m ~)
+  ?.  =(who fig:ex:cac)  (pure:m ~)
   ?~  spawn-sont=(parse-dat-sont dat.tw.pub.cek)  (pure:m ~)
   ?~  log=(parse-custody-log xtr.tw.pub.cek)  (pure:m ~)
   ::  fetch each entry's tx in its attested block (height -> hash -> in-block)

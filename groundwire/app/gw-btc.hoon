@@ -87,38 +87,39 @@
   |=  [=mark =vase]
   ^-  (quip card _this)
   ?+    mark  !!
-      ::  Jael forwards a comet self-attestation for on-chain
-      ::  verification.  We verify against our indexed chain view and
-      ::  answer with a %writ-response fact on /writs; on success Jael
-      ::  stores the point and promotes the comet.
-      ::
-      ::    NB: full variant-B verification (fetch each custody-log tx
-      ::    from a txindexed node and walk the sat, spec S7) is not yet
-      ::    wired here; we consult the point our block-watcher already
-      ::    indexed into urb-state, which is the same trust model
-      ::    ("the agent's own view of the chain") and is what the
-      ::    aqua tests exercise.  XX wire the tx-walk for unindexed or
-      ::    newer-than-indexed attestations.
+      ::  Jael forwards a comet self-attestation for on-chain verification
+      ::  (%jael-writ) or asks us to refresh our own (%jael-anew).  Both are
+      ::  local vane->agent pokes ([our our /jael]), so gate on src.
       ::
       %noun
+    ?.  =(our.bowl src.bowl)
+      ~&  >>>  [%gw-btc %foreign-noun-poke src.bowl]
+      `this
     =/  poke  !<(jael-poke:urb vase)
     ?-    -.poke
         %jael-writ
-      ::  INDEXED fast path: if our block-watcher already parsed this comet's
-      ::  on-chain reveal into unv-ids, verify against that point synchronously.
-      ?^  pt=(~(get by unv-ids.urb-state) who.poke)
-        =/  res=(unit point:jael)  (verify-indexed [dom who pass]:poke u.pt)
+      ::  INDEXED fast path: only a SUCCESSFUL indexed verify short-circuits.
+      ::  If our block-watcher parsed this comet's on-chain reveal into
+      ::  unv-ids and it still validates, answer synchronously; otherwise
+      ::  fall through to the confidential walk (an indexed comet may have
+      ::  rotated its key off-chain via a %state commitment the walk
+      ::  validates -- so a stale indexed key must NOT hard-fail the writ).
+      =/  ind=(unit point:jael)
+        ?~  pt=(~(get by unv-ids.urb-state) who.poke)  ~
+        (verify-indexed [dom who pass]:poke u.pt)
+      ?^  ind
         :_  this
         :~  :*  %give  %fact  ~[/writs]
-                %writ-response  !>(`writ-response:jael`[dom.poke who.poke res])
+                %writ-response  !>(`writ-response:jael`[dom.poke who.poke ind])
             ==
         ==
-      ::  CONFIDENTIAL path: the comet is unknown to our index, so run
-      ::  lib/gw-verify's full section-7 custody walk in a khan thread; its
-      ::  %writ-response fact is emitted when the thread returns (see the
-      ::  [%writ @ ~] case in +on-arvo).
+      ::  CONFIDENTIAL path (unindexed, or indexed-but-unverified): run
+      ::  lib/gw-verify's full section-7 custody walk in a khan thread; the
+      ::  %writ-response fact is emitted when it returns (the [%writ @ @ ~]
+      ::  case in +on-arvo).  dom + who ride the wire so the response is
+      ::  answered under the routed domain, not just our name.
       :_  this
-      :~  :*  %pass  /writ/(scot %p who.poke)  %arvo  %k
+      :~  :*  %pass  /writ/(scot %tas dom.poke)/(scot %p who.poke)  %arvo  %k
               %lard  q.byk.bowl
               (writ-shed [dom who pass]:poke rpc)
           ==
@@ -228,10 +229,12 @@
   ::
   ::  A confidential +writ-shed verify thread returned.  Give the
   ::  %writ-response fact carrying its verdict (or ~ on failure / crash).
-      [%writ @ ~]
+  ::  dom + who ride the wire (/writ/<dom>/<who>).
+      [%writ @ @ ~]
     ?+    sign-arvo  (on-arvo:def wire sign-arvo)
         [%khan %arow *]
-      =/  who=ship  (slav %p i.t.wire)
+      =/  dom=@tas  (slav %tas i.t.wire)
+      =/  who=ship  (slav %p i.t.t.wire)
       =/  res=(unit point:jael)
         ?.  ?=([%khan %arow %.y %noun *] sign-arvo)
           ::  thread bailed (rpc failure, unparsable packet): report failure.
@@ -241,7 +244,7 @@
         !<((unit point:jael) vase)
       :_  this
       :~  :*  %give  %fact  ~[/writs]
-              %writ-response  !>(`writ-response:jael`[dap.bowl who res])
+              %writ-response  !>(`writ-response:jael`[dom who res])
           ==
       ==
     ==

@@ -591,9 +591,16 @@
             sots     t.sots
             unv-ids   (~(put by unv-ids) who u.point)
         ==
+      ::
+      ::  %state (opcode 9) is a CONFIDENTIAL off-chain networking-state
+      ::  re-attestation; the on-chain block indexer never enacts it -- it
+      ::  is meaningful only inside a comet's xtr reveal log, verified by
+      ::  lib/gw-verify.  If one ever appears in an on-chain reveal, skip it.
+          %state
+        $(sots t.sots)
       ==
       ::
-      ::  Is this sont in the input that's being processed? 
+      ::  Is this sont in the input that's being processed?
       ++  is-sont-in-input
         |=  sot=sont:ord
         ~|  [s=sot [txid pos value]:i.inputs]
