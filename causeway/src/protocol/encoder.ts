@@ -56,7 +56,11 @@ function encodeSingle(w: BitWriter, s: Single): void {
     }
     case "keys":
       w.write(7, OP.keys);
-      w.write(1, s.breach ? 1 : 0);
+      // Hoon writes the breach loobean directly ([1 breach.sot]) and decodes
+      // it as =(0 breach); loobean %.y (true) is 0. So breach=true → bit 0.
+      // Writing `breach ? 1 : 0` inverted it: a plain rekey encoded as an
+      // irreversible on-chain continuity breach and vice versa.
+      w.write(1, s.breach ? 0 : 1);
       w.writeMat(s.pass);
       return;
     case "escape":

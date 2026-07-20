@@ -1,10 +1,11 @@
 import { el, clearAndAppend, banner, kvList } from "../components.js";
 import { go, getSession, ensureSession } from "../state.js";
+import { Mempool } from "../../chain/mempool.js";
 import {
   parseKeySource, defaultAccountPath, formatAccountPath,
 } from "../../keys/xpub.js";
 import { discoverUtxos } from "../../chain/discover.js";
-import { atomToPatp } from "../../protocol/patp.js";
+import { atomToMnemonym, abridgeMnemonym } from "../../protocol/mnemonym.js";
 import { scanXpubFromCamera } from "../../signing/qr-xpub.js";
 import QrScanner from "qr-scanner";
 
@@ -25,7 +26,7 @@ export async function renderKeys(root: HTMLElement): Promise<void> {
 
   const card = el("section", { class: "card" });
   const heading = s && s.patpAtom !== undefined
-    ? `Import your key — ${atomToPatp(s.patpAtom)}`
+    ? `Import your key — ${abridgeMnemonym(atomToMnemonym(s.patpAtom))}`
     : then === "spawn" ? "Import your key (for new comet)" : "Import your key";
   card.append(
     el("h1", {}, heading),
@@ -187,9 +188,20 @@ export async function renderKeys(root: HTMLElement): Promise<void> {
         network: netSel.value as "main" | "testnet",
       });
       session.keys = src;
+      // Rebuild the mempool client for the selected network — the default
+      // constructed in ensureSession()/landing is always mainnet, so without
+      // this the Testnet option silently queried mainnet.
+      session.mp = new Mempool({ network: src.network });
 
+      // Protect the on-chain-resolved ownership UTXO (if managing an existing
+      // @p) from being offered as funding, even if the snapshot hasn't indexed
+      // it yet.
+      const protectedOutpoints = session.auth
+        ? new Set([`${session.auth.utxo.txid}:${session.auth.utxo.vout}`])
+        : undefined;
       const discovery = await discoverUtxos({
         src, mp: session.mp, sontMap: session.snapshot.sontMap, maxIndex: 10,
+        ...(protectedOutpoints ? { protectedOutpoints } : {}),
       });
       session.discovery = discovery;
 

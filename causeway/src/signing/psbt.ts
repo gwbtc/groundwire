@@ -117,12 +117,17 @@ export function buildRevealPsbt(params: RevealParams): RevealResult {
 
   const tx = new Transaction();
 
+  // Reveal MUST be a script-path spend so the urb leaf is published on-chain.
+  // We deliberately OMIT tapInternalKey and tapMerkleRoot: their presence lets
+  // a signer also produce a key-path signature, which @scure's finalize
+  // prefers — spending the commit output WITHOUT revealing the attestation
+  // (same txid, so the UI falsely reports success while the comet is never
+  // registered and the mined tweak is burned). With only tapLeafScript +
+  // tapBip32Derivation, signers can only sign the script path.
   tx.addInput({
     txid: commitTxid,
     index: 0,
     witnessUtxo: { script: commitOutputScript, amount: commitOutputValue },
-    tapInternalKey: commitKey.internalKey,
-    tapMerkleRoot: commitPayment.tapMerkleRoot,
     ...(commitPayment.tapLeafScript ? { tapLeafScript: commitPayment.tapLeafScript } : {}),
     tapBip32Derivation: [[
       commitKey.internalKey,
@@ -139,10 +144,81 @@ export function buildRevealPsbt(params: RevealParams): RevealResult {
 }
 
 // Extract a finalized (signed) tx from a PSBT.
+//
+// allowUnknownInputs lets @scure finalize a script-path spend of the custom
+// urb envelope leaf (it decodes as an "unknown" script); without it, a
+// correctly script-path-signed reveal throws "Finalize: Unknown tapLeafScript".
+// Already-finalized inputs (e.g. a PSBT Sparrow finalized itself) are skipped
+// rather than re-finalized (which throws "unknown input").
 export function extractTx(signedPsbt: Uint8Array): Uint8Array {
-  const tx = Transaction.fromPSBT(signedPsbt);
-  tx.finalize();
+  const tx = Transaction.fromPSBT(signedPsbt, { allowUnknownInputs: true });
+  for (let i = 0; i < tx.inputsLength; i++) {
+    const wit = tx.getInput(i).finalScriptWitness;
+    if (wit && wit.length) continue; // already finalized by the wallet
+    tx.finalizeIdx(i);
+  }
   return tx.extract();
+}
+
+// Assert an extracted reveal tx actually reveals the attestation: its input
+// witness must be a script-path spend that includes `leafScript` (the urb
+// envelope). Guards against a key-path spend slipping through. Throws with a
+// clear message if the leaf is absent.
+export function assertRevealsLeaf(signedPsbt: Uint8Array, leafScript: Uint8Array): void {
+  const tx = Transaction.fromPSBT(signedPsbt, { allowUnknownInputs: true });
+  const wit = tx.getInput(0).finalScriptWitness
+    ?? (() => { tx.finalizeIdx(0); return tx.getInput(0).finalScriptWitness; })();
+  if (!wit || wit.length < 2) {
+    throw new Error("reveal is a key-path spend — the attestation would NOT be published on-chain");
+  }
+  const hasLeaf = wit.some((el) => el.length === leafScript.length && equalBytes(el, leafScript));
+  if (!hasLeaf) {
+    throw new Error("reveal witness does not contain the urb attestation leaf");
+  }
+}
+
+function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+// The display-order txid (block-explorer form) of a raw (finalized) tx.
+// NB: must hash the NON-witness serialization — double-SHAing the full
+// witness-inclusive bytes yields the wtxid, not the txid. @scure's Transaction
+// .id does exactly this (toBytes(true) omits the witness), so parse and read it.
+export function rawTxid(rawTx: Uint8Array): string {
+  return Transaction.fromRaw(rawTx, { allowUnknownInputs: true }).id;
+}
+
+// Verify a signed reveal actually spends the signed commit's output-0 via the
+// script path (revealing the leaf), and that the commit output it spends is
+// the one we built. Returns { commitHex, revealHex, commitTxid } ready to
+// broadcast, or throws — so we never broadcast a commit whose reveal is
+// malformed (which would strand the sat) or a key-path reveal (which never
+// publishes the attestation).
+export function extractVerifiedPair(
+  signedCommit: Uint8Array,
+  signedReveal: Uint8Array,
+): { commitHex: string; revealHex: string; commitTxid: string } {
+  const commitRaw = extractTx(signedCommit);
+  const commitTxid = rawTxid(commitRaw);
+
+  const revealTx = Transaction.fromPSBT(signedReveal, { allowUnknownInputs: true });
+  const wit = revealTx.getInput(0).finalScriptWitness
+    ?? (() => { revealTx.finalizeIdx(0); return revealTx.getInput(0).finalScriptWitness; })();
+  if (!wit || wit.length < 2) {
+    throw new Error("reveal is a key-path spend — the attestation would NOT be published on-chain");
+  }
+  const spent = revealTx.getInput(0);
+  const spentTxid = spent.txid ? bytesToHex(spent.txid) : "";
+  if (spentTxid !== commitTxid || spent.index !== 0) {
+    throw new Error(
+      `reveal does not spend the commit output (reveal spends ${spentTxid}:${spent.index}, `
+      + `commit is ${commitTxid}:0) — refusing to broadcast`,
+    );
+  }
+  return { commitHex: bytesToHex(commitRaw), revealHex: bytesToHex(revealTx.extract()), commitTxid };
 }
 
 export function extractTxHex(signedPsbt: Uint8Array): string {

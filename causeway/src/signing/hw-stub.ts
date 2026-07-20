@@ -116,7 +116,9 @@ function render(root: HTMLElement): void {
     summary.textContent = "";
     try {
       const psbtBytes = base64.decode(psbtArea.value.trim());
-      const tx = Transaction.fromPSBT(psbtBytes);
+      // allowUnknownInputs so the reveal's custom urb-leaf script-path spend
+      // can be finalized (it decodes as an "unknown" script type).
+      const tx = Transaction.fromPSBT(psbtBytes, { allowUnknownInputs: true });
       const seed = seedForMode(modeSel.value as "mnemonic" | "qseed", seedArea.value);
       const root = HDKey.fromMasterSeed(seed);
 

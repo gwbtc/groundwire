@@ -55,13 +55,19 @@ function hdKeyToScanned(hd: CryptoHDKey): ScannedKey {
 }
 
 function firstTaprootFromAccount(acc: CryptoAccount): ScannedKey | null {
-  const fp = bufferToHex(acc.getMasterFingerprint());
+  const accFp = bufferToHex(acc.getMasterFingerprint());
   for (const out of acc.getOutputDescriptors()) {
-    const descText = out.toString();
-    // toString() returns the full descriptor e.g. tr([...]xpub.../0/*) or
-    // wpkh(...)/pkh(...). We only accept tr(...) for Causeway.
-    if (descText.startsWith("tr(")) {
-      return { kind: "descriptor", text: descText, masterFingerprint: fp };
+    // out.toString() identifies the script type, but in bc-ur-registry it emits
+    // the origin WITHOUT the [fp/path] brackets (e.g. `tr(abcd/86'/0'/0'xpub…)`),
+    // which parseDescriptor rejects. So use it only to select the taproot
+    // descriptor, and rebuild the actual text from the HDKey (which brackets
+    // the origin correctly, exactly like the crypto-hdkey path).
+    if (!out.toString().startsWith("tr(")) continue;
+    const hd = out.getHDKey?.();
+    if (hd) {
+      const scanned = hdKeyToScanned(hd);
+      // Ensure a master fingerprint is present even if the hdkey lacked origin.
+      return { ...scanned, masterFingerprint: scanned.masterFingerprint ?? accFp };
     }
   }
   return null;

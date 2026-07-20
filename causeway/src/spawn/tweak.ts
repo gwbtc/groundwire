@@ -1,5 +1,16 @@
-// Build the tweak atom bytes that urb-core uses to validate a %spawn's
-// networking key.
+// LEGACY (v9) tweak — the atom bytes lib/urb-core uses to validate an
+// ON-CHAIN (public, revealed) %spawn's networking key. New confidential
+// comets use the cc-draft-2 `dat` instead (see ./dat.ts): the kernel's
+// +pass-pki-dom requires a mat-encoded domain tag at bit 0, which this
+// format does not provide. Keep using v9 only for the public spawn flow,
+// which today's chain watcher verifies against this exact format.
+//
+// NB: `rap 3` concatenates each atom's MINIMAL LE bytes — a txid whose
+// display hex has leading zero bytes contributes fewer than 32 bytes in
+// Hoon, which the fixed 32-byte txidHexToAtomBytes below does not
+// reproduce (~1/256 of txids). The cc-draft-2 dat encoding has no such
+// hazard (fixed 256-bit field). See the review notes before relying on
+// this for fresh mainnet spawns.
 //
 // Hoon source (lib/urb-core.hoon:363-375):
 //
@@ -21,17 +32,22 @@
 //
 // Reference: gw-onboard.py:862-886.
 
-// Convert display-order txid hex (big-endian display) to the Hoon @ux atom
-// bytes (little-endian wire order, full 32 bytes).
+// Convert display-order txid hex (big-endian display) to the Hoon @ux atom's
+// MINIMAL little-endian bytes — what `rap 3` actually concatenates ((met 3 txid)
+// bytes). A fixed 32 bytes is wrong when the display hex has leading zero bytes
+// (~1/256 txids): those become trailing zero LE bytes that `met` drops, so a
+// fixed-width encoding shifts every following element and mismatches urb-core.
 function txidHexToAtomBytes(displayHex: string): Uint8Array {
   const clean = displayHex.replace(/^0x/, "").toLowerCase();
   if (clean.length !== 64) throw new Error(`expected 64 hex chars, got ${clean.length}`);
   // Display hex 0x0123...  →  atom bytes LE = bytes of display hex reversed
-  const out = new Uint8Array(32);
+  const full = new Uint8Array(32);
   for (let i = 0; i < 32; i++) {
-    out[i] = parseInt(clean.slice((31 - i) * 2, (31 - i) * 2 + 2), 16);
+    full[i] = parseInt(clean.slice((31 - i) * 2, (31 - i) * 2 + 2), 16);
   }
-  return out;
+  let end = 32;
+  while (end > 0 && full[end - 1] === 0) end--; // minimal LE bytes (met 3)
+  return full.subarray(0, end);
 }
 
 // Minimum-length LE bytes of a non-negative integer. Returns empty array for 0

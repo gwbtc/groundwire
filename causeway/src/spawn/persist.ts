@@ -2,22 +2,27 @@
 // refresh (or accidental tab close) doesn't strand the user with a
 // broadcasted commit and no way to reach the reveal step.
 //
-// Only public data is persisted:
+// SECURITY: only NON-SECRET data is persisted:
 //   - xpub descriptor text (the user already handed it to Causeway voluntarily)
 //   - picked UTXO metadata (on-chain public info)
-//   - mined {comet, pass, feed, tries} (public — these become on-chain anyway)
+//   - mined {comet, pass, tries} — the @p and public networking key
 //   - assembled PSBTs (public — will be broadcast)
 //   - sponsor sig + height (public)
 //   - phase marker
 //
-// No private signing keys touch storage. Everything here is either already
-// published to Bitcoin, already on the user's screen, or derivable from their
-// xpub (which they've committed to using).
+// The `feed` is DELIBERATELY NOT persisted: it embeds the comet's networking
+// SEED (its private key). Writing that to localStorage would expose it to any
+// XSS or a shared machine. The feed lives only in memory during the active
+// flow (so the boot command renders normally); if the tab is refreshed before
+// the boot step, the user re-supplies their downloaded feed file to resume —
+// which is why the spawn page forces a feed download at mine time.
 
 const STORAGE_KEY = "causeway:pending-spawn";
 
 // Current schema version. Bumped when the shape below changes incompatibly.
-const SCHEMA_VERSION = 1;
+// v2 dropped feedHex (a secret) from PersistedMined — a stored v1 record may
+// contain a private seed, so loadPendingSpawn discards it on version mismatch.
+const SCHEMA_VERSION = 2;
 
 export type SpawnPhase =
   | "assembled"            // PSBTs built, nothing broadcast yet
@@ -43,9 +48,11 @@ export interface PersistedSponsorSig {
 
 export interface PersistedMined {
   comet: string;         // bigint decimal
-  pass: string;          // bigint decimal
-  feedHex: string;
+  pass: string;          // bigint decimal (public networking key)
   tries: number;
+  // NB: no feedHex — the feed carries the private seed and must not be
+  // persisted. It is held in memory and re-supplied from the user's download
+  // when resuming after a refresh.
 }
 
 export interface PersistedSpawn {

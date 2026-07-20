@@ -79,7 +79,7 @@
       },
       "breach": false
     },
-    "output_hex": "020017785634120df0fecaefbeadde01ad7f343404"
+    "output_hex": "820017785634120df0fecaefbeadde01ad7f343404"
   },
   {
     "name": "keys/breach",
@@ -91,7 +91,7 @@
       },
       "breach": true
     },
-    "output_hex": "820017785634120df0fecaefbeadde01ad7f343404"
+    "output_hex": "020017785634120df0fecaefbeadde01ad7f343404"
   },
   {
     "name": "escape/no-sig",
@@ -287,7 +287,7 @@
         }
       }
     ],
-    "output_hex": "00fcbb7733efaa6622de995511cd884408005ce059d14834c0fb2bbffbb67a07b4fed1d010"
+    "output_hex": "00fcbb7733efaa6622de995511cd884408025ce059d14834c0fb2bbffbb67a07b4fed1d010"
   },
   {
     "name": "full/two",

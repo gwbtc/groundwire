@@ -1,7 +1,7 @@
 import { el, clearAndAppend, banner } from "../components.js";
 import { fetchSnapshot } from "../../oracle/snapshot.js";
 import { lookupPoint, resolveAuthPubkey } from "../../oracle/point.js";
-import { isPatp, patpToAtom } from "../../protocol/patp.js";
+import { resolveId } from "../../protocol/mnemonym.js";
 import { Mempool } from "../../chain/mempool.js";
 import { go, setSession, clearManageSession } from "../state.js";
 
@@ -37,16 +37,16 @@ export async function renderLanding(root: HTMLElement): Promise<void> {
   modalWrap.appendChild(closeBtn);
   modalWrap.append(
     el("h2", {}, "Manage an existing comet"),
-    el("p", {}, "Enter the @p of the comet you control. We'll fetch its on-chain record and, after you import your taproot xpub, let you sign identity operations from your hardware wallet."),
+    el("p", {}, "Enter your comet's mnemonym (or its @p). We'll fetch its on-chain record and, after you import your taproot xpub, let you sign identity operations from your hardware wallet."),
   );
 
   const form = el("form", { id: "loginForm" });
   form.append(
-    el("label", { for: "patp" }, "Comet @p"),
+    el("label", { for: "patp" }, "Comet mnemonym or @p"),
     el("input", {
-      type: "text", id: "patp", name: "patp", value: "~",
+      type: "text", id: "patp", name: "patp",
       autocomplete: "off", spellcheck: "false",
-      placeholder: "~sampel-palnet",
+      placeholder: ".routine.inhale.regimes… or ~sampel-palnet",
     }),
   );
   const submitRow = el("div", { class: "row" });
@@ -90,12 +90,17 @@ export async function renderLanding(root: HTMLElement): Promise<void> {
     status.appendChild(banner("warn", "fetching snapshot…"));
     try {
       const inp = form.querySelector<HTMLInputElement>("#patp");
-      const patp = (inp?.value ?? "").trim();
-      if (!isPatp(patp)) throw new Error(`invalid @p: ${patp}`);
-      const patpAtom = patpToAtom(patp);
+      const entry = (inp?.value ?? "").trim();
+      if (!entry) throw new Error("enter a mnemonym or @p");
+      let patpAtom: bigint;
+      try {
+        patpAtom = resolveId(entry);
+      } catch {
+        throw new Error(`not a valid mnemonym or @p: ${entry}`);
+      }
       const snapshot = await fetchSnapshot();
       if (!lookupPoint(snapshot, patpAtom)) {
-        throw new Error(`@p not in snapshot (block ${snapshot.blockId.num})`);
+        throw new Error(`comet not in snapshot (block ${snapshot.blockId.num})`);
       }
       const mp = new Mempool();
       const auth = await resolveAuthPubkey(snapshot, patpAtom, mp);
