@@ -1,6 +1,24 @@
-// Given a mined result + the user's picked precommit UTXO + derivation keys
-// + a sponsor signature, build the full commit + reveal PSBT pair plus the
-// deterministic (segwit, witness-excluded) txids Causeway can poll for.
+// cc-draft-2 CONFIDENTIAL spawn assembler.
+//
+// Given a mined result + the user's picked spawn UTXO + derivation keys, build
+// the single COMMIT-ONLY PSBT (no on-chain reveal) plus the deterministic
+// (segwit, witness-excluded) commit txid Causeway can poll for.
+//
+// This is the web twin of desktop/causeway.py's build_confidential_commit_psbt
+// + run_spawn_connect:
+//   * input 0  — the spawn (funding) UTXO, spent via P2TR key-path.
+//   * output 0 — P2TR(internal = funding xonly, merkle_root = tapleaf(%spawn)).
+//     The %spawn attestation is COMMITTED in the taproot output but never
+//     revealed on-chain: the leaf's OP_CHECKSIG uses the BIP-341 NUMS key
+//     (nobody can sign it), so the script path is dead and the sat stays
+//     key-path spendable by the point owner for any future management op.
+//
+// The attestation itself (the %spawn sotx) is disclosed off-chain to the
+// %gw-btc verifier via the xtr reveal log baked into the boot feed (see
+// reveal-log.ts + mine-c.ts bakeXtrIntoFeed, the twin of `causeway finalize`).
+//
+// Unlike the retired legacy public flow, there is NO reveal PSBT and NO
+// on-chain %escape — the leaf commits a bare %spawn, matching the desktop.
 
 import { sha256 } from "@noble/hashes/sha256";
 import { encodeFull } from "../protocol/encoder.js";
@@ -8,13 +26,11 @@ import type { SkimSotx } from "../protocol/types.js";
 import type { DiscoveredUtxo } from "../chain/discover.js";
 import { deriveKeyInfo } from "../keys/xpub.js";
 import type { KeySource } from "../keys/xpub.js";
-import { urbLeafScript } from "../chain/tapscript.js";
-import {
-  buildCommitPsbt, buildRevealPsbt, type KeyInfo, type Utxo,
-} from "../signing/psbt.js";
+import { urbLeafScript, NUMS_XONLY } from "../chain/tapscript.js";
+import { buildCommitPsbt, type KeyInfo, type Utxo } from "../signing/psbt.js";
 import type { MineResult } from "./miner.js";
-import { patpToAtom } from "../protocol/patp.js";
-import { ESCAPE_SPONSOR } from "../chain/sponsor.js";
+
+const TAP_LEAF_VERSION = 0xc0;
 
 // spkh = shay((can 3 script-pubkey 8^value ~)) per boot.hoon's
 // extract-spawn-fields / urb-core's calc-precommit-sont. script-pubkey is a
@@ -35,34 +51,29 @@ export function computeSpkh(scriptPubKey: Uint8Array, valueSats: bigint): Uint8A
   return sha256(buf);
 }
 
-// Historically these were set to high unused indices (1000, 1001) to keep
-// Causeway's attestation keys out of the user's regular receive set, but that
-// meant signing wallets like Sparrow couldn't locate them within their gap
-// limit. We now reuse the funding key — see comment inline below.
-
 export interface AssembleArgs {
   mined: MineResult;
-  picked: DiscoveredUtxo;         // the precommit UTXO
+  picked: DiscoveredUtxo;         // the spawn (funding) UTXO
   keys: KeySource;
-  sponsorSig: bigint | null;      // null = spawn without escape (comet will self-sponsor)
   feeRate?: number;               // default 2 sat/vB
 }
 
 export interface AssembledSpawn {
   commitPsbt: Uint8Array;
-  commitTxid: Uint8Array;         // 32 bytes, wire order (LE of display hex)
+  commitTxid: Uint8Array;         // 32 bytes, display order (LE of wire hash)
   commitTxidHex: string;          // display hex
   commitOutputValue: bigint;
-  revealPsbt: Uint8Array;
-  revealTxidHex: string;
-  revealOutputValue: bigint;
   fundingKey: KeyInfo;
-  commitKey: KeyInfo;
-  destKey: KeyInfo;
-  attestationHex: string;         // for debugging / inspection
+  // Fields the xtr reveal log needs once the commit confirms (mirrors the
+  // proof.json a `causeway finalize` reads: internal key + leaf).
+  internalKeyHex: string;         // 32-byte funding xonly hex; xtr uses 02||xonly
+  leafScript: Uint8Array;         // NUMS-wrapped %spawn attestation leaf
+  leafScriptHex: string;
+  leafVersion: number;            // 0xc0
+  attestationHex: string;         // encoded sotx bytes — for inspection
 }
 
-// Txids are stored in display byte order throughout Causeway (what blocks
+// Txids are stored in display byte order throughout Causeway (what block
 // explorers, mempool.space, Sparrow show — and what @scure/btc-signer's
 // addInput expects). So we just hex-encode.
 function bytesToDisplayHex(displayBytes: Uint8Array): string {
@@ -75,24 +86,20 @@ function bytesToHex(b: Uint8Array): string {
 
 export function assembleSpawn(args: AssembleArgs): AssembledSpawn {
   const feeRate = args.feeRate ?? 2;
-  const { mined, picked, keys, sponsorSig } = args;
+  const { mined, picked, keys } = args;
 
   // Derive the key that controls the funding UTXO at its own (change, index).
   const fundingKey = deriveKeyInfo(keys, picked.change, picked.index);
-  // Reuse the funding key for the commit internal key. Wallets like Sparrow
-  // only derive within their gap limit (~20); using a high unused index
-  // means they can't locate the key for script-path signing. The funding
-  // key is always present in the wallet (that's how the UTXO was spotted),
-  // and the commit's merkle-root tweak makes the commit output's P2TR
-  // address distinct from the funding address, so there's no visual reuse.
+  // The commit output's internal key IS the funding xonly, so the sat at
+  // output 0 stays key-path spendable by the point owner (load-bearing for
+  // urb-core's sont chain: the next management op must key-path spend it).
   const commitKey = fundingKey;
-  // Destination can be any key the user controls. Reusing funding means the
-  // inscription sat lands back at the funding address — trackable as a
-  // normal incoming UTXO in any wallet.
-  const destKey = fundingKey;
 
   const spkh = computeSpkh(picked.scriptPubKey, picked.value);
 
+  // A bare %spawn sotx — matching desktop encode_spawn_sotx. urb-core's
+  // calc-precommit-sont treats a null vout as undefined behavior and fails; the
+  // vout unit must always be some, including vout 0 (the common case).
   const spawnSingle = {
     op: "spawn" as const,
     pass: mined.pass,
@@ -101,32 +108,23 @@ export function assembleSpawn(args: AssembleArgs): AssembledSpawn {
       spkh,
       off: 0n,
       tej: 0n,
-      // urb-core's calc-precommit-sont treats a null pos as undefined behavior
-      // and fails; the vout unit must always be some, including vout 0 (the
-      // common case). Encoding 0 as null silently dropped ~half of spawns.
       vout: BigInt(picked.vout),
     },
   };
-
-  const sotx: SkimSotx = sponsorSig !== null
-    ? {
-        op: "batch",
-        items: [
-          spawnSingle,
-          { op: "escape", parent: patpToAtom(ESCAPE_SPONSOR), sig: sponsorSig },
-        ],
-      }
-    : spawnSingle;
+  const sotx: SkimSotx = spawnSingle;
 
   // On-chain unvs carry the full sotx: a [sig ship] header (sig none here;
   // the comet is the from-ship) precedes the skim. urb-core's parse-roll
-  // consumes that header before the opcode, so a bare skim is unparseable
-  // (and can wedge urb-watcher's block processing on the `!!`).
+  // consumes that header before the opcode, so a bare skim is unparseable.
   const attestation = encodeFull([{ ship: mined.comet, sig: null, skim: sotx }]);
-  const leafScript = urbLeafScript(attestation, commitKey.internalKey);
+  // CONFIDENTIAL: the leaf's OP_CHECKSIG uses the NUMS key so the script path
+  // is unspendable — the attestation is committed but can never be revealed on
+  // chain. (The legacy public flow used commitKey.internalKey here to make the
+  // reveal spendable.)
+  const leafScript = urbLeafScript(attestation, NUMS_XONLY);
 
   const funding: Utxo = {
-    txid: picked.txid,              // already wire-order LE
+    txid: picked.txid,              // already display-order
     vout: picked.vout,
     value: picked.value,
     scriptPubKey: picked.scriptPubKey,
@@ -136,42 +134,16 @@ export function assembleSpawn(args: AssembleArgs): AssembledSpawn {
     funding, fundingKey, commitKey, leafScript, feeRate,
   });
 
-  const reveal = buildRevealPsbt({
-    commitTxid: commit.commitTxid,
-    commitOutputValue: commit.commitOutputValue,
-    commitOutputScript: commit.commitOutputScript,
-    commitKey,
-    leafScript,
-    destKey,
-    feeRate,
-  });
-
-  // Reveal txid — we need it too. Compute from reveal's unsigned tx bytes.
-  // buildRevealPsbt doesn't expose txid today, so derive it here.
-  const revealTxidHex = computeRevealTxid(reveal.psbt);
-
   return {
     commitPsbt: commit.psbt,
     commitTxid: commit.commitTxid,
     commitTxidHex: bytesToDisplayHex(commit.commitTxid),
     commitOutputValue: commit.commitOutputValue,
-    revealPsbt: reveal.psbt,
-    revealTxidHex,
-    revealOutputValue: reveal.revealOutputValue,
     fundingKey,
-    commitKey,
-    destKey,
+    internalKeyHex: bytesToHex(commitKey.internalKey),
+    leafScript,
+    leafScriptHex: bytesToHex(leafScript),
+    leafVersion: TAP_LEAF_VERSION,
     attestationHex: bytesToHex(attestation),
   };
-}
-
-// Compute txid from a PSBT by deserializing and hashing the unsigned tx.
-// Returns DISPLAY-order hex (reverse of internal double-SHA output).
-import { Transaction } from "@scure/btc-signer";
-function computeRevealTxid(psbt: Uint8Array): string {
-  const tx = Transaction.fromPSBT(psbt);
-  const wire = sha256(sha256(tx.unsignedTx));
-  const display = new Uint8Array(wire.length);
-  for (let i = 0; i < wire.length; i++) display[i] = wire[wire.length - 1 - i]!;
-  return bytesToDisplayHex(display);
 }

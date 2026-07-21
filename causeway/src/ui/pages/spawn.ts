@@ -1,37 +1,41 @@
-// Spawn — mine a ~daplyd comet, assemble commit+reveal PSBTs, show each as
-// an animated QR for the user's wallet to sign and broadcast. Causeway
-// predicts both txids (segwit txids are deterministic from the unsigned tx)
-// and polls mempool.space automatically. Once the reveal confirms, the boot
-// command appears.
+// Spawn — cc-draft-2 CONFIDENTIAL comet spawn (at parity with desktop Causeway).
+//
+// PROTOCOL: this page mines a suite-%c comet whose Schnorr tweak is the
+// cc-draft-2 `dat` (mat-encoded %gw-btc PKI domain + spawn satpoint, see
+// spawn/dat.ts), then builds a single COMMIT-ONLY taproot transaction whose
+// output commits the %spawn attestation in a NUMS-keyed tapleaf. The
+// attestation is NEVER revealed on-chain (no reveal PSBT); it is disclosed
+// off-chain to the %gw-btc verifier via the xtr reveal log baked into the boot
+// feed once the commit confirms. This mirrors desktop/causeway.py's
+// build_confidential_commit_psbt + run_spawn_connect + `causeway finalize`.
+//
+// The legacy PUBLIC flow (v9 rap-3 tweak + on-chain commit/reveal) has been
+// retired; see git history / the removed spawn/tweak.ts.
 //
 // State is persisted to localStorage after assembly, so an accidental refresh
-// between broadcasting the commit and the reveal doesn't orphan sats.
+// between broadcasting the commit and finalizing doesn't orphan sats.
 
 import { el, clearAndAppend, banner, kvList, copyButton } from "../components.js";
 import { go, getSession } from "../state.js";
 import { miner } from "../../spawn/miner.js";
-import { formatBootCommand, formatBootCommandFromUw, atomToUw, bytesToAtomLE } from "../../spawn/boot-cmd.js";
+import {
+  formatBootCommand, formatBootCommandFromUw, atomToUw, bytesToAtomLE, uwToAtom,
+} from "../../spawn/boot-cmd.js";
 import { assembleSpawn } from "../../spawn/assemble.js";
-import { buildTweakBytes } from "../../spawn/tweak.js";
+import { buildDatBytes } from "../../spawn/dat.js";
+import { buildXtrAtom, bakeXtrIntoFeedAtom } from "../../spawn/reveal-log.js";
 import { atomToPatp } from "../../protocol/patp.js";
 import { atomToMnemonym, abridgeMnemonym } from "../../protocol/mnemonym.js";
 import type { DiscoveredUtxo } from "../../chain/discover.js";
 import { encodePsbtUR } from "../../signing/qr-ur.js";
 import { animateUR } from "../../signing/qr-render.js";
-import { requestEscapeSig, ESCAPE_SPONSOR } from "../../chain/sponsor.js";
 import {
   savePendingSpawn, loadPendingSpawn, clearPendingSpawn, updatePhase,
-  sponsorSigAgeBlocks,
-  b64Encode, b64Decode, bytesToHex, hexToBytes,
-  type PersistedSpawn,
+  b64Encode, b64Decode, bytesToHex,
+  type PersistedSpawn, type PersistedXtrInputs,
 } from "../../spawn/persist.js";
-
-// urb-core accepts a sponsor escape-sig only within ±10 blocks of the block it
-// was issued at. Warn well before that so a slow sign/broadcast doesn't expire it.
-const SPONSOR_SIG_WINDOW_BLOCKS = 10;
 import { formatAccountPath } from "../../keys/xpub.js";
 
-const REVEAL_CONFIRMATIONS = 2;
 const POLL_INTERVAL_MS = 15_000;
 
 // Txids are stored display-order throughout Causeway; hex-encode directly.
@@ -62,22 +66,24 @@ function downloadButton(getBytes: () => Uint8Array, filename: string): HTMLButto
   return btn;
 }
 
-// Copy describing which wallets the user should actually use for signing.
+// Copy describing which wallets the user should actually use for signing. The
+// confidential commit is a plain BIP-86 key-path spend — every taproot wallet
+// handles it, and there is NO awkward script-path reveal step anymore.
 const SIGNER_ADVICE_HTML = `
   <strong>Signing requirements.</strong>
-  The commit tx is a standard BIP-86 key-path spend — any modern taproot wallet
-  should handle it. The reveal tx is a taproot <em>script-path</em> spend, which
-  is only reliably supported in a few places today. In order of recommendation:
+  The confidential commit is a standard BIP-86 taproot key-path spend — any
+  modern taproot wallet signs it. There is no on-chain reveal, so you do not
+  need the script-path signers the old public flow required.
   <ul style="margin-top:0.5rem;padding-left:1.2rem;">
-    <li><a href="https://sparrowwallet.com" target="_blank" rel="noopener">Sparrow Wallet</a> (desktop, free, open-source) — the reference signer for
-        both steps. Load each PSBT via <em>File → Load Transaction → From Text</em>
-        (paste the base64) or <em>From QR Code</em> (scan Causeway's QR with your webcam).</li>
-    <li><strong>Coldcard Q</strong> with EDGE firmware — the only hardware wallet with
-        confirmed script-path taproot signing, via animated QR.</li>
-    <li><strong>Bitcoin Core</strong> via <code>walletprocesspsbt</code> / <code>finalizepsbt</code> — if you're running a node.</li>
+    <li><a href="https://sparrowwallet.com" target="_blank" rel="noopener">Sparrow Wallet</a>,
+        <strong>BlueWallet</strong>, <strong>Coldcard</strong>, <strong>Keystone</strong>,
+        <strong>Passport</strong>, or Bitcoin Core via <code>walletprocesspsbt</code> all work.
+        Load the PSBT via <em>File → Load Transaction → From Text</em> (paste base64)
+        or scan Causeway's animated QR.</li>
   </ul>
-  Wallets that <em>will not</em> work end-to-end today: BlueWallet, Electrum mobile,
-  Phoenix, Muun, Ledger, Trezor, Jade.
+  The attestation lives in the taproot output's committed tapleaf and is never
+  published on-chain; your comet discloses it off-chain via the reveal log baked
+  into the boot feed.
 `.trim();
 
 export function renderSpawn(root: HTMLElement): void {
@@ -88,17 +94,11 @@ export function renderSpawn(root: HTMLElement): void {
   const pending = loadPendingSpawn();
 
   if (!session) {
-    if (pending) {
-      renderResumeOnly(root, pending);
-      return;
-    }
+    if (pending) { renderResumeOnly(root, pending); return; }
     go("#/"); return;
   }
   if (!session.keys || !session.discovery) {
-    if (pending) {
-      renderResumeOnly(root, pending);
-      return;
-    }
+    if (pending) { renderResumeOnly(root, pending); return; }
     go("#/keys?then=spawn"); return;
   }
 
@@ -113,19 +113,20 @@ export function renderSpawn(root: HTMLElement): void {
   const status = el("div");
   const mineCard = el("section", { class: "card", style: "display:none;" });
   const commitCard = el("section", { class: "card", style: "display:none;" });
-  const revealCard = el("section", { class: "card", style: "display:none;" });
+  const finalizeCard = el("section", { class: "card", style: "display:none;" });
   const bootCard = el("section", { class: "card", style: "display:none;" });
 
   intro.append(
-    el("h1", {}, "Spawn a comet"),
+    el("h1", {}, "Spawn a confidential comet"),
     el("p", { class: "lead" },
-      "Causeway mines a comet @p under the ~daplyd star, assembles commit + "
-      + "reveal transactions, and hands each to your wallet as a QR or "
-      + "downloadable PSBT file. We watch mempool.space for the predicted "
-      + "txids; once the reveal confirms, the boot command appears."),
+      "Causeway mines a comet @p under the ~daplyd star with the cc-draft-2 "
+      + "confidential tweak, then assembles ONE commit transaction whose taproot "
+      + "output commits your %spawn attestation. Nothing is revealed on-chain — "
+      + "we watch mempool.space for the commit, and once it confirms we bake the "
+      + "off-chain reveal log (xtr) into your boot feed."),
   );
 
-  // Signer advice card — shown up front so users pick the right tool before investing sats.
+  // Signer advice card — shown up front so users pick the right tool.
   const advice = el("section", { class: "card" });
   advice.innerHTML = SIGNER_ADVICE_HTML;
 
@@ -133,9 +134,6 @@ export function renderSpawn(root: HTMLElement): void {
     // A very common way to land here with an empty UTXO set: the user already
     // broadcast a commit tx in a previous session, which spent their funding
     // UTXO. mempool.space no longer lists it, so discovery comes back empty.
-    // In that case a pending spawn needs to be resumable — so we add all the
-    // placeholder cards to the DOM (hidden), identical to the main path, and
-    // let the Resume button populate them.
     const reason = pending
       ? "Your funding UTXO isn't in the mempool's UTXO set right now — most "
         + "likely because you already broadcast the commit tx for your pending "
@@ -143,12 +141,12 @@ export function renderSpawn(root: HTMLElement): void {
       : "No confirmed funding UTXOs at your account's first 20 addresses. "
         + "Send at least ~1,000 sats to one of your BIP-86 addresses and come back.";
     intro.appendChild(banner("warn", reason));
-    clearAndAppend(root, resumeCard, intro, advice, status, mineCard, commitCard, revealCard, bootCard);
+    clearAndAppend(root, resumeCard, intro, advice, status, mineCard, commitCard, finalizeCard, bootCard);
     if (pending) renderResumeCard(resumeCard, pending);
     return;
   }
 
-  intro.appendChild(el("h2", {}, "Precommit UTXO"));
+  intro.appendChild(el("h2", {}, "Spawn UTXO"));
   intro.appendChild(el("label", {}, "Your confirmed UTXOs (smallest-first)"));
   const pickSel = el("select") as HTMLSelectElement;
   for (const [i, u] of confirmedFunding.entries()) {
@@ -160,24 +158,23 @@ export function renderSpawn(root: HTMLElement): void {
 
   const startBtn = el("button", {
     class: "btn primary", type: "button", style: "margin-top:1rem;",
-  }, "Mine & build transactions");
+  }, "Mine & build commit");
   intro.appendChild(startBtn);
 
-  clearAndAppend(root, resumeCard, intro, advice, status, mineCard, commitCard, revealCard, bootCard);
+  clearAndAppend(root, resumeCard, intro, advice, status, mineCard, commitCard, finalizeCard, bootCard);
   if (pending) renderResumeCard(resumeCard, pending);
 
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
   async function runFlow(picked: DiscoveredUtxo): Promise<void> {
     status.innerHTML = "";
-    mineCard.style.display = "none";
-    commitCard.style.display = "none";
-    revealCard.style.display = "none";
-    bootCard.style.display = "none";
+    for (const c of [mineCard, commitCard, finalizeCard, bootCard]) c.style.display = "none";
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 
     const txidDisplay = bytesToDisplayHex(picked.txid);
-    const tweak = buildTweakBytes({ txidHex: txidDisplay, vout: picked.vout, off: 0 });
+    // cc-draft-2 `dat` — the name-committing confidential tweak (mat(%gw-btc) +
+    // spawn satpoint), replacing the legacy v9 rap-3 tweak.
+    const dat = buildDatBytes({ txidHex: txidDisplay, vout: picked.vout, off: 0 });
 
     status.appendChild(banner("warn", "mining under ~daplyd — ~65k iterations…"));
     const progressLine = el("div", { class: "qr-meta", style: "margin-top:0.3rem;" }, "0 tries");
@@ -187,7 +184,7 @@ export function renderSpawn(root: HTMLElement): void {
     let mined: Awaited<ReturnType<typeof miner.mine>>;
     try {
       mined = await miner.mine({
-        tweakExpr: tweak,
+        tweakExpr: dat,
         onProgress: (tries) => { progressLine.textContent = `${tries.toLocaleString()} tries…`; },
       });
     } catch (err: any) {
@@ -200,36 +197,26 @@ export function renderSpawn(root: HTMLElement): void {
     status.appendChild(banner("ok",
       `mined in ${(elapsed / 1000).toFixed(1)}s (${mined.tries.toLocaleString()} tries)`));
 
-    // The @p is the machine identity (sponsor API, feed filename, boot
-    // command); the mnemonym is what we show the user.
+    // The @p is the machine identity (feed filename, boot command); the
+    // mnemonym is what we show the user.
     const cometPatp = atomToPatp(mined.comet);
     const cometMnemo = atomToMnemonym(mined.comet);
 
-    status.appendChild(banner("warn",
-      `requesting escape-sig from ${ESCAPE_SPONSOR.slice(0, 14)}…`));
-    let sponsorSig;
-    try {
-      sponsorSig = await requestEscapeSig(cometPatp);
-    } catch (err: any) {
-      status.innerHTML = "";
-      status.appendChild(banner("err",
-        `sponsor-signer error: ${err.message ?? err}. `
-        + `A fresh comet without a sponsor won't route — aborting.`));
-      return;
-    }
-
-    const assembled = assembleSpawn({
-      mined, picked, keys, sponsorSig: sponsorSig.sig, feeRate: 2,
-    });
+    const assembled = assembleSpawn({ mined, picked, keys, feeRate: 2 });
 
     // ---- Persist everything we'd need to resume from a page refresh ----
     // NB: the feed (which embeds the private seed) is intentionally NOT
     // persisted; the user must save it from the download below.
+    const xtrInputs: PersistedXtrInputs = {
+      internalKeyHex: assembled.internalKeyHex,
+      leafScriptHex: assembled.leafScriptHex,
+      leafVersion: assembled.leafVersion,
+    };
     const persisted: PersistedSpawn = {
-      version: 2,
+      version: 3,
       createdAt: Date.now(),
       network: keys.network,
-      descriptor: "", // may be empty if user pasted bare xpub; we'd need to thread the raw input through — best-effort
+      descriptor: "", // best-effort; may be empty if user pasted a bare xpub
       accountPath: formatAccountPath(keys.accountPath),
       masterFingerprint: keys.masterFingerprint.toString(16).padStart(8, "0"),
       picked: {
@@ -246,14 +233,10 @@ export function renderSpawn(root: HTMLElement): void {
         pass: mined.pass.toString(),
         tries: mined.tries,
       },
-      sponsor: {
-        sig: sponsorSig.sig.toString(),
-        height: sponsorSig.height,
-      },
       commitPsbtB64: b64Encode(assembled.commitPsbt),
-      revealPsbtB64: b64Encode(assembled.revealPsbt),
       commitTxidHex: assembled.commitTxidHex,
-      revealTxidHex: assembled.revealTxidHex,
+      commitValue: assembled.commitOutputValue.toString(),
+      xtr: xtrInputs,
       phase: "assembled",
     };
     savePendingSpawn(persisted);
@@ -263,9 +246,7 @@ export function renderSpawn(root: HTMLElement): void {
       cometPatp,
       pickedSummary: `${shortTxid(bytesToDisplayHex(picked.txid))}:${picked.vout} (${picked.value} sats)`,
       tries: mined.tries,
-      sponsorHeight: sponsorSig.height,
       commitTxidHex: assembled.commitTxidHex,
-      revealTxidHex: assembled.revealTxidHex,
     });
 
     // The feed is the comet's private key and is deliberately NOT stored in
@@ -278,10 +259,7 @@ export function renderSpawn(root: HTMLElement): void {
       + "comet's private key and is not saved anywhere in this browser. You "
       + "need it to boot, and to resume this spawn if the page reloads."));
 
-    renderCommitCard(
-      commitCard, assembled.commitPsbt, assembled.commitTxidHex,
-      assembled.revealPsbt, sponsorSig.height,
-    );
+    renderCommitCard(commitCard, assembled.commitPsbt, assembled.commitTxidHex);
 
     await pollForTx(assembled.commitTxidHex,
       commitCard.querySelector<HTMLElement>(".qr-meta")!,
@@ -289,23 +267,18 @@ export function renderSpawn(root: HTMLElement): void {
     commitCard.querySelector<HTMLElement>(".qr-meta")!.textContent = "commit seen in mempool ✓";
     updatePhase("commit-broadcast");
 
-    // The escape sig expires ±10 blocks from where it was issued; if the user
-    // took too long to broadcast, warn that the spawn may not register.
-    await warnIfSponsorSigStale(persisted, status);
-
-    renderRevealCard(revealCard, assembled.revealPsbt, assembled.revealTxidHex);
-
-    await pollForTx(assembled.revealTxidHex,
-      revealCard.querySelector<HTMLElement>(".qr-meta")!,
-      { minConfs: REVEAL_CONFIRMATIONS });
-    updatePhase("reveal-confirmed");
-
+    // Boot now (raw feed) + finalize (bake xtr once the commit confirms).
     renderBootCard(bootCard, cometMnemo, cometPatp, mined.feed);
-
-    // Success terminal — we can clear persistence now.
-    clearPendingSpawn();
+    renderFinalizeCard(finalizeCard, {
+      commitTxidHex: assembled.commitTxidHex,
+      xtr: xtrInputs,
+      cometPatp,
+      getFeedAtom: () => bytesToAtomLE(mined.feed),
+    });
+    finalizeCard.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  // Poll for a tx reaching the mempool (minConfs 0) — resolves once seen.
   async function pollForTx(
     txidHex: string, metaEl: HTMLElement, opts: { minConfs: number },
   ): Promise<void> {
@@ -325,13 +298,7 @@ export function renderSpawn(root: HTMLElement): void {
             }
             return;
           }
-          const tip = await s.mp.tipHeight();
-          const confs = tip - (tx.status.block_height ?? tip) + 1;
-          metaEl.textContent = `${confs} / ${opts.minConfs} confirmations`;
-          if (confs >= opts.minConfs) {
-            clearInterval(pollTimer!); pollTimer = null;
-            resolve();
-          }
+          resolve();
         } catch (err: any) {
           metaEl.textContent = `poll error: ${err.message ?? err} (retrying)`;
         }
@@ -339,6 +306,86 @@ export function renderSpawn(root: HTMLElement): void {
       tick();
       pollTimer = setInterval(tick, POLL_INTERVAL_MS);
     });
+  }
+
+  // Poll until the tx confirms; resolve with its block height (needed to build
+  // the xtr reveal-log entry — the twin of desktop `causeway finalize`).
+  async function pollForConfirmation(txidHex: string, metaEl: HTMLElement): Promise<number> {
+    return new Promise((resolve) => {
+      const tick = async (): Promise<void> => {
+        try {
+          const tx = await s.mp.tx(txidHex).catch(() => null);
+          if (!tx) { metaEl.textContent = `waiting for ${shortTxid(txidHex)}…`; return; }
+          if (!tx.status.confirmed || tx.status.block_height === undefined) {
+            metaEl.textContent = `in mempool (0 confs) · waiting for a block…`;
+            return;
+          }
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+          resolve(tx.status.block_height);
+        } catch (err: any) {
+          metaEl.textContent = `poll error: ${err.message ?? err} (retrying)`;
+        }
+      };
+      tick();
+      pollTimer = setInterval(tick, POLL_INTERVAL_MS);
+    });
+  }
+
+  // Render the finalize card: poll the commit to confirmation, then bake the
+  // xtr reveal log into a feed and present the finalized boot command.
+  function renderFinalizeCard(
+    card: HTMLElement,
+    opts: {
+      commitTxidHex: string;
+      xtr: PersistedXtrInputs;
+      cometPatp: string;
+      getFeedAtom: () => bigint | null;
+    },
+  ): void {
+    card.innerHTML = "";
+    card.style.display = "";
+    card.append(
+      el("h2", {}, "Finalize reveal log (xtr)"),
+      el("p", {},
+        "Once your commit confirms in a block, Causeway bakes the off-chain "
+        + "reveal log (xtr) into your boot feed so your booted ship serves its "
+        + "own attestation to the %gw-btc verifier. Until then you can boot with "
+        + "the plain feed above; it works, but serves an empty reveal log until "
+        + "an %anew round-trip refreshes it."),
+    );
+    const meta = el("div", { class: "qr-meta" }, "waiting for commit to confirm…");
+    card.appendChild(meta);
+    const out = el("div");
+    card.appendChild(out);
+
+    pollForConfirmation(opts.commitTxidHex, meta)
+      .then((blockHeight) => {
+        updatePhase("commit-confirmed");
+        meta.textContent = `commit confirmed in block ${blockHeight} ✓`;
+        const xtr = buildXtrAtom([{
+          txidHex: opts.commitTxidHex,
+          blockHeight,
+          reveal: {
+            // 33-byte compressed internal key, even parity — matching desktop
+            // finalize's "02" + internal_pubkey_hex.
+            internalKeyHex: "02" + opts.xtr.internalKeyHex,
+            leafVersion: opts.xtr.leafVersion,
+            leafScriptHex: opts.xtr.leafScriptHex,
+          },
+        }]);
+        const baseFeed = opts.getFeedAtom();
+        if (baseFeed === null) {
+          renderFinalizeNeedsFeed(out, opts.cometPatp, xtr);
+        } else {
+          const feedBytes = bakeXtrIntoFeedAtom(baseFeed, xtr);
+          renderFinalizedBoot(out, opts.cometPatp, feedBytes);
+          clearPendingSpawn();
+        }
+      })
+      .catch((err) => {
+        out.innerHTML = "";
+        out.appendChild(banner("err", `finalize error: ${err.message ?? err}`));
+      });
   }
 
   startBtn.addEventListener("click", () => {
@@ -360,14 +407,12 @@ export function renderSpawn(root: HTMLElement): void {
     el_.append(
       el("h2", {}, "Pending spawn in progress"),
       el("p", {},
-        `There's an unfinished spawn for ${abridgeMnemonym(cometName)} (started ${ageMin} min ago, `
-        + `phase: ${p.phase}). Resume it or discard.`),
+        `There's an unfinished confidential spawn for ${abridgeMnemonym(cometName)} `
+        + `(started ${ageMin} min ago, phase: ${p.phase}). Resume it or discard.`),
       kvList([
         ["Comet", cometName],
-        ["Precommit UTXO", `${shortTxid(p.picked.txidHex)}:${p.picked.vout}`],
+        ["Spawn UTXO", `${shortTxid(p.picked.txidHex)}:${p.picked.vout}`],
         ["Commit txid", p.commitTxidHex],
-        ["Reveal txid", p.revealTxidHex],
-        ["Sponsor sig block", `${p.sponsor.height}`],
       ]),
     );
     const row = el("div", { class: "row" });
@@ -392,12 +437,6 @@ export function renderSpawn(root: HTMLElement): void {
   }
 
   async function resumeFromPersisted(p: PersistedSpawn): Promise<void> {
-    console.log("[causeway] resume clicked, phase=", p.phase,
-      " commit=", p.commitTxidHex.slice(0, 12),
-      " reveal=", p.revealTxidHex.slice(0, 12));
-
-    // Hide the "start a fresh spawn" UI so the resumed flow is the only
-    // thing competing for the user's attention.
     resumeCard.style.display = "none";
     intro.style.display = "none";
     advice.style.display = "none";
@@ -405,19 +444,14 @@ export function renderSpawn(root: HTMLElement): void {
     status.innerHTML = "";
     status.appendChild(banner("warn",
       `resuming ${abridgeMnemonym(atomToMnemonym(BigInt(p.mined.comet)))} from phase: ${p.phase}…`));
-    mineCard.style.display = "none";
-    commitCard.style.display = "none";
-    revealCard.style.display = "none";
-    bootCard.style.display = "none";
+    for (const c of [mineCard, commitCard, finalizeCard, bootCard]) c.style.display = "none";
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 
     let commitPsbt: Uint8Array;
-    let revealPsbt: Uint8Array;
     let cometPatp: string;
     let cometMnemo: string;
     try {
       commitPsbt = b64Decode(p.commitPsbtB64);
-      revealPsbt = b64Decode(p.revealPsbtB64);
       cometPatp = atomToPatp(BigInt(p.mined.comet));
       cometMnemo = atomToMnemonym(BigInt(p.mined.comet));
     } catch (err: any) {
@@ -428,26 +462,14 @@ export function renderSpawn(root: HTMLElement): void {
       return;
     }
 
-    try {
-      renderMineCard(mineCard, {
-        cometMnemo,
-        cometPatp,
-        pickedSummary: `${shortTxid(p.picked.txidHex)}:${p.picked.vout} (${p.picked.value} sats)`,
-        tries: p.mined.tries,
-        sponsorHeight: p.sponsor.height,
-        commitTxidHex: p.commitTxidHex,
-        revealTxidHex: p.revealTxidHex,
-      });
-
-      renderCommitCard(commitCard, commitPsbt, p.commitTxidHex, revealPsbt, p.sponsor.height);
-    } catch (err: any) {
-      status.innerHTML = "";
-      status.appendChild(banner("err", `render error: ${err.message ?? err}`));
-      console.error("[causeway] resume render failed:", err);
-      return;
-    }
-
-    // Scroll the resumed content into view so "Resume" feels obviously active.
+    renderMineCard(mineCard, {
+      cometMnemo,
+      cometPatp,
+      pickedSummary: `${shortTxid(p.picked.txidHex)}:${p.picked.vout} (${p.picked.value} sats)`,
+      tries: p.mined.tries,
+      commitTxidHex: p.commitTxidHex,
+    });
+    renderCommitCard(commitCard, commitPsbt, p.commitTxidHex);
     mineCard.scrollIntoView({ behavior: "smooth", block: "start" });
     status.innerHTML = "";
 
@@ -456,21 +478,19 @@ export function renderSpawn(root: HTMLElement): void {
       { minConfs: 0 });
     commitCard.querySelector<HTMLElement>(".qr-meta")!.textContent = "commit seen in mempool ✓";
     updatePhase("commit-broadcast");
-    await warnIfSponsorSigStale(p, status);
 
-    renderRevealCard(revealCard, revealPsbt, p.revealTxidHex);
-    revealCard.scrollIntoView({ behavior: "smooth", block: "start" });
-
-    await pollForTx(p.revealTxidHex,
-      revealCard.querySelector<HTMLElement>(".qr-meta")!,
-      { minConfs: REVEAL_CONFIRMATIONS });
-    updatePhase("reveal-confirmed");
-
-    // The feed isn't persisted (it's the private key), so on a resumed flow
-    // the user re-supplies the copy they saved at mine time.
-    renderBootCard(bootCard, cometMnemo, cometPatp, null);
-    bootCard.scrollIntoView({ behavior: "smooth", block: "start" });
-    clearPendingSpawn();
+    // The feed isn't persisted (it's the private key), so on a resumed flow the
+    // user re-supplies the copy they saved at mine time. renderBootCard's paste
+    // UI captures it; finalize then bakes xtr into that re-supplied feed.
+    let resumedFeedAtom: bigint | null = null;
+    renderBootCard(bootCard, cometMnemo, cometPatp, null, (uw) => { resumedFeedAtom = uwToAtom(uw); });
+    renderFinalizeCard(finalizeCard, {
+      commitTxidHex: p.commitTxidHex,
+      xtr: p.xtr,
+      cometPatp,
+      getFeedAtom: () => resumedFeedAtom,
+    });
+    finalizeCard.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 }
 
@@ -482,7 +502,7 @@ function renderResumeOnly(root: HTMLElement, p: PersistedSpawn): void {
   card.append(
     el("h1", {}, "Pending spawn in progress"),
     el("p", { class: "lead" },
-      `There's an unfinished spawn for ${cometName} saved in this browser. `
+      `There's an unfinished confidential spawn for ${cometName} saved in this browser. `
       + `To continue, first re-import your xpub so Causeway can attach to your `
       + `wallet's address set — then come back here.`),
   );
@@ -511,9 +531,7 @@ function renderMineCard(
     cometPatp: string;
     pickedSummary: string;
     tries: number;
-    sponsorHeight: number;
     commitTxidHex: string;
-    revealTxidHex: string;
   },
 ): void {
   card.innerHTML = "";
@@ -523,59 +541,30 @@ function renderMineCard(
     kvList([
       ["Comet", info.cometMnemo],
       ["@p", info.cometPatp],
-      ["Funding UTXO", info.pickedSummary],
+      ["Spawn UTXO", info.pickedSummary],
       ["Mining tries", info.tries.toLocaleString()],
-      ["Sponsor escape sig", `valid near block ${info.sponsorHeight}`],
       ["Commit txid (predicted)", info.commitTxidHex],
-      ["Reveal txid (predicted)", info.revealTxidHex],
     ]),
   );
-}
-
-// If the sponsor escape-sig is older than the acceptance window, tell the user
-// the spawn likely won't get its sponsor. Best-effort — a tip-fetch failure is
-// non-fatal.
-async function warnIfSponsorSigStale(p: PersistedSpawn, status: HTMLElement): Promise<void> {
-  try {
-    const tip = await getSession()?.mp.tipHeight();
-    if (tip === undefined) return;
-    const age = sponsorSigAgeBlocks(p, tip);
-    if (age > SPONSOR_SIG_WINDOW_BLOCKS) {
-      status.appendChild(banner("err",
-        `Your commit was broadcast ${age} blocks after the sponsor signature was `
-        + `issued (block ${p.sponsor.height}); the ±${SPONSOR_SIG_WINDOW_BLOCKS}-block `
-        + `window has passed, so urb-watcher will likely reject the spawn. `
-        + `Start over to get a fresh signature.`));
-    }
-  } catch { /* tip fetch failed — skip the check */ }
 }
 
 function renderCommitCard(
   card: HTMLElement,
   commitPsbt: Uint8Array,
   commitTxidHex: string,
-  revealPsbt: Uint8Array,
-  sponsorHeight: number,
 ): void {
   card.innerHTML = "";
   card.style.display = "";
   const left = el("div");
   const right = el("div");
-  right.appendChild(el("h2", {}, "1. Sign & broadcast commit"));
+  right.appendChild(el("h2", {}, "Sign & broadcast the confidential commit"));
   right.appendChild(el("p", {},
-    "Paste this into Sparrow (File → Load Transaction → From Text), or scan "
-    + "the QR with a wallet that supports UR PSBT imports. Sign the commit "
-    + `input, then broadcast. Causeway is watching for ${shortTxid(commitTxidHex)}.`));
-  right.appendChild(banner("warn",
-    `Time-sensitive: broadcast within ~${SPONSOR_SIG_WINDOW_BLOCKS} blocks of `
-    + `block ${sponsorHeight} (about 1½ hours). After that the sponsor escape `
-    + `signature expires and your comet won't get a sponsor.`));
-
-  // Prominent warning — save the reveal PSBT BEFORE broadcasting.
-  right.appendChild(el("div", { class: "banner warn" },
-    "Download both PSBTs before you broadcast the commit. "
-    + "If this page reloads and the reveal can't be rebuilt from the commit "
-    + "tx alone, those sats are stranded on-chain."));
+    "Paste this into your wallet (Sparrow: File → Load Transaction → From Text), "
+    + "or scan the QR. It's a plain BIP-86 taproot key-path spend — sign it and "
+    + `broadcast. There is NO reveal step. Causeway is watching for ${shortTxid(commitTxidHex)}.`));
+  right.appendChild(banner("ok",
+    "The %spawn attestation is committed in this transaction's taproot output "
+    + "and is never published on-chain — this is the confidential flow."));
 
   const meta = el("div", { class: "qr-meta" }, "waiting for commit in mempool…");
   right.appendChild(meta);
@@ -583,7 +572,6 @@ function renderCommitCard(
   const row = el("div", { class: "row" });
   row.appendChild(copyButton(() => toBase64(commitPsbt), "copy PSBT base64"));
   row.appendChild(downloadButton(() => commitPsbt, "commit.psbt"));
-  row.appendChild(downloadButton(() => revealPsbt, "reveal.psbt"));
   right.appendChild(row);
 
   const pane = el("div", { class: "qr-pane" });
@@ -594,39 +582,16 @@ function renderCommitCard(
   animateUR(left, stream, { fps: 4, size: 340 });
 }
 
-function renderRevealCard(
-  card: HTMLElement,
-  revealPsbt: Uint8Array,
-  revealTxidHex: string,
-): void {
-  card.innerHTML = "";
-  card.style.display = "";
-  const left = el("div");
-  const right = el("div");
-  right.appendChild(el("h2", {}, "2. Sign & broadcast reveal"));
-  right.appendChild(el("p", {},
-    "This is a taproot script-path spend. Use Sparrow Wallet (desktop): "
-    + "File → Load Transaction → From Text (paste the base64). Mobile hot "
-    + "wallets don't reliably sign script-path spends yet. Once broadcast, "
-    + `Causeway polls for ${shortTxid(revealTxidHex)}.`));
-  const meta = el("div", { class: "qr-meta" }, "waiting for reveal in mempool…");
-  right.appendChild(meta);
-  const row = el("div", { class: "row" });
-  row.appendChild(copyButton(() => toBase64(revealPsbt), "copy PSBT base64"));
-  row.appendChild(downloadButton(() => revealPsbt, "reveal.psbt"));
-  right.appendChild(row);
-  const pane = el("div", { class: "qr-pane" });
-  pane.append(left, right);
-  card.appendChild(pane);
-  const stream = encodePsbtUR(revealPsbt);
-  animateUR(left, stream, { fps: 4, size: 340 });
-}
-
-// Render the boot card. In the fresh flow `feed` is in memory; on a resumed
-// flow it is null (the feed is never persisted — it embeds the private seed),
-// so we ask the user for the copy they saved at mine time.
+// The boot card. In the fresh flow `feed` is in memory; on a resumed flow it is
+// null (the feed is never persisted — it embeds the private seed), so we ask
+// the user for the copy they saved at mine time. `onFeedUw` (resume only) is
+// called with the pasted @uw so the finalize step can bake xtr into it.
 function renderBootCard(
-  card: HTMLElement, cometMnemo: string, cometPatp: string, feed: Uint8Array | null,
+  card: HTMLElement,
+  cometMnemo: string,
+  cometPatp: string,
+  feed: Uint8Array | null,
+  onFeedUw?: (uw: string) => void,
 ): void {
   card.innerHTML = "";
   card.style.display = "";
@@ -634,9 +599,10 @@ function renderBootCard(
     el("h2", {}, "Boot your comet"),
     el("div", { class: "mnemonym" }, cometMnemo),
     el("p", {},
-      "Reveal confirmed. Run this on your own machine (macOS or Linux) to "
-      + "download the Groundwire runtime and launch your ship. The command uses "
-      + `your comet's @p (${cometPatp}) — the runtime's machine form of the ID above.`),
+      "Run this on your own machine (macOS or Linux) to download the Groundwire "
+      + "runtime and launch your ship. You can boot as soon as the commit is in "
+      + "the mempool; the Finalize step below upgrades this to include your "
+      + `off-chain reveal log once the commit confirms. Uses your @p (${cometPatp}).`),
   );
 
   const cmdPre = el("pre", { class: "code" });
@@ -657,9 +623,9 @@ function renderBootCard(
       + "security it is never stored. Paste the feed you downloaded at mine "
       + "time (the 0w… string) to reproduce your boot command."));
     const input = el("textarea", { rows: "3", placeholder: "0w…" }) as HTMLTextAreaElement;
-    const go = el("button", { class: "btn primary", type: "button" }, "Show boot command");
+    const goBtn = el("button", { class: "btn primary", type: "button" }, "Show boot command");
     const err = el("div");
-    go.addEventListener("click", () => {
+    goBtn.addEventListener("click", () => {
       err.innerHTML = "";
       const uw = input.value.trim();
       if (!/^0w[0-9a-zA-Z.~-]+$/.test(uw)) {
@@ -667,9 +633,40 @@ function renderBootCard(
         return;
       }
       showCmd(formatBootCommandFromUw({ comet: cometPatp, feedUw: uw }));
+      onFeedUw?.(uw);
     });
-    card.append(input, go, err, cmdPre, cmdRow);
+    card.append(input, goBtn, err, cmdPre, cmdRow);
   }
+}
+
+// The finalized boot command, using the xtr-baked feed.
+function renderFinalizedBoot(out: HTMLElement, cometPatp: string, feedBytes: Uint8Array): void {
+  out.innerHTML = "";
+  out.appendChild(banner("ok",
+    "Reveal log baked into your feed. Use THIS boot command — it serves your "
+    + "attestation to the %gw-btc verifier."));
+  const cmd = formatBootCommand({ comet: cometPatp, feed: feedBytes });
+  const cmdPre = el("pre", { class: "code" }, cmd);
+  const row = el("div", { class: "row" });
+  row.appendChild(copyButton(() => cmd, "copy finalized command"));
+  const feedUw = atomToUw(bytesToAtomLE(feedBytes));
+  row.appendChild(downloadButton(
+    () => new TextEncoder().encode(feedUw), `${cometPatp}.feed.xtr.txt`,
+  ));
+  out.append(cmdPre, row);
+}
+
+// On resume, the finalize step needs the user's feed to bake xtr in. If they
+// haven't pasted it into the boot card yet, show the raw xtr and instructions.
+function renderFinalizeNeedsFeed(out: HTMLElement, cometPatp: string, xtr: bigint): void {
+  out.innerHTML = "";
+  out.appendChild(banner("warn",
+    "Paste your saved feed (0w…) into the Boot card above and click “Show boot "
+    + "command”, then reload this page — Causeway will bake the reveal log below "
+    + "into it. Your reveal log (xtr) atom, for reference:"));
+  out.appendChild(el("pre", { class: "code" }, "0x" + xtr.toString(16)));
+  out.appendChild(el("p", { class: "qr-meta" },
+    `(@p ${cometPatp} — the reveal log commits to your spawn commit + block.)`));
 }
 
 function toBase64(b: Uint8Array): string {

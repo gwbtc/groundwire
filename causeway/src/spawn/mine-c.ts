@@ -230,6 +230,29 @@ export async function mineSuiteC(opts: MineOpts): Promise<MineResult> {
   throw new Error(`miner: exceeded ${maxTries} tries`);
 }
 
+// Re-bake a miner-fresh boot feed around an xtr-appended ring — the web twin
+// of desktop `causeway finalize --feed` (rebuild_feed ∘ append_xtr_to_ring).
+// The miner emits xtr-less rings (xtr can only be built once the spawn commit
+// confirms and its block height is known); this appends the reveal log so the
+// booted ship's pass.ames-state serves its own attestation (spec §2.5). The
+// @p is unchanged — the name commits to ugn+dat only. rift/life default to the
+// miner's fresh-spawn values (0 / 1).
+export function bakeXtrIntoFeed(
+  comet: bigint,
+  ringAtomBytes: Uint8Array,
+  xtr: bigint,
+  rift = 0,
+  life = 1,
+): Uint8Array {
+  const ring1 = appendXtrToRing(ringAtomBytes, xtr);
+  type Noun = bigint | [Noun, Noun];
+  const noun: Noun = [
+    [2n, 0n],
+    [comet, [BigInt(rift), [[BigInt(life), bytesToAtomLE(ring1)], 0n]]],
+  ];
+  return jam(noun);
+}
+
 // Jam the feed noun: [[2 0] comet-atom rift [[life ring-atom] 0]]
 // Mirrors hoon_jam in dump_jam_vectors.py.
 export function jamFeed(

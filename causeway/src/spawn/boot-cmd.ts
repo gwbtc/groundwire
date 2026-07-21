@@ -30,6 +30,20 @@ export function bytesToAtomLE(b: Uint8Array): bigint {
   return x;
 }
 
+// Decode a canonical @uw literal (base-64, "0w" prefix, dots ignored) back to
+// its bigint. Inverse of atomToUw. Used to re-bake the xtr reveal log into a
+// user's re-supplied feed on a resumed spawn (mirrors desktop finalize --feed).
+export function uwToAtom(uw: string): bigint {
+  const body = uw.replace(/^0w/, "").replace(/\./g, "");
+  let x = 0n;
+  for (const ch of body) {
+    const d = UW_CHARS.indexOf(ch);
+    if (d < 0) throw new Error(`uwToAtom: bad @uw digit ${ch}`);
+    x = (x << 6n) | BigInt(d);
+  }
+  return x;
+}
+
 export interface BootCmdOpts {
   comet: string;                  // @p including leading ~
   feed: Uint8Array;               // raw jam bytes

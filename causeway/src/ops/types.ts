@@ -3,8 +3,10 @@ import type { Rpc } from "../chain/rpc.js";
 import type { UrbState } from "../oracle/state.js";
 import type { KeyInfo, Utxo } from "../signing/psbt.js";
 
+// spawn is not a management op — see ui/pages/spawn.ts (the dedicated
+// cc-draft-2 confidential flow). The legacy public spawnOp has been retired.
 export type OpName =
-  | "spawn" | "rekey" | "escape" | "cancel-escape"
+  | "rekey" | "escape" | "cancel-escape"
   | "adopt" | "reject" | "detach" | "fief" | "set-mang";
 
 export interface OpCtx {
