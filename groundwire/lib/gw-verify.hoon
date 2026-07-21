@@ -285,7 +285,14 @@
     ?~  reveal.entry  `state
     ?~  onchain=(p2tr-at u.this vout.landed)  ~
     ?.  =(u.onchain (out-key u.reveal.entry))  ~
-    (parse-state who known u.reveal.entry)
+    ?~  ps=(parse-state who known u.reveal.entry)  ~
+    ::  life must not regress across the chain: a %state re-attestation may
+    ::  keep or raise the life (rekey), never lower it (rollback to a
+    ::  superseded key).  Unlike self-attestation (which counts %keys and
+    ::  so is monotonic by construction), the %state life is declared, so
+    ::  enforce it here.
+    ?.  (gte life.u.ps life.state)  ~
+    `u.ps
   ?~  new-state  ~
   $(entries t.entries, txs t.txs, sont next, state u.new-state)
 ::
