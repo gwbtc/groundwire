@@ -159,31 +159,31 @@
 ::  otherwise it is dropped, so a %state can never forge a sponsor.
 ::
 ++  parse-state
-  |=  [who=ship =reveal:urb]
+  |=  [who=ship known=(set ship) =reveal:urb]
   ^-  (unit gw-state:urb)
   ?~  parsed=(parse-leaf leaf-script.reveal)  ~
   ?~  st=(find-single %state u.parsed)  ~
   ?>  ?=(%state -.u.st)
-  ::  a claimed sponsor is honored only with verified consent; absent or
-  ::  unverified, fall back to the STRUCTURAL sponsor (never a null sponsor
-  ::  to Jael -- see urb-core / fx-to-udiffs), same default as the spawn.
+  ::  a claimed sponsor is honored only if it is PUBLIC (known to us);
+  ::  absent or unknown, fall back to the STRUCTURAL sponsor (never a null
+  ::  sponsor to Jael -- see urb-core / fx-to-udiffs), same default as spawn.
   =/  spo=(unit @p)
     ?~  sponsor.u.st  `(^sein:title who)
-    ?.  (consent-ok u.sponsor.u.st)  `(^sein:title who)
+    ?.  (consent-ok who.u.sponsor.u.st known)  `(^sein:title who)
     `who.u.sponsor.u.st
   `[life=life.u.st key=key.u.st sponsor=spo]
 ::
-::  +consent-ok: does a sponsor's consent signature authorize adopting this
-::  comet?  XX TODO (a deviation we add over spec §7, which records the
-::  sponsor but no consent proof): verify sig over the consent message
-::  against the sponsor's key + a freshness window, à la urb-core's escape
-::  sig.  Until pinned, conservatively REJECT -- a confidential comet
-::  self-sponsors rather than let an unchecked claim install a sponsor.
+::  +consent-ok: is a %state's claimed sponsor trustworthy?  We stipulate
+::  that the sponsor must be PUBLIC -- already one of the points this agent
+::  (Bob) knows from the chain (its unv-ids).  If Bob knows the sponsor we
+::  trust the claim outright, with NO signature check: the sponsor's public
+::  on-chain existence is the authorization.  If Bob does not know it, the
+::  claim is dropped (the comet falls back to its structural sponsor).
 ::
 ++  consent-ok
-  |=  =consent:urb
+  |=  [spo=@p known=(set ship)]
   ^-  ?
-  %.n
+  (~(has in known) spo)
 ::
 ::  +parse-dat-sont: recover the spawn satpoint committed in the pass tweak.
 ::  dat = (can 0 (mat dom) [256 txid] (mat vout) (mat off) ~) -- so after the
@@ -225,6 +225,7 @@
 ++  walk-checks
   |=  $:  who=ship
           cry=@
+          known=(set ship)
           spawn-sont=sont:ord
           log=custody-log:urb
           fetched=(list (unit tx:bc))
@@ -275,7 +276,7 @@
     ?~  reveal.entry  `state
     ?~  onchain=(p2tr-at u.this vout.landed)  ~
     ?.  =(u.onchain (out-key u.reveal.entry))  ~
-    (parse-state who u.reveal.entry)
+    (parse-state who known u.reveal.entry)
   ?~  new-state  ~
   $(entries t.entries, txs t.txs, sont next, state u.new-state)
 ::
@@ -299,7 +300,7 @@
 ::  and produce the verdict point (or ~).
 ::
 ++  verify
-  |=  [dom=@tas who=ship =pass rpc=req-to:btcio]
+  |=  [dom=@tas who=ship =pass known=(set ship) rpc=req-to:btcio]
   =/  m  (strand:strandio ,(unit point:jael))
   ^-  form:m
   =/  cac  (com:nu:cric:crypto pass)
@@ -314,7 +315,7 @@
   ?~  log=(parse-custody-log xtr.tw.pub.cek)  (pure:m ~)
   ::  fetch each entry's tx in its attested block (height -> hash -> in-block)
   ;<  fetched=(list (unit tx:bc))  bind:m  (fetch-log rpc u.log)
-  =/  walk  (walk-checks who cry u.spawn-sont u.log fetched)
+  =/  walk  (walk-checks who cry known u.spawn-sont u.log fetched)
   ?~  walk  (pure:m ~)
   ::  the tip output must be unspent on our node
   ;<  live=(unit ?)  bind:m
