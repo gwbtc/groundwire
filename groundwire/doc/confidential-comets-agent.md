@@ -1,6 +1,6 @@
-# %groundwire: the confidential-comets verifier agent
+# %gw-btc: the confidential-comets verifier agent
 
-Status: **draft** (branch `cyc/groundwire-agent`)
+Status: **draft** (branch `cyc/groundwire-agent` (this agent's base branch))
 
 Companion to the kernel-side spec in **gwbtc/urbit**,
 `pkg/arvo/doc/spec/confidential-comets.md` (branches `cyc/cc-draft` /
@@ -11,12 +11,12 @@ the protocol and assumes the kernel task/gift API it defines.
 
 The kernel treats on-chain identity verification as a pluggable **PKI
 domain**: a local Gall agent, registered with Jael, owns all chain
-knowledge for one domain. `%groundwire` (renamed from `%urb-watcher`)
-is that agent for the `%groundwire` domain on Bitcoin.
+knowledge for one domain. `%gw-btc` (renamed from `%urb-watcher`, then `%groundwire`)
+is that agent for the `%gw-btc` domain on Bitcoin.
 
 Domain and agent are **1:1 by construction** (kernel spec §2.2): the
 domain name *is* this agent's name. A confidential comet commits the
-tag `%groundwire` in its key tweak; Jael derives the same tag from the
+tag `%gw-btc` in its key tweak; Jael derives the same tag from the
 gall duct our `%anex` arrives on. Neither side names the other
 directly — they meet at the shared tag.
 
@@ -36,12 +36,12 @@ three responsibilities:
 confidential comet ~zig          our ship
   |  suite-%c self-attestation      |
   |  (pass tweak commits            |
-  |   %groundwire + spawn-satpoint) |
+  |   %gw-btc + spawn-satpoint) |
   |-------------------------------->|  ames +on-hear-open / +al-take-proof
   |                                 |    unknown / newer life?
-  |                                 |--%writ %groundwire ~zig pass--> jael
-  |                                 |         |  dos lookup: %groundwire
-  |                                 |         |--%jael-writ poke--> %groundwire
+  |                                 |--%writ %gw-btc ~zig pass--> jael
+  |                                 |         |  dos lookup: %gw-btc
+  |                                 |         |--%jael-writ poke--> %gw-btc
   |                                 |         |                       (this agent)
   |                                 |         |<--%writ-response fact--  verify
   |                                 |         |  store point; %public-keys
@@ -60,7 +60,7 @@ three fact marks on that path, and Jael routes on the mark:
 
 ## 3. Verification (`+verify-writ`)
 
-`%jael-writ` carries `[dom=%groundwire who=@p pass]`. We:
+`%jael-writ` carries `[dom=%gw-btc who=@p pass]`. We:
 
 1. Decode the pass; assert suite `%c`; extract the tweak-committed
    domain (`+rub` over the head of `dat.tw.pub`) and confirm it equals
@@ -110,13 +110,13 @@ agent, so comets are already `%known` before any packet — the
 (branch `cyc/groundwire-aqua`, and the companion tests added to
 gwbtc/urbit's harness) instead:
 
-- boots a suite-`%c` comet whose tweak commits `%groundwire` + a
+- boots a suite-`%c` comet whose tweak commits `%gw-btc` + a
   spawn satpoint,
-- registers a `%groundwire` verifier agent on the *receiving* ship and
+- registers a `%gw-btc` verifier agent on the *receiving* ship and
   seeds its `unv-ids` with the attesting comet's point (simulating a
   prior block-index), **without** telling Jael,
 - lets the comet self-attest, so the receiver's Ames sees an unknown
-  suite-`%c` comet and drives the real `%writ` → `%groundwire` →
+  suite-`%c` comet and drives the real `%writ` → `%gw-btc` →
   `%writ-response` → `%sybl` → promotion loop,
 - asserts promotion (Jael now holds the point; a `|hi` succeeds), and
   the `%fail` path (a corrupt/mismatched attestation is snubbed).
@@ -132,3 +132,65 @@ See that branch's report for results.
   kernel spec's `%anew` dual.
 - Decide the watch-path story if a ship hosts more than one PKI domain
   agent (kernel currently tracks one domain per desk via `%tire`).
+
+## Confidential (unindexed) verification — the section-7 custody walk
+
+The agent answers a `%jael-writ` on one of two paths:
+
+- **Indexed (fast, synchronous).** The comet did an *on-chain* reveal our
+  block-watcher already parsed into `unv-ids`. `+verify-indexed` checks the
+  attestation against that point: suite-%c, domain tag matches, `@p` = `fig`
+  of the tweaked key, and the pass's **messaging key `cry`** equals the
+  indexed one. (We compare `cry`, not the whole pass, because the pass's
+  `xtr` reveal log grows independently of the key; a whole-pass compare
+  spuriously rejects a longer log.)
+
+- **Confidential (async).** The comet is unknown to our index, so its reveal
+  never hit the chain. `app/gw-btc` spawns a khan thread running
+  `lib/gw-verify`'s full **section-7 custody walk** and emits the
+  `%writ-response` fact when it returns. This replaces the `XX`-stubbed
+  variant-B walk the agent previously shipped with.
+
+`lib/gw-verify` (`+verify` strand → pure `+walk-checks`):
+
+1. Decode the suite-%c pass into `cry` (messaging key), `dat` (immutable
+   tweak: `+mat`-encoded domain tag + spawn satpoint) and `xtr` (the
+   off-chain **custody log**). Assert the domain tag matches and re-derive
+   `who = fig(tweaked key)`.
+2. Walk the custody log spawn → tip. Each `[txid block-height reveal]` entry
+   names a tx the agent fetches from its own node (height → hash →
+   `getrawtransaction`-in-block, so **no `-txindex` needed**) and re-checks:
+   input-0 key-path-spends the previous sat-carrying output, and the sat
+   tracks deterministically to its landing output (`index-to-sont`).
+   **State commitments** (kernel spec §2.1): only entries carrying a `reveal`
+   re-attest networking state — their landing output's taproot key must equal
+   `Q = P + H_TapTweak(x(P) ‖ leaf-hash) · G` (single-leaf sparse tree, root
+   == leaf-hash) — and only the **latest** such `%state` is authoritative.
+   Bare entries (`reveal=~`) just prove custody moved.
+3. The tip must be unspent (`gettxout`), and the pass's `cry` must equal the
+   latest attested key.
+4. Verdict: `[rift=0 life keys sponsor fief=~]` from the latest state
+   (kernel spec §7).
+
+### On-chain commitment format (`%state`, opcode 9)
+
+Re-attestations commit a **`%state` snapshot** — `[life key sponsor]`,
+where `key` is the messaging `cry` and a sponsor carries a Schnorr
+**consent** signature — in an off-chain-revealed tapleaf (`lib/urb-encoder`,
+`sur/urb` `$gw-state`/`$reveal`/`$xtr-entry`). The `%spawn` single seeds the
+initial state (life 1). This is the shared Causeway↔agent contract; the
+encoders are pinned by `urbit eval` round-trip vectors.
+
+### Deviations / open items flagged for the spec author (cyc)
+
+- **Sponsor-consent signature** is an addition over §7 (which records the
+  sponsor ship but no consent proof); the signature verification hook is
+  present in the encoding but the check itself is a TODO.
+- **txid byte order** in `dat`/`xtr` must match Causeway's encoder and the
+  node's tx ids (flagged `XX` in `+parse-dat-sont`).
+- **entry-0 (spawn) placement** and `%spawn` → initial-state extraction are
+  a reasonable reading of the §7 pseudocode, not a pinned spec.
+- The verifier **cannot be compiled here** (it needs the cc-draft-2 `%base`
+  for `point:jael`); its pure primitives (taproot tweak, `%state` codec,
+  `dat` decode) are `urbit eval`-verified, the rest is written against the
+  spec and needs a fakeship/aqua run.

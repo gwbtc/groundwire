@@ -37,8 +37,8 @@
 ++  on-init
   ^-  (quip card _this)
   :_  this
-  :~  :*  %pass   /groundwire/update/urb-state
-          %agent  [our.bowl %groundwire]
+  :~  :*  %pass   /gw-btc/update/urb-state
+          %agent  [our.bowl %gw-btc]
           %watch  /urb-state
       ==
   ==
@@ -105,7 +105,7 @@
   |=  [=(pole knot) =sign:agent:gall]
   ^-  (quip card _this)
   ?+    pole  (on-agent:def pole sign)
-      [%groundwire %update %urb-state ~]
+      [%gw-btc %update %urb-state ~]
     ?+    -.sign  (on-agent:def pole sign)
         %fact
       ?+    p.cage.sign  (on-agent:def pole sign)
