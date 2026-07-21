@@ -124,7 +124,10 @@
       $:  rift=@ud
           =life
           =pass
-          sponsor=[has=? who=@p]
+          ::  sponsor: ~ means no explicit sponsor (route to the @p-derived
+          ::  default); `who means route to who (a ship may sponsor itself).
+          ::  issue #117 -- was [has=? who=@p].
+          sponsor=(unit @p)
           escape=(unit @p)
           fief=(unit fief)
       ==

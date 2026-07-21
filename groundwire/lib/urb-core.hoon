@@ -435,7 +435,7 @@
               rift=0
               life=1
               pass=pass.sot
-              sponsor=[| who] :: no sponsor on spawn
+              sponsor=~ :: no explicit sponsor on spawn (projects to self)
               escape=~
               fief=fief.sot
           ==
@@ -481,7 +481,7 @@
           %escape
         ::  sponsoring self, update now
         ?:  =(parent.sot who)
-          =.  sponsor.net.u.point  &/who
+          =.  sponsor.net.u.point  `who
           =.  escape.net.u.point   ~
           =.  cor  (emit [%point who %sponsor `who])
           %_    $
@@ -506,7 +506,7 @@
               |=(h=@ud (veri-octs:ed:crypto u.sig.sot 512^(shaz (jam [who h])) sgn:ded:ex:cac))
             ~&  >>>  ["%urb-core: escape sig from {<parent.sot>} for {<who>} failed verification (checked block heights {<lower-bound>} to {<(add num.block-id.state 1)>})"]
             cor
-          =.  sponsor.net.u.point  &/parent.sot
+          =.  sponsor.net.u.point  `parent.sot
           =.  escape.net.u.point   ~
           =.  cor  (emit [%point who %sponsor `parent.sot])
           %_    $
@@ -532,8 +532,8 @@
       ::
           %detach
         ?~  child=(~(get by unv-ids) ship.sot)  cor ::$(sots t.sots)
-        ?.  =([& who] sponsor.net.u.child)  cor ::$(sots t.sots)
-        =.  sponsor.net.u.child  |/who
+        ?.  =(`who sponsor.net.u.child)  cor ::$(sots t.sots)
+        =.  sponsor.net.u.child  ~
         =.  cor  (emit [%point ship.sot %sponsor `who]) :: the ames devs say we should never send a null sponsor
         %_    $
             sots     t.sots
@@ -545,7 +545,7 @@
       ::     so that they can auto-accept it when the %escape comes in.
           %adopt
         ?:  =(ship.sot who)
-          =.  sponsor.net.u.point  &/who
+          =.  sponsor.net.u.point  `who
           =.  escape.net.u.point   ~
           =.  cor  (emit [%point ship.sot %sponsor `who])
           %_    $
@@ -555,7 +555,7 @@
         ?~  child=(~(get by unv-ids) ship.sot)  cor ::$(sots t.sots)
         ?.  =([~ who] escape.net.u.child)  cor ::$(sots t.sots)
         =.  escape.net.u.child  ~
-        =.  sponsor.net.u.child  &/who
+        =.  sponsor.net.u.child  `who
         =.  cor  (emit [%point ship.sot %sponsor `who])
         %_    $
             sots     t.sots

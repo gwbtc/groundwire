@@ -619,10 +619,9 @@
   :*  rift.net.pt
       life.net.pt
       (my [life.net.pt (sub (end 3 pass.net.pt) 'a') pass.net.pt] ~)
-      ::  (fall sponsor self): an on-chain sponsor if present, else self
+      ::  (fall sponsor self): the point's sponsor if set, else self
       ::  (issue #117), never a null sponsor to Jael.
-      ?:  has.sponsor.net.pt  `who.sponsor.net.pt
-      `who
+      `(fall sponsor.net.pt who)
       fief.net.pt
   ==
 ::
@@ -700,9 +699,7 @@
           :*  ship
               id
               %spon
-              ?.  has.sponsor.net
-                `ship
-              `who.sponsor.net
+              `(fall sponsor.net ship)
           ==
       ==
     new-udiffs
