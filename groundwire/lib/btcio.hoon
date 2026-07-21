@@ -140,7 +140,7 @@
 ::  the txid is in that block; a lying blockhash simply fails the fetch).
 ::  Used by lib/gw-verify's custody walk.  (The confidential-comets spec
 ::  section 8 assumes a -txindex node and locates by height; this variant
-::  keeps parity with %urb-watcher's own block processing and needs no index.)
+::  keeps parity with %gw-btc's own block processing and needs no index.)
 ::
 ++  get-raw-transaction-in-block
   |=  [=req-to id=(unit @t) txid=@ux block=@ux]

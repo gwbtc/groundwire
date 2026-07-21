@@ -141,21 +141,6 @@
         %reject         6
         %detach         7
       ==
-    ::
-    ::  %state (opcode 9): a confidential-comets networking-state snapshot
-    ::  (life, messaging key, sponsor+consent).  See sur/urb and
-    ::  lib/gw-verify.  Encoding pinned by pier round-trip; the sponsor is
-    ::  a bloq-0 subslice tagged like en-sig (2-bit unit tag, then 128-bit
-    ::  ship + 512-bit consent sig).
-        %state
-      |^  ^+  ^$
-      [[7 9] (mat life.sot) (mat key.sot) en-sponsor ~]
-      ++  en-sponsor
-        ^-  plat:plot
-        :+  s+~  0
-        ?~  sponsor.sot  ~[[2 0]]
-        ~[[2 1] [128 who.u.sponsor.sot] [512 sig.u.sponsor.sot]]
-      --
     ==
   ++  en-sig
     |=  sig=(unit @)
@@ -314,15 +299,7 @@
         %6   =^(res cur take-ship `[[%reject res] cur])
         %7   =^(res cur take-ship `[[%detach res] cur])
         %8   =^(res cur take-mang ?~(res ~ `[[%set-mang u.res] cur]))
-    ::
-    ::  %9: confidential-comets networking-state snapshot (see the %state
-    ::  encoder above and lib/gw-verify).  life, key, then a sponsor unit
-    ::  tagged exactly like take-sig.
-        %9
-      =^  life=@ud                cur  take-atom
-      =^  key=@                    cur  take-atom
-      =^  spo=(unit consent:urb)  cur  take-sponsor
-      `[[%state life key spo] cur]
+        ::%9   =^(res cur take-sont `[[%set-spawn-proxy res] cur])
         %10
       =^  len  cur  take-atom
       =|  bat=(list single:skim-sotx:urb)
@@ -410,15 +387,5 @@
     ?.  =(typ 1)  ~&  >>  %take-sig  !!
     =^  sig  cur  (take 0 512)
     `[`sig cur]
-  ::  decode a %state sponsor: a 2-bit unit tag, then (if present) a
-  ::  128-bit sponsor ship and a 512-bit consent signature.
-  ++  take-sponsor
-    ^-  [(unit consent:urb) @ud]
-    =^  typ  cur  (take 0 2)
-    ?:  =(typ 0)  [~ cur]
-    ?.  =(typ 1)  ~&  >>>  %take-sponsor  !!
-    =^  who=@p  cur  (take 0 128)
-    =^  sig=@   cur  (take 0 512)
-    [`[who sig] cur]
   --
 --

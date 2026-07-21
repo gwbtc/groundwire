@@ -73,11 +73,11 @@
           .^(ring %j /(scot %p our.bowl)/vein/(scot %da now.bowl)/(scot %ud life.deed))
         =/  cac  (nol:nu:cric:crypto ring)
         ?>  ?=(^ sek.+<.cac)
-        ::  Get current block height from urb-watcher
-        ?.  .^(? %gu /(scot %p our.bowl)/urb-watcher/(scot %da now.bowl)/$)
-          [(send [503 ~ [%plain "urb-watcher not running"]]) state]
+        ::  Get current block height from %gw-btc
+        ?.  .^(? %gu /(scot %p our.bowl)/gw-btc/(scot %da now.bowl)/$)
+          [(send [503 ~ [%plain "gw-btc not running"]]) state]
         =/  [* height=@ud]
-          .^([@ @ud] %gx /(scot %p our.bowl)/urb-watcher/(scot %da now.bowl)/block-id/block-id)
+          .^([@ @ud] %gx /(scot %p our.bowl)/gw-btc/(scot %da now.bowl)/block-id/block-id)
         ::  Sign: (shaz (jam [sponsee height])) using raw ed25519
         =/  msg=octs  512^(shaz (jam [u.sponsee height]))
         =/  sig=@  (sign-octs-raw:ed:crypto msg [sgn.pub sgn.sek]:+<:cac)

@@ -163,7 +163,7 @@
     %derive             [1 total 'Creating account...']
     %address            [2 total 'Deriving address...']
     %fetch-utxos        [3 total 'Fetching UTXOs...']
-    %discover-sponsor   [4 total 'Discovering sponsor on chain (this can take some time if urb-watcher is still processing blocks)...']
+    %discover-sponsor   [4 total 'Discovering sponsor on chain (this can take some time if gw-btc is still processing blocks)...']
     %sponsor            [5 total 'Requesting sponsorship...']
     %poll-sponsor       [5 total 'Waiting for sponsor...']
     %attest             [(add 4 os) total 'Building attestation...']

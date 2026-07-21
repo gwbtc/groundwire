@@ -305,13 +305,13 @@
       (scry:io ,ring %j /vein/(scot %ud life.deed))
     =/  cac  (nol:nu:cric:crypto ring)
     ?>  &(?=(%c suite.+<.cac) ?=(^ sek.+<.cac))
-    ::  Get current block height from urb-watcher
+    ::  Get current block height from %gw-btc
     ;<  =bowl:gall  bind:m  get-bowl:io
-    ?.  .^(? %gu /(scot %p our.bowl)/urb-watcher/(scot %da now.bowl)/$)
-      ~&  "sponsorship: urb-watcher not running, cannot sign"
+    ?.  .^(? %gu /(scot %p our.bowl)/gw-btc/(scot %da now.bowl)/$)
+      ~&  "sponsorship: gw-btc not running, cannot sign"
       (pure:m ~)
     =/  [* height=@ud]
-      .^([@ @ud] %gx /(scot %p our.bowl)/urb-watcher/(scot %da now.bowl)/block-id/block-id)
+      .^([@ @ud] %gx /(scot %p our.bowl)/gw-btc/(scot %da now.bowl)/block-id/block-id)
     ~&  "sponsorship: signing at height {<height>}"
     ::  Sign: (shaz (jam [sponsee height])) using raw ed25519
     ::  Must match urb-core verification: veri-octs:ed:crypto

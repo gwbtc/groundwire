@@ -114,13 +114,32 @@ class TestMakeTweakExpr(unittest.TestCase):
         txid = "ab" * 32
         self.assertEqual(
             gw.make_tweak_expr(txid, 0, 0),
-            "(rap 3 ~[%9 ~tyr %urb-watcher %btc %gw %9 0xabab.abab.abab.abab.abab.abab.abab.abab"
+            "(rap 3 ~[%9 ~tyr %gw-btc %btc %gw %9 0xabab.abab.abab.abab.abab.abab.abab.abab"
             ".abab.abab.abab.abab.abab.abab.abab.abab 0 0])",
         )
 
     def test_vout_and_off(self):
         result = gw.make_tweak_expr("ff" * 32, 3, 7)
         self.assertIn(" 3 7])", result)
+
+    def test_domain_bytes_and_agent_target(self):
+        tweak = gw.build_tweak_bytes("00" * 32, 0, 0)
+        self.assertEqual(tweak[:14], b"\x09\x99gw-btcbtcgw\x09")
+        self.assertNotIn(b"urb-watcher", tweak)
+        self.assertIn("%gw-btc", gw.make_tweak_expr("00" * 32, 0, 0))
+        self.assertNotIn("%urb-watcher", gw.make_tweak_expr("00" * 32, 0, 0))
+
+
+class TestSnapshotTarget(unittest.TestCase):
+    def test_snapshot_fyrd_targets_gw_btc(self):
+        with patch.object(gw, "_validate_snapshot_jam"):
+            fyrd = gw.make_snapshot_fyrd(b"\x01")
+        self.assertIn("%agent  [our %gw-btc]", fyrd)
+        self.assertNotIn("%urb-watcher", fyrd)
+
+    def test_no_snapshot_fyrd_targets_gw_btc(self):
+        self.assertIn("%gw-btc", gw._START_INDEXING_NO_SNAPSHOT)
+        self.assertNotIn("%urb-watcher", gw._START_INDEXING_NO_SNAPSHOT)
 
 
 class TestDetectZigTarget(unittest.TestCase):

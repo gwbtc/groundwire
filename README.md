@@ -2,7 +2,7 @@
 
 This repo contains two Urbit desks: `%groundwire` and `%spv-wallet`. 
 
-The `%groundwire` desk runs a background Gall agent called `%urb-watcher` which scans Bitcoin for comet attestations and updates the ship's Jael accordingly.
+The `%groundwire` desk runs the `%gw-btc` Gall agent, which scans Bitcoin for Groundwire PKI events, updates the ship's Jael, and verifies confidential-comet self-attestations.
 
 The `%spv-wallet` desk contains an SPV Wallet Gall app. We currently use this app for performing post-boot comet attestations, though this may change soon.
 

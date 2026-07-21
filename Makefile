@@ -4,6 +4,19 @@ ONBOARD_DIR := onboarding/booting
 ONBOARD_VENV := $(ONBOARD_DIR)/.venv
 ONBOARD_BIN := $(ONBOARD_DIR)/dist/gw-onboard
 
+# Runtime files shipped in the groundwire desk.  Repository documentation stays
+# outside the desk so Clay does not require a Markdown mark just to commit it.
+GROUNDWIRE_DESK_FILES := \
+	app \
+	desk.bill \
+	gen \
+	lib \
+	mar \
+	sur \
+	sys.kelvin \
+	ted \
+	tests
+
 # Vendor files needed by groundwire desk
 VENDOR_BASE_DEV_GW := \
 	lib/bip32.hoon \
@@ -122,7 +135,9 @@ groundwire:
 	@rm -rf dist-groundwire
 	@mkdir -p dist-groundwire
 	@echo "Building groundwire desk..."
-	@cp -r groundwire/* dist-groundwire/
+	@for f in $(GROUNDWIRE_DESK_FILES); do \
+		cp -r groundwire/$$f dist-groundwire/$$f; \
+	done
 	@for f in $(VENDOR_BASE_DEV_GW); do \
 		mkdir -p dist-groundwire/$$(dirname $$f); \
 		cp vendor/base-dev/$$f dist-groundwire/$$f; \

@@ -421,10 +421,10 @@ def make_tweak_expr(txid_hex: str, vout: int, off: int = 0) -> str:
     Build the Hoon expression string for the Groundwire tweak.
 
     comet-miner's --tweak evaluates this via u3v_wish().
-    Tweak format v9: (rap 3 ~[%9 ~tyr %urb-watcher %btc %gw %9 txid vout off])
+    Tweak format v9: (rap 3 ~[%9 ~tyr %gw-btc %btc %gw %9 txid vout off])
     """
     txid_ux = format_hoon_ux(txid_hex)
-    return f"(rap 3 ~[%9 ~tyr %urb-watcher %btc %gw %9 {txid_ux} {vout} {off}])"
+    return f"(rap 3 ~[%9 ~tyr %gw-btc %btc %gw %9 {txid_ux} {vout} {off}])"
 
 
 # =========================================================================
@@ -881,7 +881,7 @@ def _bytes_to_hoon_atom(b: bytes) -> int:
 
 
 def build_tweak_bytes(txid_hex: str, vout: int, off: int = 0) -> bytes:
-    """Build the tweak atom bytes: (rap 3 ~[%9 ~tyr %urb-watcher %btc %gw %9 txid vout off]).
+    """Build the tweak atom bytes: (rap 3 ~[%9 ~tyr %gw-btc %btc %gw %9 txid vout off]).
 
     This is the same tweak as make_tweak_expr but as raw bytes.
     """
@@ -889,7 +889,7 @@ def build_tweak_bytes(txid_hex: str, vout: int, off: int = 0) -> bytes:
     parts = bytearray()
     parts.extend(b"\x09")             # %9 version tag (atom 9)
     parts.extend(b"\x99")             # ~tyr (galaxy 153)
-    parts.extend(b"urb-watcher")      # %urb-watcher
+    parts.extend(b"gw-btc")           # %gw-btc PKI domain / agent
     parts.extend(b"btc")              # %btc
     parts.extend(b"gw")               # %gw
     parts.extend(b"\x09")             # %9 (atom 9)
@@ -1438,7 +1438,7 @@ def load_snapshot_file(local_path: str | None, snapshot_url: str = DEFAULT_SNAPS
 
 
 def make_snapshot_fyrd(snapshot_file: bytes) -> str:
-    """Build a FYRD that pokes %urb-watcher with (unit state:urb)."""
+    """Build a FYRD that pokes %gw-btc with (unit state:urb)."""
     # Validate the jam before embedding it, but let the ship cue it. Expanding
     # the state into a Hoon noun literal can push the Khan request over 64 KiB
     # as the snapshot grows.
@@ -1460,7 +1460,7 @@ def make_snapshot_fyrd(snapshot_file: bytes) -> str:
                     ;<  ~  bind:m
                       %-  send-raw-card
                       :*  %pass   /start-indexing
-                          %agent  [our %urb-watcher]
+                          %agent  [our %gw-btc]
                           %poke   %urb-start-indexing
                           !>((some (cue {jam_atom})))
                       ==
@@ -1483,7 +1483,7 @@ _START_INDEXING_NO_SNAPSHOT = """:*  0
                                   =/  m  (strand ,vase)
                                   ;<  ~  bind:m
                                     %:  poke-our
-                                        %urb-watcher
+                                        %gw-btc
                                         %urb-start-indexing
                                         !>(~)
                                     ==
@@ -1493,10 +1493,10 @@ _START_INDEXING_NO_SNAPSHOT = """:*  0
 
 
 def start_indexing_from_snapshot(vere_bin: str, conn_sock: str, snapshot_file: bytes | None) -> bool:
-    """Poke %urb-watcher to start indexing. Returns True if the poke was confirmed."""
+    """Poke %gw-btc to start indexing. Returns True if the poke was confirmed."""
     if snapshot_file is not None:
         # Use a long timeout: the Spider thread blocks on take-poke-ack until
-        # urb-watcher finishes processing the snapshot noun.
+        # %gw-btc finishes processing the snapshot noun.
         result = send_fyrd(vere_bin, conn_sock, make_snapshot_fyrd(snapshot_file), timeout=120)
         return "%avow" in result
 
@@ -2057,8 +2057,8 @@ def boot_comet(
     started_indexing = start_indexing_from_snapshot(vere_bin, conn_sock, snapshot_file)
     if snapshot_file is not None and started_indexing is False:
         print()
-        print("WARNING: %urb-watcher did not ack the snapshot poke")
-        print("         run `:urb-watcher &urb-start-indexing ~` to")
+        print("WARNING: %gw-btc did not ack the snapshot poke")
+        print("         run `:gw-btc &urb-start-indexing ~` to")
         print("         index the onchain Urb state from scratch")
         print()
 

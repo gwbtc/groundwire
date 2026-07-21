@@ -75,7 +75,7 @@ python3 gw-onboard.py --master-ticket '~your-ticket-here'
 
 1. Install the Groundwire and SPV Wallet desks to your new ship. Both installations and initial chain syncs will take a while.
 
-2. After a few block confirmations, you should see your comet attestation come in within `%urb-watcher` output.
+2. After a few block confirmations, you should see your comet attestation come in within `%gw-btc` output.
 
 ## Development
 
@@ -94,4 +94,4 @@ Both are enforced by CI on all PRs targeting `main`.
 
 ## Caveat
 
-The number of moving parts this script depends on means it can go out of date quickly. Details like the Python script, `%urb-watcher`, and the SPV wallet all need to be pointed at signet. Things will break when these get out of sync.
+The number of moving parts this script depends on means it can go out of date quickly. Details like the Python script, `%gw-btc`, and the SPV wallet all need to be pointed at signet. Things will break when these get out of sync.

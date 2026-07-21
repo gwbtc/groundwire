@@ -83,18 +83,18 @@
         %start
       ::  Refuse to start a new boot if the comet is already confirmed
       ::  on-chain or if the previous boot already finished and is just
-      ::  waiting for urb-watcher to catch up.
+      ::  waiting for %gw-btc to catch up.
       ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
       ;<  our=@p  bind:m  get-our:io
       ;<  =bowl:gall  bind:m  get-bowl:io
       =/  in-watcher=?
-        ?.  .^(? %gu /(scot %p our)/urb-watcher/(scot %da now.bowl)/$)
+        ?.  .^(? %gu /(scot %p our)/gw-btc/(scot %da now.bowl)/$)
           %.n
         =/  points=(map @p point:urb)
-          .^((map @p point:urb) %gx /(scot %p our)/urb-watcher/(scot %da now.bowl)/points/urb-points)
+          .^((map @p point:urb) %gx /(scot %p our)/gw-btc/(scot %da now.bowl)/points/urb-points)
         (~(has by points) our)
       ?:  in-watcher
-        ~&  "boot[start]: refusing to start because comet is already present in urb-watcher"
+        ~&  "boot[start]: refusing to start because comet is already present in gw-btc"
         (pure:m ~)
       ?:  ?&(?=(^ boot.state) =(%done step.u.boot.state))
         ~&  "boot[start]: refusing to start because previous boot is pending confirmation"
@@ -329,22 +329,22 @@
   =/  m  (fiber:io ,~)
   ^-  form:m
   =/  sponsor=@p  (need sponsor.bd)
-  ~&  "boot[discover]: waiting for sponsor {<sponsor>} fief in urb-watcher..."
+  ~&  "boot[discover]: waiting for sponsor {<sponsor>} fief in gw-btc..."
   ;<  our=@p  bind:m  get-our:io
   |-
   ;<  =bowl:gall  bind:m  get-bowl:io
   =/  scry-base=tape
-    "/{(scow %p our.bowl)}/urb-watcher/{(scow %da now.bowl)}"
+    "/{(scow %p our.bowl)}/gw-btc/{(scow %da now.bowl)}"
   =/  watcher-running=?
-    .^(? %gu /(scot %p our.bowl)/urb-watcher/(scot %da now.bowl)/$)
+    .^(? %gu /(scot %p our.bowl)/gw-btc/(scot %da now.bowl)/$)
   ~&  "boot[discover]: scry %gu {scry-base}/$ -> {<watcher-running>}"
   ?.  watcher-running
-    ~&  "boot[discover]: urb-watcher not running yet, retrying in 5s..."
+    ~&  "boot[discover]: gw-btc not running yet, retrying in 5s..."
     ;<  ~  bind:m  (send-sse-event:io /spv-wallet/progress ~ `'progress-update')
     ;<  ~  bind:m  (sleep:io ~s5)
     $
   =/  points=(map @p point:urb)
-    .^((map @p point:urb) %gx /(scot %p our.bowl)/urb-watcher/(scot %da now.bowl)/points/urb-points)
+    .^((map @p point:urb) %gx /(scot %p our.bowl)/gw-btc/(scot %da now.bowl)/points/urb-points)
   ~&  "boot[discover]: scry %gx {scry-base}/points -> {<~(wyt by points)>} points in map"
   =/  known-ships=(list @p)  ~(tap in ~(key by points))
   ~&  "boot[discover]: known ships: {<known-ships>}"

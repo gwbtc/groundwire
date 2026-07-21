@@ -441,13 +441,13 @@
   ?.  =(our src):bowl
     (login-redirect:sailbox [ext site] args)
   =+  !<(state-0:s state)
-  ::  Check urb-watcher for our point to determine spawn status
+  ::  Check %gw-btc for our point to determine spawn status
   =/  spawn-status=?(%spawned %pending %unspawned)
     =/  in-watcher=?
-      ?.  .^(? %gu /(scot %p our.bowl)/urb-watcher/(scot %da now.bowl)/$)
+      ?.  .^(? %gu /(scot %p our.bowl)/gw-btc/(scot %da now.bowl)/$)
         %.n
       =/  points=(map @p point:urb)
-        .^((map @p point:urb) %gx /(scot %p our.bowl)/urb-watcher/(scot %da now.bowl)/points/urb-points)
+        .^((map @p point:urb) %gx /(scot %p our.bowl)/gw-btc/(scot %da now.bowl)/points/urb-points)
       (~(has by points) our.bowl)
     ?:  in-watcher  %spawned
     ?:  ?&(?=(^ boot) =(%done step.u.boot))  %pending
