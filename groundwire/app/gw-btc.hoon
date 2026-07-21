@@ -1,8 +1,32 @@
-::  %urb-watcher
+::  %gw-btc (né %urb-watcher, né %groundwire)
 ::
 ::  This agent is the Groundwire equivalent of %azimuth and %eth-watcher.
 ::  It fetches Bitcoin blocks on a timer and parses them for Jael events.
 ::  Its helper core at the bottom works in conjunction with lib/urb-core.
+::
+::  It is also the verifier agent for the %gw-btc PKI domain in the
+::  confidential-comets kernel protocol (see the companion spec
+::  doc/confidential-comets-agent.md and, in gwbtc/urbit,
+::  pkg/arvo/doc/spec/confidential-comets.md).  On boot it registers
+::  itself with Jael via a %anex task, so that when a confidential
+::  (suite-%c) comet self-attests to us, Ames routes the attestation
+::  here as a %jael-writ poke.  We answer with a %writ-response fact; on
+::  success Jael stores the point and promotes the comet.  Two verify
+::  paths:
+::    - INDEXED (fast, synchronous): the comet did an on-chain reveal our
+::      block-watcher already parsed into unv-ids -- consult that point.
+::    - CONFIDENTIAL (async khan thread): the comet is unknown to our
+::      index, so run lib/gw-verify's full section-7 custody walk against
+::      our bitcoin node, answering with the fact when the thread returns.
+::  A %jael-anew poke (our own comet asking for a fresh attestation) is
+::  answered with an %anew-response fact carrying the re-encoded pass.
+::
+::  The domain name is this agent's name (1:1 by construction): a comet
+::  commits the tag %gw-btc in its key tweak, and Jael derives the same
+::  tag from the gall duct our %anex arrives on.  Because the tag is
+::  hashed into every comet's signing key (and thus its @p), it names the
+::  Groundwire Bitcoin PKI DOMAIN, not this implementation -- do not
+::  rename it to track code changes.
 ::
 ::  Change new-rpc and start-height in ++init to change the network.
 ::  If you're using this in conjunction with the SPV wallet, that
@@ -14,19 +38,41 @@
 ::
 /-  bitcoin, spider, ord, urb
 /+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb
+/+  gwv=gw-verify
 ::
 |%
 +$  card  card:agent:gall
++$  versioned-state  $%(state-0 state-1)
 +$  state-0
   $:  %0
       rpc=req-to:btcio
       urb-state=state:urb
   ==
+::  state-1 adds the confidential-comet watch registry.
+::
+::  +++  MERGE BLOCKER / TODO  +++
+::  We watch the tip sat of every confidential comet we verify so that when
+::  it MOVES we can request a fresh attestation.  The WATCH is implemented
+::  (+check-conf polls each sat on the block timer and logs a move).  The
+::  RE-REQUEST is NOT: the cc-draft-2 kernel has no peer-re-attestation task
+::  yet (hd/cc-e2e poked a placeholder %ames agent the refactor removed; the
+::  spec §2.6 auto-fire is still XX).  The mechanism will be some special
+::  case "halfway between a snub and a task" -- it MUST be resolved before
+::  this is merged.  Today a detected move is only logged.
++$  state-1
+  $:  %1
+      rpc=req-to:btcio
+      urb-state=state:urb
+      ::  confidential comet @p -> the tip sat we are watching.  Kept OUT of
+      ::  urb-state/unv-ids, so the served snapshot omits confidential comets
+      ::  by construction (they are not public).
+      conf=(map @p sont:ord)
+  ==
 --
 ::
 %-  agent:dbug
 ^-  agent:gall
-=|  state-0
+=|  state-1
 =*  state  -
 %+  verb  |
 =<
@@ -36,12 +82,17 @@
 ::
 ++  on-init
   ^-  (quip card _this)
-  :-  ~
-  %=  this
-     rpc  :*  'https://alpha.groundwire.dev/rpc'
-              %basic
-              'mainnetrpcuser:fc3d36ce83e15484e75a658b2a9a8a90a66f4cb017ace74c8631fe082b93adbf'
-          ==
+  ::  register as the verifier agent for our own PKI domain (= our
+  ::  agent name).  Jael watches /writs for %writ-response /
+  ::  %anew-response / %azimuth-udiffs facts.
+  ::
+  :_  %=  this
+        rpc  :*  'https://alpha.groundwire.dev/rpc'
+                 %basic
+                 'mainnetrpcuser:fc3d36ce83e15484e75a658b2a9a8a90a66f4cb017ace74c8631fe082b93adbf'
+             ==
+      ==
+  :~  [%pass /anex %arvo %j %anex /writs]
   ==
 ::
 ++  on-save
@@ -51,23 +102,79 @@
 ++  on-load
   |=  =vase
   ^-  (quip card _this)
-  `this(state !<(state-0 vase))
+  =/  old  !<(versioned-state vase)
+  ?-  -.old
+    %1  `this(state old)
+    %0  `this(state [%1 rpc.old urb-state.old conf=~])
+  ==
 ::
 ++  on-poke
   |=  [=mark =vase]
   ^-  (quip card _this)
   ?+    mark  !!
+      ::  Jael forwards a comet self-attestation for on-chain verification
+      ::  (%jael-writ) or asks us to refresh our own (%jael-anew).  Both are
+      ::  local vane->agent pokes ([our our /jael]), so gate on src.
+      ::
+      %noun
+    ?.  =(our.bowl src.bowl)
+      ~&  >>>  [%gw-btc %foreign-noun-poke src.bowl]
+      `this
+    =/  poke  !<(jael-poke:urb vase)
+    ?-    -.poke
+        %jael-writ
+      ::  INDEXED fast path: only a SUCCESSFUL indexed verify short-circuits.
+      ::  If our block-watcher parsed this comet's on-chain reveal into
+      ::  unv-ids and it still validates, answer synchronously; otherwise
+      ::  fall through to the confidential walk (an indexed comet may have
+      ::  rotated its key off-chain via a %state commitment the walk
+      ::  validates -- so a stale indexed key must NOT hard-fail the writ).
+      =/  ind=(unit point:jael)
+        ?~  pt=(~(get by unv-ids.urb-state) who.poke)  ~
+        (verify-indexed dom.poke who.poke pass.poke u.pt)
+      ?^  ind
+        :_  this
+        :~  :*  %give  %fact  ~[/writs]
+                %writ-response  !>(`writ-response:jael`[dom.poke who.poke ind])
+            ==
+        ==
+      ::  CONFIDENTIAL path (unindexed, or indexed-but-unverified): run
+      ::  lib/gw-verify's full section-7 custody walk in a khan thread; the
+      ::  %writ-response fact is emitted when it returns (the [%writ @ @ ~]
+      ::  case in +on-arvo).  dom + who ride the wire so the response is
+      ::  answered under the routed domain, not just our name.
+      :_  this
+      :~  :*  %pass  /writ/(scot %tas dom.poke)/(scot %p who.poke)  %arvo  %k
+              %lard  q.byk.bowl
+              (writ-shed dom.poke who.poke pass.poke ~(key by unv-ids.urb-state) rpc)
+          ==
+      ==
+    ::
+        %jael-anew
+      ::  our own comet asking for a fresh self-attestation.  re-encode
+      ::  our current pass (the block-watcher keeps xtr current); if we
+      ::  don't index ourselves yet, stay silent.
+      ::
+      ?~  pas=(fresh-pass our.bowl)
+        `this
+      :_  this
+      :~  :*  %give  %fact  ~[/writs]
+              %anew-response  !>(`anew-response:jael`[dom.poke u.pas])
+          ==
+      ==
+    ==
+  ::
       %urb-start-indexing
     =/  start-urb  ;;((unit state:urb) !<((unit noun) vase))
     ?~  start-urb
-      %-  (slog :_(~ [%leaf "%urb-watcher: indexing from block {<num.block-id:(state:urb default-urb-state)>}"]))
+      %-  (slog :_(~ [%leaf "%gw-btc: indexing from block {<num.block-id:(state:urb default-urb-state)>}"]))
       :_  this(urb-state default-urb-state)
       :~  :*  %pass  /timer
               %arvo  %b
               %wait  now.bowl
           ==
       ==
-    %-  (slog :_(~ [%leaf "%urb-watcher: processing groundwire snapshot ({<~(wyt by unv-ids.u.start-urb)>} points)"]))
+    %-  (slog :_(~ [%leaf "%gw-btc: processing groundwire snapshot ({<~(wyt by unv-ids.u.start-urb)>} points)"]))
     :_  this(urb-state u.start-urb)
     :~  (listen-to-urb ~(key by unv-ids.u.start-urb) [%| dap.bowl])
         :*  %pass  /timer
@@ -145,12 +252,67 @@
   ^-  (quip card _this)
   ?+    wire  (on-arvo:def wire sign-arvo)
   ::
+  ::  A confidential +writ-shed verify thread returned.  Give the
+  ::  %writ-response fact carrying its verdict (or ~ on failure / crash).
+  ::  dom + who ride the wire (/writ/<dom>/<who>).
+      [%writ @ @ ~]
+    ?+    sign-arvo  (on-arvo:def wire sign-arvo)
+        [%khan %arow *]
+      =/  dom=@tas  (slav %tas i.t.wire)
+      =/  who=ship  (slav %p i.t.t.wire)
+      =/  res=(unit [=point:jael tip=sont:ord])
+        ?.  ?=([%khan %arow %.y %noun *] sign-arvo)
+          ::  thread bailed (rpc failure, unparsable packet): report failure.
+          %-  (slog leaf+"%gw-btc: writ verify thread failed for {<who>}" ~)
+          ~
+        =/  [%khan %arow %.y %noun =vase]  sign-arvo
+        !<((unit [point:jael sont:ord]) vase)
+      ::  on success, record the confidential comet's tip sat so +check-conf
+      ::  watches it for a move (kept out of unv-ids -> omitted from snapshots).
+      =?  conf.state  ?=(^ res)  (~(put by conf.state) who tip.u.res)
+      :_  this
+      :~  :*  %give  %fact  ~[/writs]
+              %writ-response
+              !>(`writ-response:jael`[dom who ?~(res ~ `point.u.res)])
+          ==
+      ==
+    ==
+  ::
+  ::  A +check-conf watch thread returned the confidential comets whose tip
+  ::  sat has moved.  TODO(merge-blocker): we can only LOG the move -- the
+  ::  kernel has no peer-re-attestation task yet (see the state-1 note).
+  ::  Drop each from the watch registry after logging.
+      [%conf ~]
+    ?+    sign-arvo  (on-arvo:def wire sign-arvo)
+        [%khan %arow *]
+      ?.  ?=([%khan %arow %.y %noun *] sign-arvo)  `this
+      =/  [%khan %arow %.y %noun =vase]  sign-arvo
+      =/  moved=(list @p)  !<((list @p) vase)
+      |-  ^-  (quip card _this)
+      ?~  moved  `this
+      =/  msg=tang
+        :~  leaf+"%gw-btc: TODO(merge-blocker) confidential comet {<i.moved>} moved its sat"
+            leaf+"  -> its attestation is now stale; a fresh one must be requested,"
+            leaf+"  but the cc-draft-2 kernel has no peer-re-attestation task yet."
+        ==
+      %-  (slog msg)
+      $(moved t.moved, conf.state (~(del by conf.state) i.moved))
+    ==
+  ::
   ::  Run +get-blocks at regular intervals.
       [%timer ~]
     :_  this
-    :~  :*  %pass  /blocks  %arvo  %k
+    %+  weld
+      :~  :*  %pass  /blocks  %arvo  %k
+              %lard  q.byk.bowl
+              (get-blocks [rpc urb-state]:state)
+          ==
+      ==
+    ::  also poll the watched confidential sats (if any) for a move
+    ?:  =(~ conf.state)  ~
+    :~  :*  %pass  /conf  %arvo  %k
             %lard  q.byk.bowl
-            (get-blocks [rpc urb-state]:state)
+            (check-conf rpc.state conf.state)
         ==
     ==
   ::
@@ -163,7 +325,7 @@
         [%khan %arow *]
       ?.  -.p.sign-arvo
         ?>  ?=([%khan %arow %.n *] sign-arvo)
-        %-  (slog leaf+"%urb-watcher: thread failed, retrying" +.p.p.sign-arvo)
+        %-  (slog leaf+"%gw-btc: thread failed, retrying" +.p.p.sign-arvo)
         :_  this
         :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
         ==
@@ -173,7 +335,7 @@
         !<  
         [(list [id:block:bitcoin effect:urb]) state:urb]
         vase
-      ::  Jael is subscribed to %urb-watcher to receive udiffs for some ships,
+      ::  Jael is subscribed to %gw-btc to receive udiffs for some ships,
       ::  and it isn't subscribed yet for others. For the ones in fx it is, we 
       ::  send udiffs. For the ones it isn't subscribed to yet, we tell it to,
       ::  and it will hit ++on-agent to get the udiff afterwards.
@@ -245,8 +407,8 @@
 ::  %urb-start-indexing receives a null snapshot
 ++  default-urb-state
   ^-  state:urb
-  =/  start-height  943.140
-  =/  start-hash    0x1.62b3.04e4.d48c.3a53.d80a.96de.0210.d325.c0a9.a464.8b3c
+  =/  start-height  959.031
+  =/  start-hash    0x1.b6e0.9c0a.aa11.0057.1fc0.7062.bae4.4418.da9d.d14c.bf55
   :*  [start-hash start-height]
       *sont-map:ord
       *insc-ids:ord
@@ -314,7 +476,7 @@
     ^$(tx-inputs t.tx-inputs)
   ?.  ?=(%spawn -.i.sots)
     $(sots t.sots)
-  ::  ~&  >>  "%urb-watcher found a spawn!"
+  ::  ~&  >>  "%gw-btc found a spawn!"
   ::  If we found an input with a %spawn, get the tx that generated it
   ;<  commit-tx=(unit tx:bc)  bind:m
     (get-raw-transaction:btcio rpc ~ txid.i.tx-inputs)
@@ -331,7 +493,7 @@
   =/  inputs  is.commit-urb-tx
   |-
   ?~  inputs
-    ::  ~&  >>>  "%urb-watcher: Couldn't find precommit tx."
+    ::  ~&  >>>  "%gw-btc: Couldn't find precommit tx."
     ^$(sots t.sots)
   ;<  precommit-tx=(unit tx:bc)  bind:m
     (get-raw-transaction:btcio rpc ~ txid.i.inputs)
@@ -459,6 +621,86 @@
 ::  fx are urb-core's type for urb effects. 
 ::  udiffs are Jael's type for PKI updates. 
 ::  cards for Jael contain udiffs.
+::  Confidential-comets verifier arms (see on-poke).
+::
+::  +verify-indexed: verify a comet's self-attestation against a point our
+::  block-watcher already parsed from an on-chain reveal, returning the
+::  verified Jael point or ~.  The caller looked the point up in unv-ids.
+::
+++  verify-indexed
+  |=  [dom=@tas who=ship =pass pt=point:urb]
+  ^-  (unit point:jael)
+  ::  1. suite-%c pass, carrying the tweak-committed domain at the head
+  ::     of its tweak data; it must match the domain Jael routed on
+  ::
+  =/  cek  +<:(com:nu:cric:crypto pass)
+  ?.  ?=([%c *] cek)  ~
+  ?.  =(dom `@tas`q:(rub 0 dat.tw.pub.cek))  ~
+  ::  2. the name must be the hash of the tweaked key (Ames/Jael
+  ::     already checked this; re-derive rather than trust)
+  ?.  =(who fig:ex:(com:nu:cric:crypto pass))  ~
+  ::  3. the attested MESSAGING KEY (cry) must match the one we indexed as
+  ::     current.  Compare cry, not the whole pass: the pass's xtr reveal
+  ::     log grows independently of the key, so a whole-pass compare would
+  ::     spuriously reject a comet whose attestation carries a longer log
+  ::     than the (public) reveal we parsed.  (The signing key that fixes
+  ::     the @p is already pinned by the fig check in step 2.)
+  =/  ind  +<:(com:nu:cric:crypto pass.net.pt)
+  ?.  ?=([%c *] ind)  ~
+  ?.  =(cry.pub.cek cry.pub.ind)  ~
+  `(urb-point-to-jael pt who)
+::
+::  +writ-shed: run lib/gw-verify's full section-7 custody walk in a khan
+::  thread (the confidential / unindexed path), producing its verdict as a
+::  vase for the [%writ @ @ ~] case in +on-arvo.
+::
+++  writ-shed
+  |=  [dom=@tas who=ship =pass known=(set ship) rpc=req-to:btcio]
+  ^-  shed:khan
+  =/  m  (strand:strandio ,vase)
+  ;<  res=(unit [point:jael sont:ord])  bind:m  (verify:gwv dom who pass known rpc)
+  (pure:m !>(res))
+::
+::  +fresh-pass: our own current pass, for a %jael-anew refresh
+::
+++  fresh-pass
+  |=  who=ship
+  ^-  (unit pass)
+  ?~  pt=(~(get by unv-ids.urb-state) who)  ~
+  `pass.net.u.pt
+::
+::  +urb-point-to-jael: project a urb $point onto Jael's $point
+::
+++  urb-point-to-jael
+  |=  [pt=point:urb who=ship]
+  ^-  point:jael
+  :*  rift.net.pt
+      life.net.pt
+      (my [life.net.pt (sub (end 3 pass.net.pt) 'a') pass.net.pt] ~)
+      ::  (fall sponsor self): the point's sponsor if set, else self
+      ::  (issue #117), never a null sponsor to Jael.
+      `(fall sponsor.net.pt who)
+      fief.net.pt
+  ==
+::
+::  +check-conf: poll each watched confidential comet's tip sat and return
+::  the @p list whose sat has been spent (moved).  gettxout is
+::  mempool-inclusive, so a move by an unconfirmed tx is reported
+::  conservatively.  Result handled by the [%conf ~] case in +on-arvo.
+::
+++  check-conf
+  |=  [rpc=req-to:btcio conf=(map @p sont:ord)]
+  ^-  shed:khan
+  =/  m  (strand:strandio ,vase)
+  =/  entries  ~(tap by conf)
+  =|  moved=(list @p)
+  |-  ^-  form:m
+  ?~  entries  (pure:m !>(`(list @p)`(flop moved)))
+  =/  [who=@p sat=sont:ord]  i.entries
+  ;<  live=(unit ?)  bind:m  (get-tx-out:btcio rpc ~ txid.sat vout.sat)
+  =?  moved  =(`%.n live)  [who moved]
+  $(entries t.entries)
+::
 ++  listen-to-urb
   |=  [ships=(set ship) =source:point:jael]
   ^-  card
@@ -533,9 +775,7 @@
           :*  ship
               id
               %spon
-              ?.  has.sponsor.net
-                `ship
-              `who.sponsor.net
+              `(fall sponsor.net ship)
           ==
       ==
     new-udiffs
