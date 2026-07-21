@@ -619,8 +619,10 @@
   :*  rift.net.pt
       life.net.pt
       (my [life.net.pt (sub (end 3 pass.net.pt) 'a') pass.net.pt] ~)
+      ::  (fall sponsor self): an on-chain sponsor if present, else self
+      ::  (issue #117), never a null sponsor to Jael.
       ?:  has.sponsor.net.pt  `who.sponsor.net.pt
-      `(^sein:title who)
+      `who
       fief.net.pt
   ==
 ::
