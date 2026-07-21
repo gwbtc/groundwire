@@ -135,6 +135,52 @@
   ?~  res=(de:base16:mimes:html p.res.res)  (pure:m ~)
   (pure:m `[txid (decodew:txu:bc u.res)])
 ::
+::  +get-raw-transaction-in-block: fetch a tx by txid AND blockhash.  Passing
+::  the blockhash lets a NON-txindexed node find the tx (Core validates that
+::  the txid is in that block; a lying blockhash simply fails the fetch).
+::  Used by lib/gw-verify's custody walk.  (The confidential-comets spec
+::  section 8 assumes a -txindex node and locates by height; this variant
+::  keeps parity with %urb-watcher's own block processing and needs no index.)
+::
+++  get-raw-transaction-in-block
+  |=  [=req-to id=(unit @t) txid=@ux block=@ux]
+  =/  m  (strand:strandio (unit tx:bc))
+  ^-  form:m
+  ;<  res=response:rpc  bind:m
+    %+  request-rpc  req-to
+    ^-  request:rpc
+    :*  ?~(id 'get-raw-transaction-in-block' u.id)
+        '2.0'
+        'getrawtransaction'
+        list+[s+(render-hex-bytes 32 txid) b+| s+(render-hex-bytes 32 block) ~]
+    ==
+  ?.  ?=([%result * [%s *]] res)  (pure:m ~)
+  ?~  res=(de:base16:mimes:html p.res.res)  (pure:m ~)
+  (pure:m `[txid (decodew:txu:bc u.res)])
+::
+::  +get-tx-out: query whether a specific output is unspent (RPC gettxout).
+::
+::    Produces ~ on RPC error, `%.y if the output is unspent (UTXO present),
+::    or `%.n if it is spent or does not exist (gettxout yields JSON null).
+::    gettxout includes the mempool, so a tip spent by an unconfirmed tx reads
+::    as spent (conservative) and an unconfirmed tip reads as live.
+::
+++  get-tx-out
+  |=  [=req-to id=(unit @t) txid=@ux vout=@ud]
+  =/  m  (strand:strandio (unit ?))
+  ^-  form:m
+  ;<  res=response:rpc  bind:m
+    %+  request-rpc  req-to
+    ^-  request:rpc
+    :*  ?~(id 'get-tx-out' u.id)
+        '2.0'
+        'gettxout'
+        list+[s+(render-hex-bytes 32 txid) (numb:enjs:format vout) ~]
+    ==
+  ?.  ?=([%result *] res)  (pure:m ~)
+  ?:  ?=(~ res.res)  (pure:m `%.n)
+  (pure:m `%.y)
+::
 ++  get-block-count
   |=  [=req-to id=(unit @t)]
   =/  m  (strand:strandio (unit @ud))
