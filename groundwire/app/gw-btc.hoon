@@ -349,8 +349,8 @@
 ::  %urb-start-indexing receives a null snapshot
 ++  default-urb-state
   ^-  state:urb
-  =/  start-height  943.140
-  =/  start-hash    0x1.62b3.04e4.d48c.3a53.d80a.96de.0210.d325.c0a9.a464.8b3c
+  =/  start-height  959.031
+  =/  start-hash    0x1.b6e0.9c0a.aa11.0057.1fc0.7062.bae4.4418.da9d.d14c.bf55
   :*  [start-hash start-height]
       *sont-map:ord
       *insc-ids:ord
