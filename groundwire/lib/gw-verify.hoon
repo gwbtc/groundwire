@@ -37,10 +37,12 @@
 ::
 ::  XX flagged for spec-author (cyc) review -- consensus-critical interpretations
 ::  of the section-7 pseudocode; see the marked arms:
-::    - entry-0 (spawn) placement + %spawn->initial-state extraction
 ::    - txid byte-order between dat/xtr and the node's tx ids (must match
-::      Causeway's dat/xtr encoder)
-::    - sponsor-consent signature verification (a deviation we add over section 7)
+::      Causeway's encoder; entry-0's funding-spend + every continuity check
+::      compares dat/xtr txids against the node's, so a mismatch fails all
+::      honest packets -- verify end to end against Causeway + a live node)
+::    - sponsor policy: a claimed sponsor is trusted iff already public
+::      (in our unv-ids), no signature -- a deviation over section 7
 ::
 /-  bitcoin, ord, urb
 /+  bc=bitcoin, bscr=btc-script, btcio, strandio, tr=taproot, ue=urb-encoder, uc=urb-core
@@ -243,22 +245,29 @@
   ?~  log  ~
   ?~  fetched  ~
   ?.  =((lent log) (lent fetched))  ~
-  ::  entry-0: the spawn commit.  Its tx must be the spawn tx (dat's txid), it
-  ::  must carry a %spawn reveal, and that reveal must commit to the sat's home
-  ::  output (spawn-sont).  Initial state comes from the %spawn.
+  ::  entry-0: the spawn COMMIT tx.  A tweak (dat) committed inside an output
+  ::  cannot name that output's own txid (recursive hash), so dat's satpoint
+  ::  is the FUNDING outpoint the commit SPENDS, not the commit itself
+  ::  (mirrors urb-core's precommit->commit spawn proof + the hd/cc-e2e
+  ::  `spawn-spends-precommit` check; confirmed against Causeway's
+  ::  make_dat_expr, which builds dat from the funding UTXO).  So: the
+  ::  commit's input-0 must key-path-spend the funding satpoint, the sat
+  ::  lands in the commit's outputs, and the %spawn leaf must be committed
+  ::  at that landing.
   ?~  tx0=i.fetched  ~
   ?~  rev0=reveal.i.log  ~
-  ?.  =(id.u.tx0 txid.spawn-sont)  ~
-  ?.  (lth vout.spawn-sont (lent os.u.tx0))  ~
-  ::  the sat's offset must lie within its home output's value (the bound
-  ::  urb-core's is-sont-in-input enforces on chain; interior links get it
-  ::  for free from index-to-sont, but entry-0's offset comes from dat).
-  ?.  (lth off.spawn-sont value:(snag vout.spawn-sont os.u.tx0))  ~
-  ?~  onchain0=(p2tr-at u.tx0 vout.spawn-sont)  ~
+  ?~  inp0=(snag-input 0 u.tx0)  ~
+  ?.  =([txid.u.inp0 pos.u.inp0] [txid.spawn-sont vout.spawn-sont])  ~
+  ?.  (is-key-path witness.u.inp0)  ~
+  ::  the sat enters the commit through input-0 (no preceding input value),
+  ::  so it lands at output index = its funding offset.  ~ = fell to fee.
+  =/  landed0  (index-to-sont:uc off.spawn-sont os.u.tx0)
+  ?~  landed0  ~
+  ?~  onchain0=(p2tr-at u.tx0 vout.landed0)  ~
   ?.  =(u.onchain0 (out-key u.rev0))  ~
   ?~  state0=(parse-spawn-state who u.rev0)  ~
   =/  state=gw-state:urb  u.state0
-  =/  sont=sont:ord  spawn-sont
+  =/  sont=sont:ord  [id.u.tx0 vout.landed0 off.landed0]
   =/  entries  t.log
   =/  txs      t.fetched
   |-
