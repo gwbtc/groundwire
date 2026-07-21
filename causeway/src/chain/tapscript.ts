@@ -8,6 +8,18 @@ const OP_0 = 0x00;
 const OP_IF = 0x63;
 const OP_ENDIF = 0x68;
 const OP_CHECKSIG = 0xac;
+
+// BIP-341 NUMS point H (x-only) — "nothing-up-my-sleeve" key with no known
+// private key. cc-draft-2 confidential spawns wrap the urb leaf's OP_CHECKSIG
+// with THIS key, not the owner's, so the tapleaf can never be spent (the
+// attestation is committed in the taproot output but is unrevealable on-chain).
+// Ownership rides on the output's key-path (internal key = the funding xonly).
+// Must byte-match desktop/causeway.py NUMS_XONLY.
+export const NUMS_XONLY: Uint8Array = Uint8Array.from(
+  "50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0"
+    .match(/../g)!
+    .map((h) => parseInt(h, 16)),
+);
 const OP_PUSHDATA1 = 0x4c;
 const OP_PUSHDATA2 = 0x4d;
 const OP_PUSHDATA4 = 0x4e;

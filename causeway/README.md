@@ -13,8 +13,10 @@ Passport, Keystone, SeedSigner, and any other wallet that speaks
 ## What it does
 
 - **Spawn** a new Groundwire comet by mining a suite-C networking key in the
-  browser, building commit + reveal PSBTs for you to sign, and handing you a
-  one-line shell command to boot the comet afterwards.
+  browser (cc-draft-2 confidential), building a single commit-only PSBT for you
+  to sign, and handing you a one-line shell command to boot the comet afterwards.
+  The attestation is committed on-chain but never revealed; the reveal log is
+  baked into the boot feed off-chain.
 - **Manage** an existing comet: rotate its networking key (`rekey`), change
   sponsor (`escape`/`cancel-escape`/`adopt`/`reject`/`detach`), pin a static
   endpoint (`fief`), or delegate management (`set-mang`).
@@ -95,11 +97,15 @@ groundwire/groundwire/causeway/
 
 The spawn page mines a comet entirely in-browser using `@noble/curves` (ed25519)
 and `@noble/hashes` (SHA-256/512). The algorithm matches `_mine_c` in
-`comet-miner/pkg/vere/comet_miner.c`. With no prefix constraint the miner
-terminates on the first iteration (there is no PoW hardness — the "mining" is
-just aesthetic constraint selection).
+`comet-miner/pkg/vere/comet_miner.c`, tweaked with the cc-draft-2 `dat`. The
+`~daplyd` star constraint makes it a ~65k-iteration search.
 
-After a successful spawn and reveal broadcast, you see a shell one-liner like:
+The spawn is **confidential**: Causeway builds ONE commit transaction (a plain
+BIP-86 key-path spend, signable by any taproot wallet) whose taproot output
+commits the `%spawn` attestation; nothing is revealed on-chain. Once the commit
+confirms, Causeway bakes the off-chain reveal log (`xtr`) into the boot feed.
+
+After the commit is broadcast, you see a shell one-liner like:
 
 ```bash
 curl -fsSL https://groundwire.io/install.sh | sh
@@ -111,25 +117,32 @@ which installs the Groundwire runtime and boots your new comet.
 ## Protocol status (cc-draft-2)
 
 The confidential-comets kernel spec (`gwbtc/urbit` branch `cyc/cc-draft-2`)
-moved the attestation into the pass itself. Causeway's two front ends now
-straddle the migration:
+moved the attestation into the pass itself. **Both front ends now run the same
+cc-draft-2 confidential spawn protocol** — the web app was brought to parity
+with the desktop:
 
-- **Web app (this SPA)** still runs the *public* spawn flow — commit +
-  on-chain reveal with the legacy v9 tweak (`src/spawn/tweak.ts`) — because
-  the deployed chain watcher (`lib/urb-core`) verifies exactly that. The
-  cc-draft-2 primitives are available (`src/spawn/dat.ts`,
-  `src/spawn/reveal-log.ts`, xtr-aware pass/ring builders in
-  `src/spawn/mine-c.ts`) for when the web flow goes confidential.
-- **Desktop app (`desktop/`)** runs the *confidential* flow and mines with
-  the cc-draft-2 `dat` (mat-encoded `%gw-btc` domain + spawn satpoint)
-  by default; `--legacy-tweak` restores v9 for the current e2e harness.
-  `causeway finalize` bakes the off-chain reveal log (`xtr`) into the boot
-  feed after the commit confirms. See
-  `desktop/docs/CONFIDENTIAL-COMETS.md` for the full protocol note and
-  compatibility matrix.
+- **Web app (this SPA)** — the spawn page (`src/ui/pages/spawn.ts`) mines with
+  the cc-draft-2 `dat` (mat-encoded `%gw-btc` domain + spawn satpoint,
+  `src/spawn/dat.ts`), builds a single **commit-only** taproot transaction whose
+  output commits the `%spawn` attestation in a NUMS-keyed tapleaf (there is **no
+  on-chain reveal**), and bakes the off-chain reveal log (`xtr`) into the boot
+  feed once the commit confirms (`src/spawn/reveal-log.ts` `bakeXtrIntoFeedAtom`,
+  the twin of `causeway finalize`). The legacy public flow (v9 rap-3 tweak +
+  on-chain reveal, formerly `src/spawn/tweak.ts`) has been **retired**.
+- **Desktop app (`desktop/`)** — the primary front end; mines the cc-draft-2
+  `dat`, builds `build_confidential_commit_psbt`, and `causeway finalize` bakes
+  `xtr` into the boot feed. `--legacy-tweak` restores v9 for the current e2e
+  harness. See `desktop/docs/CONFIDENTIAL-COMETS.md` for the full protocol note
+  and compatibility matrix.
 
-Both `dat` and `xtr` encoders are pinned to `urbit eval` golden vectors in
-`tests/dat.spec.ts` and `desktop/tests/test_causeway.py`.
+The desktop app remains the primary, production front end and the web app may
+not be used in production — but **the web app is maintained going forward for
+correctness and comprehensiveness**, kept at protocol parity with the desktop
+twin. When the two disagree, the `urbit eval` golden vectors win.
+
+Both `dat` and `xtr` encoders are pinned to those golden vectors in
+`tests/dat.spec.ts` and `desktop/tests/test_causeway.py`; the confidential
+feed-finalize step is covered by `tests/feed-finalize.spec.ts`.
 
 ## Status
 
@@ -146,10 +159,10 @@ Known limitations:
   rekeyed/escaped many times and then had additional unrelated spends layered
   may need outspend-walking to find the canonical reveal. When the witness
   cannot be parsed, Causeway flags it and falls back to the tweaked output key.
-- **Spawn tweak expression:** `src/ui/pages/spawn.ts`'s `buildTweakBytes` is
-  currently a best-effort stub. The exact bit-for-bit `(rap 3 ~[%9 ~tyr ...])`
-  atom needs to be re-derived to match urb-core's verification (see
-  `urb-core.hoon:363-375`). Easy to finish but requires another encoding pass.
+- **Spawn tweak:** the spawn page now uses the cc-draft-2 `dat`
+  (`src/spawn/dat.ts`), pinned bit-for-bit to `urbit eval` golden vectors in
+  `tests/dat.spec.ts`. The legacy v9 `(rap 3 ~[%9 ~tyr ...])` tweak has been
+  retired from the web spawn path.
 - **Camera QR:** `signing/qr-scan.ts` wraps `qr-scanner` but the op page
   currently uses paste-based input for signed PSBTs. The camera path is
   already wired and just needs a UI toggle.

@@ -26,8 +26,10 @@
 // The Python twin is build_xtr_atom in desktop/causeway.py; both are
 // pinned to the same `urbit eval` golden vectors (tests/dat.spec.ts).
 
-import { jam } from "./mine-c.js";
+import { jam, bakeXtrIntoFeed } from "./mine-c.js";
 import { bytesToAtomLE } from "../protocol/bitwriter.js";
+import { cue } from "../oracle/cue.js";
+import { asAtom, head, tail } from "../oracle/noun.js";
 
 export interface XtrReveal {
   internalKeyHex: string;   // 33-byte compressed internal pubkey P (0x02||xonly)
@@ -64,4 +66,33 @@ export function buildXtrAtom(entries: XtrEntry[]): bigint {
     log = [node, log];
   }
   return bytesToAtomLE(jam(log));
+}
+
+// Re-bake a boot-feed ATOM (e.g. cued from a user's saved 0w… feed) around an
+// xtr-appended ring — the web twin of desktop `causeway finalize --feed`. It
+// cues the feed [[2 0] comet rift [[life ring] 0]], appends xtr to the ring,
+// and re-jams, returning the new feed bytes. Used by the resume path, where
+// `mined` (with its ring/comet) is gone from memory and the feed is re-supplied.
+export function bakeXtrIntoFeedAtom(feedAtom: bigint, xtr: bigint): Uint8Array {
+  const feed = cue(feedAtom);
+  // [[2 0] [comet [rift [[life ring] 0]]]]
+  const body = tail(feed);
+  const comet = asAtom(head(body));
+  const rest = tail(body);
+  const rift = Number(asAtom(head(rest)));
+  const lifeRing = head(tail(rest)); // [life ring]
+  const life = Number(asAtom(head(lifeRing)));
+  const ringAtom = asAtom(tail(lifeRing));
+  const ringBytes = atomToBytesLE(ringAtom);
+  return bakeXtrIntoFeed(comet, ringBytes, xtr, rift, life);
+}
+
+function atomToBytesLE(a: bigint): Uint8Array {
+  const out: number[] = [];
+  let x = a;
+  while (x > 0n) {
+    out.push(Number(x & 0xffn));
+    x >>= 8n;
+  }
+  return new Uint8Array(out);
 }
