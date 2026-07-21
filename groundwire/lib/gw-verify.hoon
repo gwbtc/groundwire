@@ -152,7 +152,11 @@
   ::  victim's spawn (same dat + public cry) under a fresh ugn / @p and
   ::  ride the victim's whole chain (sat-reuse identity forgery).
   ?.  =(who fig:ex:(com:nu:cric:crypto pass.u.sp))  ~
-  `[life=1 key=cry.pub.cek sponsor=`(^sein:title who)]
+  ::  a spawn names no sponsor, so the default is self: (fall ~ who) = who
+  ::  (issue #117 -- the sponsor is a (unit ship) that defaults to self, a
+  ::  ship may sponsor itself; a null sponsor would instead route to the
+  ::  @p-derived default, which we don't want as the confidential default).
+  `[life=1 key=cry.pub.cek sponsor=`who]
 ::
 ::  +parse-state: the networking state a %state leaf re-attests.  A claimed
 ::  sponsor is honored ONLY if its consent signature verifies (+consent-ok);
@@ -165,13 +169,14 @@
   ?~  st=(find-single %state u.parsed)  ~
   ?>  ?=(%state -.u.st)
   ::  a claimed sponsor is honored only if it is PUBLIC (known to us);
-  ::  absent or unknown, fall back to the STRUCTURAL sponsor (never a null
-  ::  sponsor to Jael -- see urb-core / fx-to-udiffs), same default as spawn.
-  =/  spo=(unit @p)
-    ?~  sponsor.u.st  `(^sein:title who)
-    ?.  (consent-ok who.u.sponsor.u.st known)  `(^sein:title who)
+  ::  absent or unknown, the sponsor defaults to self via (fall sponsor
+  ::  self) -- issue #117, never a null sponsor to Jael (see urb-core /
+  ::  fx-to-udiffs), same default as the spawn.
+  =/  claimed=(unit @p)
+    ?~  sponsor.u.st  ~
+    ?.  (consent-ok who.u.sponsor.u.st known)  ~
     `who.u.sponsor.u.st
-  `[life=life.u.st key=key.u.st sponsor=spo]
+  `[life=life.u.st key=key.u.st sponsor=`(fall claimed who)]
 ::
 ::  +consent-ok: is a %state's claimed sponsor trustworthy?  We stipulate
 ::  that the sponsor must be PUBLIC -- already one of the points this agent
