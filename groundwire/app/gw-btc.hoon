@@ -290,11 +290,12 @@
       =/  moved=(list @p)  !<((list @p) vase)
       |-  ^-  (quip card _this)
       ?~  moved  `this
-      %-  %+  slog
-            :~  leaf+"%gw-btc: TODO(merge-blocker) confidential comet {<i.moved>} moved its sat"
-                leaf+"  -> its attestation is now stale; a fresh one must be requested,"
-                leaf+"  but the cc-draft-2 kernel has no peer-re-attestation task yet."
-            ==
+      =/  msg=tang
+        :~  leaf+"%gw-btc: TODO(merge-blocker) confidential comet {<i.moved>} moved its sat"
+            leaf+"  -> its attestation is now stale; a fresh one must be requested,"
+            leaf+"  but the cc-draft-2 kernel has no peer-re-attestation task yet."
+        ==
+      %-  (slog msg)
       $(moved t.moved, conf.state (~(del by conf.state) i.moved))
     ==
   ::
