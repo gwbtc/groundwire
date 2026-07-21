@@ -113,10 +113,14 @@
 ::  (expanding %batch), or ~.
 ::
 ++  find-single
-  |*  [tag=?(%spawn %state) sots=(list raw-sotx:urb)]
+  |*  [who=ship tag=?(%spawn %state) sots=(list raw-sotx:urb)]
   |^  ^-  (unit single:skim-sotx:urb)
   |-
   ?~  sots  ~
+  ::  self-enacted only: skip any raw-sotx whose author is not `who`, so a
+  ::  %spawn/%state signed by another ship (e.g. slipped into a batch)
+  ::  cannot masquerade as this comet's own attestation.
+  ?.  =(who ship.sot.i.sots)  $(sots t.sots)
   =/  hit  (scan-one +.sot.i.sots)
   ?^  hit  hit
   $(sots t.sots)
@@ -143,7 +147,7 @@
   |=  [who=ship =reveal:urb]
   ^-  (unit gw-state:urb)
   ?~  parsed=(parse-leaf leaf-script.reveal)  ~
-  ?~  sp=(find-single %spawn u.parsed)  ~
+  ?~  sp=(find-single who %spawn u.parsed)  ~
   ?>  ?=(%spawn -.u.sp)
   =/  cek  +<:(com:nu:cric:crypto pass.u.sp)
   ?.  ?=([%c *] cek)  ~
@@ -166,7 +170,7 @@
   |=  [who=ship known=(set ship) =reveal:urb]
   ^-  (unit gw-state:urb)
   ?~  parsed=(parse-leaf leaf-script.reveal)  ~
-  ?~  st=(find-single %state u.parsed)  ~
+  ?~  st=(find-single who %state u.parsed)  ~
   ?>  ?=(%state -.u.st)
   ::  a claimed sponsor is honored only if it is PUBLIC (known to us);
   ::  absent or unknown, the sponsor defaults to self via (fall sponsor
