@@ -42,16 +42,37 @@
 ::
 |%
 +$  card  card:agent:gall
++$  versioned-state  $%(state-0 state-1)
 +$  state-0
   $:  %0
       rpc=req-to:btcio
       urb-state=state:urb
   ==
+::  state-1 adds the confidential-comet watch registry.
+::
+::  +++  MERGE BLOCKER / TODO  +++
+::  We watch the tip sat of every confidential comet we verify so that when
+::  it MOVES we can request a fresh attestation.  The WATCH is implemented
+::  (+check-conf polls each sat on the block timer and logs a move).  The
+::  RE-REQUEST is NOT: the cc-draft-2 kernel has no peer-re-attestation task
+::  yet (hd/cc-e2e poked a placeholder %ames agent the refactor removed; the
+::  spec §2.6 auto-fire is still XX).  The mechanism will be some special
+::  case "halfway between a snub and a task" -- it MUST be resolved before
+::  this is merged.  Today a detected move is only logged.
++$  state-1
+  $:  %1
+      rpc=req-to:btcio
+      urb-state=state:urb
+      ::  confidential comet @p -> the tip sat we are watching.  Kept OUT of
+      ::  urb-state/unv-ids, so the served snapshot omits confidential comets
+      ::  by construction (they are not public).
+      conf=(map @p sont:ord)
+  ==
 --
 ::
 %-  agent:dbug
 ^-  agent:gall
-=|  state-0
+=|  state-1
 =*  state  -
 %+  verb  |
 =<
@@ -81,7 +102,11 @@
 ++  on-load
   |=  =vase
   ^-  (quip card _this)
-  `this(state !<(state-0 vase))
+  =/  old  !<(versioned-state vase)
+  ?-  -.old
+    %1  `this(state old)
+    %0  `this(state [%1 rpc.old urb-state.old conf=~])
+  ==
 ::
 ++  on-poke
   |=  [=mark =vase]
@@ -235,26 +260,58 @@
         [%khan %arow *]
       =/  dom=@tas  (slav %tas i.t.wire)
       =/  who=ship  (slav %p i.t.t.wire)
-      =/  res=(unit point:jael)
+      =/  res=(unit [=point:jael tip=sont:ord])
         ?.  ?=([%khan %arow %.y %noun *] sign-arvo)
           ::  thread bailed (rpc failure, unparsable packet): report failure.
           %-  (slog leaf+"%gw-btc: writ verify thread failed for {<who>}" ~)
           ~
         =/  [%khan %arow %.y %noun =vase]  sign-arvo
-        !<((unit point:jael) vase)
+        !<((unit [point:jael sont:ord]) vase)
+      ::  on success, record the confidential comet's tip sat so +check-conf
+      ::  watches it for a move (kept out of unv-ids -> omitted from snapshots).
+      =?  conf.state  ?=(^ res)  (~(put by conf.state) who tip.u.res)
       :_  this
       :~  :*  %give  %fact  ~[/writs]
-              %writ-response  !>(`writ-response:jael`[dom who res])
+              %writ-response
+              !>(`writ-response:jael`[dom who ?~(res ~ `point.u.res)])
           ==
       ==
+    ==
+  ::
+  ::  A +check-conf watch thread returned the confidential comets whose tip
+  ::  sat has moved.  TODO(merge-blocker): we can only LOG the move -- the
+  ::  kernel has no peer-re-attestation task yet (see the state-1 note).
+  ::  Drop each from the watch registry after logging.
+      [%conf ~]
+    ?+    sign-arvo  (on-arvo:def wire sign-arvo)
+        [%khan %arow *]
+      ?.  ?=([%khan %arow %.y %noun *] sign-arvo)  `this
+      =/  [%khan %arow %.y %noun =vase]  sign-arvo
+      =/  moved=(list @p)  !<((list @p) vase)
+      |-  ^-  (quip card _this)
+      ?~  moved  `this
+      %-  %+  slog
+            :~  leaf+"%gw-btc: TODO(merge-blocker) confidential comet {<i.moved>} moved its sat"
+                leaf+"  -> its attestation is now stale; a fresh one must be requested,"
+                leaf+"  but the cc-draft-2 kernel has no peer-re-attestation task yet."
+            ==
+      $(moved t.moved, conf.state (~(del by conf.state) i.moved))
     ==
   ::
   ::  Run +get-blocks at regular intervals.
       [%timer ~]
     :_  this
-    :~  :*  %pass  /blocks  %arvo  %k
+    %+  weld
+      :~  :*  %pass  /blocks  %arvo  %k
+              %lard  q.byk.bowl
+              (get-blocks [rpc urb-state]:state)
+          ==
+      ==
+    ::  also poll the watched confidential sats (if any) for a move
+    ?:  =(~ conf.state)  ~
+    :~  :*  %pass  /conf  %arvo  %k
             %lard  q.byk.bowl
-            (get-blocks [rpc urb-state]:state)
+            (check-conf rpc.state conf.state)
         ==
     ==
   ::
@@ -600,7 +657,7 @@
   |=  [dom=@tas who=ship =pass known=(set ship) rpc=req-to:btcio]
   ^-  shed:khan
   =/  m  (strand:strandio ,vase)
-  ;<  res=(unit point:jael)  bind:m  (verify:gwv dom who pass known rpc)
+  ;<  res=(unit [point:jael sont:ord])  bind:m  (verify:gwv dom who pass known rpc)
   (pure:m !>(res))
 ::
 ::  +fresh-pass: our own current pass, for a %jael-anew refresh
@@ -624,6 +681,24 @@
       `(fall sponsor.net.pt who)
       fief.net.pt
   ==
+::
+::  +check-conf: poll each watched confidential comet's tip sat and return
+::  the @p list whose sat has been spent (moved).  gettxout is
+::  mempool-inclusive, so a move by an unconfirmed tx is reported
+::  conservatively.  Result handled by the [%conf ~] case in +on-arvo.
+::
+++  check-conf
+  |=  [rpc=req-to:btcio conf=(map @p sont:ord)]
+  ^-  shed:khan
+  =/  m  (strand:strandio ,vase)
+  =/  entries  ~(tap by conf)
+  =|  moved=(list @p)
+  |-  ^-  form:m
+  ?~  entries  (pure:m !>(`(list @p)`(flop moved)))
+  =/  [who=@p sat=sont:ord]  i.entries
+  ;<  live=(unit ?)  bind:m  (get-tx-out:btcio rpc ~ txid.sat vout.sat)
+  =?  moved  =(`%.n live)  [who moved]
+  $(entries t.entries)
 ::
 ++  listen-to-urb
   |=  [ships=(set ship) =source:point:jael]

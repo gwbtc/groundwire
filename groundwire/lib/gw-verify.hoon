@@ -322,11 +322,12 @@
 ::  +verify: the async entrypoint.  Decode + validate the pass, fetch the
 ::  custody log's txs (each in its attested block, so no -txindex needed),
 ::  run +walk-checks, confirm the tip is unspent and the pass's key is current,
-::  and produce the verdict point (or ~).
+::  and produce the verdict point PLUS its tip sat (or ~).  The caller stores
+::  the tip in its conf registry to watch the sat for a move (app/gw-btc).
 ::
 ++  verify
   |=  [dom=@tas who=ship =pass known=(set ship) rpc=req-to:btcio]
-  =/  m  (strand:strandio ,(unit point:jael))
+  =/  m  (strand:strandio ,(unit [=point:jael tip=sont:ord]))
   ^-  form:m
   =/  cac  (com:nu:cric:crypto pass)
   =/  cek  +<:cac
@@ -348,7 +349,7 @@
   ?.  =(`%.y live)  (pure:m ~)
   ::  the pass's current messaging key must be the latest attested one
   ?.  =(cry key.state.u.walk)  (pure:m ~)
-  (pure:m `(to-jael-point pass state.u.walk))
+  (pure:m `[(to-jael-point pass state.u.walk) tip.u.walk])
 ::
 ::  +fetch-log: resolve each entry's block-height to a hash and fetch the tx in
 ::  that block.  Preserves order + arity so +walk-checks can zip by index; a
