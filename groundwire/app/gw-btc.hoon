@@ -121,7 +121,7 @@
       :_  this
       :~  :*  %pass  /writ/(scot %tas dom.poke)/(scot %p who.poke)  %arvo  %k
               %lard  q.byk.bowl
-              (writ-shed dom.poke who.poke pass.poke rpc)
+              (writ-shed dom.poke who.poke pass.poke ~(key by unv-ids.urb-state) rpc)
           ==
       ==
     ::
@@ -597,10 +597,10 @@
 ::  vase for the [%writ @ @ ~] case in +on-arvo.
 ::
 ++  writ-shed
-  |=  [dom=@tas who=ship =pass rpc=req-to:btcio]
+  |=  [dom=@tas who=ship =pass known=(set ship) rpc=req-to:btcio]
   ^-  shed:khan
   =/  m  (strand:strandio ,vase)
-  ;<  res=(unit point:jael)  bind:m  (verify:gwv dom who pass rpc)
+  ;<  res=(unit point:jael)  bind:m  (verify:gwv dom who pass known rpc)
   (pure:m !>(res))
 ::
 ::  +fresh-pass: our own current pass, for a %jael-anew refresh
