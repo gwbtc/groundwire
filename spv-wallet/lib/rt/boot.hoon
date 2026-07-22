@@ -3,7 +3,7 @@
     wallet-address, wallet-account, *wallet-mempool-space,
     taproot, txns=tx-build,
     bcu=bitcoin-utils, fees=tx-fees, sig=tx-sighash, urb-encoder,
-    bscr=btc-script
+    bscr=btc-script, seed-phrases
 |%
 ::  Boot network configuration
 ::  Change these to retarget the boot sequence.
@@ -105,16 +105,13 @@
         ;<  ~  bind:m  (replace:io !>(state))
         ;<  ~  bind:m  (send-sse-event:io /spv-wallet/progress ~ `'progress-update')
         (pure:m ~)
-      ::  Parse seed phrase as @q
+      ::  The seed phrase is a BIP-39 mnemonic (12 words). Validate the
+      ::  checksum before deriving; the %t seed path runs PBKDF2 downstream.
       =/  seed-text=@t  (need (get-key:kv:html-utils 'seed-phrase' args))
-      =/  txt=tape  (trip seed-text)
-    =/  with-sig=tape
-      ?:(?=(~ txt) txt ?:(=('~' i.txt) (weld "." txt) (weld ".~" txt)))
-    =/  parsed=(each @q tang)
-      (mule |.(`@q`(slav %q (crip with-sig))))
-    ?:  ?=(%| -.parsed)
-      (store-boot-error %bad-seed p.parsed)
-    =/  boot-secret=@q  p.parsed
+      =/  valid=(unit ?)  (mole |.((validate-seed-phrase:seed-phrases seed-text)))
+      ?.  ?=([~ %&] valid)
+        (store-boot-error %bad-seed ~['invalid BIP-39 master ticket'])
+      =/  boot-secret=@t  seed-text
     ::  Parse boot mode
     =/  mode-text=@t  (fall (get-key:kv:html-utils 'boot-mode' args) '')
     =/  fief=(unit fief:urb)
@@ -207,8 +204,8 @@
   ^-  form:m
   =/  result=(each [@ux wallet:s] tang)
     %-  mule  |.
-    =/  pubkey=@ux  (seed-to-pubkey:wallet-address [%q boot-secret.bd])
-    =/  new-wallet=wallet:s  ['Boot Wallet' [%q boot-secret.bd] pubkey ~ ~]
+    =/  pubkey=@ux  (seed-to-pubkey:wallet-address [%t boot-secret.bd])
+    =/  new-wallet=wallet:s  ['Boot Wallet' [%t boot-secret.bd] pubkey ~ ~]
     [pubkey new-wallet]
   ?:  ?=(%| -.result)
     (store-boot-error %wallet-derivation p.result)
@@ -229,7 +226,7 @@
   =/  pubkey=@ux  (need wallet-pubkey.bd)
   =/  result=(each [account-pubkey=@ux xprv=@t] tang)
     %-  mule  |.
-    =/  master-wallet  (from-seed:bip32 (seed-to-bytes:wallet-address [%q boot-secret.bd]))
+    =/  master-wallet  (from-seed:bip32 (seed-to-bytes:wallet-address [%t boot-secret.bd]))
     =/  derived  (derive-path:master-wallet "m/86'/1'/0'")
     [public-key:derived (crip (prv-extended:derived (en-crypto:wallet-address boot-network)))]
   ?:  ?=(%| -.result)
@@ -269,7 +266,7 @@
   =/  acct=account:hd-path  [[%.y 86] [%.y 1] [%.y 0]]
   =/  result=(each @t tang)
     %-  mule  |.
-    (derive-address-at-index:wallet-address [%q boot-secret.bd] acct %receiving 0 (en-crypto:wallet-address boot-network))
+    (derive-address-at-index:wallet-address [%t boot-secret.bd] acct %receiving 0 (en-crypto:wallet-address boot-network))
   ?:  ?=(%| -.result)
     (store-boot-error %address-derivation p.result)
   =/  address=@t  p.result
@@ -413,7 +410,7 @@
   ~&  "boot[attest]: mode={<boot-mode.bd>} sponsor={<sponsor.bd>} sig={<sponsor-sig.bd>}"
   =/  result=(each ptst:taproot tang)
     %-  mule  |.
-    =/  master-wallet  (from-seed:bip32 (seed-to-bytes:wallet-address [%q boot-secret.bd]))
+    =/  master-wallet  (from-seed:bip32 (seed-to-bytes:wallet-address [%t boot-secret.bd]))
     =/  derived  (derive-path:master-wallet "m/86'/1'/0'/0/0")
     =/  boot-pubkey=@ux  (ser-p:derived pub.derived)
     =/  txid-display=@ux  (rash txid.sel hex)
@@ -435,7 +432,7 @@
   ::  Derive commit address internal key at m/86'/1'/0'/0/1
   =/  commit-key-result=(each @ux tang)
     %-  mule  |.
-    =/  master-wallet  (from-seed:bip32 (seed-to-bytes:wallet-address [%q boot-secret.bd]))
+    =/  master-wallet  (from-seed:bip32 (seed-to-bytes:wallet-address [%t boot-secret.bd]))
     =/  derived  (derive-path:master-wallet "m/86'/1'/0'/0/1")
     public-key:derived
   ?:  ?=(%| -.commit-key-result)
@@ -450,7 +447,7 @@
   =/  acct-details=account-details:s  (~(got by accounts.state) account-pubkey)
   =/  main-addr-1=(each @t tang)
     %-  mule  |.
-    (derive-address-at-index:wallet-address [%q boot-secret.bd] acct %receiving 1 (en-crypto:wallet-address boot-network))
+    (derive-address-at-index:wallet-address [%t boot-secret.bd] acct %receiving 1 (en-crypto:wallet-address boot-network))
   ?:  ?=(%| -.main-addr-1)
     (store-boot-error %addr-1-derivation p.main-addr-1)
   ;<  now=@da  bind:m  get-time:io
@@ -482,7 +479,7 @@
   ::  Derive boot address private key at m/86'/1'/0'/0/0
   =/  result=(each [privkey=@ux boot-pubkey=@ux] tang)
     %-  mule  |.
-    =/  master-wallet  (from-seed:bip32 (seed-to-bytes:wallet-address [%q boot-secret.bd]))
+    =/  master-wallet  (from-seed:bip32 (seed-to-bytes:wallet-address [%t boot-secret.bd]))
     =/  derived  (derive-path:master-wallet "m/86'/1'/0'/0/0")
     [prv.derived (ser-p:derived pub.derived)]
   ?:  ?=(%| -.result)
@@ -582,7 +579,7 @@
   ::  Derive commit address private key at m/86'/1'/0'/0/1
   =/  result=(each [privkey=@ux commit-pub=@ux] tang)
     %-  mule  |.
-    =/  master-wallet  (from-seed:bip32 (seed-to-bytes:wallet-address [%q boot-secret.bd]))
+    =/  master-wallet  (from-seed:bip32 (seed-to-bytes:wallet-address [%t boot-secret.bd]))
     =/  derived  (derive-path:master-wallet "m/86'/1'/0'/0/1")
     [prv.derived (ser-p:derived pub.derived)]
   ?:  ?=(%| -.result)
@@ -621,7 +618,7 @@
   =/  acct=account:hd-path  [[%.y 86] [%.y 1] [%.y 0]]
   =/  addr-result=(each @t tang)
     %-  mule  |.
-    (derive-address-at-index:wallet-address [%q boot-secret.bd] acct %receiving 2 (en-crypto:wallet-address boot-network))
+    (derive-address-at-index:wallet-address [%t boot-secret.bd] acct %receiving 2 (en-crypto:wallet-address boot-network))
   ?:  ?=(%| -.addr-result)
     (store-boot-error %reveal-addr-derivation p.addr-result)
   =/  reveal-address=@t  p.addr-result

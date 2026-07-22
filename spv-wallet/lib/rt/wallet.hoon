@@ -77,9 +77,9 @@
     ::  If this is the boot wallet, clear boot state
     =/  removed=(unit wallet:s)  (~(get by wallets.state) pubkey-to-remove)
     =?  boot.state  ?&  ?=(^ removed)
-                        ?=(%q -.seed.u.removed)
+                        ?=(%t -.seed.u.removed)
                         ?=(^ boot.state)
-                        =(q.seed.u.removed boot-secret.data.u.boot.state)
+                        =(t.seed.u.removed boot-secret.data.u.boot.state)
                     ==
       ~
     =.  wallets.state  (~(del by wallets.state) pubkey-to-remove)
