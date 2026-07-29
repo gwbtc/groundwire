@@ -343,6 +343,29 @@ registration without allowing a conflicting path. The earlier local `%base`
 fix is not part of the Groundwire PR and must be handled in a separate Urbit
 change. Groundwire documentation must not describe it as already merged.
 
+### Published companion Urbit split
+
+The previously uncommitted kernel and Aqua work is now separated into five
+reviewable Urbit PRs. This ledger is descriptive; none is merged merely because
+it is published.
+
+| PR | Branch / base | State | Groundwire relevance and current evidence |
+|---|---|---|---|
+| [urbit#59](https://github.com/gwbtc/urbit/pull/59) | `agent/cc-ames-malformed-domain` -> `agent/confidential-comets-waypoint` | ready | fail-closed malformed suite-C domain parsing; fresh kernel and Ames/Mesa malformed cases pass without observed `%aqua-crash` |
+| [urbit#60](https://github.com/gwbtc/urbit/pull/60) | `agent/cc-jael-anex-rewatch` -> `agent/confidential-comets-waypoint` | ready | exact duplicate `%anex` restores the retained watch; both focused Jael tests pass |
+| [urbit#61](https://github.com/gwbtc/urbit/pull/61) | `agent/cc-jael-bane-auth` -> `agent/confidential-comets-waypoint` | draft | revocation/authorization experiment; its direct persisted `%5` mold edit is unsafe, and recovery/lifecycle/source semantics remain open |
+| [urbit#62](https://github.com/gwbtc/urbit/pull/62) | `agent/cc-test-compat` -> `agent/confidential-comets-waypoint` | ready | fixture/API provenance is recorded; Dawn and representative legacy Aqua pass, with baseline-red Ames/full-suite failures disclosed |
+| [urbit#63](https://github.com/gwbtc/urbit/pull/63) | `agent/cc-aqua-attestation` -> `agent/cc-test-compat` | draft | real Ames -> Jael -> fake `%gw-btc` -> Behn -> Jael -> Ames scaffold; packet/proof vectors are intentionally obsolete pending revision 2 |
+
+The first #63 audit caught a mismatched comet/suite/seed inventory before the
+attestation path; `cd96be4e84` supplies the missing suite-C entries. Its
+post-fix matrix is still validation evidence for a draft, not a reason to treat
+jammed-satpoint or boolean verdict fixtures as protocol authority.
+
+The archived development pier is outside both repositories at
+`/Users/armitage/r/gwbtc/s/dev`. It is an operational artifact, not a source or
+test fixture.
+
 ## 8. Test state
 
 The adversarial branch contains a large useful suite for its own implementation:
