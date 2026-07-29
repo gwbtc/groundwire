@@ -355,12 +355,15 @@ it is published.
 | [urbit#60](https://github.com/gwbtc/urbit/pull/60) | `agent/cc-jael-anex-rewatch` -> `agent/confidential-comets-waypoint` | ready | exact duplicate `%anex` restores the retained watch; both focused Jael tests pass |
 | [urbit#61](https://github.com/gwbtc/urbit/pull/61) | `agent/cc-jael-bane-auth` -> `agent/confidential-comets-waypoint` | draft | revocation/authorization experiment; its direct persisted `%5` mold edit is unsafe, and recovery/lifecycle/source semantics remain open |
 | [urbit#62](https://github.com/gwbtc/urbit/pull/62) | `agent/cc-test-compat` -> `agent/confidential-comets-waypoint` | ready | fixture/API provenance is recorded; Dawn and representative legacy Aqua pass, with baseline-red Ames/full-suite failures disclosed |
-| [urbit#63](https://github.com/gwbtc/urbit/pull/63) | `agent/cc-aqua-attestation` -> `agent/cc-test-compat` | draft | real Ames -> Jael -> fake `%gw-btc` -> Behn -> Jael -> Ames scaffold; packet/proof vectors are intentionally obsolete pending revision 2 |
+| [urbit#63](https://github.com/gwbtc/urbit/pull/63) | `agent/cc-aqua-attestation` -> `agent/cc-test-compat` | draft | Ames accept/reject pass; life-2 hangs before a second verifier request; Mesa and revision-2 packet/proof vectors remain open |
 
 The first #63 audit caught a mismatched comet/suite/seed inventory before the
-attestation path; `cd96be4e84` supplies the missing suite-C entries. Its
-post-fix matrix is still validation evidence for a draft, not a reason to treat
-jammed-satpoint or boolean verdict fixtures as protocol authority.
+attestation path; `cd96be4e84` supplies the missing suite-C entries. After the
+fix, Ames accept and reject reach `done` without `%aqua-crash`; life-2 verifies
+life 1 but then repeats `%fine-mismatch our=[0 2] her=[comet 0 1]` without a
+second verifier request. Mesa was not rerun under the time bound. These results
+are validation evidence for a draft, not a reason to treat jammed-satpoint or
+boolean verdict fixtures as protocol authority.
 
 The archived development pier is outside both repositories at
 `/Users/armitage/r/gwbtc/s/dev`. It is an operational artifact, not a source or

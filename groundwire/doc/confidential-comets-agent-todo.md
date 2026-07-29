@@ -238,6 +238,10 @@ Urbit-owned dependencies, to be implemented in separate changes:
   suites explicitly recorded.
 - [x] Publish the async-attestation scaffold as draft
   [urbit#63](https://github.com/gwbtc/urbit/pull/63), stacked on #62.
+- [ ] Diagnose #63's life-2 hang before treating the higher-life scenario as
+  coverage; the second handshake never reaches the fake verifier.
+- [ ] Rerun #63's accept, reject, and life-2 cases under Mesa after that flow is
+  understood.
 - [ ] Replace #63's jammed-satpoint identities and boolean verdicts with the
   frozen revision-2 packet and deterministic `%light-client` facts; rerun its
   full Ames/Mesa matrix after every fixture-inventory change.
