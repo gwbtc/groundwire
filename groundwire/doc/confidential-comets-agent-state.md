@@ -369,6 +369,12 @@ The archived development pier is outside both repositories at
 `/Users/armitage/r/gwbtc/s/dev`. It is an operational artifact, not a source or
 test fixture.
 
+The residual pre-split Urbit source worktree is preserved locally in stash
+`6db5a3f0c9c582822d57a0999d66e6f6bb60d4ba`, named
+`pre-split confidential-comets worktree; extracted to PRs 59-63`. It retains
+superseded combined hunks and the stale packet sketch for recovery provenance;
+it must not be treated as a branch to merge wholesale.
+
 ## 8. Test state
 
 The adversarial branch contains a large useful suite for its own implementation:
