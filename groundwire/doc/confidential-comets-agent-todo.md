@@ -223,11 +223,29 @@ Groundwire tasks:
 
 Urbit-owned dependencies, to be implemented in separate changes:
 
+- [x] Publish malformed-domain hardening as ready
+  [urbit#59](https://github.com/gwbtc/urbit/pull/59); merge remains subject to
+  review.
+- [x] Publish the exact-duplicate `%anex` re-watch as ready
+  [urbit#60](https://github.com/gwbtc/urbit/pull/60); retain full app-nuke and
+  Gall/Clay lifecycle coverage as follow-up.
+- [x] Publish the `%bane`/udiff-authorization experiment as draft
+  [urbit#61](https://github.com/gwbtc/urbit/pull/61); do not ready it without a
+  real new Jael state version/migration, recovery decision, source matrix, and
+  lifecycle tests.
+- [x] Publish test compatibility provenance as ready
+  [urbit#62](https://github.com/gwbtc/urbit/pull/62), with existing baseline-red
+  suites explicitly recorded.
+- [x] Publish the async-attestation scaffold as draft
+  [urbit#63](https://github.com/gwbtc/urbit/pull/63), stacked on #62.
+- [ ] Replace #63's jammed-satpoint identities and boolean verdicts with the
+  frozen revision-2 packet and deterministic `%light-client` facts; rerun its
+  full Ames/Mesa matrix after every fixture-inventory change.
 - [ ] Add bounded two-data-fragment alien Mesa reassembly in Ames.
 - [ ] Add or confirm the Jael/Ames path that asks a remote peer to re-attest
   after its recorded outpoint moves.
-- [ ] Land the Jael `%anex` same-agent/same-path lifecycle fix separately; reject
-  conflicting paths.
+- [ ] Merge the reviewed Jael `%anex` same-agent/same-path lifecycle fix while
+  continuing to reject conflicting paths.
 - [ ] If needed, extend the Jael verdict API so invalid, policy-ineligible,
   deferred, and stale outcomes do not collapse into one sticky failure.
 
