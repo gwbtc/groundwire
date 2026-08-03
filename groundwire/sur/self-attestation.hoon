@@ -46,7 +46,13 @@
   ==
 ::  $blind-opening: opens the pass's hiding dat commitment
 ::
-+$  blind-opening  [spawn=sont:ord blind=@ux]
+::    start-height is transport metadata, not part of the commitment
+::    preimage: it names the block containing the transaction that
+::    CREATED the spawn satpoint, so the verifier's whole fetch path
+::    stays height-based (the light client cannot look transactions up
+::    by bare txid).
+::
++$  blind-opening  [spawn=sont:ord start-height=@ud blind=@ux]
 ::  $opening: reveals the state committed at one custody hop
 ::
 ::    internal-key is the 33-byte compressed P2TR internal key (02/03
@@ -69,6 +75,7 @@
 ::
 +$  self-attestation
   $:  who=@p
+      =pass
       chain=custody-log
   ==
 ::

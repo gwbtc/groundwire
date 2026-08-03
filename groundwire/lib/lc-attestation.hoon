@@ -10,7 +10,7 @@
 ++  verify-lc
   |=  $:  sat=self-attestation:sa
           tracked=(unit anchor:sa)
-          sponsors=(map @p point:urb)
+          known-public=(set ship)
       ==
   ^-  shed:khan
   =/  m  (strand:strandio ,vase)
@@ -19,13 +19,27 @@
   =*  who  who.sat
   ?~  chain.sat
     (pure:m !>([(fail-result:lsa who 'empty-chain') *hexb:bc]))
-  ::  dat names the precommit transaction but not its block height.
-  ;<  start-cage=cage  bind:m  (watch-start our txid.spawn.sat)
+  =/  spawn-open  (spawn-of:lsa chain.sat)
+  ?~  spawn-open
+    (pure:m !>([(fail-result:lsa who 'spawn-opening') *hexb:bc]))
+  =/  spawn=sont:ord  spawn.u.spawn-open
+  ::  The blind-opening names the spawn transaction by [height txid]:
+  ::  the light client cannot look transactions up by bare txid, so the
+  ::  whole fetch path is height-based.
+  ;<  sh-cage=cage  bind:m  (watch-height our start-height.u.spawn-open)
+  =/  sblock=id:block:bc  !<(block-hash-response:lc q.sh-cage)
+  ?.  =(start-height.u.spawn-open num.sblock)
+    %+  strand-fail:strandio  %attestation-height-mismatch
+    [>[start-height.u.spawn-open num.sblock]< ~]
+  ;<  start-cage=cage  bind:m  (watch-entry our hax.sblock txid.spawn)
   =/  start=tx:bc  !<(transaction-response:lc q.start-cage)
+  ?.  =(txid.spawn id.start)
+    %+  strand-fail:strandio  %attestation-txid-mismatch
+    [>[txid.spawn id.start]< ~]
   ::  Every custody entry supplies a height. Resolve the canonical block hash,
   ::  then request the verified transaction in that block.
   ;<  txl=(list tx:bc)  bind:m  (fetch-entries our chain.sat)
-  =/  tip  (derive-tip:lsa spawn.sat start txl)
+  =/  tip  (derive-tip:lsa spawn start txl)
   ?~  tip
     (pure:m !>([(fail-result:lsa who 'derive-tip') *hexb:bc]))
   =/  last=tx:bc  (rear txl)
@@ -44,21 +58,13 @@
     ?.  =(out tip-out)
       (strand-fail:strandio %attestation-tip-output-mismatch >[who u.tip]< ~)
     =/  result=result:sa
-      (run-checks:lsa sat start txl `%.y tracked sponsors)
+      (run-checks:lsa sat start txl `%.y tracked known-public)
     (pure:m !>([result tip-spk]))
   ::
       %spent
     =/  result=result:sa
-      (run-checks:lsa sat start txl `%.n tracked sponsors)
+      (run-checks:lsa sat start txl `%.n tracked known-public)
     (pure:m !>([result tip-spk]))
-  ==
-::
-++  watch-start
-  |=  [our=@p txid=@ux]
-  %-  watch-one:strandio
-  :*  /lc/start/(scot %ux txid)
-      [our %light-client]
-      /transaction/(scot %ux txid)
   ==
 ::
 ++  watch-entry
