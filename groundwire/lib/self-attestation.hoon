@@ -12,7 +12,7 @@
 ::  directly testable.
 ::
 /-  bitcoin, ord, urb, sa=self-attestation
-/+  bc=bitcoin, cc=gw-btc-pass, tr=taproot, uc=urb-core
+/+  bc=bitcoin, cc=gw-btc-pass, uc=urb-core
 |%
 ::
 ++  report

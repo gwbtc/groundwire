@@ -35,34 +35,28 @@
 ::
 |%
 +$  card  card:agent:gall
-+$  pending-writ
+::  $inflight-writ: the single verification job a ship may have
+::
+::    single-flight per ship: while one exists, every further
+::    %jael-writ for that ship is dropped silently.  job disambiguates
+::    the thread/timeout wires of successive jobs for the same ship.
+::
++$  inflight-writ
   $:  dom=@tas
       =pass
       sat=self-attestation:sa
-  ==
-+$  inflight-job
-  $:  job=@uv
-      token=@uv
-      context=@ux
-      epoch=@uv
-  ==
-+$  launch-result
-  $:  cards=(list card)
-      started=(map ship inflight-job)
-      next-job=@uv
+      job=@ud
   ==
 +$  gw-state
   $:  rpc=req-to:btcio
       urb-state=state:urb
       ready=?
       best=(unit id:block:bc)
-      pending=(map ship pending-writ)
-      inflight=(map ship inflight-job)
+      inflight=(map ship inflight-writ)
       confidential=(set ship)
       attested=(map ship sont:ord)
       publicizing=(set ship)
-      next-job=@uv
-      chain-epoch=@uv
+      next-job=@ud
   ==
 --
 ::
@@ -117,39 +111,43 @@
       ::  an exact sanitized replay is in progress.  Ignore reinsertion until
       ::  that block job resolves.
       ?:  (~(has in publicizing) who.poke)
-        `this(pending (~(del by pending) who.poke))
+        `this
+      ::  Single-flight per ship: at most one verification job.  A
+      ::  duplicate or replacement writ while one is in flight is
+      ::  dropped silently -- the peer's retries re-enter after the
+      ::  verdict, and the on-chain cost of minting states is the rate
+      ::  limit.  No queue, no slot economy.
+      ?:  (~(has by inflight) who.poke)
+        `this
       ?~  sat=(pass-attestation [dom who pass]:poke)
         ::  The public onboarding packet is a valid suite-C %gw-btc pass
         ::  with no xtr tail at all.  It is resolved by the block scanner,
         ::  so neither queue it nor turn its temporary absence into a sticky
         ::  negative Jael verdict.  Other decode failures are malformed.
         ?:  (public-pass [dom who pass]:poke)
-          `this(pending (~(del by pending) who.poke))
-        :_  this(pending (~(del by pending) who.poke))
+          `this
+        :_  this
         ~[(writ-card dom.poke who.poke ~)]
-      ::  A present, canonically decoded xtr must contain the spawn reveal.
+      ::  A present, canonically decoded xtr must contain the spawn opening.
       ::  The raw-0 public shape was classified above before +from-xtr.
       ?~  chain.u.sat
-        :_  this(pending (~(del by pending) who.poke))
+        :_  this
         ~[(writ-card dom.poke who.poke ~)]
       ?:  (gth (lent chain.u.sat) 1.024)
-        :_  this(pending (~(del by pending) who.poke))
+        :_  this
         ~[(writ-card dom.poke who.poke ~)]
       ?:  (known-public who.poke)
-        `this(pending (~(del by pending) who.poke))
-      ?:  ?&  !(~(has by pending) who.poke)
-              (gte ~(wyt by pending) max-pending)
-          ==
         `this
-      =/  req=pending-writ  [dom.poke pass.poke u.sat]
-      =.  pending  (~(put by pending) who.poke req)
+      ::  Drop silently until the index and light client are ready;
+      ::  readiness is infrastructure, never evidence.
       ?:  ?|(=(| ready) ?=(~ best))
         `this
-      =/  queued
-        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
-      =.  next-job  next-job.queued
-      =.  inflight  (~(uni by inflight) started.queued)
-      [cards.queued this]
+      =/  job  next-job
+      =.  next-job  +(next-job)
+      =/  req=inflight-writ  [dom.poke pass.poke u.sat job]
+      =.  inflight  (~(put by inflight) who.poke req)
+      :_  this
+      (verify-cards q.byk.bowl now.bowl who.poke req)
     ::
         %jael-anew
       ::  Our own comet asking for a fresh self-attestation.  Return the last
@@ -180,27 +178,15 @@
       %-  (slog :_(~ [%leaf "%gw-btc: indexing from block {<num.block-id:(state:urb default-urb-state)>}"]))
       =.  urb-state  default-urb-state
       =.  ready  &
-      =/  queued
-        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
-      =.  next-job  next-job.queued
-      =.  inflight  (~(uni by inflight) started.queued)
       :_  this
-      :-  :*  %pass  /timer
-              %arvo  %b
-              %wait  now.bowl
-          ==
-      cards.queued
+      ~[[%pass /timer %arvo %b %wait now.bowl]]
     %-  (slog :_(~ [%leaf "%gw-btc: processing Groundwire snapshot ({<~(wyt by unv-ids.u.start-urb)>} points)"]))
     =.  urb-state  u.start-urb
     =.  ready  &
-    =/  queued
-      (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
-    =.  next-job  next-job.queued
-    =.  inflight  (~(uni by inflight) started.queued)
     :_  this
-    :-  (listen-to-urb ~(key by unv-ids.u.start-urb) [%| dap.bowl])
-    :-  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
-    cards.queued
+    :~  (listen-to-urb ~(key by unv-ids.u.start-urb) [%| dap.bowl])
+        [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
+    ==
   ==
 ::
 ++  on-peek
@@ -306,139 +292,61 @@
     ?.  ?=([%behn %wake *] sign-arvo)
       (on-arvo:def wire sign-arvo)
     =/  who  (slav %p i.t.wire)
-    =/  job  (slav %uv i.t.t.wire)
+    =/  job  (slav %ud i.t.t.wire)
     =/  active  (~(get by inflight) who)
     ?~  active
       `this
     ?.  =(job job.u.active)
       `this
-    =/  token  token.u.active
-    =/  context  context.u.active
-    =/  epoch  epoch.u.active
-    =/  req  (~(get by pending) who)
-    ?~  req
-      `this(inflight (~(del by inflight) who))
-    =/  current-token  (request-token u.req)
-    ?.  =(token current-token)
-      =.  inflight  (~(del by inflight) who)
-      =/  queued
-        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
-      =.  next-job  next-job.queued
-      =.  inflight  (~(uni by inflight) started.queued)
-      [cards.queued this]
-    ?.  ?&  =(context (context-token urb-state attested))
-            =(epoch chain-epoch)
-        ==
-      =.  inflight  (~(del by inflight) who)
-      =/  queued
-        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
-      =.  next-job  next-job.queued
-      =.  inflight  (~(uni by inflight) started.queued)
-      [cards.queued this]
-    =.  pending  (~(del by pending) who)
-    =.  inflight  (~(del by inflight) who)
-    =/  queued
-      (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
-    =.  next-job  next-job.queued
-    =.  inflight  (~(uni by inflight) started.queued)
     ::  A timeout is an infrastructure failure, not evidence that the
-    ::  attestation is invalid.  Release the slot silently so a later packet
-    ::  can retry; emitting res=~ here would cause Ames to snub a valid peer.
-    [cards.queued this]
+    ::  attestation is invalid.  Release the ship's slot silently so a
+    ::  later packet can retry; emitting res=~ here would cause Ames to
+    ::  snub a valid peer.
+    `this(inflight (~(del by inflight) who))
   ::
       [%verify ship=@ job=@ ~]
     =/  who  (slav %p i.t.wire)
-    =/  job  (slav %uv i.t.t.wire)
+    =/  job  (slav %ud i.t.t.wire)
     =/  active  (~(get by inflight) who)
     ?~  active
       `this
     ?.  =(job job.u.active)
       `this
-    =/  token  token.u.active
-    =/  context  context.u.active
-    =/  epoch  epoch.u.active
-    =/  req  (~(get by pending) who)
-    ?~  req
-      =.  inflight  (~(del by inflight) who)
-      =/  queued
-        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
-      =.  next-job  next-job.queued
-      =.  inflight  (~(uni by inflight) started.queued)
-      [cards.queued this]
-    =/  current-token  (request-token u.req)
-    ?.  =(token current-token)
-      =.  inflight  (~(del by inflight) who)
-      =/  queued
-        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
-      =.  next-job  next-job.queued
-      =.  inflight  (~(uni by inflight) started.queued)
-      [cards.queued this]
-    ?.  ?&  =(context (context-token urb-state attested))
-            =(epoch chain-epoch)
-        ==
-      =.  inflight  (~(del by inflight) who)
-      =/  queued
-        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
-      =.  next-job  next-job.queued
-      =.  inflight  (~(uni by inflight) started.queued)
-      [cards.queued this]
-    ?:  ?|(=(| ready) ?=(~ best))
-      `this(inflight (~(del by inflight) who))
+    =/  req=inflight-writ  u.active
+    =.  inflight  (~(del by inflight) who)
     ?+    sign-arvo  (on-arvo:def wire sign-arvo)
         [%khan %arow *]
       ?.  -.p.sign-arvo
         ?>  ?=([%khan %arow %.n *] sign-arvo)
         %-  (slog leaf+"%gw-btc: verification thread for {<who>} ended without a verdict" +.p.p.sign-arvo)
-        =.  pending  (~(del by pending) who)
-        =.  inflight  (~(del by inflight) who)
-        =/  queued
-          (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
-        =.  next-job  next-job.queued
-        =.  inflight  (~(uni by inflight) started.queued)
-        ::  A generic strand crash is likewise retryable/indeterminate.
-        ::  Only a mold-valid verifier result may emit a Jael verdict.
-        [cards.queued this]
+        ::  A generic strand crash is retryable/indeterminate.  Only a
+        ::  mold-valid verifier result may emit a Jael verdict.
+        `this
       ?>  ?=([%khan %arow %.y %noun *] sign-arvo)
       =/  [%khan %arow %.y %noun =vase]  sign-arvo
       =/  [res=result:sa tip-spk=hexb:bc]
         !<([result:sa hexb:bc] vase)
-      =.  pending  (~(del by pending) who)
-      =.  inflight  (~(del by inflight) who)
       ::  A concurrently indexed public spawn wins this race.  It no longer
       ::  belongs to the confidential verifier, but that is not evidence the
       ::  peer supplied a bad attestation, so do not emit a sticky failure.
       ?:  (known-public who)
-        =/  queued
-          (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
-        =.  next-job  next-job.queued
-        =.  inflight  (~(uni by inflight) started.queued)
-        [cards.queued this]
+        `this
       %-  (slog (report:lsa verdict.res))
       =/  verified=(unit point:urb)
         ?.  &(ok.verdict.res =(who who.verdict.res))  ~
         ?~  point.res  ~
-        ?.  (attested-point-ok pass.u.req u.point.res)  ~
-        ?:  (known-public who)  ~
+        ?.  (attested-point-ok pass.req u.point.res)  ~
         ?.  (tip-owner-ok urb-state who sont.own.u.point.res)  ~
-        `u.point.res(pass.net pass.u.req)
+        `u.point.res(pass.net pass.req)
       ?~  verified
-        =/  queued
-          (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
-        =.  next-job  next-job.queued
-        =.  inflight  (~(uni by inflight) started.queued)
-        [[(writ-card dom.u.req who ~) cards.queued] this]
+        :_  this
+        ~[(writ-card dom.req who ~)]
       =/  applied  (apply-verified who u.verified tip-value.res)
       =.  urb-state  -.applied
       =.  confidential  +.applied
       =.  attested  (~(put by attested) who sont.own.u.verified)
-      ::  Launch queued work only after the verified point is visible, so a
-      ::  dependent attestation snapshots the newest sponsor map.
-      =/  queued
-        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
-      =.  next-job  next-job.queued
-      =.  inflight  (~(uni by inflight) started.queued)
       :_  this
-      [(writ-card dom.u.req who `(urb-point-to-jael u.verified who)) cards.queued]
+      ~[(writ-card dom.req who `(urb-point-to-jael u.verified who))]
     ==
   ::
   ::  Our +get-blocks thread returned. Update
@@ -512,7 +420,6 @@
               confidential  new-confidential
               attested     new-attested
               publicizing  (~(uni in publicizing) public-new)
-              pending      (drop-pending pending public-new)
               inflight     (drop-inflight inflight public-new)
             ==
         ::  Schedule the sanitized snapshot for immediate retry. The publicizing
@@ -534,20 +441,23 @@
         `[ship udiff]
       =/  new-urb-state  u.merged
       =/  old-block-id  block-id.urb-state.state
-      ::  Commit the merged view before waking queued verification work.  A
-      ::  successful block result can free slots, resolve a public-spawn race,
-      ::  or advance sponsor state; leaving the queue asleep until some later
-      ::  best-block fact makes progress depend on unrelated traffic.
-      =.  urb-state     new-urb-state
-      =.  confidential  new-confidential
-      =.  attested      new-attested
+      ::  A confidential comet whose attested tip the scanner just saw
+      ::  spent has gone stale: its committed state may have changed and
+      ::  is unknown until it re-attests.  Drop our trust and tell Jael
+      ::  (which demotes the peer to an alien, never a snub) so the
+      ::  owner's next attestation re-verifies from scratch.
+      =/  gone-stale=(set ship)  (detect-stale new-urb-state new-confidential attested)
+      =.  confidential  (~(dif in new-confidential) gone-stale)
+      =.  attested      (drop-attested new-attested gone-stale)
+      =.  inflight      (drop-inflight inflight gone-stale)
+      =.  urb-state     (drop-private-insertions new-urb-state gone-stale)
       =.  publicizing   ~
-      =/  queued
-        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
-      =.  next-job  next-job.queued
-      =.  inflight  (~(uni by inflight) started.queued)
+      =/  stale-cards=(list card)
+        %+  turn  ~(tap in gone-stale)
+        |=(=ship (stale-card dap.bowl ship))
       :_  this
       %+  welp
+      %+  welp  stale-cards
       %+  welp
         ?.  =(~ fx-ships)
           ::  don't send a %listen task for ships
@@ -562,13 +472,12 @@
       %+  welp
         :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
         ==
-      ?:  =(num.block-id.new-urb-state num.old-block-id)
+      ?:  =(num.block-id.urb-state num.old-block-id)
         ~
       :~  :*  %give  %fact  ~[/urb-state]  %urb-state
-              !>((filter-snapshot new-urb-state new-confidential))
+              !>((filter-snapshot urb-state confidential))
           ==
       ==
-      cards.queued
     ==
   ==
 ::
@@ -581,12 +490,12 @@
         %watch-ack
       ?~  p.sign  `this
       %-  (slog leaf+"%gw-btc: %light-client /best-block watch rejected" u.p.sign)
-      :_  this(best ~, chain-epoch +(chain-epoch))
+      :_  this(best ~)
       :~  [%pass /lc-retry %arvo %b %wait (add ~s30 now.bowl)]
       ==
     ::
         %kick
-      :_  this(best ~, chain-epoch +(chain-epoch))
+      :_  this(best ~)
       :~  [%pass /best-block %agent [our.bowl %light-client] %watch /best-block]
       ==
     ::
@@ -594,18 +503,7 @@
       ?.  ?=(%light-client-best-block p.cage.sign)
         (on-agent:def wire sign)
       =/  upd  !<(best-block-update:lc q.cage.sign)
-      =/  old-best  best
-      =.  best  `id.upd
-      ::  A positive /tx-out answer is valid only at the light-client view
-      ::  against which it was obtained.  Even an ordinary tip advance can
-      ::  spend that output, so every changed best id invalidates old jobs.
-      =?  chain-epoch  ?|(!=(old-best best) ?=(^ reorg.upd))
-        +(chain-epoch)
-      =/  queued
-        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
-      =.  next-job  next-job.queued
-      =.  inflight  (~(uni by inflight) started.queued)
-      [cards.queued this]
+      `this(best `id.upd)
     ==
   ==
 ++  on-leave  on-leave:def
@@ -613,10 +511,6 @@
 --
 ::
 |%
-::  Keep alien traffic from turning readiness recovery into an unbounded
-::  khan/watch fan-out.
-++  max-pending   1.024
-++  max-inflight  16
 ++  verify-timeout  ~m2
 ::
 ::
@@ -836,22 +730,9 @@
 ::
 ::  Confidential-comet verification helpers.
 ::
-::  Decode the immutable %gw-btc domain + spawn satpoint from dat and the
-::  mutable custody log from xtr.  Malformed or non-canonical xtr is rejected
-::  by +from-xtr before any asynchronous fetches are launched.
-++  request-token
-  |=  req=pending-writ
-  ^-  @uv
-  (sham [dom.req pass.req])
-::
-++  context-token
-  |=  [st=state:urb ats=(map ship sont:ord)]
-  ^-  @ux
-  ::  Bind both identity state and the legacy scanner cursor.  If a block
-  ::  result advances first, a delayed verification may otherwise install a
-  ::  tip whose spend the scanner has already passed.
-  (shax (jam [block-id.st unv-ids.st ats]))
-::
+::  Decode the immutable %gw-btc domain from dat and the mutable custody
+::  log from xtr.  Malformed or non-canonical xtr is rejected by
+::  +from-xtr before any asynchronous fetches are launched.
 ++  pass-attestation
   |=  [dom=@tas who=ship =pass]
   ^-  (unit self-attestation:sa)
@@ -859,12 +740,16 @@
   =/  meta  (parse-pass:cc pass)
   ?~  meta  ~
   ?.  =(dom dom.u.meta)  ~
+  ?.  =(kelvin:cc kel.u.meta)  ~
   ?.  =(who fig:ex:(com:nu:cric:crypto pass))  ~
   (from-xtr:lsa who pass)
 ::
 ::  Recognize the public onboarder's intentionally absent xtr tail.  This is
 ::  narrower than an empty decoded custody log: `(jam ~)` is a present but
 ::  invalid confidential attestation and must receive a negative verdict.
+::  The hiding dat commitment is not opened here (no blind is carried), so
+::  this only confirms a well-formed suite-C %gw-btc pass with no xtr; the
+::  block scanner resolves the actual on-chain spawn.
 ++  public-pass
   |=  [dom=@tas who=ship =pass]
   ^-  ?
@@ -873,80 +758,61 @@
   ?~  meta  %.n
   =/  cic  (com:nu:cric:crypto pass)
   ?&  =(dom dom.u.meta)
+      =(kelvin:cc kel.u.meta)
       =(0 xtr.u.meta)
       ?=(%c suite.+<.cic)
       =(who fig:ex:cic)
-      =(dat.tw.pub:+<.cic (make-dat:cc spawn.u.meta))
   ==
 ::
-::  Launch one %light-client-backed verification thread.  The block watcher
-::  state supplies both the previously tracked tip and any sponsor points
-::  needed while replaying signed Groundwire events.
-++  verify-card
-  |=  [byk=desk who=ship job=@uv req=pending-writ st=state:urb]
-  ^-  card
-  :*  %pass  /verify/(scot %p who)/(scot %uv job)  %arvo  %k
-      %lard  byk
-      %+  (set-timeout:strandio ,vase)  verify-timeout
-      (verify-lc:lca sat.req (tracked-anchor st who) unv-ids.st)
-  ==
-::
-::  The verification strand has its own +set-timeout so Khan/Spider tears
-::  down outstanding light-client watches. Pair it with an app-level deadline
-::  as a backstop so a delayed or lost Khan result cannot retain an in-flight
-::  slot indefinitely.
+::  Launch the single %light-client-backed verification thread for a ship,
+::  with an app-level timeout backstop.  The block watcher state supplies
+::  the previously tracked tip and the set of known-public ships used for
+::  the sponsor-existence check.
 ++  verify-cards
-  |=  [byk=desk now=@da who=ship job=@uv req=pending-writ st=state:urb]
+  |=  [byk=desk now=@da who=ship req=inflight-writ]
   ^-  (list card)
-  :~  (verify-card byk who job req st)
-      :*  %pass  /verify-timeout/(scot %p who)/(scot %uv job)
+  =/  wir  /(scot %p who)/(scot %ud job.req)
+  :~  :*  %pass  [%verify wir]  %arvo  %k
+          %lard  byk
+          %+  (set-timeout:strandio ,vase)  verify-timeout
+          (verify-lc:lca sat.req (tracked-anchor urb-state who) unv-ids.urb-state)
+      ==
+      :*  %pass  [%verify-timeout wir]
           %arvo  %b  %wait  (add now verify-timeout)
       ==
   ==
 ::
-::  Start every queued request once both the Groundwire snapshot and the
-::  light client's first best-block fact have arrived.  Requests already in
-::  flight remain queued in the map but are not launched twice.
-++  launch-pending
-  |=  $:  byk=desk
-          now=@da
-          ready=?
-          best=(unit id:block:bc)
-          st=state:urb
-          pending=(map ship pending-writ)
-          inflight=(map ship inflight-job)
-          next-job=@uv
-      ==
-  ^-  launch-result
-  ?.  &(ready ?=(^ best))  [~ ~ next-job]
-  ?:  (gte ~(wyt by inflight) max-inflight)  [~ ~ next-job]
-  =/  slots  (sub max-inflight ~(wyt by inflight))
-  =/  entries  ~(tap by pending)
-  =/  context  (context-token st attested)
-  =|  cards=(list card)
-  =|  started=(map ship inflight-job)
-  |-
-  ?~  entries  [(flop cards) started next-job]
-  ?:  (gte ~(wyt by started) slots)  [(flop cards) started next-job]
-  =/  [who=ship req=pending-writ]  i.entries
-  ?:  (~(has by inflight) who)
-    $(entries t.entries)
-  =/  token  (request-token req)
-  =/  job  next-job
-  %=  $
-    entries  t.entries
-    cards    (weld (flop (verify-cards byk now who job req st)) cards)
-    started  (~(put by started) who [job token context chain-epoch])
-    next-job  +(next-job)
-  ==
-::
 ::  A verifier result may carry a pass reconstructed from the latest
-::  committed Groundwire event.  Its cryptographic key must equal the pass
+::  committed Groundwire state.  Its cryptographic key must equal the pass
 ::  Jael forwarded, but xtr is intentionally allowed to differ.
 ++  attested-point-ok
   |=  [submitted=pass verified=point:urb]
   ^-  ?
   (same-key:cc submitted pass.net.verified)
+::
+::  Confidential comets whose attested tip the scanner just saw move.  A
+::  moved identity sat means the committed state may have changed and is
+::  unknown until the owner re-attests, so the attestation is stale.
+++  detect-stale
+  |=  [st=state:urb conf=(set ship) ats=(map ship sont:ord)]
+  ^-  (set ship)
+  %-  silt
+  %+  murn  ~(tap by ats)
+  |=  [who=ship tip=sont:ord]
+  ^-  (unit ship)
+  ?.  (~(has in conf) who)  ~
+  ?~  pt=(~(get by unv-ids.st) who)  ~
+  ?:  =(tip sont.own.u.pt)  ~
+  `who
+::
+::  Tell Jael a confidential comet's verified attestation went stale.  Jael
+::  drops the point and Ames demotes the peer to an alien (never a snub).
+++  stale-card
+  |=  [dom=@tas who=ship]
+  ^-  card
+  :*  %give  %fact  ~[/writs]
+      %stale-notice  !>(`stale-notice:jael`[dom who])
+  ==
 ::
 ::  Emit an asynchronous Jael verdict on the path registered by %anex.
 ++  writ-card
@@ -1176,17 +1042,9 @@
   ?~  entries  ats
   $(entries t.entries, ats (~(del by ats) i.entries))
 ::
-++  drop-pending
-  |=  [reqs=(map ship pending-writ) ships=(set ship)]
-  ^-  (map ship pending-writ)
-  =/  entries  ~(tap in ships)
-  |-
-  ?~  entries  reqs
-  $(entries t.entries, reqs (~(del by reqs) i.entries))
-::
 ++  drop-inflight
-  |=  [jobs=(map ship inflight-job) ships=(set ship)]
-  ^-  (map ship inflight-job)
+  |=  [jobs=(map ship inflight-writ) ships=(set ship)]
+  ^-  (map ship inflight-writ)
   =/  entries  ~(tap in ships)
   |-
   ?~  entries  jobs
