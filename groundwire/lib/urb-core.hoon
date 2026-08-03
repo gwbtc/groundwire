@@ -33,8 +33,8 @@
 ::  6. %gw-btc turns these fx into udiffs and
 ::     gives them to Jael.
 ::
-/-  bitcoin, ord, urb
-/+  bscr=btc-script, cc=gw-btc-pass, ol=ord, urb-encoder
+/-  bitcoin, ord, urb, sa=self-attestation
+/+  cc=gw-btc-pass, ol=ord
 |%
 ++  urb-core
   =|  state:urb
@@ -74,129 +74,53 @@
   ::  if we had saved one of its inputs previously,
   ::  or if its witness contains an urb reveal.
   ++  find-block-reveals
+    ::  A transaction is relevant if it publishes a %gw-btc OP_RETURN
+    ::  output, or spends a satpoint we are tracking, or spends an
+    ::  output of a tx already saved in this block.  For each saved tx
+    ::  we record every input's prevout value from our sont index (0
+    ::  when untracked) so ++handle-tx sees the whole input list.
+    ::  Witnesses are no longer parsed: public identity is published in
+    ::  outputs (OP_RETURN), and confidential identity never on-chain.
     ::
-    :: XX in order to properly fulfill the coinbase transaction, we need to
-    :: keep track of the fee change from skipped tx's
+    :: XX the coinbase fee is understated for a spawn's untracked
+    :: funding inputs (recorded as value 0); this only affects the
+    :: land-in-fee edge of ++index-to-sont-with-coinbase.
     |=  =block:bitcoin
     =|  reveals=(map [txid:ord vout:ord] [sots=(list raw-sotx:urb) value=(unit @ud)])
     ^+  [reveals block]
-    :: XX num isn't in urb-block type yet, see other num.block comment
-    :: ?.  =(num.block +(num.block-id.state))
-    ::   %-  (slog leaf+"can't handle block {<num:block>}, expected block {<+(num.block-id.state)>}" ~)
-    ::   [reveals block]  ::  XX crash instead?
-    ::
-    ::  Set aside this block's coinbase transaction.
     ?~  txs.block
       ~&  >>>  ["%urb-core: This block has no transactions:" block]  !!
     =/  cb-tx  i.txs.block
     =/  txs    t.txs.block
-    ::
-    ::  Loop through this block's transactions
-    ::  and filter down to tx containing reveals.
     =|  saved-txs=(list tx:bitcoin)
-    |-  
+    |-
     ^+  [reveals block]
     ?~  txs
       :-  reveals
       block(txs [cb-tx (flop saved-txs)])
-    ::
-    ::  Loop through this transaction's inputs
-    ::  and, if any contain sots, save the whole tx.
-    =/  is  is.i.txs  :: list of inputs
-    =|  need-tx=_|    :: whether we need to save this tx
-    |^  
-    ^+  ^$
-    ?~  is
-      %=  ^$
-        txs        t.txs
-        saved-txs  ?.  need-tx
-                     saved-txs
-                   [i.txs saved-txs]
-      ==
-    ::
-    ::  If this input had been saved as an output in our state,
-    ::  then that means it was relevant to urb, and
-    ::  we for sure need to save this tx to track where
-    ::  all the sats end up.
-    =/  value=(unit @ud)
-      =/  vout  (get-vout:si:ol sont-map [txid pos]:i.is)
-      ?~(vout ~ `value.u.vout)
-    =.  need-tx  |(need-tx ?=(^ value))
-    ::
-    ::  Similarly, if this input came from a transaction we've
-    ::  already saved in this block, we save this tx too.
-    =.  need-tx
-      ?|  need-tx
-          %+  lien
-            saved-txs
-          |=  =tx:bitcoin
-          =(id.tx txid.i.is)
-      ==
-    ::
-    ::  Parse the witness for sots. If no sots, just 
-    ::  preserve our potential saved value and recurse.
-    =/  raw-script=(unit octs)
-      =/  rwit  (flop witness.i.is)
-      ?.  ?=([* ^] rwit)  ~                                                               
-      =/  first-byte  =+(i.rwit (cut 3 [(dec wid) 1] dat))
-      ?.  |(=(0xc0 first-byte) =(0xc1 first-byte))  ~  :: limit to taproot tx                                
-      ?.  =+  i.rwit                                                                      
-          &(!=(0 wid) =(0x50 (cut 3 [(dec wid) 1] dat)))                                  
-        `i.t.rwit                                                                         
-      ?~  t.t.rwit  ~        
-      `i.t.t.rwit   
-    ?~  raw-script
-      (add-to-reveals ~ value)
-    ::  Quick check: skip scripts that don't start with the urb envelope.
-    ::  Envelope is OP_0 OP_IF PUSH3 "urb" = bytes 00 63 03 75 72 62.
-    ::  In octs, the first script byte is the MSB of the atom.
-    ::  We check the top 5 bytes (skipping the leading 0x00 which
-    ::  vanishes in the atom) for OP_IF PUSH3 "urb" = 0x6303757262.
-    ?.  ?&  (gte p.u.raw-script 6)
-            =(0x63.0375.7262 (cut 3 [(sub p.u.raw-script 6) 5] q.u.raw-script))
-        ==
-      (add-to-reveals ~ value)
-    ~&  >  "%urb-core: urb envelope detected! parsing..."
-    =/  descr  (de:bscr u.raw-script)
-    ?~  descr
-      ~&  >>>  "%urb-core: de:bscr failed on urb script"
-      (add-to-reveals ~ value)
-    ~|  [=+(u.raw-script [p `@ux`q]) =+((en:bscr u.descr) [p `@ux`q])]
-    ?.  =(u.raw-script (en:bscr u.descr))
-      ~&  >>>  "%urb-core: round-trip mismatch in witness parsing"
-      (add-to-reveals ~ value)
-    ~&  >  "%urb-core: script parsed successfully, extracting unvs..."
-    =/  unvs=(unit (list @))  (some (unv:de:urb-encoder u.descr))
-    ?~  unvs
-      ~&  >>>  "%urb-core: no unvs found in parsed script"
-      (add-to-reveals ~ value)
-    ::
-    ::  If there is sots, get it, add it to reveals, 
-    ::  flag this tx as needed, and recurse.
-    ::  ~&  >>  unvs
-    =/  sots=(unit (list raw-sotx:urb))
-      %-  mole
-      |.((zing (turn u.unvs parse-roll:urb-encoder)))
-    ?~  sots
-      ~&  >>>  "%urb-core: malformed urb payload"
-      (add-to-reveals ~ value)
-    ::  ~&  >>  sots
-    (add-to-reveals(need-tx &) u.sots value)
-    ::
-    ::  ^$ recurses to the inputs loop.
-    ++  add-to-reveals
-      |=  [sots=(list raw-sotx:urb) value=(unit @ud)]
-      ^+  ^$
-      ?>  ?=(^ is)
-      ?:  ?&  =(~ sots)
-              =(~ value)
-          ==
-        ^$(is t.is)
-      %=  ^$
-        is  t.is
-        reveals  (~(put by reveals) [txid pos]:i.is sots value)
-      ==
-    --
+    =/  this  i.txs
+    =/  spends-tracked
+      %+  lien  is.this
+      |=  inp=inputw:tx:bitcoin
+      ?=(^ (get-vout:si:ol sont-map [txid pos]:inp))
+    =/  spends-saved
+      %+  lien  is.this
+      |=  inp=inputw:tx:bitcoin
+      (lien saved-txs |=(t=tx:bitcoin =(id.t txid.inp)))
+    =/  has-pub
+      %+  lien  os.this
+      |=  o=output:tx:bitcoin
+      ?=(^ (read-publication:cc script-pubkey.o))
+    ?.  ?|(has-pub spends-tracked spends-saved)
+      $(txs t.txs)
+    =.  reveals
+      =/  ins  is.this
+      |-  ^+  reveals
+      ?~  ins  reveals
+      =/  vout  (get-vout:si:ol sont-map [txid pos]:i.ins)
+      =/  v=@ud  ?~(vout 0 value.u.vout)
+      $(ins t.ins, reveals (~(put by reveals) [txid pos]:i.ins [~ `v]))
+    $(txs t.txs, saved-txs [this saved-txs])
   ::
   ::  Fill in a block's txs with prevouts
   ::  given in a reveals map and restructure it
@@ -244,9 +168,7 @@
   ::
   ::  Given an urb-block, update state and emit fx.
   ++  handle-block
-    |=  $:  =urb-block:urb
-            precommits=(map [txid:ord vout:ord] [commit=urb-tx:urb precommit=urb-tx:urb])
-        ==
+    |=  =urb-block:urb
     ^+  cor
     =.  num.block-id.state  +(num.block-id.state)
     ?~  txs.urb-block
@@ -255,28 +177,29 @@
           txs.urb-block  t.txs.urb-block
           cb-tx         [reward.urb-block i.txs.urb-block]
         ==
-    |-  
+    |-
     ^+  cor
     :: XX handle coinbase tx
     ?~  txs.urb-block
       cor
-    =.  cor  (handle-tx i.txs.urb-block precommits)
+    =.  cor  (handle-tx i.txs.urb-block)
     $(txs.urb-block t.txs.urb-block)
   ::
   ++  handle-tx
     =|  running-value=@ud
-    |=  $:  tx=urb-tx:urb
-            precommits=(map [txid:ord vout:ord] [commit=urb-tx:urb precommit=urb-tx:urb])
-        ==
+    |=  tx=urb-tx:urb
     ^+  cor
     =/  sum-out  (roll os.tx |=([[* a=@] b=@] (add a b)))
     =/  sum-in  (roll is.tx |=([a=input:urb-tx:urb b=@] (add value.a b)))
     =/  inputs  is.tx
     ?~  inputs  cor
-    |^  
+    |^
     ^+  cor
-    =.  cor  process-unv
-    ::  =.  cor  check-for-insc
+    ::  Process the OP_RETURN publication (if any) once, against input 0.
+    ::  running-value is 0 on the first iteration, so a spawn's or state
+    ::  update's sat offset math is anchored at input 0 as the protocol
+    ::  requires.  Then follow every tracked sat through this input.
+    =?  cor  =(0 running-value)  process-publication
     =.  cor  update-sonts
     ::  Excess inputs get added to coinbase fee,
     ::  which we calculate iteratively because we need
@@ -292,387 +215,116 @@
     ::
     ::  XX For all failures in this arm figure out when 
     ::  to loop and when to quit. Do we ever need to rewind?
-    ++  process-unv
+    ::  Process this transaction's OP_RETURN publication, if any.  A
+    ::  public %gw-btc comet reveals a $publication in a deliberate
+    ::  OP_RETURN output: the pass binds the name (who = fig(pass)) and
+    ::  the opening reveals the state committed in the sat-carrying
+    ::  output.  A present blind-opening is a spawn; an absent one is a
+    ::  state update (rekey/breach) of an already-tracked comet.  All
+    ::  other transactions are pure custody moves handled by
+    ::  ++update-sonts.  Confidential comets never publish, so they
+    ::  never appear here.
+    ++  process-publication
       ^+  cor
-      =/  sots  sots.i.inputs
-      |-  
-      ?~  sots
-        cor
-      ::  ~&  >>  "%urb-core: processing sots"
-      =*  raw  raw.i.sots
-      =*  who  ship.sot.i.sots
-      ::  =*  sig   sig.sot.i.sots :: XX check networking key signature?
-      =-  $.+(cor -, sots t.sots)
-      =/  sots=(list single:skim-sotx:urb)
-        ?:  ?=(%batch +<.sot.i.sots) 
-          bat.sot.i.sots 
-        ~[+.sot.i.sots]
-      |^  
+      ?~  pub=(find-publication os.tx)  cor
+      =*  pass  pass.u.pub
+      =*  op    opening.u.pub
+      ?~  meta=(parse-pass:cc pass)  cor
+      ?.  =(domain:cc dom.u.meta)  cor
+      ?.  =(kelvin:cc kel.u.meta)  cor
+      =/  cac  (com:nu:cric:crypto pass)
+      ?.  ?=(%c suite.+<.cac)  cor
+      =/  who  fig:ex:cac
+      ?~  blind-opening.op
+        (apply-state who pass op)
+      (apply-spawn who pass d.u.meta op u.blind-opening.op)
+    ::
+    ::  Find the first OP_RETURN "urb" publication among a tx's outputs.
+    ++  find-publication
+      |=  outs=(list output:tx:bitcoin)
+      ^-  (unit publication:sa)
+      ?~  outs  ~
+      ?^  p=(read-publication:cc script-pubkey.i.outs)  p
+      $(outs t.outs)
+    ::
+    ::  The x-only key of a P2TR (OP_1 PUSH32) output script, else ~.
+    ++  p2tr-xonly
+      |=  spk=hexb:bitcoin
+      ^-  (unit @ux)
+      ?.  =(34 wid.spk)  ~
+      ?.  =(0x5120 (rsh [3 32] dat.spk))  ~
+      `(end [3 32] dat.spk)
+    ::
+    ::  A public spawn: one transaction whose input 0 spends the comet's
+    ::  chosen (funding) satpoint and whose sat-carrying output commits
+    ::  the initial snapshot.  Verify the name<->pass<->dat binding, the
+    ::  funding spend, the on-chain state commitment, and that no other
+    ::  comet already holds the landing sat; then index the point.
+    ++  apply-spawn
+      |=  [who=ship =pass d=@ux op=opening:sa bo=blind-opening:sa]
       ^+  cor
-      =/  point  (~(get by unv-ids) who)
-      =|  bat-cnt=@
-      =.  bat-cnt  +(bat-cnt)
-      ?~  sots  cor
-      =*  sot  i.sots
-      ::  XX more ordering constraints?
-      ?:  ?=(%spawn -.sot)
-        ::  ~&  >>  "%urb-core: processing %spawn"
-        ?.  =(1 bat-cnt)  cor                   :: first sot in batch
-        ?^  point  cor                          :: no data for @p yet
-        ?:  (~(has by unv-ids) who)  cor        :: no data for @p yet
-        =/  cac  (com:nu:cric:crypto pass.sot)
-        ?.  ?=(%c suite.+<.cac)  cor            :: uses suite c encoded pass
-        ?.  =(who fig:ex:cac)  cor              :: initial comet @p = hash of public key
-        ::
-        ::  A Groundwire user must choose the sat they want to own their comet
-        ::  prior to boot-time and pass in its satpoint to Vere on first boot.
-        ::  However, within their commit attestation, they must include their
-        ::  ship's networking key, which is only knowable after boot.
-        ::  Because of this, we have an additional "pre-commit" transaction
-        ::  in addition to the typical ordinal protocol. A client will:
-        ::
-        ::  1. Pre-commit to a sat inside a precommit transaction.
-        ::  2. Boot their comet using a satpoint within the precommit transaction.
-        ::  3. Submit the commit transaction containing their precommit satpoint and ship networking key.
-        ::  4. Submit the reveal transaction.
-        ::
-        ::  When processing a %spawn sotx then, rather than just checking
-        ::  whether the sont is in this input, we need to check if it carried
-        ::  through from *two* transactions back.
-        ::
-        ::  The %spawn sotx includes a supposed satpoint and spkh from 
-        ::  the precommit transaction: [precommit-spkh vout off] 
-        ::  (We know the txid by virtue of the %spawn being associated with this input.)
-        ::  We call ++calc-precommit-sont to determine whether this
-        ::  sotx-attested satpoint does indeed exist given the
-        ::  precommit transaction's outputs. If so, we'll grab this sat,
-        ::  and then check that it's also equal to the tweak of this
-        ::  comet's networking key.
-        ::
-        =/  pcmtx  (~(get by precommits) [txid.i.inputs pos.i.inputs])
-        ?~  pcmtx
-          ~&  >>  "%urb-core: Couldn't find precommit tx."  cor
-        =/  precommit-tx  precommit.u.pcmtx
-        =/  commit-tx  commit.u.pcmtx
-        ?~  precommit-sat=(calc-precommit-sont precommit-tx to.sot)  
-          cor
-        ::  XX  OP_RETURN revision, public-comet path.  Under kelvin 9 the
-        ::  immutable dat is a HIDING commitment
-        ::  (make-dat:cc [spawn blind]); a public spawn reveals its blind
-        ::  in an OP_RETURN output, not in this witness-parsed
-        ::  precommit/commit/reveal flow.  Recovering the blind here
-        ::  requires the OP_RETURN output scanner rework
-        ::  (opret-revision/02 item 8), a separate workstream that does
-        ::  not affect confidential-comet verification (lib/self-attestation).
-        ::  Until it lands, the public-spawn tweak check cannot recover the
-        ::  blind, so it fails closed: a public spawn is not indexed rather
-        ::  than indexed unverified.
-        =/  blind=@ux  *@ux
-        =/  tweak  (make-dat:cc u.precommit-sat blind)
-        ::
-        ::  Check that the given comet networking key encodes the tweak
-        ::  that corresponds to the attestation.
-        ?.  =(dat.tw.pub:+<:cac tweak)
-          ~&  >>>  ["%urb-core: public-spawn tweak check disabled pending OP_RETURN scanner" dat.tw.pub:+<:cac]
-          cor
-        ::  ~&  >>  "%urb-core: provided pass encodes the correct tweaked networking key!"
-        ::
-        ::  We now know that:
-        ::  - the attested satpoint exists
-        ::  - the attested satpoint is encoded in the attested comet's networking key
-        ::  - the attested satpoint was in an input to the commit transaction
-        ::    (because we found and verified the satpoint by fetching the commit
-        ::    transaction's input), and therefore the precommit and commit transactions
-        ::    share a controller
-        ::
-        ::  This proves ownership. All that's left is to find where the sat ultimately
-        ::  ended up so we can track it appropriately. We thus transition 
-        ::  the sat to [commit-txid vout off] to see where it landed afterwards.
-        ::
-        =/  commit-sat=(unit sont:ord)
-          (apply-tx-to-sont commit-tx u.precommit-sat)
-        ::  ~&  >>  commit-sat
-        ?~  commit-sat
-          cor
-        ::
-        ::  We check to make sure that the sat was indeed spent in the reveal transaction.
-        ::  You could argue that this isn't strictly necessary here, since
-        ::  we know that the creator of the commit tx controlled the sat at that time,
-        ::  so this is a valid reveal regardless and ++update-sonts will still track it 
-        ::  correctly, but in all other cases our security model is to check
-        ::  (is-sont-in-input sont.own.u.point), so we enforce that here as well.
-        ::
-        ?.  (is-sont-in-input u.commit-sat)
-          ~&  >>>  'The commit sat did not get spent in the reveal tx. Rejecting.' 
-          cor
-        ::
-        ::  sont-map has a single comet slot at each sat.  Do not overwrite a
-        ::  different public comet here: doing so would leave that comet's
-        ::  unv-ids point referring to a forward-index entry it no longer owns.
-        ?.  %:  can-put-com:si:ol
-                sont-map
-                txid.u.commit-sat
-                vout.u.commit-sat
-                off.u.commit-sat
-                who
-            ==
-          ~&  >>>  ['The spawn sat is already occupied by another comet. Rejecting.' u.commit-sat]
-          cor
-        ::
-        ::  Now that we know where the sat ended up after the commit tx,
-        ::  we provisionally update sont-map and unv-ids with the
-        ::  commit-sat. We do NOT call ++update-sonts here; the outer
-        ::  loop does that after ++process-unv finishes. This is
-        ::  critical for batching: sont.own must still refer to this
-        ::  input so that subsequent sots (e.g. %escape) can pass
-        ::  the is-sont-in-input check. We compute reveal-sat
-        ::  directly for the %owner emission.
-        ::
-        =.  sont-map
-          %:  put-com:si:ol
-              sont-map
-              txid.u.commit-sat
-              vout.u.commit-sat
-              off.u.commit-sat
-              value.i.inputs :: value of this input to the reveal tx, aka the commit utxo
-              who
-          ==
-        =/  =point:urb
-          :*  own=[u.commit-sat ~]
-              rift=0
-              life=1
-              pass=pass.sot
-              sponsor=[| who] :: no sponsor on spawn
-              escape=~
-              fief=fief.sot
-          ==
-        =.  unv-ids  (~(put by unv-ids) who point)
-        =/  reveal-sunt
-          %-  index-to-sont-with-coinbase
-          (add running-value off.u.commit-sat)
-        =/  reveal-sat=sont:ord
-          ?~  reveal-sunt  [0x0 0 0]
-          u.reveal-sunt
-        ~&  >  ["%gw-btc found comet: " who]
-        =.  cor
-          %-  emil
-          :~  [%point who %owner reveal-sat]
-              [%point who %sponsor `who] :: the ames devs say we should never send a null sponsor
-              [%point who %keys 1 pass.sot]
-              [%point who %fief fief.sot]
-          ==
-        $(sots t.sots)
-      ::
-      ::  =^  point  cor  (spend-point point)
-      ?~  point  cor
-      ?.  (is-sont-in-input sont.own.u.point)
-        ~&  >>>  'Input to this tx did not include the owner sont. Rejecting.' 
-        cor
-      ?-    -.sot
-          %set-mang
-        $(sots t.sots)
-        ::=.  cor  (emit [%point who %mang mang.sot])
-        ::%_    $
-        ::    sots     t.sots
-        ::    unv-ids   (~(put by unv-ids) who u.point)
-        ::==
-      ::
-          %fief
-        =.  fief.net.u.point  fief.sot
-        =.  cor  (emit [%point who %fief fief.sot])
-        %_    $
-            sots     t.sots
-            unv-ids   (~(put by unv-ids) who u.point)
+      ?^  (~(get by unv-ids) who)  cor
+      ?.  =(d (spawn-commit:cc spawn.bo blind.bo))  cor
+      ?.  =([txid vout]:spawn.bo [txid pos]:i.inputs)  cor
+      ?~  landed=(index-to-sont-with-coinbase off.spawn.bo)  cor
+      =/  sont  u.landed
+      =/  out  (snag vout.sont os.tx)
+      ?.  =(`(state-key:cc internal-key.op snapshot.op) (p2tr-xonly script-pubkey.out))
+        ~&  >>>  "%urb-core: spawn state commitment mismatch"  cor
+      ?.  (can-put-com:si:ol sont-map txid.sont vout.sont off.sont who)
+        ~&  >>>  ['%urb-core: spawn sat already occupied' sont]  cor
+      ~&  >  ["%gw-btc found public comet: " who]
+      (index-point who pass snapshot.op sont value.out %.y)
+    ::
+    ::  A public state update: the comet spends its tracked sat through
+    ::  input 0, committing a new snapshot in the sat-carrying output.
+    ::  life must advance.  ++update-sonts relocates sont.own; here we
+    ::  only refresh the networking fields.
+    ++  apply-state
+      |=  [who=ship =pass op=opening:sa]
+      ^+  cor
+      ?~  pt=(~(get by unv-ids) who)  cor
+      =/  cur  sont.own.u.pt
+      ?.  =([txid vout]:cur [txid pos]:i.inputs)  cor
+      ?~  landed=(index-to-sont-with-coinbase off.cur)  cor
+      =/  sont  u.landed
+      =/  out  (snag vout.sont os.tx)
+      ?.  =(`(state-key:cc internal-key.op snapshot.op) (p2tr-xonly script-pubkey.out))
+        ~&  >>>  "%urb-core: state commitment mismatch"  cor
+      ?.  (gth life.snapshot.op life.net.u.pt)  cor
+      (index-point who pass snapshot.op cur value.out %.n)
+    ::
+    ::  Write a point from a snapshot and emit the jael udiffs.  On a
+    ::  spawn we seed sont-map at the landing and emit %owner; on a
+    ::  state update we leave sont.own for ++update-sonts to relocate
+    ::  and only change the net fields.
+    ++  index-point
+      |=  [who=ship =pass snap=snapshot:sa =sont:ord out-value=@ud spawn=?]
+      ^+  cor
+      =/  spo=[has=? who=@p]  ?~(sponsor.snap [| who] [& u.sponsor.snap])
+      =/  old  (~(get by unv-ids) who)
+      =/  =point:urb
+        ?:  |(spawn ?=(~ old))
+          [[sont ~] rift.snap life.snap pass spo ~ fief.snap]
+        %=  u.old
+          pass.net     pass
+          life.net     life.snap
+          rift.net     rift.snap
+          sponsor.net  spo
+          fief.net     fief.snap
         ==
-      ::
-          %escape
-        ::  sponsoring self, update now
-        ?:  =(parent.sot who)
-          =.  sponsor.net.u.point  &/who
-          =.  escape.net.u.point   ~
-          =.  cor  (emit [%point who %sponsor `who])
-          %_    $
-              sots     t.sots
-              unv-ids   (~(put by unv-ids) who u.point)
-          ==
-        ::  sponsor already signed the request off-chain, update now
-        ::  LLM: verify escape sig against sponsor's stored pass.
-        ::  Message is (shaz (jam [sponsee height])), with a 10 block buffer
-        ?^  sig.sot
-          =/  sponsor  (~(get by unv-ids) parent.sot)
-          ?~  sponsor  
-            ~&  >>>  "%urb-core: sponsor {<parent.sot>} not found in unv-ids, dropping escape" 
-            cor
-          =/  cac  (com:nu:cric:crypto pass.net.u.sponsor)
-          =/  lower-bound
-            ?:  (lth num.block-id.state 10) 
-              0
-            (sub num.block-id.state 10)
-          ?.  %+  lien
-                (gulf lower-bound (add num.block-id.state 1))
-              |=(h=@ud (veri-octs:ed:crypto u.sig.sot 512^(shaz (jam [who h])) sgn:ded:ex:cac))
-            ~&  >>>  ["%urb-core: escape sig from {<parent.sot>} for {<who>} failed verification (checked block heights {<lower-bound>} to {<(add num.block-id.state 1)>})"]
-            cor
-          =.  sponsor.net.u.point  &/parent.sot
-          =.  escape.net.u.point   ~
-          =.  cor  (emit [%point who %sponsor `parent.sot])
-          %_    $
-              sots     t.sots
-              unv-ids   (~(put by unv-ids) who u.point)
-          ==
-        ::  no signature, flag sponsorship as pending
-        =.  escape.net.u.point  `parent.sot
-        =.  cor  (emit [%point who %escape `parent.sot])
-        %_    $
-            sots     t.sots
-            unv-ids   (~(put by unv-ids) who u.point)
-        ==
-      ::
-          %cancel-escape
-        ?.  =([~ parent.sot] escape.net.u.point)  cor ::$(sots t.sots)
-        =.  escape.net.u.point  ~
-        =.  cor  (emit [%point who %escape ~])
-        %_    $
-            sots     t.sots
-            unv-ids   (~(put by unv-ids) who u.point)
-        ==
-      ::
-          %detach
-        ?~  child=(~(get by unv-ids) ship.sot)  cor ::$(sots t.sots)
-        ?.  =([& who] sponsor.net.u.child)  cor ::$(sots t.sots)
-        =.  sponsor.net.u.child  |/ship.sot
-        =.  cor  (emit [%point ship.sot %sponsor `ship.sot])
-        %_    $
-            sots     t.sots
-            unv-ids   (~(put by unv-ids) ship.sot u.child)
-        ==
-      ::
-      ::  XX It would be nice to have an escapee's pending sponsor
-      ::     sign their %escape transaction out-of-band with their networking key
-      ::     so that they can auto-accept it when the %escape comes in.
-          %adopt
-        ?:  =(ship.sot who)
-          =.  sponsor.net.u.point  &/who
-          =.  escape.net.u.point   ~
-          =.  cor  (emit [%point ship.sot %sponsor `who])
-          %_    $
-              sots     t.sots
-              unv-ids   (~(put by unv-ids) who u.point)
-          ==
-        ?~  child=(~(get by unv-ids) ship.sot)  cor ::$(sots t.sots)
-        ?.  =([~ who] escape.net.u.child)  cor ::$(sots t.sots)
-        =.  escape.net.u.child  ~
-        =.  sponsor.net.u.child  &/who
-        =.  cor  (emit [%point ship.sot %sponsor `who])
-        %_    $
-            sots     t.sots
-            unv-ids   (~(put by unv-ids) ship.sot u.child)
-        ==
-      ::
-          %reject
-        ?~  child=(~(get by unv-ids) ship.sot)  cor ::$(sots t.sots)
-        ?.  =([~ who] escape.net.u.child)  cor ::$(sots t.sots)
-        =.  escape.net.u.child  ~
-        =.  cor  (emit [%point ship.sot %escape ~])
-        %_    $
-            sots     t.sots
-            unv-ids   (~(put by unv-ids) ship.sot u.child)
-        ==
-      ::
-          %keys
-        ::=/  cac  (com:nu:cric:crypto pass.sot)
-        ::?~  sig                  cor
-        ::?.  ?=(%c suite.+<.cac)  cor
-        ::?.  =(dat.tw.pub:+<:cac (rap 3 ~[+(life.net.u.point) %btc %ord %gw %test]))  cor
-        ::?.  (veri-octs:ed:crypto u.sig 512^(shal raw.i.^sots) sgn:ded:ex:cac)
-        ::  cor
-        =.  net.u.point
-          net.u.point(pass pass.sot, life +(life.net.u.point))
-        =?  rift.net.u.point  breach.sot  +(rift.net.u.point)
-        =.  cor  %-  emil
-          :*  [%point who %keys life.net.u.point pass.sot]
-              ?.  breach.sot  ~
-              [%point who %rift rift.net.u.point]^~
-          ==
-        %_    $
-            sots     t.sots
-            unv-ids   (~(put by unv-ids) who u.point)
-        ==
+      =?  sont-map  spawn
+        (put-com:si:ol sont-map txid.sont vout.sont off.sont out-value who)
+      =.  unv-ids  (~(put by unv-ids) who point)
+      %-  emil
+      %+  weld
+        ?.  spawn  ~
+        ~[[%point who %owner sont]]
+      :~  [%point who %sponsor ?~(sponsor.snap `who `u.sponsor.snap)]
+          [%point who %keys life.snap pass]
+          [%point who %rift rift.snap]
+          [%point who %fief fief.snap]
       ==
-      ::
-      ::  Is this sont in the input that's being processed?
-      ++  is-sont-in-input
-        |=  sot=sont:ord
-        ~|  [s=sot [txid pos value]:i.inputs]
-        ?.  =([txid vout]:sot [txid pos]:i.inputs)  |
-        ~|  %fatal-tracking-error
-        ?>  (lth off.sot value.i.inputs)  &
-      ::
-      ::  Given a precommit tx and a [vout off tej],
-      ::  check if the implied satpoint [txid vout off]
-      ::  is a valid landing location within the tx outputs
-      ::  and that off+tej doesn't exceed that output's value.
-      ::  Additionally, check that the scriptPubkey hash of the
-      ::  landing output matches the given spkh.
-      ::  If both are true, return the implied satpoint,
-      ::  otherwise return null.
-      ++  calc-precommit-sont
-        |=  $:  precommit=urb-tx:urb
-                out=[spkh=@ux pos=(unit vout:ord) =off:ord tej=off:ord]
-            ==
-        ^-  (unit sont:ord)
-        =|  out-pos=@ud
-        =|  out-val=@ud
-        =/  in-val
-          (roll is.precommit |=([a=input:urb-tx:urb b=@] (add value.a b)))
-        =/  outputs  os.precommit
-        |-  
-        ^-  (unit sont:ord)
-        ?~  outputs  ~
-        ::  Null pos.out is undefined behavior for now, fail
-        ?~  pos.out
-          ~
-        ::  If we passed vout, fail
-        ?:  (lth u.pos.out out-pos)  
-          ~
-        ::  If satpoint would exceed total available input value, fail
-        ?:  (gth :(add out-val off.out tej.out) in-val)
-          ~
-        ::  If this isn't the correct output index, loop
-        ?:  !=(out-pos u.pos.out)
-          $(out-val (add out-val value.i.outputs), outputs t.outputs, out-pos +(out-pos))
-        ::  Last check: this is the correct output index, but is it big enough?
-        ?:  (gth (add off:out tej:out) value.i.outputs)
-          ~
-        ::  The satpoint is legit, we build it
-        =/  sat=sont:ord  [id.precommit u.pos.out off.out]
-        ::  Rebuild the hash of this output and check if it matches the given hash
-        =/  en-out  (can 3 script-pubkey.i.outputs 8^value.i.outputs ~)
-        =/  hax-out  (shay (add 8 wid.script-pubkey.i.outputs) en-out)
-        ?:  =(hax-out spkh.out)  
-          `sat
-        ~
-      ::
-      ::  Experimental arm for allowing both the sat owner and the networking 
-      ::  key controller to make attestations.
-      ::  ++  spend-point
-      ::    |=  point=(unit ^point)
-      ::    ^+  [point cor]
-      ::    ?~  point  [~ cor]
-      ::    ?:  ?&  ?=(~ sig) 
-      ::            (is-sont-in-input sont.own.u.point)
-      ::        ==
-      ::      [point cor]
-      ::    ?~  sig  [~ cor]
-      ::    XX rethink
-      ::    ?.  ?=([~ %pass *] mang.own.u.point)  [~ cor]
-      ::    ?:  =(txid (cut 8 [1 1] pass.u.mang.own.u.point))  [~ cor]
-      ::    =/  pub  (end 8 pass.u.mang.own.u.point)
-      ::    =/  tw  (scap:ed:crypto pub (shax:sha pass.u.mang.own.u.point))
-      ::    ?.  (veri-octs:ed:crypto u.sig raw tw)  [~ cor]
-      ::    =.  pass.u.mang.own.u.point  (can 8 [1 pub] [1 txid] ~)
-      ::    [point cor(unv-ids (~(put by unv-ids) who u.point))]
-      --
     ::
     ::  Given the transaction input that's currently in
     ::  ++handle-tx's context, get every sont we're tracking
@@ -764,34 +416,6 @@
       state(unv-ids (~(put by unv-ids:state) com point(sont.own sont)))
     ::
     ::
-    ::  Given a transaction and a satpoint that refers to one of its inputs,
-    ::  compute where that same sat ends up in this tx’s outputs.
-    ::  XX  This arm is LLM-generated and needs to be vetted.
-    ::      Also reason about how the caller should interpret a null returns.
-    ++  apply-tx-to-sont
-      |=  [tx=urb-tx:urb sot=sont:ord]
-      ^-  (unit sont:ord)
-      =/  inputs  is.tx
-      =|  in-sum=@ud
-      |-  
-      ^-  (unit sont:ord)
-      ?~  inputs
-        ~
-      =/  inp  i.inputs
-      ::  Is this the input spending the sat’s prevout?
-      ?:  =([txid vout]:sot [txid pos]:inp)
-        ::  Off must be within that prevout’s value.
-        ?.  (lth off.sot value.inp)
-          ~
-        =/  index=@ud
-          (add in-sum off.sot)
-        =/  out  (index-to-sont index os.tx)
-        ?~  out
-          ~
-        ::  Landed in output vout.out at offset off.out (relative to that output).
-        `[[id.tx vout.out off.out]]
-      ::  Otherwise keep scanning; add this input’s value to the running sum.
-      $(inputs t.inputs, in-sum (add in-sum value.inp))
     --
   --
 ::

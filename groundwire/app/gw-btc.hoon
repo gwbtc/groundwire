@@ -557,74 +557,14 @@
     (convert-block i u.bluck)
   ::  ~&  >>  [%new new]
   ::
-  ::  Find all %spawn sotx in the urb-block. For each %spawn, ++get-raw-transaction 
-  ::  the commit tx and the precommit tx, which are needed to accurately track the sat.
-  ::  (This assumes one %spawn per reveal transaction.)
-  =|  precommits=(map [txid:ord vout:ord] [commit=urb-tx:urb precommit=urb-tx:urb])
-  =/  txs  txs.new
-  ::  Check all txs for %spawns
-  |-
-  ?~  txs
-    =.  uc  (handle-block:uc new precommits)
-    ~&  >  "processed block {<i>} of {<last-settled-block>}"
-    ^$(i +(i))
-  =/  tx-inputs  is.i.txs
-  ::  Check all inputs for a %spawn. There could be multiple spawning
-  ::  commit inputs to a single reveal tx
-  |-  
-  ?~  tx-inputs
-    ^$(txs t.txs)
-  =/  sots  sots.i.tx-inputs
-  ?~  sots
-    $(tx-inputs t.tx-inputs)
-  =/  sots=(list single:skim-sotx:urb)  :: bad name shadowing
-    ?:  ?=(%batch +<.sot.i.sots) 
-      bat.sot.i.sots 
-    ~[+.sot.i.sots]
-  |-
-  ?~  sots  
-    ^$(tx-inputs t.tx-inputs)
-  ?.  ?=(%spawn -.i.sots)
-    $(sots t.sots)
-  ::  ~&  >>  "%gw-btc found a spawn!"
-  ::  If we found an input with a %spawn, get the tx that generated it
-  ;<  commit-tx=(unit tx:bc)  bind:m
-    (get-raw-transaction:btcio rpc ~ txid.i.tx-inputs)
-  ?~  commit-tx  ~|  %couldnt-fetch-tx  !!
-  ;<    commit-urb-tx=urb-tx:urb  
-      bind:m
-    (convert-tx u.commit-tx)
-  ::  ~&  >>  [%commit-tx id.commit-urb-tx]
-  ::  Now find the commit tx input that matches attested spkh to get precommit tx.
-  ::  (There could technically be multiple that match; we assume the first.)
-  ::  To do this, we need one more inner loop to get the values of all outputs
-  ::  of the precommit tx, to calculate the potential spkhs.
-  =/  spkh  spkh.to.i.sots
-  =/  inputs  is.commit-urb-tx
-  |-
-  ?~  inputs
-    ::  ~&  >>>  "%gw-btc: Couldn't find precommit tx."
-    ^$(sots t.sots)
-  ;<  precommit-tx=(unit tx:bc)  bind:m
-    (get-raw-transaction:btcio rpc ~ txid.i.inputs)
-  ?~  precommit-tx  ~|  %couldnt-fetch-tx  !!
-  =/  outputs  os.u.precommit-tx
-  |- 
-  ?~  outputs
-    ^$(inputs t.inputs)
-  =/  en-out  (can 3 script-pubkey.i.outputs 8^value.i.outputs ~)  :: value as 8 bytes
-  ?.  =(spkh (shay (add 8 wid.script-pubkey.i.outputs) en-out))
-    $(outputs t.outputs)
-  ;<    precommit-urb-tx=urb-tx:urb  
-      bind:m
-    (convert-tx u.precommit-tx)
-  ::  ~&  >>  [%precommit-tx id.precommit-urb-tx]
-  %=  ^^^$
-    tx-inputs   t.tx-inputs
-    precommits  %+  ~(put by precommits) 
-                  [txid.i.tx-inputs pos.i.tx-inputs]
-                [commit-urb-tx precommit-urb-tx]
-  ==  
+  ::  Under the OP_RETURN revision there is no precommit/commit/reveal
+  ::  fetch: a public identity is spawned and updated in single
+  ::  transactions whose sat-carrying output commits the state and whose
+  ::  OP_RETURN output opens it.  ++handle-block reads those outputs
+  ::  directly.
+  =.  uc  (handle-block:uc new)
+  ~&  >  "processed block {<i>} of {<last-settled-block>}"
+  $(i +(i))
   ::
   ::  Convert a block:bitcoin into a urb-block:urb.
   ::  This requires an async +get-raw-transaction call.
@@ -686,44 +626,6 @@
       prev-outputs  t.prev-outputs
       pos  +(pos)
       reveals  (~(put by reveals) [id.u.prev-tx pos] [sots `value.i.prev-outputs])
-    ==
-  ::
-  ::  Use a similar loop to ++convert-block to convert
-  ::  a single tx:bitcoin to urb-tx:urb, but without regard
-  ::  for sots, only values.
-  ++  convert-tx
-    |=  old-tx=tx:bc
-    =/  m  (strand:strandio ,urb-tx:urb)
-    =/  old-inputs  is.old-tx
-    =|  new-inputs=(list [[sots=(list raw-sotx:urb) value=@ud] inputw:tx:bitcoin])
-    |-  
-    ^-  form:m
-    ?~  old-inputs  
-      %-  pure:m
-      :*  id.old-tx
-          new-inputs
-          os.old-tx
-          locktime.old-tx
-          nversion.old-tx
-          segwit.old-tx
-      ==
-    ;<  prev-tx=(unit tx:bc)  bind:m
-      (get-raw-transaction:btcio rpc ~ txid.i.old-inputs)
-    ?~  prev-tx  ~|  %couldnt-fetch-tx  !!
-    =/  prev-outputs  os.u.prev-tx
-    =|  pos=@ud
-    |-  
-    ^-  form:m
-    ?~  prev-outputs  
-      ^$(old-inputs t.old-inputs)
-    ?.  ?&  =(id.u.prev-tx txid.i.old-inputs) 
-            =(pos pos.i.old-inputs)
-        ==
-      $(prev-outputs t.prev-outputs, pos +(pos))
-    =/  new-input  [[~ value.i.prev-outputs] i.old-inputs]
-    %=  ^$
-      old-inputs  t.old-inputs
-      new-inputs  [new-input new-inputs]
     ==
   --
 ::

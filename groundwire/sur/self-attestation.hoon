@@ -78,6 +78,17 @@
       =pass
       chain=custody-log
   ==
+::  $publication: the payload a PUBLIC comet reveals in a deliberate
+::  OP_RETURN output (kelvin 9).  Same evidence a confidential comet
+::  hands a peer in an xtr entry, but published on-chain so scanners
+::  can follow public identities with no packet exchange.  The pass
+::  binds the name (who = fig(pass)); the opening reveals the state
+::  committed in the transaction's sat-carrying output.  A present
+::  blind-opening marks a spawn (it also opens the hiding dat
+::  commitment); an absent one marks a state update (rekey/breach) of
+::  an already-tracked comet.
+::
++$  publication  [=pass =opening]
 ::
 +$  anchor
   $:  point=point:urb

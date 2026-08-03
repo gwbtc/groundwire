@@ -166,6 +166,25 @@
     ?:  (lte wid.payload 75)  [1 wid.payload]
     (cat:byt:bcu ~[[1 0x4c] [1 wid.payload]])
   (cat:byt:bcu ~[[5 0x6a.0375.7262] [1 0x1] [1 kelvin] psh payload])
+::  +make-publication: full OP_RETURN scriptPubKey for a $publication
+::
+++  make-publication
+  |=  pub=publication:sa
+  ^-  hexb:btc
+  =/  jm  (jam pub)
+  (publication-script [(met 3 jm) jm])
+::  +parse-publication-payload: decode a publication from an output
+::  script.  Rejects a wrong kelvin so a future protocol version's
+::  publications are ignored, not mis-parsed.
+::
+++  read-publication
+  |=  script=hexb:btc
+  ^-  (unit publication:sa)
+  =/  env  (parse-publication script)
+  ?~  env  ~
+  ?.  =(kelvin kel.u.env)  ~
+  %-  mole
+  |.  ;;(publication:sa (cue dat.payload.u.env))
 ::  +parse-publication: (unit [kelvin payload]) from an output script
 ::
 ++  parse-publication
