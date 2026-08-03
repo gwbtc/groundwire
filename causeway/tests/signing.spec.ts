@@ -1,18 +1,21 @@
+// PSBT construction — kelvin-9 single-transaction spawn / state-update.
+//
+// A spawn (and every custody move) is ONE key-path P2TR spend: input 0 = the
+// current sat-carrying UTXO, output 0 = the new sat-carrying P2TR key Q. There
+// is no commit/reveal pair. A state UPDATE additionally carries the current
+// state leaf's merkle root on the input so the signer can key-path-spend the
+// tweaked output (BIP-371).
+
 import { describe, expect, test } from "vitest";
 import { Transaction, p2tr } from "@scure/btc-signer";
 import { HDKey } from "@scure/bip32";
 import { sha256 } from "@noble/hashes/sha256";
 import {
-  buildCommitPsbt,
-  buildRevealPsbt,
-  extractTx,
-  assertRevealsLeaf,
-  extractVerifiedPair,
-  rawTxid,
-  bip86Path,
-  type KeyInfo,
+  buildSpawnPsbt, extractTx, rawTxid, bip86Path, type KeyInfo,
 } from "../src/signing/psbt.js";
-import { urbLeafScript } from "../src/chain/tapscript.js";
+import {
+  stateOutputKey, stateOutputScript, stateMerkleRoot, type Snapshot,
+} from "../src/spawn/snapshot.js";
 
 const SEED = sha256(new TextEncoder().encode("causeway-test-seed-do-not-use"));
 const root = HDKey.fromMasterSeed(SEED);
@@ -27,11 +30,14 @@ function keyAt(index: number): KeyInfo {
 }
 
 const fundingKey = keyAt(0);
-const commitKey = keyAt(1);
-const destKey = keyAt(2);
+const internalKey33 = (() => {
+  const k = new Uint8Array(33);
+  k[0] = 0x02;
+  k.set(fundingKey.internalKey, 1);
+  return k;
+})();
 
-const dummyAttestation = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
-const leafScript = urbLeafScript(dummyAttestation, commitKey.internalKey);
+const initialSnapshot: Snapshot = { life: 1, rift: 0, key: 0xabcdn, sponsor: null, fief: null };
 
 const fundingTxid = sha256(new TextEncoder().encode("funding-txid"));
 const funding = {
@@ -41,126 +47,80 @@ const funding = {
   scriptPubKey: p2tr(fundingKey.internalKey).script,
 };
 
-describe("PSBT construction", () => {
-  test("buildCommitPsbt produces valid PSBT", () => {
-    const result = buildCommitPsbt({
-      funding,
-      fundingKey,
-      commitKey,
-      leafScript,
-      feeRate: 2,
-    });
+describe("kelvin-9 PSBT construction", () => {
+  test("buildSpawnPsbt produces a one-in one-out P2TR(Q) spend", () => {
+    const outputScript = stateOutputScript(stateOutputKey(internalKey33, initialSnapshot));
+    const result = buildSpawnPsbt({ funding, fundingKey, outputScript, feeRate: 2 });
+
     expect(result.psbt.length).toBeGreaterThan(0);
-    expect(result.commitTxid.length).toBe(32);
-    expect(result.commitOutputValue).toBeGreaterThan(0n);
-    expect(result.commitOutputScript.length).toBeGreaterThan(0);
+    expect(result.txid.length).toBe(32);
+    expect(result.outputValue).toBeGreaterThan(0n);
 
     const tx = Transaction.fromPSBT(result.psbt);
     expect(tx.inputsLength).toBe(1);
     expect(tx.outputsLength).toBe(1);
+    // output 0 is a 34-byte P2TR scriptPubKey (5120 || Q).
+    const out0 = tx.getOutput(0).script!;
+    expect(out0.length).toBe(34);
+    expect(out0[0]).toBe(0x51);
+    expect(out0[1]).toBe(0x20);
+    expect(Array.from(out0)).toEqual(Array.from(outputScript));
   });
 
-  test("buildRevealPsbt produces valid PSBT", () => {
-    const commit = buildCommitPsbt({ funding, fundingKey, commitKey, leafScript, feeRate: 2 });
-    const reveal = buildRevealPsbt({
-      commitTxid: commit.commitTxid,
-      commitOutputValue: commit.commitOutputValue,
-      commitOutputScript: commit.commitOutputScript,
-      commitKey,
-      leafScript,
-      destKey,
-      feeRate: 2,
-    });
-    expect(reveal.psbt.length).toBeGreaterThan(0);
-    expect(reveal.revealOutputValue).toBeGreaterThan(0n);
-
-    const tx = Transaction.fromPSBT(reveal.psbt);
-    expect(tx.inputsLength).toBe(1);
-    expect(tx.outputsLength).toBe(1);
-  });
-
-  test("commit + sign + finalize round-trip", () => {
-    const commit = buildCommitPsbt({ funding, fundingKey, commitKey, leafScript, feeRate: 2 });
-    const tx = Transaction.fromPSBT(commit.psbt);
+  test("spawn + sign + finalize round-trip (BIP-86 key-path)", () => {
+    const outputScript = stateOutputScript(stateOutputKey(internalKey33, initialSnapshot));
+    const built = buildSpawnPsbt({ funding, fundingKey, outputScript, feeRate: 2 });
+    const tx = Transaction.fromPSBT(built.psbt);
     const privKey = root.derive("m/86'/1'/0'/0/0").privateKey!;
-    tx.signIdx(privKey, 0);
+    expect(tx.signIdx(privKey, 0)).toBe(true);
     tx.finalizeIdx(0);
     const raw = tx.extract();
     expect(raw.length).toBeGreaterThan(0);
+    // The predicted (pre-sign) txid matches the finalized non-witness txid.
+    expect(built.txidHex).toBe(rawTxid(raw));
   });
 
-  // The reveal MUST spend the commit output via the script path so the urb
-  // attestation leaf is published on-chain. Regression guard for the
-  // key-path-preferred finalize bug (the leaf was never revealed).
-  test("reveal signs script-path and publishes the leaf", () => {
-    const commit = buildCommitPsbt({ funding, fundingKey, commitKey, leafScript, feeRate: 2 });
-    const reveal = buildRevealPsbt({
-      commitTxid: commit.commitTxid,
-      commitOutputValue: commit.commitOutputValue,
-      commitOutputScript: commit.commitOutputScript,
-      commitKey, leafScript, destKey, feeRate: 2,
-    });
-
-    // commitKey is at derivation index 1; it is the key inside the urb leaf.
-    const tx = Transaction.fromPSBT(reveal.psbt, { allowUnknownInputs: true });
-    const commitPriv = root.derive("m/86'/1'/0'/0/1").privateKey!;
-    expect(tx.signIdx(commitPriv, 0)).toBe(true);
-
-    // No tapInternalKey means no key-path sig is possible — only a script sig.
-    const signed = tx.toPSBT(0);
-    assertRevealsLeaf(signed, leafScript); // throws if key-path or missing leaf
-
-    // Finalize via the shipping path and confirm the script-path witness.
-    tx.finalizeIdx(0);
-    const witness = tx.getInput(0).finalScriptWitness!;
-    expect(witness.length).toBe(3); // [sig, leafScript, controlBlock]
-    expect(Array.from(witness[1]!)).toEqual(Array.from(leafScript));
-    expect(extractTx(signed).length).toBeGreaterThan(0);
+  test("public spawn adds an OP_RETURN publication output", () => {
+    const outputScript = stateOutputScript(stateOutputKey(internalKey33, initialSnapshot));
+    const publicationScript = Uint8Array.from([0x6a, 0x03, 0x75, 0x72, 0x62, 0x01, 0x09, 0x02, 0xca, 0xfe]);
+    const built = buildSpawnPsbt({ funding, fundingKey, outputScript, publicationScript, feeRate: 2 });
+    const tx = Transaction.fromPSBT(built.psbt, { allowUnknownOutputs: true });
+    expect(tx.outputsLength).toBe(2);
+    const op = tx.getOutput(1).script!;
+    expect(op[0]).toBe(0x6a); // OP_RETURN
+    expect(tx.getOutput(1).amount).toBe(0n);
   });
 
-  // extractVerifiedPair must return the real TXID and confirm the reveal spends
-  // the commit output-0. Regression guard: rawTxid must hash the NON-witness
-  // serialization (a wtxid here would make the outpoint check always fail).
-  test("extractVerifiedPair returns the txid and verifies the reveal chains", () => {
-    const commit = buildCommitPsbt({ funding, fundingKey, commitKey, leafScript, feeRate: 2 });
-    const reveal = buildRevealPsbt({
-      commitTxid: commit.commitTxid,
-      commitOutputValue: commit.commitOutputValue,
-      commitOutputScript: commit.commitOutputScript,
-      commitKey, leafScript, destKey, feeRate: 2,
+  test("state update carries the current leaf merkle root on the input", () => {
+    // Spend a sat-carrying output committing `initialSnapshot`, re-commit a new
+    // snapshot (rekey: life+1, new key).
+    const currentQ = stateOutputKey(internalKey33, initialSnapshot);
+    const current = {
+      txid: sha256(new TextEncoder().encode("state-utxo")),
+      vout: 0,
+      value: 8000n,
+      scriptPubKey: stateOutputScript(currentQ),
+    };
+    const newSnapshot: Snapshot = { ...initialSnapshot, life: 2, key: 0x1234n };
+    const outputScript = stateOutputScript(stateOutputKey(internalKey33, newSnapshot));
+    const built = buildSpawnPsbt({
+      funding: current, fundingKey, outputScript,
+      inputMerkleRoot: stateMerkleRoot(initialSnapshot), feeRate: 2,
     });
-    const ctx = Transaction.fromPSBT(commit.psbt);
-    ctx.signIdx(root.derive("m/86'/1'/0'/0/0").privateKey!, 0);
-    const signedCommit = ctx.toPSBT(0);
-    const rtx = Transaction.fromPSBT(reveal.psbt, { allowUnknownInputs: true });
-    rtx.signIdx(root.derive("m/86'/1'/0'/0/1").privateKey!, 0);
-    const signedReveal = rtx.toPSBT(0);
-
-    // Passing at all proves the reveal's input-0 outpoint matched the commit
-    // txid (extractVerifiedPair throws otherwise).
-    const { commitTxid, commitHex, revealHex } = extractVerifiedPair(signedCommit, signedReveal);
-    // The reported txid must be the real (non-witness) txid — not the wtxid.
-    ctx.finalizeIdx(0);
-    expect(commitTxid).toBe(rawTxid(ctx.extract()));
-    expect(commitHex.length).toBeGreaterThan(0);
-    expect(revealHex.length).toBeGreaterThan(0);
+    const tx = Transaction.fromPSBT(built.psbt);
+    const in0 = tx.getInput(0);
+    expect(in0.tapMerkleRoot).toBeDefined();
+    expect(Array.from(in0.tapMerkleRoot!)).toEqual(Array.from(stateMerkleRoot(initialSnapshot)));
+    expect(Array.from(in0.tapInternalKey!)).toEqual(Array.from(fundingKey.internalKey));
   });
 
-  test("a key-path-only reveal PSBT is rejected by assertRevealsLeaf", () => {
-    // Simulate the old dangerous shape: a reveal input that carries the
-    // internal key + merkle root, letting a signer key-path spend it.
-    const commit = buildCommitPsbt({ funding, fundingKey, commitKey, leafScript, feeRate: 2 });
-    const commitPayment = p2tr(commitKey.internalKey, { script: leafScript, leafVersion: 0xc0 }, undefined, true);
-    const tx = new Transaction();
-    tx.addInput({
-      txid: commit.commitTxid, index: 0,
-      witnessUtxo: { script: commit.commitOutputScript, amount: commit.commitOutputValue },
-      tapInternalKey: commitKey.internalKey,
-      tapMerkleRoot: commitPayment.tapMerkleRoot,
-    });
-    tx.addOutput({ script: p2tr(destKey.internalKey).script, amount: commit.commitOutputValue - 500n });
-    const commitPriv = root.derive("m/86'/1'/0'/0/1").privateKey!;
-    tx.signIdx(commitPriv, 0);
-    expect(() => assertRevealsLeaf(tx.toPSBT(0), leafScript)).toThrow(/key-path/);
+  test("extractTx finalizes a signed spawn PSBT", () => {
+    const outputScript = stateOutputScript(stateOutputKey(internalKey33, initialSnapshot));
+    const built = buildSpawnPsbt({ funding, fundingKey, outputScript, feeRate: 2 });
+    const tx = Transaction.fromPSBT(built.psbt);
+    tx.signIdx(root.derive("m/86'/1'/0'/0/0").privateKey!, 0);
+    const raw = extractTx(tx.toPSBT(0));
+    expect(raw.length).toBeGreaterThan(0);
+    expect(rawTxid(raw)).toBe(built.txidHex);
   });
 });

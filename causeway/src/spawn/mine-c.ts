@@ -16,6 +16,16 @@ import { ed25519 } from "@noble/curves/ed25519";
 import { sha256, sha512 } from "@noble/hashes/sha2";
 import { BitWriter, bytesToAtomLE } from "../protocol/bitwriter.js";
 import { rub } from "../protocol/mat.js";
+import { jam } from "../protocol/jam.js";
+import type { Noun } from "../protocol/jam.js";
+import { hTag, minimalLEBytes } from "../protocol/tagged-hash.js";
+import {
+  spawnNoun, spawnCommitFromJam, datFromCommit, DEFAULT_PKI_DOM, type SpawnSont,
+} from "./dat.js";
+
+// jam lives in ../protocol/jam.js now; re-exported here for the existing
+// callers (reveal-log.ts, tests) that import it from mine-c.
+export { jam };
 
 // ed25519 curve order L
 const ED_L = 2n ** 252n + 27742317777372353535851937790883648493n;
@@ -133,7 +143,12 @@ export function appendXtrToRing(ringBytes: Uint8Array, xtr: bigint): Uint8Array 
 }
 
 export interface MineOpts {
-  tweak: Uint8Array;           // raw tweak bytes (LE atom bytes)
+  // The spawn satpoint (the UTXO the sat sits at pre-spawn). The kelvin-9 `dat`
+  // is a hiding commitment to this satpoint blinded by the candidate seed, so
+  // the tweak is recomputed per iteration (see ./dat.ts). Replaces the fixed
+  // `tweak` bytes of the legacy clear-satpoint dat.
+  spawn: SpawnSont;
+  dom?: string;                // PKI domain tag (default %gw-btc)
   life?: number;               // default 1
   rift?: number;               // default 0
   // Optional vanity: 16-bit match on last 2 bytes of comet. Combined with
@@ -153,7 +168,9 @@ export interface MineResult {
   cPub: Uint8Array;
   tweakedSPub: Uint8Array;
   comet: Uint8Array;          // 16 bytes — the raw comet @p atom
-  pass: bigint;               // on-chain pass atom for %spawn sotx
+  pass: bigint;               // pass atom carrying the kelvin-9 dat
+  dat: bigint;                // the winning candidate's dat atom
+  blind: Uint8Array;          // 32 bytes — H_tag("gw/spawn-blind", seed)
   ringAtomBytes: Uint8Array;
   feed: Uint8Array;           // jam bytes; encode as @uw for vere -G
   tries: number;
@@ -163,7 +180,11 @@ export async function mineSuiteC(opts: MineOpts): Promise<MineResult> {
   const prefix = opts.prefix ?? null;
   const maxTries = opts.maxTries ?? 10_000_000;
   const yieldEvery = opts.yieldEveryTries ?? 2000;
-  const tweakAtom = bytesToAtomLE(opts.tweak);
+  const dom = opts.dom ?? DEFAULT_PKI_DOM;
+  // The spawn satpoint is fixed for the whole search; only `blind` (and thus
+  // `dat`, and thus the tweak) varies per candidate seed. Precompute the
+  // constant jam(spawn-sont) once.
+  const jamSpawn = jam(spawnNoun(opts.spawn));
 
   let tries = 0;
   while (tries < maxTries) {
@@ -171,12 +192,18 @@ export async function mineSuiteC(opts: MineOpts): Promise<MineResult> {
 
     const seed = new Uint8Array(64);
     crypto.getRandomValues(seed);
+    // kelvin-9 hiding dat, recomputed for this candidate seed.
+    const blind = hTag("gw/spawn-blind", minimalLEBytes(bytesToAtomLE(seed)));
+    const d = spawnCommitFromJam(jamSpawn, blind);
+    const datAtom = datFromCommit(d, dom);
+    const tweak = minimalLEBytes(datAtom);
+
     const ringMaterial = sha512(seed);              // 64 bytes
     const sSeed = ringMaterial.slice(0, 32);
     const sPub = edLuck(sSeed);
-    const twScaData = new Uint8Array(32 + opts.tweak.length);
+    const twScaData = new Uint8Array(32 + tweak.length);
     twScaData.set(sPub, 0);
-    twScaData.set(opts.tweak, 32);
+    twScaData.set(tweak, 32);
     const twSca = sha256(twScaData);
     const tweakedSPub = edAddScalarPublic(sPub, twSca);
 
@@ -218,13 +245,13 @@ export async function mineSuiteC(opts: MineOpts): Promise<MineResult> {
     // Matched. Compute cPub and finalize.
     const cSeed = ringMaterial.slice(32, 64);
     const cPub = edLuck(cSeed);
-    const pass = buildPassAtom(sPub, cPub, tweakAtom);
-    const ringAtomBytes = buildRingAtomBytes(ringMaterial, tweakAtom);
+    const pass = buildPassAtom(sPub, cPub, datAtom);
+    const ringAtomBytes = buildRingAtomBytes(ringMaterial, datAtom);
     const feed = jamFeed(comet, opts.rift ?? 0, opts.life ?? 1, ringAtomBytes);
 
     return {
       seed, ringMaterial, sPub, cPub, tweakedSPub, comet,
-      pass, ringAtomBytes, feed, tries,
+      pass, dat: datAtom, blind, ringAtomBytes, feed, tries,
     };
   }
   throw new Error(`miner: exceeded ${maxTries} tries`);
@@ -245,7 +272,6 @@ export function bakeXtrIntoFeed(
   life = 1,
 ): Uint8Array {
   const ring1 = appendXtrToRing(ringAtomBytes, xtr);
-  type Noun = bigint | [Noun, Noun];
   const noun: Noun = [
     [2n, 0n],
     [comet, [BigInt(rift), [[BigInt(life), bytesToAtomLE(ring1)], 0n]]],
@@ -264,56 +290,9 @@ export function jamFeed(
   const cometAtom = bytesToAtomLE(cometBytes);
   const ringAtom = bytesToAtomLE(ringAtomBytes);
 
-  type Noun = bigint | [Noun, Noun];
   const noun: Noun = [
     [2n, 0n],
     [cometAtom, [BigInt(rift), [[BigInt(life), ringAtom], 0n]]],
   ];
   return jam(noun);
-}
-
-// Minimal jam (Hoon ++jam) with back-references.
-export function jam(noun: bigint | [any, any]): Uint8Array {
-  const w = new BitWriter();
-  const refs = new Map<string, number>();
-
-  function key(n: any): string {
-    if (typeof n === "bigint") return `a:${n.toString(16)}`;
-    return `c:(${key(n[0])}|${key(n[1])})`;
-  }
-
-  function encode(n: any): void {
-    const start = w.bitLength;
-    const k = key(n);
-    const existing = refs.get(k);
-
-    if (Array.isArray(n)) {
-      if (existing !== undefined) {
-        w.write(1, 1); w.write(1, 1);
-        w.writeMat(BigInt(existing));
-      } else {
-        refs.set(k, start);
-        w.write(1, 1); w.write(1, 0);
-        encode(n[0]);
-        encode(n[1]);
-      }
-    } else {
-      const a = n as bigint;
-      if (existing !== undefined) {
-        const aBits = a === 0n ? 0 : a.toString(2).length;
-        const rBits = existing === 0 ? 1 : Math.floor(Math.log2(existing)) + 1;
-        if (aBits <= rBits) {
-          w.write(1, 0); w.writeMat(a);
-        } else {
-          w.write(1, 1); w.write(1, 1); w.writeMat(BigInt(existing));
-        }
-      } else {
-        refs.set(k, start);
-        w.write(1, 0); w.writeMat(a);
-      }
-    }
-  }
-
-  encode(noun);
-  return w.toBytes();
 }

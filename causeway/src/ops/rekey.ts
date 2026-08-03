@@ -1,14 +1,32 @@
-import type { Single } from "../protocol/types.js";
-import { buildPsbtsForSkim, broadcastPair } from "./_common.js";
-import type { BroadcastResult, OpCtx, OpModule, PsbtPair } from "./types.js";
+// rekey — rotate the networking (messaging) key, optionally with a breach.
+//
+// The signing key that fixes the @p is immutable; only the encryption half
+// (snapshot.key = cry.pub) rotates. Every snapshot change increments `life`; a
+// breach also increments `rift` (decisions-addendum §2). This is the sole
+// on-chain management op that survives under the OP_RETURN revision.
 
-export interface RekeyArgs { newPass: bigint; breach: boolean; }
+import { buildStateUpdate, broadcastStateUpdate } from "./_common.js";
+import type { OpModule, StateUpdateCtx, BuiltStateUpdate, BroadcastResult } from "./types.js";
+import type { Snapshot } from "../spawn/snapshot.js";
+
+export interface RekeyArgs {
+  newKey: bigint;   // new messaging key (cry.pub of the new suite-C pass)
+  breach: boolean;
+}
 
 export const rekeyOp: OpModule<RekeyArgs> = {
   name: "rekey",
-  async buildPsbts(args, ctx): Promise<PsbtPair> {
-    const skim: Single = { op: "keys", pass: args.newPass, breach: args.breach };
-    return buildPsbtsForSkim(skim, ctx.inscriptionUtxo, ctx);
+  build(args, ctx): BuiltStateUpdate {
+    const newSnapshot: Snapshot = {
+      life: ctx.currentSnapshot.life + 1,
+      rift: ctx.currentSnapshot.rift + (args.breach ? 1 : 0),
+      key: args.newKey,
+      sponsor: ctx.currentSnapshot.sponsor,
+      fief: ctx.currentSnapshot.fief,
+    };
+    return buildStateUpdate(newSnapshot, ctx);
   },
-  async broadcast(c, r, ctx): Promise<BroadcastResult> { return broadcastPair(c, r, ctx.mp); },
+  async broadcast(signedPsbt, ctx): Promise<BroadcastResult> {
+    return broadcastStateUpdate(signedPsbt, ctx.mp);
+  },
 };

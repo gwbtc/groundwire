@@ -1,29 +1,28 @@
+// kelvin-9 on-chain management. Under the OP_RETURN revision, sponsorship /
+// escape / adopt / reject / detach / fief / set-mang all leave the consensus
+// layer (they are off-chain, wire-borne state — spec §8). The ONLY on-chain
+// management op that survives is a state UPDATE: a rekey/breach that spends the
+// sat-carrying UTXO key-path and re-commits a new snapshot in output 0.
+
 import type { Mempool } from "../chain/mempool.js";
-import type { Rpc } from "../chain/rpc.js";
-import type { UrbState } from "../oracle/state.js";
 import type { KeyInfo, Utxo } from "../signing/psbt.js";
+import type { Snapshot } from "../spawn/snapshot.js";
 
-// spawn is not a management op — see ui/pages/spawn.ts (the dedicated
-// cc-draft-2 confidential flow). The legacy public spawnOp has been retired.
-export type OpName =
-  | "rekey" | "escape" | "cancel-escape"
-  | "adopt" | "reject" | "detach" | "fief" | "set-mang";
+export type OpName = "rekey";
 
-export interface OpCtx {
-  state: UrbState;
-  patpAtom: bigint;
-  inscriptionUtxo: Utxo;  // UTXO currently holding the ownership sat
-  fundingKey: KeyInfo;     // key at index 0 — signs commit input (= inscription UTXO)
-  commitKey: KeyInfo;      // key at index 1 — internal key for commit output, signs reveal
-  destKey: KeyInfo;        // key at index 2 — internal key for reveal destination
+export interface StateUpdateCtx {
+  current: Utxo;                 // the sat-carrying UTXO to spend (input 0)
+  ownerKey: KeyInfo;             // key controlling `current` (signs input 0)
+  internalKey33: Uint8Array;     // 33-byte compressed internal key P
+  currentSnapshot: Snapshot;     // committed in `current` (gives the input merkle root)
   feeRate: number;
   mp: Mempool;
-  rpc?: Rpc;
 }
 
-export interface PsbtPair {
-  commitPsbt: Uint8Array;
-  revealPsbt: Uint8Array;
+export interface BuiltStateUpdate {
+  psbt: Uint8Array;
+  txidHex: string;               // predicted display-order txid
+  newSnapshot: Snapshot;
 }
 
 export interface BroadcastResult {
@@ -32,6 +31,6 @@ export interface BroadcastResult {
 
 export interface OpModule<Args> {
   readonly name: OpName;
-  buildPsbts(args: Args, ctx: OpCtx): Promise<PsbtPair>;
-  broadcast(signedCommit: Uint8Array, signedReveal: Uint8Array, ctx: OpCtx): Promise<BroadcastResult>;
+  build(args: Args, ctx: StateUpdateCtx): BuiltStateUpdate;
+  broadcast(signedPsbt: Uint8Array, ctx: StateUpdateCtx): Promise<BroadcastResult>;
 }

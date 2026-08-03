@@ -1,36 +1,45 @@
-// cc-draft-2 `dat` — the name-committing tweak data for suite-C
-// confidential comets.
+// kelvin-9 %gw-btc `dat` — the HIDING, name-committing tweak data for
+// suite-C confidential comets.
 //
-// Per the kernel spec (gwbtc/urbit cyc/cc-draft-2,
-// doc/spec/confidential-comets.md + sur/stealth.hoon), the Schnorr tweak
-// data hashed into a confidential comet's signing key is:
+// Per the OP_RETURN revision (groundwire/doc/opret-revision, and the Hoon
+// codec groundwire/lib/gw-btc-pass.hoon):
 //
-//     dat = (can 0 (mat dom) [256 txid] (mat vout) (mat off) ~)
+//     dat   = (can 0 (mat %gw-btc) (mat 9) [256 d] ~)
+//     d     = H_tag("gw/spawn-commit", (jam spawn-sont) || blind)
+//     blind = H_tag("gw/spawn-blind", seed)
 //
-// i.e. the +mat-encoded PKI domain tag at bit 0 — the kernel extracts it
-// with (rub 0 dat) in +pass-pki-dom — followed by the spawn satpoint (the
-// sat's location BEFORE the spawn commit spends it), laid out the way
-// lib/urb-encoder's +en-sont writes satpoints: a fixed 256-bit txid (the
-// numeric value of the display hex a block explorer shows), then
-// mat(vout), then mat(off).
+// The domain tag is the leading +mat item at bit 0 — Ames extracts it with
+// (rub 0 dat) and routes the pass to %gw-btc; nothing else in the kernel
+// changes. The Kelvin (9) is plaintext, so any holder of a pass can read a
+// comet's mint version without an opening. `d` is a HIDING commitment: the
+// spawn satpoint is learned only from an explicit blind-opening (in the xtr,
+// or in a public OP_RETURN publication), never parsed out of dat — this
+// replaces the legacy clear-satpoint `can`/`mat` dat. Decoders reject trailing
+// data: the bit-width is exactly p:(mat %gw-btc) + p:(mat 9) + 256.
 //
-// The domain tag is 1:1 with the verifier agent registered with Jael via
-// %anex — %gw-btc, the Groundwire Bitcoin-PKI domain agent (renamed from
-// %urb-watcher / %groundwire). dat is hashed into the signing key, so the
-// comet's @p commits to the tag forever — it is consensus-critical.
+// `dat` is hashed into the signing key, so the comet's @p commits to the
+// domain tag, the Kelvin, and the hidden spawn commitment forever.
 //
-// Unlike the legacy v9 rap-3 tweak (see ./tweak.ts), the fixed-width txid
-// field means a txid with leading zero bytes cannot shift the encoding,
-// and the trailing mat always ends in a 1-bit, so the atom's byte length
-// is unambiguous.
+// Because `blind` derives from the ship's seed alone, the opening is
+// recoverable without storing anything extra. This makes `dat` depend on the
+// seed, so the miner recomputes it per candidate seed (see mine-c.ts).
 //
-// Golden vectors: tests/dat.spec.ts, generated with `urbit eval` against
-// the cyc/cc-draft-2 kernel.
+// Golden vectors: groundwire/vectors/gw-kelvin-9.json + tests/kelvin9.spec.ts,
+// pinned to the authoritative Hoon test tests/lib/gw-btc-pass.hoon.
 
 import { BitWriter } from "../protocol/bitwriter.js";
 import { rub } from "../protocol/mat.js";
+import { jam, type Noun } from "../protocol/jam.js";
+import { hTag, concatBytes, minimalLEBytes, bytesToAtomBE } from "../protocol/tagged-hash.js";
 
 export const DEFAULT_PKI_DOM = "gw-btc";
+export const KELVIN = 9;
+
+export interface SpawnSont {
+  txidHex: string;          // 64-char display hex of the spawn satpoint's txid
+  vout: number;             // output index the sat sits at pre-spawn
+  off?: number | bigint;    // sat offset within that output (default 0)
+}
 
 // Pack an ASCII term into its Hoon atom (LE bytes).
 export function cordToAtom(s: string): bigint {
@@ -41,37 +50,62 @@ export function cordToAtom(s: string): bigint {
   return x;
 }
 
-export interface DatInputs {
-  txidHex: string;          // 64-char display hex of the spawn satpoint's txid
-  vout: number;             // output index the sat sits at pre-spawn
-  off?: number | bigint;    // sat offset within that output (default 0)
-  dom?: string;             // PKI domain tag (default %groundwire)
-}
-
-export function buildDatAtom(inputs: DatInputs): bigint {
-  const clean = inputs.txidHex.replace(/^0x/, "").toLowerCase();
+// The spawn satpoint as a jammable noun: [txid [vout off]], txid = the numeric
+// value of its display hex. jam(spawnNoun) is the `jam_spawn_le` vector.
+export function spawnNoun(s: SpawnSont): Noun {
+  const clean = s.txidHex.replace(/^0x/, "").toLowerCase();
   if (clean.length !== 64) {
     throw new Error(`dat: expected 64 hex chars of txid, got ${clean.length}`);
   }
+  return [BigInt("0x" + clean), [BigInt(s.vout), BigInt(s.off ?? 0)]];
+}
+
+// blind = H_tag("gw/spawn-blind", seed_le_bytes). `seed` is the ship's master
+// seed as an atom (bigint) or its minimal LE byte string; both hash the same
+// minimal LE bytes.
+export function makeBlind(seed: bigint | Uint8Array): Uint8Array {
+  const atom = typeof seed === "bigint" ? seed : bytesToAtomBEofLE(seed);
+  return hTag("gw/spawn-blind", minimalLEBytes(atom));
+}
+
+// A Uint8Array seed is an atom in LE byte order (LSB first), matching how the
+// miner draws 64 random bytes and how Hoon reads `seed`.
+function bytesToAtomBEofLE(b: Uint8Array): bigint {
+  let x = 0n;
+  for (let i = b.length - 1; i >= 0; i--) x = (x << 8n) | BigInt(b[i]!);
+  return x;
+}
+
+// d = H_tag("gw/spawn-commit", jam(spawn-sont) || blind). `blind` is the raw
+// 32 bytes.
+export function spawnCommit(s: SpawnSont, blind: Uint8Array): Uint8Array {
+  return spawnCommitFromJam(jam(spawnNoun(s)), blind);
+}
+
+// Same, from a precomputed jam(spawn-sont) — the miner reuses this across the
+// whole search since the spawn satpoint is fixed and only `blind` varies.
+export function spawnCommitFromJam(jamSpawn: Uint8Array, blind: Uint8Array): Uint8Array {
+  return hTag("gw/spawn-commit", concatBytes(jamSpawn, blind));
+}
+
+// dat atom = can(0, [mat(dom), mat(9), [256, d]]).
+export function datFromCommit(d: Uint8Array, dom = DEFAULT_PKI_DOM): bigint {
   const w = new BitWriter();
-  w.writeMat(cordToAtom(inputs.dom ?? DEFAULT_PKI_DOM));
-  w.write(256, BigInt("0x" + clean));
-  w.writeMat(BigInt(inputs.vout));
-  w.writeMat(BigInt(inputs.off ?? 0));
+  w.writeMat(cordToAtom(dom));
+  w.writeMat(BigInt(KELVIN));
+  w.write(256, bytesToAtomBE(d));
   return w.toInt();
 }
 
-// Minimal LE atom bytes — what the tweak hash (shax(ugn || dat)) and the
-// miner consume. dat always ends in a mat's 1-bit, so ceil(bits/8) is the
-// minimal byte length.
-export function buildDatBytes(inputs: DatInputs): Uint8Array {
-  let a = buildDatAtom(inputs);
-  const out: number[] = [];
-  while (a > 0n) {
-    out.push(Number(a & 0xffn));
-    a >>= 8n;
-  }
-  return new Uint8Array(out);
+export function buildDatAtom(s: SpawnSont, seed: bigint | Uint8Array, dom = DEFAULT_PKI_DOM): bigint {
+  return datFromCommit(spawnCommit(s, makeBlind(seed)), dom);
+}
+
+// Minimal LE atom bytes — the tweak the miner hashes into the signing key and
+// what `comet-miner` consumes via u3r_bytes_all. dat always ends in a mat's
+// 1-bit, so ceil(bits/8) is the minimal byte length.
+export function buildDatBytes(s: SpawnSont, seed: bigint | Uint8Array, dom = DEFAULT_PKI_DOM): Uint8Array {
+  return minimalLEBytes(buildDatAtom(s, seed, dom));
 }
 
 // The domain tag a receiving kernel would extract via +pass-pki-dom's

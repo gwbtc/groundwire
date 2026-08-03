@@ -6,9 +6,11 @@
 
 import { mineSuiteC } from "./mine-c.js";
 import type { MineResult as RawResult } from "./mine-c.js";
+import type { SpawnSont } from "./dat.js";
 
 export interface MineParams {
-  tweakExpr: Uint8Array;
+  spawn: SpawnSont;            // the spawn satpoint the kelvin-9 dat commits to
+  dom?: string;
   parent?: bigint;
   prefix?: number | null;
   onProgress?: (tries: number) => void;
@@ -20,6 +22,8 @@ export interface MineResult {
   ring: Uint8Array;
   seed: Uint8Array;
   pass: bigint;
+  dat: bigint;                 // the winning dat atom
+  blind: Uint8Array;           // 32 bytes — opens the hiding dat commitment
   sPub: Uint8Array;
   cPub: Uint8Array;
   tries: number;
@@ -42,6 +46,8 @@ function toPublicResult(r: RawResult): MineResult {
     ring: r.ringAtomBytes,
     seed: r.seed,
     pass: r.pass,
+    dat: r.dat,
+    blind: r.blind,
     sPub: r.sPub,
     cPub: r.cPub,
     tries: r.tries,
@@ -50,7 +56,7 @@ function toPublicResult(r: RawResult): MineResult {
 
 // Worker-backed miner. Preferred in the browser.
 const workerMiner: CometMiner = {
-  async mine({ tweakExpr, prefix, onProgress }) {
+  async mine({ spawn, dom, prefix, onProgress }) {
     // Vite resolves the worker URL at build time via import.meta.url.
     const worker = new Worker(new URL("./mine-worker.ts", import.meta.url), {
       type: "module",
@@ -72,16 +78,17 @@ const workerMiner: CometMiner = {
         worker.terminate();
         reject(err);
       };
-      worker.postMessage({ tweak: tweakExpr, prefix: prefix ?? null });
+      worker.postMessage({ spawn, dom, prefix: prefix ?? null });
     });
   },
 };
 
 // Main-thread fallback — used in tests and environments without Worker.
 const mainThreadMiner: CometMiner = {
-  async mine({ tweakExpr, prefix, onProgress }) {
+  async mine({ spawn, dom, prefix, onProgress }) {
     const res = await mineSuiteC({
-      tweak: tweakExpr,
+      spawn,
+      ...(dom ? { dom } : {}),
       prefix: prefix ?? null,
       ...(onProgress ? { onProgress } : {}),
     });

@@ -7,7 +7,6 @@ Launch with `causeway-tui` once the package is installed, or
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import json
 import os
 import sys
@@ -23,6 +22,7 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import (
     Button,
+    Checkbox,
     DataTable,
     Footer,
     Header,
@@ -64,23 +64,24 @@ class FlowState:
     feed: Optional[str] = None
     ring: Optional[str] = None
     pass_atom: Optional[int] = None
-    attestation: Optional[bytes] = None
+    # kelvin-9: the sat output commits a snapshot; a seed-derived blind hides the
+    # spawn satpoint in dat and is opened later in the xtr / a public OP_RETURN.
+    snapshot: Optional[dict] = None
+    blind: Optional[bytes] = None
+    blind_seed: Optional[int] = None
+    publish: bool = False
     psbt_b64_unsigned: Optional[str] = None
     psbt_b64_signed: Optional[str] = None
     commit_txid: Optional[str] = None
     proof_path: Optional[str] = None
     op_name: str = "spawn"
 
-    # Manage context
+    # Manage context (kelvin-9: rekey is the only on-chain management op;
+    # sponsorship + escape are off-chain).  A rekey spends the point's current
+    # sat-carrying output key-path, identified by --prior-proof.
     point: Optional[str] = None
-    parent: Optional[str] = None
     new_pass_hex: Optional[str] = None
-    fief_ip: Optional[str] = None
-    fief_port: Optional[int] = None
-    # Management ops chain off the point's prior proof (its current on-chain
-    # home), not an arbitrary wallet UTXO — see build_chained_commit_psbt.
     prior_proof: Optional[dict] = None
-    escape_sig_hex: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -543,14 +544,18 @@ class MiningScreen(BaseScreen):
             return
         log = self.query_one("#log", Log)
         u = state.picked_utxo
-        self.app.call_from_thread(log.write_line, f"Tweak: txid={u['txid'][:16]}... vout={u['vout']} off=0")
+        self.app.call_from_thread(log.write_line, f"Spawn satpoint: txid={u['txid'][:16]}... vout={u['vout']} off=0")
         self.app.call_from_thread(log.write_line, f"Miner: {state.miner_bin}")
         if not os.path.exists(state.miner_bin):
             self.app.call_from_thread(log.write_line, f"ERROR: miner binary not found at {state.miner_bin}")
             self.app.call_from_thread(self.query_one("#status", Static).update, "miner not found — configure --miner")
             return
+        # Seed-derived blind so the dat opening is recoverable; dat depends on it.
+        import secrets as _secrets
+        state.blind_seed = int.from_bytes(_secrets.token_bytes(32), "big")
+        state.blind = cw.make_blind(state.blind_seed)
         try:
-            result = cw.mine_comet_from_utxo(u["txid"], u["vout"], 0, state.miner_bin)
+            result = cw.mine_comet_from_utxo(u["txid"], u["vout"], 0, state.blind_seed, state.miner_bin)
         except Exception as e:
             self.app.call_from_thread(log.write_line, f"Mining error: {e}")
             return
@@ -562,19 +567,9 @@ class MiningScreen(BaseScreen):
         self.app.call_from_thread(log.write_line, f"  @p {state.comet}")
         self.app.call_from_thread(log.write_line, f"Pass atom: 0x{state.pass_atom:x}")
 
-        # Build the %spawn sotx attestation
-        comet_p = cw.patp_to_int(state.comet)
-        spkh = cw.compute_spkh(u["address"], u["value"])
-        state.attestation = cw.encode_spawn_sotx(
-            comet_p=comet_p,
-            pass_atom=state.pass_atom,
-            spkh=spkh,
-            vout=u["vout"],
-            off=0,
-            tej=0,
-            fief=None,
-        )
-        self.app.call_from_thread(log.write_line, f"Attestation: {len(state.attestation)} bytes")
+        # The initial snapshot the sat output commits to (life 1, rift 0).
+        state.snapshot = cw._initial_snapshot(state.pass_atom)
+        self.app.call_from_thread(log.write_line, f"Initial snapshot: life=1 rift=0 key=0x{state.snapshot['key']:x}")
         self.app.call_from_thread(self.app.push_screen, PsbtBuildScreen())
 
 
@@ -623,45 +618,50 @@ class PsbtBuildScreen(BaseScreen):
 
     def build_psbt(self) -> None:
         state: FlowState = self.app.state  # type: ignore[attr-defined]
-        if state.source is None or state.attestation is None:
-            self.query_one("#status", Static).update("missing prerequisites — go back")
-            return
         try:
             if state.op_name == "spawn":
-                if state.picked_utxo is None:
-                    self.query_one("#status", Static).update("no funding UTXO — go back")
+                if state.picked_utxo is None or state.source is None or state.snapshot is None:
+                    self.query_one("#status", Static).update("missing prerequisites — go back")
                     return
-                p, proof = cw.build_confidential_commit_psbt(
-                    utxo_txid=state.picked_utxo["txid"],
-                    utxo_vout=state.picked_utxo["vout"],
-                    utxo_value=state.picked_utxo["value"],
-                    utxo_script_pubkey=state.picked_utxo["scriptpubkey"],
-                    funding_internal_xonly=state.picked_utxo["xonly"],
-                    funding_path=state.picked_utxo["path"],
+                u = state.picked_utxo
+                pub_pass = pub_opening = None
+                if state.publish:
+                    pub_pass = state.pass_atom
+                    pub_opening = cw._spawn_publication_opening(
+                        u["xonly"], state.snapshot, u, state.blind or b""
+                    )
+                p, proof = cw.build_spawn_psbt(
+                    utxo_txid=u["txid"],
+                    utxo_vout=u["vout"],
+                    utxo_value=u["value"],
+                    utxo_script_pubkey=u["scriptpubkey"],
+                    funding_internal_xonly=u["xonly"],
+                    funding_path=u["path"],
                     funding_fingerprint=state.source.master_fingerprint,
-                    attestation_bytes=state.attestation,
+                    snapshot=state.snapshot,
+                    publication_pass_atom=pub_pass,
+                    publication_opening=pub_opening,
                     fee_rate=2,
                     network=state.network,
+                )
+                cw._finish_spawn_proof(
+                    proof, comet=state.comet or "", pass_atom=state.pass_atom or 0,
+                    blind=state.blind or b"", blind_seed=state.blind_seed or 0, utxo=u,
                 )
             else:
-                # Management op: chain off the prior proof so the commit spends
-                # the point's current sont (build_chained_commit_psbt), not an
-                # arbitrary wallet UTXO.
-                if state.prior_proof is None:
-                    self.query_one("#status", Static).update("no prior proof — go back")
+                # Rekey: spend the point's current sat output key-path, identified
+                # by --prior-proof (build_rekey_psbt).
+                if state.prior_proof is None or state.snapshot is None:
+                    self.query_one("#status", Static).update("no prior proof / snapshot — go back")
                     return
-                p, proof = cw.build_chained_commit_psbt(
+                p, proof = cw.build_rekey_psbt(
                     prior_proof=state.prior_proof,
-                    new_attestation_bytes=state.attestation,
+                    new_snapshot=state.snapshot,
                     fee_rate=2,
                     network=state.network,
                 )
-            proof["op"] = state.op_name
-            proof["patp"] = state.comet or state.point or ""
-            if state.pass_atom is not None:
-                proof["pass_atom_hex"] = hex(state.pass_atom)
-            proof["tweak_format"] = "cc2"
-            proof["dom"] = cw.PKI_DOM
+                proof["op"] = state.op_name
+                proof["patp"] = state.point or ""
             state.psbt_b64_unsigned = p.to_base64()
             # stash proof temporarily in state via a closure
             self._pending_proof = proof  # type: ignore[attr-defined]
@@ -704,9 +704,9 @@ class PsbtBuildScreen(BaseScreen):
         try:
             # The signed tx's txid is deterministic (segwit), so we know the
             # commit_txid before broadcasting. Persist the proof FIRST — it is
-            # the only durable record of the attestation/leaf; if we broadcast
-            # first and then crash before writing it, an already-spent sat is
-            # left with no recoverable proof (identity-burning for a spawn).
+            # the only durable record of the snapshot + blind opening; if we
+            # broadcast first and then crash before writing it, an already-spent
+            # sat is left with no recoverable proof (identity-burning for a spawn).
             commit_txid, tx_hex = cw._extract_tx_from_psbt(state.psbt_b64_signed or "")
             proof = getattr(self, "_pending_proof", None) or {}
             proof["commit_txid"] = commit_txid
@@ -765,7 +765,7 @@ class DoneScreen(BaseScreen):
                     classes="label",
                 ),
                 Static(
-                    f"Once the commit confirms, bake the reveal log into the feed:\n"
+                    f"Once the spawn confirms, bake the custody log (xtr) into the feed:\n"
                     f"  causeway finalize {proof_path} --feed <feed>",
                     classes="label",
                 ),
@@ -781,8 +781,9 @@ class DoneScreen(BaseScreen):
                 Static(f"Commit txid: {state.commit_txid}", classes="label"),
                 Static(f"Proof: {state.proof_path}", classes="label"),
                 Static(
-                    "Import the proof into your ship's Ames state via "
-                    f"`:spv-wallet|import-proof ...` (see {state.proof_path}).",
+                    "After it confirms, hand the new xtr entry + opening to your\n"
+                    "ship's %gw-btc agent (the %anew poke) so peers can re-verify\n"
+                    f"you. Keep {state.proof_path} as --prior-proof for the next op.",
                     classes="label",
                 ),
                 Button("Done  →  back to landing", id="home", variant="primary"),
@@ -816,11 +817,13 @@ class ManagePickOpScreen(BaseScreen):
         yield Header()
         yield Vertical(
             Static("MANAGE — pick an operation", id="title"),
+            Static(
+                "kelvin-9: rekey (messaging-key rotation / breach) is the only\n"
+                "on-chain management op. Sponsorship and escape are off-chain.",
+                classes="label",
+            ),
             RadioSet(
-                RadioButton("rekey (%keys)", id="rekey", value=True),
-                RadioButton("escape (%escape)", id="escape"),
-                RadioButton("cancel-escape (%cancel-escape)", id="cancel-escape"),
-                RadioButton("fief (%fief)", id="fief"),
+                RadioButton("rekey — rotate messaging key", id="rekey", value=True),
                 id="ops",
             ),
             Horizontal(
@@ -862,37 +865,15 @@ class ManageFormScreen(BaseScreen):
     def compose(self) -> ComposeResult:
         yield Header()
         children: list = [
-            Static(f"{self.op.upper()} — fill in op fields", id="title"),
+            Static("REKEY — rotate messaging key", id="title"),
             Static("Target comet (mnemonym or @p):", classes="label"),
             Input(placeholder=".routine.inhale… or ~sampel-palnet", id="point"),
-            Static("Xpub / descriptor:", classes="label"),
-            Input(placeholder="xpub... or tr([fp/86h/0h/0h]xpub...)", id="xpub"),
-            Static("Prior proof.json (spawn's or last op's):", classes="label"),
+            Static("Prior proof.json (spawn's or last rekey's):", classes="label"),
             Input(placeholder="/path/to/~sampel-palnet-spawn.proof.json", id="prior-proof"),
-        ]
-        if self.op == "rekey":
-            children += [
-                Static("New pass (hex):", classes="label"),
-                Input(placeholder="deadbeef...", id="new-pass-hex"),
-            ]
-        elif self.op in ("escape", "cancel-escape"):
-            children += [
-                Static("Parent (mnemonym or @p):", classes="label"),
-                Input(placeholder="~daplyd", id="parent"),
-            ]
-            if self.op == "escape":
-                children += [
-                    Static("Escape sig (hex, optional):", classes="label"),
-                    Input(placeholder="leave blank for no pre-sig", id="escape-sig"),
-                ]
-        elif self.op == "fief":
-            children += [
-                Static("IP (v4 or v6):", classes="label"),
-                Input(placeholder="1.2.3.4 or ::1", id="ip"),
-                Static("Port:", classes="label"),
-                Input(placeholder="31337", id="port"),
-            ]
-        children += [
+            Static("New pass (hex — your ship's new ring's pass):", classes="label"),
+            Input(placeholder="deadbeef...", id="new-pass-hex"),
+            Static("Breach (bump rift as well as life)?", classes="label"),
+            Checkbox("breach", id="breach"),
             Horizontal(
                 Button("Continue →", id="continue", variant="primary"),
                 Button("Back", id="back"),
@@ -909,19 +890,17 @@ class ManageFormScreen(BaseScreen):
         if event.button.id != "continue":
             return
         state: FlowState = self.app.state  # type: ignore[attr-defined]
+        state.op_name = "rekey"
         err = self.query_one("#err", Static)
         try:
             entry = self.query_one("#point", Input).value.strip()
             # Accept a mnemonym or @p; canonicalize to @p for filenames/proof.
             state.point = cw.int_to_patp(cw.resolve_id(entry))
-            comet_p = cw.patp_to_int(state.point)
-            xpub_val = self.query_one("#xpub", Input).value.strip()
-            state.source = cw.parse_key_source(xpub_val, network=state.network)
         except Exception as e:
             err.update(f"parse error: {e}")
             return
-        # Management ops must chain off the point's current on-chain home
-        # (urb-core's is-sont-in-input), so a prior proof is required.
+        # A rekey spends the point's current sat-carrying output key-path, so a
+        # prior proof (with its snapshot) is required.
         prior_path = self.query_one("#prior-proof", Input).value.strip()
         if not prior_path:
             err.update("prior proof.json is required — it's how this op spends the point's sat")
@@ -929,48 +908,30 @@ class ManageFormScreen(BaseScreen):
         try:
             state.prior_proof = cw.load_proof_json(prior_path)
             if not state.prior_proof.get("commit_txid"):
-                err.update("prior proof has no commit_txid — was its commit broadcast?")
+                err.update("prior proof has no commit_txid — was its tx broadcast?")
                 return
         except Exception as e:
             err.update(f"couldn't load prior proof: {e}")
             return
-        if self.op == "rekey":
-            np = self.query_one("#new-pass-hex", Input).value.strip()
-            try:
-                state.new_pass_hex = np
-                pass_atom = int.from_bytes(bytes.fromhex(np), "little")
-            except Exception as e:
-                err.update(f"bad hex: {e}")
-                return
-            state.attestation = cw.encode_keys_sotx(comet_p=comet_p, pass_atom=pass_atom, breach=False)
-        elif self.op == "escape":
-            state.parent = self.query_one("#parent", Input).value.strip()
-            sig_hex = self.query_one("#escape-sig", Input).value.strip() or None
-            esc_sig = int.from_bytes(bytes.fromhex(sig_hex), "little") if sig_hex else None
-            state.attestation = cw.encode_escape_sotx(
-                comet_p=comet_p,
-                parent_p=cw.resolve_id(state.parent),
-                escape_sig=esc_sig,
-            )
-        elif self.op == "cancel-escape":
-            state.parent = self.query_one("#parent", Input).value.strip()
-            state.attestation = cw.encode_cancel_escape_sotx(
-                comet_p=comet_p, parent_p=cw.resolve_id(state.parent)
-            )
-        elif self.op == "fief":
-            ip_str = self.query_one("#ip", Input).value.strip()
-            try:
-                port = int(self.query_one("#port", Input).value.strip())
-            except Exception as e:
-                err.update(f"bad port: {e}")
-                return
-            if ":" in ip_str:
-                ip_int = int(ipaddress.IPv6Address(ip_str)); fief = ("is", ip_int, port)
-            else:
-                ip_int = int(ipaddress.IPv4Address(ip_str)); fief = ("if", ip_int, port)
-            state.attestation = cw.encode_fief_sotx(comet_p=comet_p, fief=fief)
-        # No UTXO picker for management ops: the commit input is fixed — it's
-        # the prior proof's commit output (the point's current sont).
+        np = self.query_one("#new-pass-hex", Input).value.strip()
+        try:
+            state.new_pass_hex = np
+            new_key = cw.messaging_key_from_pass(int.from_bytes(bytes.fromhex(np), "little"))
+        except Exception as e:
+            err.update(f"bad hex: {e}")
+            return
+        breach = self.query_one("#breach", Checkbox).value
+        prior_snap = state.prior_proof.get("snapshot") or {}
+        # Every snapshot change bumps life; a rift bump implies a life bump.
+        state.snapshot = {
+            "life": int(prior_snap.get("life", 0)) + 1,
+            "rift": int(prior_snap.get("rift", 0)) + (1 if breach else 0),
+            "key": new_key,
+            "sponsor": prior_snap.get("sponsor"),
+            "fief": prior_snap.get("fief"),
+        }
+        # No UTXO picker for a rekey: the input is fixed — the prior proof's
+        # sat-carrying output (the point's current custody home).
         self.app.push_screen(PsbtBuildScreen())
 
 

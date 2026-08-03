@@ -20,15 +20,16 @@
 const STORAGE_KEY = "causeway:pending-spawn";
 
 // Current schema version. Bumped when the shape below changes incompatibly.
-// v3 (cc-draft-2 confidential): dropped the reveal PSBT + sponsor sig, added
-// the xtr inputs (internalKeyHex / leafScriptHex / leafVersion). A stored v1/v2
-// record describes the retired public flow, so loadPendingSpawn discards it.
-const SCHEMA_VERSION = 3;
+// v4 (kelvin-9 OP_RETURN): the spawn is ONE transaction (no commit/reveal); the
+// stored opening carries the internal key + snapshot + blind that reconstruct
+// the xtr entry once the spawn tx confirms. A stored v1/v2/v3 record describes a
+// retired flow, so loadPendingSpawn discards it.
+const SCHEMA_VERSION = 4;
 
 export type SpawnPhase =
-  | "assembled"            // commit PSBT built, nothing broadcast yet
-  | "commit-broadcast"     // commit seen in mempool
-  | "commit-confirmed";    // commit at >= 1 conf (terminal — we clear after this)
+  | "assembled"            // spawn PSBT built, nothing broadcast yet
+  | "spawn-broadcast"      // spawn tx seen in mempool
+  | "spawn-confirmed";     // spawn tx at >= 1 conf (terminal — we clear after this)
 
 export interface PersistedUtxo {
   txidHex: string;       // display-hex (mempool.space style, big-endian)
@@ -49,13 +50,23 @@ export interface PersistedMined {
   // when resuming after a refresh.
 }
 
-// The public commitment data the xtr reveal log needs once the commit confirms
-// (block height comes from mempool.space at that point). Mirrors the subset of
-// desktop proof.json a `causeway finalize` reads.
-export interface PersistedXtrInputs {
-  internalKeyHex: string;   // 32-byte funding xonly; xtr uses 02||xonly
-  leafScriptHex: string;    // NUMS-wrapped %spawn attestation leaf
-  leafVersion: number;      // 0xc0
+// The public opening data the xtr custody log needs once the spawn tx confirms
+// (block height comes from mempool.space at that point). Reconstructs the
+// [internal-key snapshot blind-opening] the verifier checks against output 0.
+export interface PersistedSnapshot {
+  life: number;
+  rift: number;
+  keyHex: string;            // messaging key (cry.pub) as hex
+  sponsor: string | null;    // sponsor @p as decimal string, or null
+}
+
+export interface PersistedOpening {
+  internalKeyHex: string;    // 33-byte compressed internal key (02||xonly)
+  snapshot: PersistedSnapshot;
+  spawnTxidHex: string;      // spawn satpoint txid (display hex)
+  spawnVout: number;
+  spawnOff: number;
+  blindHex: string;          // 32-byte blind (BE hex) — opens the dat commitment
 }
 
 export interface PersistedSpawn {
@@ -67,10 +78,10 @@ export interface PersistedSpawn {
   masterFingerprint: string; // 8 hex chars
   picked: PersistedUtxo;
   mined: PersistedMined;
-  commitPsbtB64: string;
-  commitTxidHex: string;     // display hex
-  commitValue: string;       // bigint decimal — the commit output's sats
-  xtr: PersistedXtrInputs;
+  spawnPsbtB64: string;
+  spawnTxidHex: string;      // display hex
+  outputValue: string;       // bigint decimal — the sat-carrying output's sats
+  opening: PersistedOpening;
   phase: SpawnPhase;
 }
 

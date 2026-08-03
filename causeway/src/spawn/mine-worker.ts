@@ -1,21 +1,24 @@
 // Dedicated mining Web Worker. Keeps the ~65k-iteration ~daplyd search off the
 // main thread so the UI stays responsive.
 //
-// Protocol: parent posts `{ tweak, prefix }`, worker posts `{type:"progress"}`
+// Protocol: parent posts `{ spawn, prefix }`, worker posts `{type:"progress"}`
 // periodically and eventually `{type:"result"}` or `{type:"error"}`.
 
 import { mineSuiteC } from "./mine-c.js";
+import type { SpawnSont } from "./dat.js";
 
 interface MineMessage {
-  tweak: Uint8Array;
+  spawn: SpawnSont;
+  dom?: string;
   prefix: number | null;
 }
 
 self.onmessage = async (ev: MessageEvent<MineMessage>) => {
-  const { tweak, prefix } = ev.data;
+  const { spawn, dom, prefix } = ev.data;
   try {
     const res = await mineSuiteC({
-      tweak,
+      spawn,
+      ...(dom ? { dom } : {}),
       prefix,
       onProgress: (tries) => {
         (self as unknown as Worker).postMessage({ type: "progress", tries });

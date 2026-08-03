@@ -1,69 +1,51 @@
-// cc-draft-2 `xtr` — the off-chain reveal log riding in a confidential
-// comet's pass.
+// kelvin-9 `xtr` — the off-chain custody/attestation log riding in a
+// confidential comet's pass (spec §5, decisions-addendum §2.5).
 //
 // xtr is NOT hashed into the key (the @p commits to ugn+dat only, see
-// ./dat.ts), so it grows over the comet's lifetime without changing the
-// name; peers' domain agents parse it to verify the on-chain ownership
-// chain, and the kernel's %anew flow refreshes it when the sat moves.
+// ./dat.ts), so it grows over the comet's lifetime without changing the name;
+// peers' domain agents parse it to verify the on-chain ownership chain, and
+// the kernel's %anew flow refreshes it when the sat moves.
 //
-// This encoding is now PINNED to the %gw-btc agent's decoder
-// (groundwire lib/gw-verify `$custody-log`, branch hd/gw-btc): the
-// spec's fetch-based "variant B" (§8) with STATE COMMITMENTS (§2.1) —
+//     xtr     = (jam log)
+//     log     = (list entry)                 :: oldest first, terminates in ~
+//     entry   = [txid=@ux height=@ud opening=(unit opening)]
+//     opening = [internal-key snapshot blind-opening=(unit [spawn blind])]
 //
-//     xtr = (jam log)
-//     log = (list [txid=@ux block-height=@ud reveal=(unit reveal)])
-//     reveal = [internal-key=@ux leaf-version=@ux leaf-script=[wid=@ud dat=@ux]]
+// An entry that carries an opening lets the verifier recompute the state-key Q
+// and compare it against the transaction's sat-carrying output. A bare entry
+// (opening omitted) is a pure custody transfer that only proves the sat moved;
+// only the LATEST state-bearing entry is authoritative. The spawn entry
+// (normally entry 0) carries a blind-opening, which also opens the hiding
+// `dat` commitment.
 //
-// oldest-first: entry 0 is the spawn commit. `block-height` is the
-// containing block's HEIGHT (the agent resolves it to a hash and fetches
-// the tx in-block, so no -txindex is required). A `reveal` is present on
-// every entry that re-attests networking state (spawn / rekey / escape /
-// …); a bare entry (`reveal` omitted) is a pure custody transfer that only
-// proves the sat moved. Only the LATEST state-bearing entry is
-// authoritative. txid / key / script atoms are the numeric values of their
-// display hex (hexb:bitcoin convention).
-//
-// The Python twin is build_xtr_atom in desktop/causeway.py; both are
-// pinned to the same `urbit eval` golden vectors (tests/dat.spec.ts).
+// Golden vectors: groundwire/vectors/gw-kelvin-9.json ("basic".xtr) +
+// tests/kelvin9.spec.ts.
 
-import { jam, bakeXtrIntoFeed } from "./mine-c.js";
+import { jam, type Noun } from "../protocol/jam.js";
+import { bakeXtrIntoFeed } from "./mine-c.js";
 import { bytesToAtomLE } from "../protocol/bitwriter.js";
+import { openingNoun, type Opening } from "./publication.js";
 import { cue } from "../oracle/cue.js";
 import { asAtom, head, tail } from "../oracle/noun.js";
 
-export interface XtrReveal {
-  internalKeyHex: string;   // 33-byte compressed internal pubkey P (0x02||xonly)
-  leafVersion: number;      // BIP-342 leaf version, 0xc0
-  leafScriptHex: string;    // the committed `urb` tapleaf script bytes
-}
-
 export interface XtrEntry {
-  txidHex: string;          // display hex of the (commit / op / transfer) tx
+  txidHex: string;          // display hex of the (spawn / update / transfer) tx
   blockHeight: number;      // height of its containing block
-  reveal?: XtrReveal;       // omit for a pure custody-transfer hop
+  opening?: Opening | null; // omit for a pure custody-transfer hop
 }
 
-type Noun = bigint | [Noun, Noun];
-
-function revealNoun(r: XtrReveal | undefined): Noun {
-  if (r === undefined) return 0n; // ~
-  const tapleaf: Noun = [
-    BigInt(r.leafVersion),
-    [BigInt(r.leafScriptHex.length / 2), BigInt("0x" + r.leafScriptHex)],
-  ];
-  // [~ [internal-key leaf-version leaf-script]] — the (unit reveal) some-case
-  return [0n, [BigInt("0x" + r.internalKeyHex), tapleaf]];
+// entry = [txid [height opening=(unit opening)]].
+function entryNoun(e: XtrEntry): Noun {
+  const ou: Noun = e.opening == null ? 0n : [0n, openingNoun(e.opening)];
+  return [BigInt("0x" + e.txidHex.replace(/^0x/, "")), [BigInt(e.blockHeight), ou]];
 }
 
+// xtr = (jam log), log oldest-first, terminating in ~. Returned as the atom
+// (bytesToAtomLE of the jam) so it can ride in the ring/pass.
 export function buildXtrAtom(entries: XtrEntry[]): bigint {
   let log: Noun = 0n;
   for (let i = entries.length - 1; i >= 0; i--) {
-    const e = entries[i]!;
-    const node: Noun = [
-      BigInt("0x" + e.txidHex),
-      [BigInt(e.blockHeight), revealNoun(e.reveal)],
-    ];
-    log = [node, log];
+    log = [entryNoun(entries[i]!), log];
   }
   return bytesToAtomLE(jam(log));
 }

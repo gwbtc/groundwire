@@ -4,15 +4,11 @@ import { atomToPatp } from "../../protocol/patp.js";
 import { atomToMnemonym, displayId } from "../../protocol/mnemonym.js";
 import { lookupPoint } from "../../oracle/point.js";
 
+// Under the kelvin-9 OP_RETURN revision the only surviving on-chain management
+// op is a state update (rekey). Sponsorship / escape / adopt / reject / detach /
+// fief / set-mang are off-chain now (spec §8).
 const OP_LABELS: Array<[string, string, string]> = [
-  ["rekey", "Rotate networking key", "Deploy a new networking key; optional breach."],
-  ["escape", "Escape to new sponsor", "Request a new sponsor; they must sign off-chain."],
-  ["cancel-escape", "Cancel pending escape", "Withdraw an in-flight escape request."],
-  ["adopt", "Adopt a child", "Accept a child's escape to you."],
-  ["reject", "Reject a child", "Refuse a child's escape request."],
-  ["detach", "Detach a child", "Disown a current child."],
-  ["fief", "Set fief (static IP)", "Pin your networking endpoint on-chain."],
-  ["set-mang", "Set management proxy", "Delegate sponsorship via a management key."],
+  ["rekey", "Rotate messaging key", "Re-commit a new snapshot; optional breach."],
 ];
 
 export function renderDashboard(root: HTMLElement): void {

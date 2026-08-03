@@ -1,93 +1,28 @@
+// Management op — kelvin-9 rekey (state update).
+//
+// Under the OP_RETURN revision the only surviving on-chain management op is a
+// state update: spend the sat-carrying UTXO key-path and re-commit a new
+// snapshot in output 0. Sponsorship / escape / adopt / reject / detach / fief /
+// set-mang are off-chain now (spec §8), so this page handles only `rekey`
+// (rotate the messaging key, optional breach) as a SINGLE PSBT — no
+// commit/reveal pair.
+
 import { base64 } from "@scure/base";
 import { el, clearAndAppend, banner, copyButton, kvList } from "../components.js";
 import { go, getSession } from "../state.js";
-import { atomToMnemonym, abridgeMnemonym, resolveId } from "../../protocol/mnemonym.js";
+import { atomToMnemonym, abridgeMnemonym } from "../../protocol/mnemonym.js";
 import { ops } from "../../ops/index.js";
-import type { OpCtx } from "../../ops/types.js";
-import type { Fief } from "../../protocol/types.js";
+import type { StateUpdateCtx } from "../../ops/types.js";
+import type { Snapshot } from "../../spawn/snapshot.js";
+import { lookupPoint } from "../../oracle/point.js";
 import { findKeyForScript } from "../../keys/xpub.js";
 import { animateUR } from "../../signing/qr-render.js";
 import { encodePsbtUR } from "../../signing/qr-ur.js";
 import { scanPsbtFromCamera } from "../../signing/qr-scan.js";
 import QrScanner from "qr-scanner";
 
-type FormSpec = Array<{
-  name: string;
-  label: string;
-  kind: "text" | "patp" | "number" | "fief" | "checkbox";
-  placeholder?: string;
-  required?: boolean;
-}>;
-
-const OP_FORMS: Record<string, FormSpec> = {
-  "rekey": [
-    { name: "newPassHex", label: "New networking pass (hex atom)", kind: "text", required: true },
-    { name: "breach", label: "Breach (discontinuity)", kind: "checkbox" },
-  ],
-  "escape": [
-    { name: "newSponsor", label: "New sponsor (mnemonym or @p)", kind: "patp", required: true },
-    { name: "sponsorSigHex", label: "Sponsor's off-chain signature (hex, optional)", kind: "text" },
-  ],
-  "cancel-escape": [
-    { name: "pendingSponsor", label: "Pending sponsor (mnemonym or @p)", kind: "patp", required: true },
-  ],
-  "adopt": [{ name: "child", label: "Child (mnemonym or @p)", kind: "patp", required: true }],
-  "reject": [{ name: "child", label: "Child (mnemonym or @p)", kind: "patp", required: true }],
-  "detach": [{ name: "child", label: "Child (mnemonym or @p)", kind: "patp", required: true }],
-  "fief": [
-    { name: "ip", label: "IPv4 address (e.g. 1.2.3.4) — leave empty to clear", kind: "text" },
-    { name: "port", label: "Port", kind: "number", placeholder: "31337" },
-  ],
-  "set-mang": [
-    { name: "passHex", label: "Management pass (hex) — leave empty to clear", kind: "text" },
-  ],
-};
-
-function parseIPv4ToInt(s: string): number {
-  const parts = s.trim().split(".").map(Number);
-  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
-    throw new Error("invalid IPv4");
-  }
-  return ((parts[0]! << 24) | (parts[1]! << 16) | (parts[2]! << 8) | parts[3]!) >>> 0;
-}
-
-function buildArgs(opName: string, form: HTMLFormElement): any {
-  const data = new FormData(form);
-  const get = (k: string): string => String(data.get(k) ?? "").trim();
-  switch (opName) {
-    case "rekey":
-      return {
-        newPass: BigInt("0x" + get("newPassHex").replace(/^0x/, "")),
-        breach: data.has("breach"),
-      };
-    case "escape": {
-      const sigHex = get("sponsorSigHex");
-      return {
-        newSponsor: resolveId(get("newSponsor")),
-        sponsorSig: sigHex ? BigInt("0x" + sigHex.replace(/^0x/, "")) : null,
-      };
-    }
-    case "cancel-escape":
-      return { pendingSponsor: resolveId(get("pendingSponsor")) };
-    case "adopt": case "reject": case "detach":
-      return { child: resolveId(get("child")) };
-    case "fief": {
-      const ipStr = get("ip"); const portStr = get("port");
-      if (!ipStr && !portStr) return { fief: null };
-      return { fief: { type: "if", ip: parseIPv4ToInt(ipStr), port: Number(portStr) } as Fief };
-    }
-    case "set-mang": {
-      const h = get("passHex").replace(/^0x/, "");
-      if (!h) return { mang: null };
-      return { mang: { type: "pass", pass: BigInt("0x" + h) } };
-    }
-    default: return {};
-  }
-}
-
-// Build a signed-PSBT input block: shows a scan-with-camera button (if the
-// device has a camera) and a paste fallback. Writes the accepted PSBT bytes
-// into `setState` when successful.
+// Build a signed-PSBT input block: scan-with-camera (if available) + paste
+// fallback. Writes the accepted PSBT bytes into `setState`.
 function signedPsbtInput(
   title: string,
   setState: (bytes: Uint8Array) => void,
@@ -127,7 +62,6 @@ function signedPsbtInput(
 
   let activeScanStop: (() => void) | null = null;
 
-  // Disable scan button if no camera on this device.
   QrScanner.hasCamera().then((has) => {
     if (!has) {
       scanBtn.setAttribute("disabled", "true");
@@ -189,36 +123,30 @@ function signedPsbtInput(
 export function renderOp(root: HTMLElement, opName: string): void {
   const s = getSession();
   if (!s || s.patpAtom === undefined || !s.auth) { go("#/"); return; }
-  if (!(opName in ops)) { root.textContent = `unknown op: ${opName}`; return; }
+  if (opName !== "rekey") { root.textContent = `unknown op: ${opName}`; return; }
   if (!s.keys) { go("#/keys"); return; }
 
   const patpAtom = s.patpAtom;
   const auth = s.auth;
+  const keys = s.keys;
 
   const card = el("section", { class: "card" });
   card.append(
-    el("h1", {}, opName),
-    el("p", {}, `Build a commit + reveal PSBT pair for ${abridgeMnemonym(atomToMnemonym(patpAtom))}.`),
+    el("h1", {}, "rekey"),
+    el("p", {},
+      `Rotate the messaging key for ${abridgeMnemonym(atomToMnemonym(patpAtom))} — a `
+      + `single state-update transaction that re-commits a new snapshot in the `
+      + `sat-carrying output. No commit/reveal pair.`),
   );
 
   const form = el("form", { id: "opForm" });
-  const spec = OP_FORMS[opName] ?? [];
-  for (const f of spec) {
-    const lbl = el("label", { for: f.name }, f.label);
-    let input: HTMLElement;
-    if (f.kind === "checkbox") {
-      input = el("input", { type: "checkbox", name: f.name, id: f.name });
-    } else {
-      input = el("input", {
-        type: f.kind === "number" ? "number" : "text",
-        name: f.name, id: f.name,
-        placeholder: f.placeholder ?? "",
-      });
-    }
-    form.append(lbl, input);
-  }
-
-  const buildBtn = el("button", { class: "btn primary", type: "submit" }, "Build PSBTs");
+  form.append(
+    el("label", { for: "newKeyHex" }, "New messaging key (cry.pub, hex atom)"),
+    el("input", { type: "text", name: "newKeyHex", id: "newKeyHex", placeholder: "0x…" }),
+    el("label", { for: "breach", style: "display:block;margin-top:0.6rem;" }, "Breach (rift increment)"),
+    el("input", { type: "checkbox", name: "breach", id: "breach" }),
+  );
+  const buildBtn = el("button", { class: "btn primary", type: "submit", style: "margin-top:0.8rem;" }, "Build PSBT");
   form.appendChild(buildBtn);
   card.appendChild(form);
 
@@ -226,35 +154,21 @@ export function renderOp(root: HTMLElement, opName: string): void {
   card.appendChild(buildStatus);
 
   const psbtCard = el("section", { class: "card", style: "display:none;" });
-  psbtCard.appendChild(el("h2", {}, "Sign on your hardware wallet"));
+  psbtCard.appendChild(el("h2", {}, "Sign the state update"));
+  const qrPane = el("div", { class: "qr-pane" });
+  const qrLeft = el("div");
+  const qrRight = el("div");
+  qrRight.appendChild(el("h3", {}, "Rekey PSBT"));
+  qrRight.appendChild(el("p", {},
+    "Scan the animated QR on your wallet (or copy the base64). Sign, then bring "
+    + "the signed PSBT back."));
+  const qrCopy = el("div");
+  qrRight.appendChild(qrCopy);
+  qrPane.append(qrLeft, qrRight);
+  psbtCard.appendChild(qrPane);
 
-  const commitQr = el("div", { class: "qr-pane" });
-  const commitLeft = el("div");
-  const commitRight = el("div");
-  commitRight.appendChild(el("h3", {}, "Commit PSBT"));
-  commitRight.appendChild(el("p", {},
-    "Scan this animated QR on your hardware wallet. Sign, then bring the signed PSBT back."));
-  const commitCopy = el("div");
-  commitRight.appendChild(commitCopy);
-  commitQr.append(commitLeft, commitRight);
-  psbtCard.appendChild(commitQr);
-
-  const revealQr = el("div", { class: "qr-pane", style: "margin-top:2rem;" });
-  const revealLeft = el("div");
-  const revealRight = el("div");
-  revealRight.appendChild(el("h3", {}, "Reveal PSBT"));
-  revealRight.appendChild(el("p", {},
-    "Sign this second PSBT on your device. Causeway broadcasts commit first, then reveal."));
-  const revealCopy = el("div");
-  revealRight.appendChild(revealCopy);
-  revealQr.append(revealLeft, revealRight);
-  psbtCard.appendChild(revealQr);
-
-  let signedCommit: Uint8Array | null = null;
-  let signedReveal: Uint8Array | null = null;
-
-  psbtCard.appendChild(signedPsbtInput("Signed commit PSBT", (b) => { signedCommit = b; }));
-  psbtCard.appendChild(signedPsbtInput("Signed reveal PSBT", (b) => { signedReveal = b; }));
+  let signedPsbt: Uint8Array | null = null;
+  psbtCard.appendChild(signedPsbtInput("Signed rekey PSBT", (b) => { signedPsbt = b; }));
 
   const bcastBtn = el("button", { class: "btn primary", type: "button" }, "Verify & broadcast");
   const bcastRow = el("div", { class: "row" });
@@ -267,23 +181,23 @@ export function renderOp(root: HTMLElement, opName: string): void {
 
   clearAndAppend(root, card, psbtCard, resultCard);
 
-  let ctx: OpCtx | null = null;
-  let commitPsbt: Uint8Array | null = null;
-  let revealPsbt: Uint8Array | null = null;
+  let ctx: StateUpdateCtx | null = null;
 
-  form.addEventListener("submit", async (ev) => {
+  form.addEventListener("submit", (ev) => {
     ev.preventDefault();
     buildStatus.innerHTML = "";
     try {
-      const args = buildArgs(opName, form);
-      const session = s!;
-      const keys = session.keys!;
+      const data = new FormData(form);
+      const newKeyHex = String(data.get("newKeyHex") ?? "").trim().replace(/^0x/, "");
+      if (!/^[0-9a-fA-F]+$/.test(newKeyHex)) throw new Error("new key must be a hex atom");
+      const breach = data.has("breach");
 
-      // The inscription UTXO is the plain BIP-86 P2TR left by the prior op's
-      // reveal; find the wallet key that actually controls it rather than
-      // assuming receive index 0. That key signs the commit input, and (like
-      // the spawn flow) also serves as the commit-output internal key and the
-      // reveal destination, so the sat stays spendable at a known address.
+      const point = lookupPoint(s.snapshot, patpAtom);
+      if (!point) throw new Error("point not found in the current snapshot");
+
+      // The key that controls the current sat-carrying UTXO. A kelvin-9 output
+      // is P2TR(Q) tweaked by its state leaf; the internal key is the same
+      // BIP-86 child that owned the funding UTXO at spawn.
       const owner = findKeyForScript(keys, auth.utxo.scriptPubKey);
       if (!owner) {
         throw new Error(
@@ -291,49 +205,50 @@ export function renderOp(root: HTMLElement, opName: string): void {
           + "derivations of either chain — is this the wallet that holds the @p?",
         );
       }
+      const internalKey33 = new Uint8Array(33);
+      internalKey33[0] = 0x02;
+      internalKey33.set(owner.internalKey, 1);
 
-      // auth.utxo.txid is DISPLAY order (block-explorer form); @scure/btc-signer
-      // reverses to wire order itself, so pass the display bytes as-is. The old
-      // code reversed here too, producing a commit that spent a nonexistent
-      // outpoint.
-      const txidHex = auth.utxo.txid;
+      // Current committed snapshot, mapped from the oracle point. (The kelvin-9
+      // state oracle is not yet wired; life/rift/sponsor carry over, and the
+      // current messaging key comes from the point's pass.)
+      const currentSnapshot: Snapshot = {
+        life: point.net.life,
+        rift: point.net.rift,
+        key: point.net.pass,
+        sponsor: point.net.sponsor.who,
+        fief: null,
+      };
+
       const txidBytes = new Uint8Array(32);
       for (let i = 0; i < 32; i++) {
-        txidBytes[i] = parseInt(txidHex.slice(i * 2, i * 2 + 2), 16);
+        txidBytes[i] = parseInt(auth.utxo.txid.slice(i * 2, i * 2 + 2), 16);
       }
 
       ctx = {
-        state: session.snapshot,
-        patpAtom,
-        inscriptionUtxo: {
+        current: {
           txid: txidBytes,
           vout: auth.utxo.vout,
           value: BigInt(auth.utxo.value),
           scriptPubKey: auth.utxo.scriptPubKey,
         },
-        fundingKey: owner,
-        commitKey: owner,
-        destKey: owner,
+        ownerKey: owner,
+        internalKey33,
+        currentSnapshot,
         feeRate: 2,
-        mp: session.mp,
+        mp: s.mp,
       };
 
-      const mod = (ops as any)[opName];
-      const pair = await mod.buildPsbts(args, ctx);
-      commitPsbt = pair.commitPsbt;
-      revealPsbt = pair.revealPsbt;
+      const built = ops.rekey.build({ newKey: BigInt("0x" + newKeyHex), breach }, ctx);
 
       psbtCard.style.display = "";
-
-      const commitStream = encodePsbtUR(commitPsbt!);
-      animateUR(commitLeft, commitStream, { fps: 4, size: 360 });
-      commitCopy.innerHTML = "";
-      commitCopy.appendChild(copyButton(() => base64.encode(commitPsbt!), "copy base64"));
-
-      const revealStream = encodePsbtUR(revealPsbt!);
-      animateUR(revealLeft, revealStream, { fps: 4, size: 360 });
-      revealCopy.innerHTML = "";
-      revealCopy.appendChild(copyButton(() => base64.encode(revealPsbt!), "copy base64"));
+      const stream = encodePsbtUR(built.psbt);
+      animateUR(qrLeft, stream, { fps: 4, size: 360 });
+      qrCopy.innerHTML = "";
+      qrCopy.appendChild(copyButton(() => base64.encode(built.psbt), "copy base64"));
+      buildStatus.appendChild(banner("ok",
+        `built rekey → life ${built.newSnapshot.life}, rift ${built.newSnapshot.rift} `
+        + `(predicted txid ${built.txidHex.slice(0, 8)}…)`));
     } catch (err: any) {
       buildStatus.innerHTML = "";
       buildStatus.appendChild(banner("err", `build error: ${err.message ?? err}`));
@@ -343,17 +258,14 @@ export function renderOp(root: HTMLElement, opName: string): void {
   bcastBtn.addEventListener("click", async () => {
     status.innerHTML = "";
     try {
-      if (!ctx) throw new Error("build PSBTs first");
-      if (!signedCommit) throw new Error("need signed commit PSBT");
-      if (!signedReveal) throw new Error("need signed reveal PSBT");
-      const mod = (ops as any)[opName];
-      status.appendChild(banner("warn", "broadcasting commit, then reveal…"));
-      const result = await mod.broadcast(signedCommit, signedReveal, ctx);
+      if (!ctx) throw new Error("build the PSBT first");
+      if (!signedPsbt) throw new Error("need the signed rekey PSBT");
+      status.appendChild(banner("warn", "broadcasting state update…"));
+      const result = await ops.rekey.broadcast(signedPsbt, ctx);
       resultCard.style.display = "";
       resultCard.innerHTML = "";
       resultCard.appendChild(el("h2", {}, "Broadcast ✓"));
-      resultCard.appendChild(kvList(result.txids.map((t: string, i: number) =>
-        [i === 0 ? "commit txid" : "reveal txid", t])));
+      resultCard.appendChild(kvList(result.txids.map((t) => ["txid", t] as [string, string])));
       status.innerHTML = "";
     } catch (err: any) {
       status.innerHTML = "";

@@ -1,10 +1,11 @@
-// cc-draft-2 web parity: the finalize step that bakes the xtr reveal log into
+// kelvin-9 web parity: the finalize step that bakes the xtr custody log into
 // the boot feed (mirrors desktop causeway.py append_xtr_to_ring + rebuild_feed,
 // exercised by `causeway finalize --feed` and ui/pages/spawn.ts renderFinalizeCard).
 
 import { describe, it, expect } from "vitest";
-import { buildDatAtom } from "../src/spawn/dat.js";
-import { buildXtrAtom, bakeXtrIntoFeedAtom } from "../src/spawn/reveal-log.js";
+import { buildDatAtom, type SpawnSont } from "../src/spawn/dat.js";
+import { buildXtrAtom, bakeXtrIntoFeedAtom, type XtrEntry } from "../src/spawn/reveal-log.js";
+import type { Opening } from "../src/spawn/publication.js";
 import {
   buildRingAtomBytes, appendXtrToRing, bakeXtrIntoFeed, jamFeed,
 } from "../src/spawn/mine-c.js";
@@ -13,7 +14,12 @@ import { head, tail, asAtom } from "../src/oracle/noun.js";
 import { bytesToAtomLE } from "../src/protocol/bitwriter.js";
 import { atomToUw, uwToAtom } from "../src/spawn/boot-cmd.js";
 
-const TXID = "ab12f00d9c330000111122223333444455556666777788889999aaaabbbbcccc";
+const SPAWN: SpawnSont = {
+  txidHex: "ab12f00d9c330000111122223333444455556666777788889999aaaabbbbcccc",
+  vout: 0,
+  off: 0,
+};
+const SEED = 0xdeadbeefn;
 const COMET = 0x1234_42cdn; // arbitrary comet atom (LE low bytes are the ~daplyd star)
 
 function cometBytesLE(a: bigint): Uint8Array {
@@ -23,14 +29,16 @@ function cometBytesLE(a: bigint): Uint8Array {
   return out;
 }
 
-const XTR_ENTRY = {
-  txidHex: TXID, blockHeight: 123,
-  reveal: { internalKeyHex: "02" + "ef".repeat(32), leafVersion: 0xc0, leafScriptHex: "0063037572620102ac" },
+const OPENING: Opening = {
+  internalKey: BigInt("0x02" + "ef".repeat(32)),
+  snapshot: { life: 1, rift: 0, key: 0xabcdn, sponsor: null, fief: null },
+  blindOpening: { spawnSont: SPAWN, startHeight: 100, blind: 0xdeadn },
 };
+const XTR_ENTRY: XtrEntry = { txidHex: SPAWN.txidHex, blockHeight: 123, opening: OPENING };
 
-describe("cc-draft-2 feed finalize", () => {
+describe("kelvin-9 feed finalize", () => {
   it("bakeXtrIntoFeed appends xtr to the ring and keeps the [[2 0] comet rift [[life ring] 0]] shape", () => {
-    const dat = buildDatAtom({ txidHex: TXID, vout: 0 });
+    const dat = buildDatAtom(SPAWN, SEED);
     const seed = new Uint8Array(64).fill(9);
     const ring0 = buildRingAtomBytes(seed, dat);
     const xtr = buildXtrAtom([XTR_ENTRY]);
@@ -51,7 +59,7 @@ describe("cc-draft-2 feed finalize", () => {
   });
 
   it("bakeXtrIntoFeedAtom (cue-based, resume path) matches bakeXtrIntoFeed (fresh path)", () => {
-    const dat = buildDatAtom({ txidHex: TXID, vout: 3 });
+    const dat = buildDatAtom(SPAWN, SEED);
     const seed = new Uint8Array(64).fill(4);
     const ring0 = buildRingAtomBytes(seed, dat);
     const xtr = buildXtrAtom([XTR_ENTRY]);

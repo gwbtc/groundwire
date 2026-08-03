@@ -400,127 +400,248 @@ def format_hoon_ux(hex_str: str) -> str:
     return "0x" + ".".join(reversed(chunks))
 
 
-def make_tweak_expr(txid_hex: str, vout: int, off: int = 0) -> str:
-    """
-    Build the Hoon expression string for the LEGACY (v9) Groundwire tweak.
-
-    comet-miner's --tweak evaluates this via u3v_wish().
-    Tweak format v9: (rap 3 ~[%9 ~tyr %urb-watcher %btc %gw %9 txid vout off])
-
-    This is what lib/urb-core (on-chain spawns) and the protocol-2.0
-    self-attestation verifier (hd/cc-e2e check-spawn) expect TODAY. New
-    confidential comets should use make_dat_expr (cc-draft-2) instead.
-    """
-    txid_ux = format_hoon_ux(txid_hex)
-    return f"(rap 3 ~[%9 ~tyr %urb-watcher %btc %gw %9 {txid_ux} {vout} {off}])"
-
-
 # =========================================================================
-#  cc-draft-2 `dat` — the name-committing tweak for confidential comets
+#  kelvin-9 (%gw-btc, OP_RETURN) confidential-comets protocol encoders.
 #
-#  Per the kernel spec (gwbtc/urbit cyc/cc-draft-2,
-#  doc/spec/confidential-comets.md + sur/stealth.hoon), a suite-C
-#  confidential comet's tweak data is:
+#  Bit-exact port of groundwire/lib/gw-btc-pass.hoon +
+#  sur/self-attestation.hoon.  All values are pinned by the shared golden
+#  vectors (vectors/gw-kelvin-9.json) and the Hoon golden test
+#  (groundwire/tests/lib/gw-btc-pass.hoon).  See the module docstring in
+#  that lib for the design; the two amending specs are
+#  doc/opret-revision/{01-spec-revision,04-decisions-addendum}.md.
 #
-#      dat = (can 0 (mat dom) [256 txid] (mat vout) (mat off) ~)
-#
-#  i.e. the +mat-encoded PKI domain tag at bit 0 (the kernel extracts it
-#  with (rub 0 dat) in +pass-pki-dom), followed by the spawn satpoint —
-#  the sat's location BEFORE the spawn commit spends it — in the same
-#  bit layout lib/urb-encoder's +en-sont uses: fixed 256-bit txid
-#  (display-hex numeric value, i.e. the @ux a block explorer shows),
-#  then mat(vout), then mat(off).
-#
-#  The domain tag is 1:1 with the verifier agent's name registered with
-#  Jael via %anex — the Groundwire Bitcoin-PKI domain agent, %gw-btc
-#  (renamed from %urb-watcher / %groundwire). Because dat is hashed into
-#  the signing key, the comet's @p commits to it forever — changing
-#  PKI_DOM changes every @p minted with it, so it is consensus-critical.
-#
-#  Unlike the v9 rap-3 tweak, the fixed-width txid field means a txid
-#  with leading zero bytes cannot shift the encoding, and the trailing
-#  mat always ends in a 1-bit, so the atom's byte length is unambiguous.
+#  Byte conventions, pinned by the vectors: H_tag is the BIP-340 tagged
+#  hash over BIG-endian byte strings; a jammed noun enters a hash message
+#  (or an OP_RETURN payload) as its minimal LITTLE-endian byte dump — the
+#  ordinary serialization of a jam.  All commitment hashes are 32 bytes.
 # =========================================================================
 
 
-PKI_DOM = "gw-btc"
+PKI_DOM = "gw-btc"   # the %gw-btc PKI domain tag; consensus-critical (in dat)
+KELVIN = 9           # protocol version, plaintext in dat and the OP_RETURN
 
 
-def make_dat_expr(txid_hex: str, vout: int, off: int = 0, dom: str = PKI_DOM) -> str:
-    """Hoon expression for the cc-draft-2 dat, for comet-miner's --tweak flag."""
-    txid_ux = format_hoon_ux(txid_hex)
-    return f"(can 0 (mat %{dom}) [256 {txid_ux}] (mat {vout}) (mat {off}) ~)"
+def jam_bytes(noun) -> bytes:
+    """A jammed noun as its minimal little-endian byte dump.
+
+    This is how a jam enters a hash preimage or an OP_RETURN payload, and
+    it is exactly +jam-octs:gw-btc-pass: that arm's (rev 3 wid) reverses
+    the jam atom's bytes so that, read back big-endian by the tagged-hash,
+    they land in this original little-endian order.
+    """
+    a = hoon_jam(noun)
+    return a.to_bytes((a.bit_length() + 7) // 8, "little") if a else b""
 
 
-def build_dat_atom(txid_hex: str, vout: int, off: int = 0, dom: str = PKI_DOM) -> int:
-    """The cc-draft-2 dat as a Hoon atom (integer). Twin of make_dat_expr."""
+def _unit(value):
+    """(unit x): the null unit ~ is 0; a full unit [~ v] is the cell [0 v]."""
+    return 0 if value is None else (0, value)
+
+
+# --- hiding `dat` — the immutable name-committing tweak (spec §4) ----------
+#
+#     dat   = (can 0 (mat %gw-btc) (mat 9) [256 d] ~)
+#     d     = H_tag("gw/spawn-commit", (jam spawn-sont) || blind)
+#     blind = H_tag("gw/spawn-blind", seed)
+#
+# The spawn satpoint is hidden behind a seed-derived blind: only an
+# explicit blind-opening (in the xtr, or a public OP_RETURN publication)
+# reveals it, never `dat` itself.  Because dat is hashed into the signing
+# key, the comet's @p commits to it forever.  Ames reads only the leading
+# `mat %gw-btc` to route the pass to the %gw-btc agent.
+
+
+def spawn_sont_noun(txid_hex: str, vout: int, off: int = 0) -> tuple:
+    """The $sont:ord spawn satpoint as a noun: [txid=@ux vout=@ud off=@ud]."""
+    return (int(txid_hex, 16), (vout, off))
+
+
+def make_blind(seed: int) -> bytes:
+    """blind = H_tag('gw/spawn-blind', minimal-LE-bytes(seed)). 32 bytes.
+
+    Recommended derivation from the ship's master seed so the opening is
+    recoverable from the seed alone (spec §4)."""
+    seed_le = seed.to_bytes((seed.bit_length() + 7) // 8, "little") if seed else b""
+    return _tagged_hash("gw/spawn-blind", seed_le)
+
+
+def spawn_commit(txid_hex: str, vout: int, off: int, blind: bytes) -> bytes:
+    """d = H_tag('gw/spawn-commit', jam(spawn-sont) || blind). 32 bytes.
+
+    `blind` is the 32-byte big-endian blind value (as make_blind returns).
+    """
+    return _tagged_hash(
+        "gw/spawn-commit", jam_bytes(spawn_sont_noun(txid_hex, vout, off)) + blind
+    )
+
+
+def build_dat_atom(
+    txid_hex: str, vout: int, off: int, seed: int, dom: str = PKI_DOM
+) -> int:
+    """The kelvin-9 dat as a Hoon atom (integer):
+
+        dat = (can 0 (mat dom) (mat 9) [256 d] ~)
+
+    where d hides the spawn satpoint under a seed-derived blind.  The dat
+    now depends on `seed` (via blind), so it must be recomputed per
+    candidate seed at mine time."""
+    d = spawn_commit(txid_hex, vout, off, make_blind(seed))
     w = BitWriter()
     w.write_mat(int.from_bytes(dom.encode("ascii"), "little"))
-    w.write(256, int(txid_hex, 16))
-    w.write_mat(vout)
-    w.write_mat(off)
+    w.write_mat(KELVIN)
+    w.write(256, int.from_bytes(d, "big"))
     return w.to_int()
 
 
-def build_dat_bytes(txid_hex: str, vout: int, off: int = 0, dom: str = PKI_DOM) -> bytes:
-    """The cc-draft-2 dat as minimal LE atom bytes (what the tweak hash consumes).
+def build_dat_bytes(
+    txid_hex: str, vout: int, off: int, seed: int, dom: str = PKI_DOM
+) -> bytes:
+    """The kelvin-9 dat as minimal LE atom bytes.
 
-    Safe to size from the bit stream: dat always ends in a mat, whose last
-    bit is 1, so ceil(bits/8) equals the atom's minimal byte length.
-    """
-    a = build_dat_atom(txid_hex, vout, off, dom)
+    Safe to size from the bit stream: dat ends in exactly 256 bits of d
+    whose top bit is (almost surely) set, and the width is fixed anyway."""
+    a = build_dat_atom(txid_hex, vout, off, seed, dom)
     return a.to_bytes((a.bit_length() + 7) // 8, "little")
 
 
-# =========================================================================
-#  cc-draft-2 `xtr` — the off-chain reveal log riding in the pass
+def make_dat_expr(
+    txid_hex: str, vout: int, off: int, seed: int, dom: str = PKI_DOM
+) -> str:
+    """Hoon expression that reconstructs the concrete kelvin-9 dat, for
+    comet-miner's --tweak flag.  d is a concrete hash we compute here, so
+    the expression is a literal (can 0 (mat dom) (mat 9) [256 0x..d..] ~)."""
+    d = spawn_commit(txid_hex, vout, off, make_blind(seed))
+    d_ux = format_hoon_ux(d.hex())
+    return f"(can 0 (mat %{dom}) (mat {KELVIN}) [256 {d_ux}] ~)"
+
+
+# --- state snapshot + on-chain state commitment (spec §3) -----------------
 #
-#  xtr is NOT hashed into the key (the @p commits to ugn+dat only), so it
-#  can grow over the comet's lifetime without changing the name; peers'
-#  domain agents parse it to verify the ownership chain, and the %anew
-#  flow refreshes it when the sat moves.
+#     snapshot = [life rift key sponsor=(unit @p) fief=(unit fief)]
+#     c        = H_tag("gw/state-commit", (jam snapshot))
+#     leaf     = OP_RETURN PUSH2 "gw" PUSH32 <c>            (37 bytes)
+#     root     = H_TapLeaf(0xc0 || compact_size(leaf) || leaf)   (single leaf)
+#     Q        = lift_x(x(P)) + H_TapTweak(x(P) || root)*G;  output key = x(Q)
 #
-#  The kernel treats xtr as opaque bits, and the agent-side decoder is
-#  not yet pinned (spec §4 item 3), so the encoding below is Causeway's
-#  PROPOSAL, chosen to match the spec's fetch-based "variant B" (§8) and
-#  the protocol-2.0 +link shape (sur/self-attestation.hoon on hd/cc-e2e,
-#  minus `sots`, which verifiers re-derive from the leaf script):
+# The sat-carrying output's scriptPubKey is OP_1 PUSH32 Q.  A chain
+# observer sees only Q, indistinguishable from any P2TR key; the snapshot
+# is revealed only to attestation verifiers (or on-chain, when published).
+
+
+def snapshot_noun(
+    life: int, rift: int, key: int, sponsor=None, fief=None
+) -> tuple:
+    """[life rift key sponsor=(unit @p) fief=(unit fief)] as a noun.
+
+    sponsor is an @p integer or None; fief is None (absent) or a prebuilt
+    fief noun."""
+    return (life, (rift, (key, (_unit(sponsor), _unit(fief)))))
+
+
+def snapshot_dict_to_noun(snap: dict) -> tuple:
+    """Convert a {life, rift, key, sponsor, fief} dict to its snapshot noun."""
+    return snapshot_noun(
+        snap["life"], snap["rift"], snap["key"],
+        snap.get("sponsor"), snap.get("fief"),
+    )
+
+
+def state_commit(snap: dict) -> bytes:
+    """c = H_tag('gw/state-commit', jam(snapshot)). 32 bytes."""
+    return _tagged_hash("gw/state-commit", jam_bytes(snapshot_dict_to_noun(snap)))
+
+
+def state_leaf_script(c: bytes) -> bytes:
+    """The unspendable commitment tapleaf script:
+    OP_RETURN PUSH2 'gw' PUSH32 <c> = 6a 02 67 77 20 || c (37 bytes)."""
+    return bytes([0x6A, 0x02, 0x67, 0x77, 0x20]) + c
+
+
+def state_leaf_hash(script_bytes: bytes) -> bytes:
+    """TapLeaf hash: H_tag('TapLeaf', 0xc0 || compact_size(len) || script).
+    For the 37-byte state leaf, compact_size(37) = bytes([37])."""
+    return _tapleaf_hash(0xC0, script_bytes)
+
+
+def state_output_key(internal_key: bytes, snap: dict) -> bytes:
+    """Q — the 32-byte x-only P2TR output key committing `snap` under the
+    internal key.  `internal_key` is the 33-byte compressed key (02/03) or
+    a bare 32-byte x-only key.  Single-leaf tree ⇒ merkle root = leaf hash."""
+    xonly = internal_key[1:] if len(internal_key) == 33 else internal_key
+    leaf_hash = state_leaf_hash(state_leaf_script(state_commit(snap)))
+    q, _parity = _taproot_tweak_pubkey(xonly, leaf_hash)
+    return q
+
+
+# --- opening / publication / xtr (spec §5–6, sur/self-attestation) --------
 #
-#      xtr = (jam log)
-#      log = (list [txid=@ux block-height=@ud reveal=(unit reveal)])
-#      reveal = [internal-key=@ux leaf-version=@ux leaf-script=[wid=@ud dat=@ux]]
-#
-#  oldest-first: entry 0 is the spawn commit. `block-height` is the
-#  containing block's HEIGHT; the %gw-btc agent resolves it to a hash and
-#  fetches the tx in-block (no -txindex needed). A `reveal` re-attests
-#  networking state (state commitments, spec §2.1); a bare entry
-#  (reveal=None) is a pure custody transfer. Only the latest state-bearing
-#  entry is authoritative. txid/key/script atoms are numeric values of
-#  their display hex. Pinned to lib/gw-verify's $custody-log (hd/gw-btc).
-# =========================================================================
+#     blind-opening = [spawn=sont start-height=@ud blind=@]
+#     opening       = [internal-key=@ux snapshot blind-opening=(unit ...)]
+#     publication   = [pass opening]
+#     custody-entry = [txid height opening=(unit opening)]
+#     xtr           = (jam (list custody-entry))    oldest first
+
+
+def _blind_opening_noun(spawn: dict, start_height: int, blind: bytes) -> tuple:
+    """[spawn=sont start-height blind] — spawn is {txid_hex, vout, off}."""
+    return (
+        spawn_sont_noun(spawn["txid_hex"], spawn["vout"], spawn.get("off", 0)),
+        (start_height, int.from_bytes(blind, "big")),
+    )
+
+
+def opening_noun(opening: dict) -> tuple:
+    """[internal-key snapshot blind-opening=(unit ...)] as a noun.
+
+    opening = {internal_key (int), snapshot (dict), blind_opening (None or
+    {spawn, start_height, blind})}."""
+    bo = opening.get("blind_opening")
+    bo_unit = 0 if bo is None else _unit(
+        _blind_opening_noun(bo["spawn"], bo["start_height"], bo["blind"])
+    )
+    return (
+        opening["internal_key"],
+        (snapshot_dict_to_noun(opening["snapshot"]), bo_unit),
+    )
+
+
+def publication_noun(pass_atom: int, opening: dict) -> tuple:
+    """[pass opening] as a noun."""
+    return (pass_atom, opening_noun(opening))
+
+
+MAX_PUBLICATION = 512
+
+
+def make_publication_script(pass_atom: int, opening: dict) -> bytes:
+    """The OP_RETURN scriptPubKey for a deliberate on-chain publication:
+
+        OP_RETURN PUSH3 'urb' PUSH1 <kelvin> <pushdata payload>
+        payload = (jam [pass opening])
+
+    Payloads over 75 bytes use PUSHDATA1 (0x4c len); cap 512 bytes."""
+    payload = jam_bytes(publication_noun(pass_atom, opening))
+    if len(payload) > MAX_PUBLICATION:
+        raise ValueError(f"publication payload {len(payload)} > {MAX_PUBLICATION}")
+    if len(payload) <= 75:
+        push = bytes([len(payload)])
+    else:
+        push = b"\x4c" + bytes([len(payload)])
+    # 6a 03 'urb' 01 <kelvin> — matches +publication-script:gw-btc-pass.
+    return bytes([0x6A, 0x03, 0x75, 0x72, 0x62, 0x01, KELVIN]) + push + payload
 
 
 def build_xtr_atom(entries: list[dict]) -> int:
-    """Jam the reveal log. Each entry: {txid_hex, block_height, reveal}, where
-    reveal is None (pure custody hop) or {internal_key_hex (33-byte compressed
-    P), leaf_version, leaf_script_hex}."""
+    """Jam the custody log, oldest first, terminating in ~ (0).
+
+    Each entry: {txid_hex, height, opening}, where opening is None (a plain
+    custody hop) or an opening dict (see opening_noun). Exactly one entry —
+    entry 0, the spawn — carries a blind_opening opening the dat commitment."""
     log = 0  # ~ (null-terminated list)
     for e in reversed(entries):
-        reveal = e.get("reveal")
-        if reveal is None:
-            reveal_noun = 0  # ~
-        else:
-            script_hex = reveal["leaf_script_hex"]
-            tapleaf = (
-                int(reveal["leaf_version"]),
-                (len(script_hex) // 2, int(script_hex, 16)),
-            )
-            # [~ [internal-key leaf-version leaf-script]] — (unit reveal) some
-            reveal_noun = (0, (int(reveal["internal_key_hex"], 16), tapleaf))
-        node = (
-            int(e["txid_hex"], 16),
-            (int(e["block_height"]), reveal_noun),
-        )
+        op = e.get("opening")
+        op_unit = 0 if op is None else _unit(opening_noun(op))
+        node = (int(e["txid_hex"], 16), (e["height"], op_unit))
         log = (node, log)
     return hoon_jam(log)
 
@@ -860,297 +981,6 @@ class BitWriter:
 
 
 # =========================================================================
-#  URB attestation encoder — encodes SOTx for Taproot script embedding
-# =========================================================================
-
-
-def _encode_spawn_skim(
-    w: "BitWriter",
-    pass_atom: int,
-    fief: tuple | None,
-    spkh: bytes,
-    vout: int | None,
-    off: int,
-    tej: int,
-) -> None:
-    """Encode a %spawn skim into the BitWriter."""
-    w.write(7, 1)          # opcode: %spawn
-    w.write(1, 0)          # pad
-    w.write_mat(pass_atom) # networking key (pass)
-
-    # Fief (inline unit): ~ = no fief
-    if fief is None:
-        w.write(2, 0)  # no fief
-    elif fief[0] == "if":
-        w.write(2, 2)         # %if
-        w.write(32, fief[1])  # IPv4 address (32 bits)
-        w.write(16, fief[2])  # port (16 bits)
-    elif fief[0] == "is":
-        w.write(2, 3)          # %is
-        w.write(128, fief[1])  # IPv6 address (128 bits)
-        w.write(16, fief[2])   # port (16 bits)
-
-    # To fields
-    spkh_int = int.from_bytes(spkh, "little")
-    w.write(256, spkh_int)  # spkh (256 bits)
-    w.write_mat(off)        # offset
-    w.write_mat(tej)        # tej
-    if vout is not None:
-        w.write(2, 1)       # vout present
-        w.write_mat(vout)   # vout value
-    else:
-        w.write(2, 0)       # no vout
-
-
-def encode_spawn_sotx(
-    comet_p: int,
-    pass_atom: int,
-    spkh: bytes,
-    vout: int | None,
-    off: int,
-    tej: int,
-    fief: tuple | None,
-) -> bytes:
-    """Encode a spawn-only SOTx (no escape) as raw bytes for script embedding.
-
-    Used in fief/sponsor mode where no escape transaction is needed.
-    """
-    w = BitWriter()
-
-    # -- Top-level SOTx header --
-    w.write(2, 0)          # Sig: no sig (type 0)
-    w.write(128, comet_p)  # Ship: comet @p (128 bits)
-
-    # -- Spawn skim (no batch wrapper) --
-    _encode_spawn_skim(w, pass_atom, fief, spkh, vout, off, tej)
-
-    return w.to_bytes()
-
-
-def encode_batch_sotx(
-    comet_p: int,
-    pass_atom: int,
-    spkh: bytes,
-    vout: int | None,
-    off: int,
-    tej: int,
-    fief: tuple | None,
-    sponsor_p: int,
-    sponsor_sig: int,
-) -> bytes:
-    """Encode a batch SOTx (spawn + escape) as raw bytes for script embedding.
-
-    Returns the encoded data as bytes ready for wrapping in a urb Taproot script.
-    """
-    w = BitWriter()
-
-    # -- Top-level SOTx header --
-    w.write(2, 0)          # Sig: no sig (type 0)
-    w.write(128, comet_p)  # Ship: comet @p (128 bits)
-
-    # -- Batch skim --
-    w.write(7, 10)         # opcode: %batch
-    w.write_mat(2)         # count: 2 items in batch
-
-    # -- Sub-item 1: Spawn --
-    _encode_spawn_skim(w, pass_atom, fief, spkh, vout, off, tej)
-
-    # -- Sub-item 2: Escape --
-    w.write(7, 3)            # opcode: %escape
-    w.write(1, 0)            # pad
-    w.write(128, sponsor_p)  # sponsor ship (128 bits)
-    # Sponsor sig: present
-    w.write(2, 1)            # sig type: present
-    w.write(512, sponsor_sig)  # sig (512 bits)
-
-    return w.to_bytes()
-
-
-def _encode_keys_skim(w: "BitWriter", pass_atom: int, breach: bool) -> None:
-    """Encode a %keys skim (rekey / breach)."""
-    w.write(7, 2)               # opcode %keys
-    # Hoon writes the breach loobean directly ([1 breach.sot]) and decodes it
-    # as =(0 breach); loobean %.y (true) is 0. So breach=True writes bit 0.
-    # Writing `1 if breach else 0` inverted it: a plain rekey encoded as an
-    # irreversible continuity breach and vice versa.
-    w.write(1, 0 if breach else 1)
-    w.write_mat(pass_atom)
-
-
-def _encode_escape_skim(w: "BitWriter", parent_p: int, escape_sig: int | None) -> None:
-    """Encode a %escape skim. escape_sig is the sponsor's off-chain signature (512 bits) or None."""
-    w.write(7, 3)               # opcode %escape
-    w.write(1, 0)               # pad
-    w.write(128, parent_p)
-    if escape_sig is None:
-        w.write(2, 0)
-    else:
-        w.write(2, 1)
-        w.write(512, escape_sig)
-
-
-def _encode_ship_skim(w: "BitWriter", opcode: int, ship_p: int) -> None:
-    """Encode a cancel-escape/adopt/reject/detach skim — each takes a single ship."""
-    if opcode not in (4, 5, 6, 7):
-        raise ValueError(f"ship skim opcode must be one of 4,5,6,7; got {opcode}")
-    w.write(7, opcode)
-    w.write(1, 0)
-    w.write(128, ship_p)
-
-
-def _encode_fief_skim(w: "BitWriter", fief: tuple | None) -> None:
-    """Encode a standalone %fief skim."""
-    w.write(7, 11)              # opcode %fief
-    w.write(1, 0)               # pad
-    if fief is None:
-        w.write(2, 0)
-    elif fief[0] == "if":
-        w.write(2, 2); w.write(32, fief[1]); w.write(16, fief[2])
-    elif fief[0] == "is":
-        w.write(2, 3); w.write(128, fief[1]); w.write(16, fief[2])
-    else:
-        raise ValueError(f"unknown fief kind: {fief[0]}")
-
-
-def _encode_mang_skim(w: "BitWriter", mang: tuple | None) -> None:
-    """Encode a %set-mang skim. mang is None, ('sont',txid,vout,off), or ('pass',pass_atom)."""
-    w.write(7, 8)
-    if mang is None:
-        w.write(2, 0)
-    elif mang[0] == "sont":
-        w.write(2, 1)
-        w.write(1, 0)                                    # pad before sont
-        w.write(256, int.from_bytes(mang[1], "little"))  # txid (32 bytes)
-        w.write_mat(mang[2])                             # vout
-        w.write_mat(mang[3])                             # off
-    elif mang[0] == "pass":
-        w.write(2, 2)
-        w.write(256, mang[1])
-    else:
-        raise ValueError(f"unknown mang kind: {mang[0]}")
-
-
-def _write_outer_header(w: "BitWriter", from_ship_p: int, tx_sig: int | None) -> None:
-    """Write the top-level sotx header: en-sig(tx_sig) + [128 from_ship]."""
-    if tx_sig is None:
-        w.write(2, 0)
-    else:
-        w.write(2, 1)
-        w.write(512, tx_sig)
-    w.write(128, from_ship_p)
-
-
-def encode_keys_sotx(comet_p: int, pass_atom: int, breach: bool = False, tx_sig: int | None = None) -> bytes:
-    """%keys (rekey) sotx — the comet rotates its networking key."""
-    w = BitWriter()
-    _write_outer_header(w, comet_p, tx_sig)
-    _encode_keys_skim(w, pass_atom, breach)
-    return w.to_bytes()
-
-
-def encode_escape_sotx(
-    comet_p: int,
-    parent_p: int,
-    escape_sig: int | None = None,
-    tx_sig: int | None = None,
-) -> bytes:
-    """%escape sotx — comet requests adoption by `parent_p`. If escape_sig is provided,
-    it is the sponsor's off-chain signature over (shaz (jam [comet_p block_height]))."""
-    w = BitWriter()
-    _write_outer_header(w, comet_p, tx_sig)
-    _encode_escape_skim(w, parent_p, escape_sig)
-    return w.to_bytes()
-
-
-def encode_cancel_escape_sotx(comet_p: int, parent_p: int, tx_sig: int | None = None) -> bytes:
-    """%cancel-escape sotx — comet cancels a pending escape request."""
-    w = BitWriter()
-    _write_outer_header(w, comet_p, tx_sig)
-    _encode_ship_skim(w, 4, parent_p)
-    return w.to_bytes()
-
-
-def encode_adopt_sotx(sponsor_p: int, child_p: int, tx_sig: int | None = None) -> bytes:
-    """%adopt sotx — sponsor accepts a child's pending escape. **Reveal-mandatory.**"""
-    w = BitWriter()
-    _write_outer_header(w, sponsor_p, tx_sig)
-    _encode_ship_skim(w, 5, child_p)
-    return w.to_bytes()
-
-
-def encode_reject_sotx(sponsor_p: int, child_p: int, tx_sig: int | None = None) -> bytes:
-    """%reject sotx — sponsor denies a pending escape. **Reveal-mandatory.**"""
-    w = BitWriter()
-    _write_outer_header(w, sponsor_p, tx_sig)
-    _encode_ship_skim(w, 6, child_p)
-    return w.to_bytes()
-
-
-def encode_detach_sotx(sponsor_p: int, child_p: int, tx_sig: int | None = None) -> bytes:
-    """%detach sotx — sponsor releases a child. **Reveal-mandatory.**"""
-    w = BitWriter()
-    _write_outer_header(w, sponsor_p, tx_sig)
-    _encode_ship_skim(w, 7, child_p)
-    return w.to_bytes()
-
-
-def encode_fief_sotx(comet_p: int, fief: tuple | None, tx_sig: int | None = None) -> bytes:
-    """%fief sotx — comet sets or clears its own network-routing fief.
-    fief is None or ('if', ipv4_int, port) or ('is', ipv6_int, port)."""
-    w = BitWriter()
-    _write_outer_header(w, comet_p, tx_sig)
-    _encode_fief_skim(w, fief)
-    return w.to_bytes()
-
-
-def encode_set_mang_sotx(comet_p: int, mang: tuple | None, tx_sig: int | None = None) -> bytes:
-    """%set-mang sotx — designate a manager for PKI ops. Core doesn't process this yet."""
-    w = BitWriter()
-    _write_outer_header(w, comet_p, tx_sig)
-    _encode_mang_skim(w, mang)
-    return w.to_bytes()
-
-
-def wrap_urb_script(data: bytes, xonly_pubkey: bytes) -> bytes:
-    """Wrap encoded URB data in a Taproot script envelope.
-
-    Returns the raw script bytes for:
-      OP_FALSE OP_IF OP_PUSH "urb" <push data chunks> OP_ENDIF
-      <xonly_pubkey> OP_CHECKSIG
-    """
-    parts = bytearray()
-    parts.append(0x00)  # OP_0 (OP_FALSE)
-    parts.append(0x63)  # OP_IF
-    parts.append(0x03)  # PUSH 3 bytes
-    parts.extend(b"urb")
-
-    # Push data in chunks of at most 520 bytes
-    offset = 0
-    while offset < len(data):
-        chunk = data[offset:offset + 520]
-        chunk_len = len(chunk)
-        if chunk_len <= 0x4B:
-            parts.append(chunk_len)
-        elif chunk_len <= 0xFF:
-            parts.append(0x4C)
-            parts.append(chunk_len)
-        elif chunk_len <= 0xFFFF:
-            parts.append(0x4D)
-            parts.extend(chunk_len.to_bytes(2, "little"))
-        else:
-            raise ValueError(f"Chunk too large: {chunk_len}")
-        parts.extend(chunk)
-        offset += 520
-
-    parts.append(0x68)  # OP_ENDIF
-    # Require a signature from the reveal key to spend via script-path
-    parts.append(0x20)  # PUSH 32 bytes
-    parts.extend(xonly_pubkey)
-    parts.append(0xAC)  # OP_CHECKSIG
-    return bytes(parts)
-
-
-# =========================================================================
 #  Taproot helpers — address derivation with script tree
 # =========================================================================
 
@@ -1193,64 +1023,9 @@ def _taproot_tweak_pubkey(internal_key: bytes, merkle_root: bytes | None) -> tup
     return (x_only, parity)
 
 
-def tapscript_address(internal_xonly: bytes, script_bytes: bytes, network: str = "main") -> str:
-    """Derive a bech32m taproot address for a single-leaf script tree.
-
-    internal_xonly: 32-byte x-only internal public key
-    script_bytes: the raw script for the single leaf (version 0xc0)
-    """
-    leaf_hash = _tapleaf_hash(0xC0, script_bytes)
-    output_xonly, _parity = _taproot_tweak_pubkey(internal_xonly, leaf_hash)
-    # Construct P2TR scriptPubKey directly from the tweaked output key
-    # (do NOT pass through script.p2tr() which would apply a second tweak)
-    sc = script.Script(b"\x51\x20" + output_xonly)
-    return sc.address(NETWORKS[network])
-
-
 # =========================================================================
 #  Ring / Pass — derive Suite C networking key from comet miner output
 # =========================================================================
-
-
-def _hoon_atom_to_bytes(atom: int, width: int) -> bytes:
-    """Convert a Hoon atom to little-endian bytes of a given width."""
-    return atom.to_bytes(width, "little")
-
-
-def _bytes_to_hoon_atom(b: bytes) -> int:
-    """Convert little-endian bytes to a Hoon atom (integer)."""
-    return int.from_bytes(b, "little")
-
-
-def build_tweak_bytes(txid_hex: str, vout: int, off: int = 0) -> bytes:
-    """Build the tweak atom bytes: (rap 3 ~[%9 ~tyr %urb-watcher %btc %gw %9 txid vout off]).
-
-    This is the same tweak as make_tweak_expr but as raw bytes.
-    """
-    # Each element's bytes are concatenated (rap 3 = byte-level concat)
-    parts = bytearray()
-    parts.extend(b"\x09")             # %9 version tag (atom 9)
-    parts.extend(b"\x99")             # ~tyr (galaxy 153)
-    parts.extend(b"urb-watcher")      # %urb-watcher
-    parts.extend(b"btc")              # %btc
-    parts.extend(b"gw")               # %gw
-    parts.extend(b"\x09")             # %9 (atom 9)
-    # txid as Hoon @ atom's MINIMAL little-endian bytes — `rap 3` uses
-    # (met 3 txid), so a txid whose display hex has leading zero bytes
-    # contributes fewer than 32 bytes. A fixed 32 shifts every following
-    # element and mismatches urb-core's tweak for ~1/256 of txids.
-    txid_int = int(txid_hex, 16)
-    txid_len = (txid_int.bit_length() + 7) // 8
-    parts.extend(txid_int.to_bytes(txid_len, "little"))
-    # vout: only add bytes if nonzero (met 3 of 0 = 0)
-    if vout > 0:
-        n = (vout.bit_length() + 7) // 8
-        parts.extend(vout.to_bytes(n, "little"))
-    # off: only add bytes if nonzero
-    if off > 0:
-        n = (off.bit_length() + 7) // 8
-        parts.extend(off.to_bytes(n, "little"))
-    return bytes(parts)
 
 
 def derive_pass_from_ring(ring_uw: str, tweak_bytes: bytes | None = None) -> int:
@@ -1288,7 +1063,7 @@ def derive_pass_from_ring(ring_uw: str, tweak_bytes: bytes | None = None) -> int
 
     # Extract tweak data from ring: rub at bit 512 of bod
     # (rub 512 bod) gives [bit_count, tweak_data]; everything after the
-    # mat is xtr, the off-chain reveal log (cc-draft-2) — empty on
+    # mat is xtr, the off-chain custody log (kelvin-9) — empty on
     # miner-fresh rings, present after append_xtr_to_ring.
     _cur, dat = _hoon_rub(512, bod)
     xtr = bod >> (512 + _cur)
@@ -1318,66 +1093,25 @@ def derive_pass_from_ring(ring_uw: str, tweak_bytes: bytes | None = None) -> int
     w.write(256, int.from_bytes(c_pub, "little"))    # cry = ed25519 pub from luck
     w.write(mat_p, mat_q)                                 # mat(dat)
     if xtr:
-        w.write(xtr.bit_length(), xtr)                    # reveal log (cc-draft-2)
+        w.write(xtr.bit_length(), xtr)                    # custody log (kelvin-9)
 
     return w.to_int()
 
 
 # =========================================================================
-#  SPKH — script pubkey hash for spawn verification
+#  Messaging key — the snapshot's `key` field (cry.pub of the suite-C pass)
 # =========================================================================
 
 
-def compute_spkh(funding_address: str, funding_value_sats: int) -> bytes:
-    """Compute spkh = SHA-256(script_pubkey || value).
-
-    This matches boot.hoon's extract-spawn-fields:
-      =/  en-out  (can 3 script-pubkey 8^amount.input ~)
-      =/  spkh  (shay (add 8 wid.script-pubkey) en-out)
-    """
-    # Decode the taproot address to get the script pubkey
-    sc = script.Script.from_address(funding_address)
-    spk_bytes = sc.data  # raw script bytes (OP_1 <32-byte-key>)
-    # Hoon's (can 3 [wid dat] [8 val] ~) concatenates the LE bytes of the
-    # script-pubkey atom followed by the LE bytes of the value atom.
-    # The script-pubkey atom's LE bytes are the REVERSE of the standard
-    # script byte order.
-    spk_atom = int.from_bytes(spk_bytes, "big")  # standard bytes → atom
-    spk_le = spk_atom.to_bytes(len(spk_bytes), "little")  # atom → LE bytes
-    value_le = funding_value_sats.to_bytes(8, "little")
-    data = spk_le + value_le
-    return hashlib.sha256(data).digest()
+def messaging_key_from_pass(pass_atom: int) -> int:
+    """cry — the suite-C messaging (encryption) public key, which is the
+    snapshot's `key` field.  Pass layout (see derive_pass_from_ring):
+    'c'(8 bits) | ugn(256) | cry(256) | mat(dat) | xtr."""
+    return (pass_atom >> (8 + 256)) & ((1 << 256) - 1)
 
 
 # =========================================================================
-#  Sponsor signature — HTTP request to sponsor-signer agent
-# =========================================================================
-
-
-def request_sponsor_signature(
-    comet_name: str, sponsor_url: str = SPONSOR_URL
-) -> tuple[int, int]:
-    """Request an escape signature from the sponsor-signer agent.
-
-    Returns (sig, height).
-    """
-    resp = requests.post(
-        f"{sponsor_url}/apps/sponsor-signer/sign",
-        json={"ship": comet_name},
-        timeout=30,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    sig_str = data["sig"]
-    # sig is returned as Hoon @ux: 0x1234.5678...
-    sig_hex = sig_str.lstrip("0x").replace(".", "")
-    sig = int(sig_hex, 16) if sig_hex else 0
-    height = int(data["height"])
-    return (sig, height)
-
-
-# =========================================================================
-#  Transaction building — commit and reveal
+#  Transaction building — spawn (one tx, key-path) and rekey (state update)
 # =========================================================================
 
 
@@ -1387,16 +1121,7 @@ def _derive_key_at_index(seed_bytes: bytes, index: int) -> bip32.HDKey:
     return root.derive(f"m/86h/1h/0h/0/{index}")
 
 
-# BIP-341 "nothing up my sleeve" point H. Retained for the tapleaf script's
-# OP_CHECKSIG suffix so the leaf is provably-unspendable via script-path, but
-# NOT used as the commit output's internal key — urb-core's ++is-sont-in-input
-# (lib/urb-core.hoon ~L595) requires the point's sont to be re-spent as the
-# input of the next management tx, so the internal key must be one the point
-# owner holds. Using NUMS there would strand the sat forever.
-NUMS_XONLY = bytes.fromhex("50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0")
-
-
-def build_confidential_commit_psbt(
+def build_spawn_psbt(
     *,
     utxo_txid: str,
     utxo_vout: int,
@@ -1405,35 +1130,30 @@ def build_confidential_commit_psbt(
     funding_internal_xonly: bytes,
     funding_path: str,
     funding_fingerprint: bytes,
-    attestation_bytes: bytes,
+    snapshot: dict,
+    publication_pass_atom: int | None = None,
+    publication_opening: dict | None = None,
     fee_rate: int = 2,
     change_internal_xonly: bytes | None = None,
     change_script_pubkey: bytes | None = None,
     change_path: str | None = None,
     network: str = "main",
 ) -> tuple["psbt.PSBT", dict]:
-    """Build a confidential-commit PSBT.
+    """Build the kelvin-9 spawn transaction — ONE tx, no reveal (spec §7.3).
 
     Shape:
-      * input 0 — the funding UTXO, spent via P2TR key-path.
-      * output 0 — P2TR committing to the urb attestation tapleaf, with the
-        funding UTXO's own xonly as the internal key. This is load-bearing:
-        urb-core's sont-chain invariant requires the next management op's
-        commit to spend this exact UTXO via key-path (++is-sont-in-input in
-        lib/urb-core around L595), so the internal key must be one the point
-        owner can sign for. The output remains script-path-committed to the
-        attestation (tapleaf with the encoded sotx) but script-path-
-        unspendable (the leaf's OP_CHECKSIG uses the NUMS xonly, for which
-        nobody holds the private key).
-      * output 1 (optional) — change back to the caller's next change address.
+      * input 0  — the chosen funding UTXO, spent via P2TR key-path.
+      * output 0 — the sat-carrying P2TR output whose key Q = state_output_key
+        (funding xonly, initial snapshot).  The sat lands here and travels with
+        its state commitment; the owner re-spends it key-path for every future
+        custody move.
+      * OP_RETURN publication output — PUBLIC spawns only.  A confidential spawn
+        omits it (there is nothing on-chain to grep).  Pass publication_pass_atom
+        + publication_opening to include it.
+      * change (optional).
 
-    For the NEXT management op on this point, pass merkle_root (=leaf_hash for
-    a single-leaf tree, stored as merkle_root_hex in the proof) via
-    PSBT_IN_TAP_MERKLE_ROOT on the re-spend input so the external signer can
-    compute the key-path tweak. See `add_tap_merkle_root_hint`.
-
-    Returns (psbt, proof_dict) where proof_dict is the on-disk schema for
-    comet.proof.json / <patp>-<op>-<txid>.proof.json.
+    Returns (psbt, proof_dict); proof stores the snapshot + opening so a later
+    finalize can bake the xtr and a rekey can re-derive the current leaf hash.
     """
     from embit import psbt as _psbt
     from embit import ec as _ec
@@ -1443,42 +1163,48 @@ def build_confidential_commit_psbt(
         TransactionOutput as _TxOut,
     )
 
-    leaf_script = wrap_urb_script(attestation_bytes, NUMS_XONLY)
-    leaf_version = 0xC0
-    leaf_hash = _tapleaf_hash(leaf_version, leaf_script)
-    # Internal key = funding UTXO's xonly. The sat at output 0 stays key-path
-    # spendable by the point owner for the next management op.
-    commit_spk = _build_p2tr_spk(funding_internal_xonly, leaf_hash)
+    # The sat-carrying output commits the initial snapshot under the funding key.
+    q = state_output_key(funding_internal_xonly, snapshot)
+    sat_spk = bytes([0x51, 0x20]) + q
+    leaf_hash = state_leaf_hash(state_leaf_script(state_commit(snapshot)))
 
-    # Tx-size estimation: 1x P2TR key-path input ~57.5 vbytes, each P2TR
-    # output ~43 vbytes, overhead ~10.5. 1-out commit ~111; 2-out ~154.
-    est_vbytes = 154 if change_script_pubkey is not None else 111
+    publish = publication_pass_atom is not None and publication_opening is not None
+    pub_script = (
+        make_publication_script(publication_pass_atom, publication_opening)
+        if publish else None
+    )
+
+    # Rough vbyte estimate: 1 key-path input (~57.5), each P2TR out ~43,
+    # overhead ~10.5, an OP_RETURN publication ~ (9 + len)/... counted as bytes.
+    est_vbytes = 68 + 43  # input + sat output + overhead-ish
+    if pub_script is not None:
+        est_vbytes += 11 + len(pub_script)
+    if change_script_pubkey is not None:
+        est_vbytes += 43
     fee = est_vbytes * fee_rate
 
+    outputs: list = []
     if change_script_pubkey is None:
-        # All funds land in the commit output. The sat is re-spendable by the
-        # owner, and this is the "home" for any future management op.
-        commit_value = utxo_value - fee
-        if commit_value < 330:
+        sat_value = utxo_value - fee
+        if sat_value < 330:
             raise RuntimeError(
                 f"UTXO {utxo_value} sats too small: need >= 330 + {fee} (fee)"
             )
-        outputs: list[_TxOut] = [_TxOut(commit_value, _script_from_spk(commit_spk))]
+        outputs.append(_TxOut(sat_value, _script_from_spk(sat_spk)))
+        if pub_script is not None:
+            outputs.append(_TxOut(0, _script_from_spk(pub_script)))
     else:
-        # Split: commit output holds a comfortable re-spend reserve (up to
-        # 1000 sats, enough for a few future ops at 2 sat/vbyte). Change goes
-        # back to the wallet.
-        commit_value = min(1_000, utxo_value - fee - 330)
-        if commit_value < 330:
+        sat_value = min(1_000, utxo_value - fee - 330)
+        if sat_value < 330:
             raise RuntimeError(
                 f"UTXO {utxo_value} sats too small: need >= {330 + 330 + fee} "
-                f"(commit + change dust + fee)"
+                f"(sat output + change dust + fee)"
             )
-        change_value = utxo_value - commit_value - fee
-        outputs = [
-            _TxOut(commit_value, _script_from_spk(commit_spk)),
-            _TxOut(change_value, _script_from_spk(change_script_pubkey)),
-        ]
+        change_value = utxo_value - sat_value - fee
+        outputs.append(_TxOut(sat_value, _script_from_spk(sat_spk)))
+        if pub_script is not None:
+            outputs.append(_TxOut(0, _script_from_spk(pub_script)))
+        outputs.append(_TxOut(change_value, _script_from_spk(change_script_pubkey)))
 
     txid_bytes = bytes.fromhex(utxo_txid)
     tx = _Tx(
@@ -1490,52 +1216,36 @@ def build_confidential_commit_psbt(
 
     p = _psbt.PSBT(tx)
     inp = p.inputs[0]
-    # BIP-371 input metadata — key-path spend of a plain P2TR input.
     inp.witness_utxo = _TxOut(utxo_value, _script_from_spk(utxo_script_pubkey))
     funding_pubkey = _ec.PublicKey.from_xonly(funding_internal_xonly)
     inp.taproot_internal_key = funding_pubkey
     inp.taproot_bip32_derivations[funding_pubkey] = (
-        [],  # no leaf hashes — key-path spend of a plain P2TR input
+        [],  # key-path spend of a plain P2TR input — no leaf hashes
         _psbt.DerivationPath(funding_fingerprint, _parse_path(funding_path)),
     )
 
-    # NB: we deliberately DO NOT set taproot_internal_key / bip32 derivation on
-    # the commit output. Its scriptPubKey is tweaked by the (undisclosed) leaf
-    # hash, but embit can't emit PSBT_OUT_TAP_TREE — so a strict signer that
-    # tried to verify the output as its own would recompute the key from the
-    # internal key + an EMPTY tree, get a mismatch, and flag it as a
-    # change-address substitution (Coldcard/Sparrow output validation). Leaving
-    # it as a foreign output avoids the false alarm; the owner still spends it
-    # next op via the input's PSBT_IN_TAP_MERKLE_ROOT hint (build_chained...).
-
-    # Change output metadata (if present) — points at the change address path
-    # so the signer treats it as a known-derivation output.
+    # Change output metadata (known-derivation output for the signer).
     if change_script_pubkey is not None and change_internal_xonly is not None and change_path is not None:
         change_pubkey = _ec.PublicKey.from_xonly(change_internal_xonly)
-        out1 = p.outputs[1]
-        out1.taproot_internal_key = change_pubkey
-        out1.taproot_bip32_derivations[change_pubkey] = (
+        out_change = p.outputs[-1]
+        out_change.taproot_internal_key = change_pubkey
+        out_change.taproot_bip32_derivations[change_pubkey] = (
             [],
             _psbt.DerivationPath(funding_fingerprint, _parse_path(change_path)),
         )
 
     proof = {
-        "version": 1,
-        "commit_vout": 0,
+        "version": 2,
+        "protocol": "kelvin-9",
+        "sat_vout": 0,
         "internal_pubkey_hex": funding_internal_xonly.hex(),
-        "leaf_version": leaf_version,
-        "leaf_script_hex": leaf_script.hex(),
-        "merkle_path": [],  # single-leaf tree; merkle_root == leaf_hash
-        "merkle_root_hex": leaf_hash.hex(),  # feed into next-op PSBT_IN_TAP_MERKLE_ROOT
-        "attestation_bytes_hex": attestation_bytes.hex(),
-        "commit_script_pubkey_hex": commit_spk.hex(),
-        "commit_value": outputs[0].value,
+        "snapshot": snapshot,
+        "leaf_hash_hex": leaf_hash.hex(),   # merkle root for the next rekey's key-path spend
+        "sat_script_pubkey_hex": sat_spk.hex(),
+        "sat_value": outputs[0].value,
+        "published": bool(publish),
         "network": network,
         "funding": {
-            # The sat's on-chain home after this commit: the input of any
-            # future management op MUST be (commit_txid, 0). That input needs
-            # PSBT_IN_TAP_MERKLE_ROOT = merkle_root_hex so the signer can
-            # compute the key-path tweak.
             "txid": utxo_txid,
             "vout": utxo_vout,
             "value": utxo_value,
@@ -1548,34 +1258,32 @@ def build_confidential_commit_psbt(
 
 def add_tap_merkle_root_hint(psbt_obj, input_idx: int, merkle_root: bytes) -> None:
     """Set PSBT_IN_TAP_MERKLE_ROOT on a PSBT input. Required when re-spending a
-    prior Causeway commit output via key-path: the signer needs merkle_root to
-    compute the taproot tweak, and won't know it from their descriptor alone."""
+    prior sat-carrying output via key-path: the signer needs merkle_root (= the
+    state leaf hash of the CURRENT snapshot) to compute the taproot tweak, and
+    won't know it from their descriptor alone."""
     inp = psbt_obj.inputs[input_idx]
     inp.taproot_merkle_root = merkle_root
 
 
-def build_chained_commit_psbt(
+def build_rekey_psbt(
     *,
     prior_proof: dict,
-    new_attestation_bytes: bytes,
+    new_snapshot: dict,
+    publication_pass_atom: int | None = None,
+    publication_opening: dict | None = None,
     fee_rate: int = 2,
     network: str = "main",
 ) -> tuple["psbt.PSBT", dict]:
-    """Build a management-op commit PSBT that spends the prior op's commit
-    output. This is the sont-preserving path: urb-core's ++is-sont-in-input
-    requires that the next management op's input IS the point's current sont.
+    """Build a rekey / state-update transaction — the one surviving on-chain
+    management op (spec §5, §7.4).
 
-    Takes a prior proof.json dict (from a previous spawn or management op) and
-    the new sotx bytes. Produces a PSBT that:
-      * input 0 = (prior_proof.commit_txid, prior_proof.commit_vout), key-path
-        spend of the tweaked taproot output. Includes PSBT_IN_TAP_MERKLE_ROOT
-        so the external signer can compute the tweak.
-      * output 0 = new P2TR tweaked by the new attestation, same internal key
-        (the point owner's).
-      * no change output — the sat's value stays on the new commit output so
-        future ops can continue the chain.
+    Spends the point's current sat-carrying output key-path (embit needs the
+    taproot internal key + merkle root = leaf hash of the CURRENT snapshot's
+    state leaf, so the external signer can compute the key-path tweak), and
+    commits the new snapshot at output 0 = P2TR(new Q).  An OP_RETURN
+    publication output is added for public comets.
 
-    Returns (psbt, new_proof_dict).
+    Returns (psbt, new_proof_dict) — a chained proof.
     """
     from embit import psbt as _psbt
     from embit import ec as _ec
@@ -1585,50 +1293,57 @@ def build_chained_commit_psbt(
         TransactionOutput as _TxOut,
     )
 
-    # Unpack the prior proof.
-    prior_internal_xonly = bytes.fromhex(prior_proof["internal_pubkey_hex"])
-    prior_merkle_root = bytes.fromhex(prior_proof["merkle_root_hex"])
-    prior_commit_txid = prior_proof.get("commit_txid")
-    if not prior_commit_txid:
-        raise ValueError("prior proof has no commit_txid — was the prior commit broadcast?")
-    prior_commit_vout = int(prior_proof.get("commit_vout", 0))
-    prior_commit_value = int(prior_proof["commit_value"])
-    prior_commit_spk = bytes.fromhex(prior_proof["commit_script_pubkey_hex"])
+    internal_xonly = bytes.fromhex(prior_proof["internal_pubkey_hex"])
+    prior_merkle_root = bytes.fromhex(prior_proof["leaf_hash_hex"])
+    prior_txid = prior_proof.get("commit_txid") or prior_proof.get("sat_txid")
+    if not prior_txid:
+        raise ValueError("prior proof has no commit_txid — was the prior tx broadcast?")
+    prior_vout = int(prior_proof.get("sat_vout", 0))
+    prior_value = int(prior_proof["sat_value"])
+    prior_spk = bytes.fromhex(prior_proof["sat_script_pubkey_hex"])
+
     funding = prior_proof.get("funding", {})
     funding_path = funding.get("path", "m/86h/0h/0h/0/0")
     funding_fingerprint = bytes.fromhex(funding.get("fingerprint_hex", "00000000"))
 
-    # Build the new tapleaf.
-    leaf_script = wrap_urb_script(new_attestation_bytes, NUMS_XONLY)
-    leaf_version = 0xC0
-    leaf_hash = _tapleaf_hash(leaf_version, leaf_script)
-    new_commit_spk = _build_p2tr_spk(prior_internal_xonly, leaf_hash)
+    new_q = state_output_key(internal_xonly, new_snapshot)
+    new_sat_spk = bytes([0x51, 0x20]) + new_q
+    new_leaf_hash = state_leaf_hash(state_leaf_script(state_commit(new_snapshot)))
 
-    # Single in/out → ~111 vbytes.
+    publish = publication_pass_atom is not None and publication_opening is not None
+    pub_script = (
+        make_publication_script(publication_pass_atom, publication_opening)
+        if publish else None
+    )
+
     est_vbytes = 111
+    if pub_script is not None:
+        est_vbytes += 11 + len(pub_script)
     fee = est_vbytes * fee_rate
-    new_commit_value = prior_commit_value - fee
-    if new_commit_value < 330:
+    new_value = prior_value - fee
+    if new_value < 330:
         raise RuntimeError(
-            f"prior commit {prior_commit_value} sats too small: need >= 330 + {fee} "
-            f"(fee). Top up by sending more sats to the point's commit output, or "
-            f"use a lower fee-rate."
+            f"prior sat output {prior_value} sats too small: need >= 330 + {fee} "
+            f"(fee). Top up the sat-carrying UTXO or lower the fee-rate."
         )
 
-    txid_bytes = bytes.fromhex(prior_commit_txid)
+    outputs = [_TxOut(new_value, _script_from_spk(new_sat_spk))]
+    if pub_script is not None:
+        outputs.append(_TxOut(0, _script_from_spk(pub_script)))
+
     tx = _Tx(
         version=2,
-        vin=[_TxIn(txid_bytes, prior_commit_vout, sequence=0xFFFFFFFF)],
-        vout=[_TxOut(new_commit_value, _script_from_spk(new_commit_spk))],
+        vin=[_TxIn(bytes.fromhex(prior_txid), prior_vout, sequence=0xFFFFFFFF)],
+        vout=outputs,
         locktime=0,
     )
     p = _psbt.PSBT(tx)
 
-    # Input: key-path spend of a tweaked P2TR. The signer needs merkle_root to
-    # compute the tweak — that's what PSBT_IN_TAP_MERKLE_ROOT is for.
+    # Key-path spend of the tweaked sat output: the signer needs the current
+    # snapshot's leaf hash as PSBT_IN_TAP_MERKLE_ROOT to compute the tweak.
     inp = p.inputs[0]
-    inp.witness_utxo = _TxOut(prior_commit_value, _script_from_spk(prior_commit_spk))
-    internal_pubkey = _ec.PublicKey.from_xonly(prior_internal_xonly)
+    inp.witness_utxo = _TxOut(prior_value, _script_from_spk(prior_spk))
+    internal_pubkey = _ec.PublicKey.from_xonly(internal_xonly)
     inp.taproot_internal_key = internal_pubkey
     inp.taproot_merkle_root = prior_merkle_root
     inp.taproot_bip32_derivations[internal_pubkey] = (
@@ -1636,36 +1351,27 @@ def build_chained_commit_psbt(
         _psbt.DerivationPath(funding_fingerprint, _parse_path(funding_path)),
     )
 
-    # As in build_confidential_commit_psbt, DO NOT set taproot_internal_key /
-    # derivation on the leaf-tweaked commit output: without PSBT_OUT_TAP_TREE
-    # (embit can't emit it) a strict signer recomputes the key from the internal
-    # key + empty tree, mismatches the tweaked SPK, and flags a change
-    # substitution. The owner spends this output next op via the input merkle-
-    # root hint, so the output metadata isn't needed.
-
     new_proof = {
-        "version": 1,
-        "commit_vout": 0,
-        "internal_pubkey_hex": prior_internal_xonly.hex(),
-        "leaf_version": leaf_version,
-        "leaf_script_hex": leaf_script.hex(),
-        "merkle_path": [],
-        "merkle_root_hex": leaf_hash.hex(),
-        "attestation_bytes_hex": new_attestation_bytes.hex(),
-        "commit_script_pubkey_hex": new_commit_spk.hex(),
-        "commit_value": new_commit_value,
+        "version": 2,
+        "protocol": "kelvin-9",
+        "sat_vout": 0,
+        "internal_pubkey_hex": internal_xonly.hex(),
+        "snapshot": new_snapshot,
+        "leaf_hash_hex": new_leaf_hash.hex(),
+        "sat_script_pubkey_hex": new_sat_spk.hex(),
+        "sat_value": new_value,
+        "published": bool(publish),
         "network": network,
         "funding": {
-            # The sat moved: new home is (new_commit_txid, 0) once broadcast.
-            "txid": prior_commit_txid,  # the INPUT we spent (for provenance)
-            "vout": prior_commit_vout,
-            "value": prior_commit_value,
+            "txid": prior_txid,   # the sat's prior home we spent (provenance)
+            "vout": prior_vout,
+            "value": prior_value,
             "path": funding_path,
             "fingerprint_hex": funding_fingerprint.hex(),
         },
         "prior_proof": {
-            "commit_txid": prior_commit_txid,
-            "commit_vout": prior_commit_vout,
+            "commit_txid": prior_txid,
+            "sat_vout": prior_vout,
         },
     }
     return p, new_proof
@@ -1791,7 +1497,7 @@ def int_to_patp(atom: int) -> str:
 #  the atom split into 11-bit groups indexing a 2048-word list, with a SHA-256
 #  checksum, dot-joined, prefixed "." (tweaked/Groundwire) or ".." (untweaked).
 #  Reference + wordlist vendored from gwbtc/mnemonyms in ./vendor. The @p stays
-#  the canonical machine identity (boot --comet, pier name, proof.json, sotx).
+#  the canonical machine identity (boot --comet, pier name, proof.json).
 # =========================================================================
 
 import importlib.util as _ilu
@@ -2037,7 +1743,7 @@ def boot_comet(
 # =========================================================================
 
 
-PROOF_SCHEMA_VERSION = 1
+PROOF_SCHEMA_VERSION = 2
 
 
 def write_proof_json(proof: dict, path: str) -> None:
@@ -2054,55 +1760,56 @@ def load_proof_json(path: str) -> dict:
 
 
 def verify_proof_self(proof: dict) -> tuple[bool, str]:
-    """Recompute the tapleaf hash and tweaked output xonly from the proof's fields.
-    Returns (ok, reason). Does NOT check on-chain existence; see verify_proof_onchain."""
+    """Recompute the sat-carrying output key Q from the proof's internal key and
+    snapshot, and check it against the stored scriptPubKey.  Returns (ok, reason).
+    Does NOT check on-chain existence; see verify_proof_onchain."""
     try:
         internal = bytes.fromhex(proof["internal_pubkey_hex"])
-        leaf_script = bytes.fromhex(proof["leaf_script_hex"])
-        leaf_version = int(proof["leaf_version"])
-        expected_spk = bytes.fromhex(proof["commit_script_pubkey_hex"])
+        snapshot = proof["snapshot"]
+        expected_spk = bytes.fromhex(proof["sat_script_pubkey_hex"])
     except (KeyError, ValueError) as e:
         return False, f"malformed proof: {e}"
     try:
-        leaf_hash = _tapleaf_hash(leaf_version, leaf_script)
-        # Walk the merkle path (empty for single-leaf trees).
-        root = leaf_hash
-        for sib_hex in proof.get("merkle_path", []):
-            sib = bytes.fromhex(sib_hex)
-            root = _tagged_hash("TapBranch", min(root, sib) + max(root, sib))
-        computed_spk = _build_p2tr_spk(internal, root)
+        q = state_output_key(internal, snapshot)
+        computed_spk = bytes([0x51, 0x20]) + q
     except Exception as e:
-        return False, f"error recomputing spk: {e}"
+        return False, f"error recomputing sat output key: {e}"
     if computed_spk != expected_spk:
         return False, (
             f"spk mismatch: computed {computed_spk.hex()}, expected {expected_spk.hex()}"
         )
+    # If a leaf hash is recorded, confirm it matches the snapshot too.
+    lh = proof.get("leaf_hash_hex")
+    if lh is not None:
+        want = state_leaf_hash(state_leaf_script(state_commit(snapshot))).hex()
+        if lh.lower() != want.lower():
+            return False, f"leaf_hash mismatch: stored {lh}, computed {want}"
     return True, "OK"
 
 
 def verify_proof_onchain(proof: dict, *, mempool_base: str = MEMPOOL_API_URL) -> tuple[bool, str]:
-    """Fetch the commit tx from mempool.space and verify its output matches the proof."""
+    """Fetch the custody tx from mempool.space and verify its sat output matches the proof."""
     ok, reason = verify_proof_self(proof)
     if not ok:
         return False, reason
-    txid = proof.get("commit_txid")
+    txid = proof.get("commit_txid") or proof.get("sat_txid")
     if not txid:
-        return False, "proof has no commit_txid — was the commit broadcast?"
+        return False, "proof has no commit_txid — was the tx broadcast?"
     try:
         r = requests.get(f"{mempool_base}/tx/{txid}", timeout=20)
         r.raise_for_status()
         tx = r.json()
     except Exception as e:
         return False, f"could not fetch tx {txid}: {e}"
-    vout_idx = int(proof.get("commit_vout", 0))
+    vout_idx = int(proof.get("sat_vout", 0))
     try:
         vout = tx["vout"][vout_idx]
     except (KeyError, IndexError):
         return False, f"tx {txid} has no vout {vout_idx}"
     onchain_spk = vout.get("scriptpubkey", "")
-    if onchain_spk.lower() != proof["commit_script_pubkey_hex"].lower():
+    if onchain_spk.lower() != proof["sat_script_pubkey_hex"].lower():
         return False, (
-            f"on-chain spk {onchain_spk} != proof spk {proof['commit_script_pubkey_hex']}"
+            f"on-chain spk {onchain_spk} != proof spk {proof['sat_script_pubkey_hex']}"
         )
     confs = (tx.get("status") or {}).get("confirmed", False)
     return True, f"OK ({'confirmed' if confs else 'unconfirmed'})"
@@ -2336,39 +2043,22 @@ def confirm_seed_saved(mnemonic: str) -> None:
 # =========================================================================
 
 
-def mine_comet(tweak_hex: str, miner_bin: str = COMET_MINER_BIN) -> dict:
-    """Call the comet_miner binary with a tweak expression, return parsed result.
-
-    Uses the existing make_tweak_expr + run_comet_miner flow.
-    """
-    # Need to reconstruct the tweak expression from the hex. tweak_hex is raw bytes.
-    tweak_bytes = bytes.fromhex(tweak_hex)
-    # Parse txid / vout / off back out of the tweak bytes structure so we can use make_tweak_expr.
-    # NOTE: this is fragile; simpler to just pass the tweak atom directly. The miner accepts a Hoon
-    # expression, so we wrap the raw bytes as =@ (^&@ux bytes) and run:
-    # For our purposes the caller can pass (txid, vout, off) and we build the expr via make_tweak_expr.
-    raise NotImplementedError("use mine_comet_from_utxo below")
-
-
 def mine_comet_from_utxo(
     txid_hex: str,
     vout: int,
     off: int = 0,
+    seed: int = 0,
     miner_bin: str = COMET_MINER_BIN,
-    legacy_tweak: bool = False,
     dom: str = PKI_DOM,
 ) -> dict:
-    """Build a tweak expression for the given funding UTXO and run the comet miner.
+    """Build the kelvin-9 dat expression for the given funding UTXO + blind seed
+    and run the comet miner.
 
-    By default the tweak is the cc-draft-2 `dat` (mat-encoded PKI domain +
-    spawn satpoint). Pass legacy_tweak=True for the v9 rap-3 format that
-    lib/urb-core and the protocol-2.0 verifier still expect — required until
-    the kernel/agent migration lands everywhere the comet must verify.
-    """
-    if legacy_tweak:
-        tweak_expr = make_tweak_expr(txid_hex, vout, off)
-    else:
-        tweak_expr = make_dat_expr(txid_hex, vout, off, dom)
+    dat = (can 0 (mat dom) (mat 9) [256 d] ~), d hiding the spawn satpoint under
+    blind = H_tag('gw/spawn-blind', seed).  The dat is passed to comet-miner's
+    --tweak flag; the miner varies the ship's own key material to hit the PoW
+    target, so the caller's blind seed must be chosen before mining."""
+    tweak_expr = make_dat_expr(txid_hex, vout, off, seed, dom)
     return run_comet_miner(tweak_expr, miner_bin)
 
 
@@ -2394,8 +2084,9 @@ def proof():
 
 
 _MGMT_PRIOR_PROOF_HELP = (
-    "Path to the prior proof.json for this point (spawn's or last mgmt op's). "
-    "The new commit spends its commit output — required so urb-core's sont chain stays valid."
+    "Path to the prior proof.json for this point (spawn's or last rekey's). "
+    "The rekey spends its sat-carrying output key-path — required so the "
+    "custody chain (input-0 spends) stays valid."
 )
 
 
@@ -2403,100 +2094,32 @@ _MGMT_PRIOR_PROOF_HELP = (
 @click.option("--point", required=True, help="Target comet — mnemonym or @p")
 @click.option("--prior-proof", required=True, type=click.Path(exists=True, dir_okay=False), help=_MGMT_PRIOR_PROOF_HELP)
 @click.option("--new-pass-hex", required=True, help="New networking key (pass), hex — derived from your ship's new ring")
-@click.option("--breach", is_flag=True, default=False, help="Bump rift (a breach rekey)")
+@click.option("--breach", is_flag=True, default=False, help="Bump rift (a breach rekey; also bumps life)")
 @click.option("--fee-rate", type=int, default=2, show_default=True)
 @click.option("--network", type=click.Choice(["main", "testnet"]), default="main", show_default=True)
 @click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".", show_default=True)
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
 def cmd_rekey(point, prior_proof, new_pass_hex, breach, fee_rate, network, output_dir, mempool_base):
-    """%keys sotx — rotate a comet's networking key. Confidential commit; chains off --prior-proof."""
+    """Rotate a comet's messaging key — a state update committed in the sat
+    output's taproot tweak. Spends the current sat-carrying UTXO key-path;
+    chains off --prior-proof."""
     point = int_to_patp(resolve_id(point))  # accept mnemonym or @p
-    comet_p = patp_to_int(point)
     new_pass = int.from_bytes(bytes.fromhex(new_pass_hex), "little")
-    attestation = encode_keys_sotx(comet_p=comet_p, pass_atom=new_pass, breach=breach)
-    _run_management_op("keys", point, prior_proof, fee_rate, network, output_dir, mempool_base, attestation)
+    new_key = messaging_key_from_pass(new_pass)
+    _run_rekey_op(point, prior_proof, new_key, breach, fee_rate, network, output_dir, mempool_base)
 
 
-@cli.command("escape")
-@click.option("--point", required=True, help="The escaping comet — mnemonym or @p")
-@click.option("--parent", required=True, help="The requested parent — mnemonym or @p")
-@click.option("--prior-proof", required=True, type=click.Path(exists=True, dir_okay=False), help=_MGMT_PRIOR_PROOF_HELP)
-@click.option("--sig-hex", default=None, help="Sponsor's off-chain pre-signature (hex, 64 bytes) — optional")
-@click.option("--fee-rate", type=int, default=2, show_default=True)
-@click.option("--network", type=click.Choice(["main", "testnet"]), default="main", show_default=True)
-@click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".", show_default=True)
-@click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
-def cmd_escape(point, parent, prior_proof, sig_hex, fee_rate, network, output_dir, mempool_base):
-    """%escape sotx — ask a new parent to adopt you. Chains off --prior-proof."""
-    point = int_to_patp(resolve_id(point))  # accept mnemonym or @p
-    comet_p = patp_to_int(point)
-    parent_p = resolve_id(parent)
-    escape_sig = int.from_bytes(bytes.fromhex(sig_hex), "little") if sig_hex else None
-    attestation = encode_escape_sotx(comet_p=comet_p, parent_p=parent_p, escape_sig=escape_sig)
-    _run_management_op("escape", point, prior_proof, fee_rate, network, output_dir, mempool_base, attestation)
+def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool, fee_rate: int, network: str, output_dir: str, mempool_base: str) -> None:
+    """Spend the point's current sat-carrying output key-path, commit a new
+    snapshot (life+1, rift+1 on breach, rotated key), await signed PSBT,
+    broadcast, and emit `<patp>-rekey-<txid>.proof.json`.
 
-
-@cli.command("cancel-escape")
-@click.option("--point", required=True, help="Target comet — mnemonym or @p")
-@click.option("--parent", required=True, help="Parent to cancel — mnemonym or @p")
-@click.option("--prior-proof", required=True, type=click.Path(exists=True, dir_okay=False), help=_MGMT_PRIOR_PROOF_HELP)
-@click.option("--fee-rate", type=int, default=2, show_default=True)
-@click.option("--network", type=click.Choice(["main", "testnet"]), default="main", show_default=True)
-@click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".", show_default=True)
-@click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
-def cmd_cancel_escape(point, parent, prior_proof, fee_rate, network, output_dir, mempool_base):
-    """%cancel-escape sotx — rescind a pending escape request. Chains off --prior-proof."""
-    point = int_to_patp(resolve_id(point))  # accept mnemonym or @p
-    comet_p = patp_to_int(point)
-    parent_p = resolve_id(parent)
-    attestation = encode_cancel_escape_sotx(comet_p=comet_p, parent_p=parent_p)
-    _run_management_op("cancel-escape", point, prior_proof, fee_rate, network, output_dir, mempool_base, attestation)
-
-
-@cli.command("fief")
-@click.option("--point", required=True, help="Target comet — mnemonym or @p")
-@click.option("--prior-proof", required=True, type=click.Path(exists=True, dir_okay=False), help=_MGMT_PRIOR_PROOF_HELP)
-@click.option("--ip", default=None, help="IPv4 or IPv6 address. Omit to clear fief.")
-@click.option("--port", type=int, default=None, help="Port (required if --ip is given)")
-@click.option("--fee-rate", type=int, default=2, show_default=True)
-@click.option("--network", type=click.Choice(["main", "testnet"]), default="main", show_default=True)
-@click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".", show_default=True)
-@click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
-def cmd_fief(point, prior_proof, ip, port, fee_rate, network, output_dir, mempool_base):
-    """%fief sotx — set or clear a comet's static IP/port fief. Chains off --prior-proof."""
-    point = int_to_patp(resolve_id(point))  # accept mnemonym or @p
-    comet_p = patp_to_int(point)
-    if ip is None:
-        fief = None
-    else:
-        if port is None:
-            raise click.UsageError("--port is required when --ip is given")
-        try:
-            if ":" in ip:
-                ip_int = int(ipaddress.IPv6Address(ip))
-                fief = ("is", ip_int, port)
-            else:
-                ip_int = int(ipaddress.IPv4Address(ip))
-                fief = ("if", ip_int, port)
-        except ValueError as e:
-            raise click.UsageError(f"bad IP address {ip!r}: {e}")
-    attestation = encode_fief_sotx(comet_p=comet_p, fief=fief)
-    _run_management_op("fief", point, prior_proof, fee_rate, network, output_dir, mempool_base, attestation)
-
-
-def _run_management_op(op: str, point: str, prior_proof_path: str, fee_rate: int, network: str, output_dir: str, mempool_base: str, attestation: bytes) -> None:
-    """Shared flow for management ops: spend the point's current sont (the
-    commit output of the prior op, identified by `--prior-proof`), build a new
-    confidential commit for `attestation`, await signed PSBT, broadcast, emit
-    `<patp>-<op>-<txid>.proof.json`.
-
-    This is required by urb-core's ++is-sont-in-input invariant — the next
-    management op must spend the point's previous on-chain home, not an
-    unrelated wallet UTXO.
-    """
+    Sponsorship and escape are off-chain in kelvin-9; only key rotation / breach
+    is an on-chain state update.  The sponsor/fief carry forward from the prior
+    snapshot unchanged."""
     print()
     print("=" * 60)
-    print(f"  CAUSEWAY — Confidential {op.upper()} for {patp_to_mnemonym(point)}")
+    print(f"  CAUSEWAY — kelvin-9 REKEY for {patp_to_mnemonym(point)}")
     print(f"  (@p {point})")
     print("=" * 60)
 
@@ -2506,36 +2129,46 @@ def _run_management_op(op: str, point: str, prior_proof_path: str, fee_rate: int
         click.echo(click.style(f"  cannot load --prior-proof: {e}", fg="red"))
         sys.exit(1)
 
-    # Sanity: prior proof must be for the same point.
     if prior.get("patp") and prior["patp"] != point:
         click.echo(click.style(
             f"  prior proof is for {prior['patp']}, not {point}", fg="red"))
         sys.exit(1)
 
-    print(f"\n  Chaining from prior {prior.get('op', '?')} op: "
-          f"commit={prior.get('commit_txid','?')[:16]}..:{prior.get('commit_vout',0)} "
-          f"value={prior.get('commit_value','?')}")
+    prior_snap = prior.get("snapshot") or {}
+    new_snapshot = {
+        "life": int(prior_snap.get("life", 0)) + 1,   # every change bumps life
+        "rift": int(prior_snap.get("rift", 0)) + (1 if breach else 0),
+        "key": new_key,
+        "sponsor": prior_snap.get("sponsor"),          # carries forward
+        "fief": prior_snap.get("fief"),
+    }
 
-    psbt_obj, proof = build_chained_commit_psbt(
+    prior_txid = prior.get("commit_txid") or prior.get("sat_txid")
+    print(f"\n  Chaining from prior {prior.get('op', '?')} op: "
+          f"sat={str(prior_txid)[:16]}..:{prior.get('sat_vout', 0)} "
+          f"value={prior.get('sat_value', '?')}  life {prior_snap.get('life','?')}→{new_snapshot['life']}")
+
+    psbt_obj, proof = build_rekey_psbt(
         prior_proof=prior,
-        new_attestation_bytes=attestation,
+        new_snapshot=new_snapshot,
         fee_rate=fee_rate,
         network=network,
     )
-    proof["op"] = op
+    proof["op"] = "rekey"
     proof["patp"] = point
 
     os.makedirs(output_dir, exist_ok=True)
     pier = point.lstrip("~")
-    psbt_path = os.path.join(output_dir, f"{pier}-{op}.psbt")
+    psbt_path = os.path.join(output_dir, f"{pier}-rekey.psbt")
     unsigned_b64 = psbt_obj.to_base64()
     with open(psbt_path, "w") as f:
         f.write(unsigned_b64 + "\n")
     print(f"\n  Wrote unsigned PSBT: {psbt_path}")
     click.echo(click.style(
-        "\n  Note: this PSBT's input has PSBT_IN_TAP_MERKLE_ROOT set so your\n"
-        "  signer can compute the taproot tweak. Sparrow v1.8+ supports this;\n"
-        "  older signers will refuse to sign.",
+        "\n  Note: this PSBT's input has PSBT_IN_TAP_MERKLE_ROOT set (= the\n"
+        "  current snapshot's state leaf hash) so your signer can compute the\n"
+        "  taproot key-path tweak. BIP-371 software signers (Sparrow-class,\n"
+        "  Core descriptor wallets) support this.",
         fg="yellow",
     ))
 
@@ -2547,11 +2180,11 @@ def _run_management_op(op: str, point: str, prior_proof_path: str, fee_rate: int
         sys.exit(1)
 
     proof["commit_txid"] = commit_txid
-    proof_path = os.path.join(output_dir, f"{pier}-{op}-{commit_txid[:12]}.proof.json")
+    proof_path = os.path.join(output_dir, f"{pier}-rekey-{commit_txid[:12]}.proof.json")
     write_proof_json(proof, proof_path)
     print(f"  Wrote proof: {proof_path}")
 
-    print("\n  Broadcasting commit...")
+    print("\n  Broadcasting rekey...")
     try:
         broadcast_id = _broadcast_tx(tx_hex, mempool_base=mempool_base)
     except Exception as e:
@@ -2561,11 +2194,11 @@ def _run_management_op(op: str, point: str, prior_proof_path: str, fee_rate: int
 
     print("\n" + "=" * 60)
     click.echo(click.style(
-        f"  {op.upper()} attestation broadcast for {patp_to_mnemonym(point)}.\n"
-        f"  Sont chain: {prior.get('commit_txid','?')[:10]}..:0 → {commit_txid[:10]}..:0\n"
-        f"  Use {proof_path} as --prior-proof for the NEXT management op.\n"
-        f"  Also import into your ship's %spv-wallet state:\n"
-        f"    :spv-wallet|import-proof '{open(proof_path).read()[:40]}...'\n",
+        f"  REKEY broadcast for {patp_to_mnemonym(point)}.\n"
+        f"  Custody chain: {str(prior_txid)[:10]}..:0 → {commit_txid[:10]}..:0\n"
+        f"  Use {proof_path} as --prior-proof for the NEXT state update.\n"
+        f"  After it confirms, hand the new xtr entry + opening to your ship's\n"
+        f"  %gw-btc agent (the %anew poke) so peers can re-verify you.\n",
         fg="yellow",
     ))
 
@@ -2578,11 +2211,11 @@ def _run_management_op(op: str, point: str, prior_proof_path: str, fee_rate: int
 @click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".", show_default=True, help="Directory to write psbt + proof files")
 @click.option("--miner", default=COMET_MINER_BIN, show_default=True, help="Path to comet_miner binary")
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
-@click.option("--legacy-tweak", is_flag=True, default=False,
-              help="Mine with the v9 rap-3 tweak (pre-cc-draft-2) instead of the mat(dom)+satpoint dat")
-def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, legacy_tweak):
+@click.option("--publish", is_flag=True, default=False,
+              help="Public spawn: add an OP_RETURN publication output opening the dat commitment (default off = confidential)")
+def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish):
     """Spawn using a user-provided wallet (xpub / descriptor). You sign the PSBT externally."""
-    run_spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, legacy_tweak)
+    run_spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish)
 
 
 @spawn.command("generate")
@@ -2592,11 +2225,11 @@ def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_ba
 @click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".", show_default=True)
 @click.option("--miner", default=COMET_MINER_BIN, show_default=True)
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
-@click.option("--legacy-tweak", is_flag=True, default=False,
-              help="Mine with the v9 rap-3 tweak (pre-cc-draft-2) instead of the mat(dom)+satpoint dat")
-def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, legacy_tweak):
+@click.option("--publish", is_flag=True, default=False,
+              help="Public spawn: add an OP_RETURN publication output (default off = confidential)")
+def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish):
     """Generate a fresh BIP-39 wallet, fund it, spawn, and emit a boot one-liner."""
-    run_spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, legacy_tweak)
+    run_spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish)
 
 
 @proof.command("show")
@@ -2632,14 +2265,15 @@ def proof_verify(path, onchain, mempool_base):
 @click.option("--poll-interval", type=int, default=POLL_INTERVAL, show_default=True)
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
 def cmd_finalize(proofs, feed, wait, poll_interval, mempool_base):
-    """Bake the cc-draft-2 reveal log (xtr) into proofs and, optionally, a boot feed.
+    """Bake the kelvin-9 custody log (xtr) into proofs and, optionally, a boot feed.
 
     Give every proof.json for the point, OLDEST FIRST (spawn first, then each
-    management op). Once each commit has confirmed, its block hash is recorded
-    in the proof, the reveal-log entries are jammed into xtr, and — if --feed
-    is given — the feed is re-encoded with xtr baked into the ring, so the
-    booted ship's pass carries its own attestation (spec §2.5). Without this
-    step the ship boots fine but serves an empty reveal log until an %anew
+    rekey). Once each custody tx has confirmed, its block hash is recorded in
+    the proof, an xtr entry (with the snapshot opening) is jammed per hop, and —
+    if --feed is given — the feed is re-encoded with xtr baked into the ring, so
+    the booted ship's pass carries its own attestation. Entry 0 (the spawn)
+    additionally opens the hiding dat commitment via its blind-opening. Without
+    this step the ship boots fine but serves an empty log until an %anew
     round-trip refreshes it.
     """
     chain = [load_proof_json(p) for p in proofs]
@@ -2652,10 +2286,10 @@ def cmd_finalize(proofs, feed, wait, poll_interval, mempool_base):
             )
 
     entries = []
-    for path, proof in zip(proofs, chain):
+    for idx, (path, proof) in enumerate(zip(proofs, chain)):
         txid = proof.get("commit_txid")
         if not txid:
-            raise click.UsageError(f"{path} has no commit_txid — was its commit broadcast?")
+            raise click.UsageError(f"{path} has no commit_txid — was its tx broadcast?")
         while True:
             status = mempool_get(f"/tx/{txid}", base=mempool_base).get("status", {})
             if status.get("confirmed"):
@@ -2667,19 +2301,31 @@ def cmd_finalize(proofs, feed, wait, poll_interval, mempool_base):
             time.sleep(poll_interval)
         proof["block_hash"] = status["block_hash"]
         proof["block_height"] = status["block_height"]
-        entries.append(dict(
-            txid_hex=txid,
-            block_height=int(proof["block_height"]),
-            # every finalized op re-attests state, so each carries a reveal.
-            # 33-byte compressed internal key, even parity per BIP-341 lift_x —
-            # the same shape as protocol 2.0's reveal (sur/self-attestation).
-            reveal=dict(
-                internal_key_hex="02" + proof["internal_pubkey_hex"],
-                leaf_version=int(proof["leaf_version"]),
-                leaf_script_hex=proof["leaf_script_hex"],
-            ),
-        ))
-        print(f"  {os.path.basename(path)}: confirmed in block {proof['block_height']}")
+        height = int(proof["block_height"])
+
+        # Each hop's opening reveals the state committed in its sat output.
+        # 33-byte compressed internal key, even parity per BIP-341 lift_x.
+        internal_key = int("02" + proof["internal_pubkey_hex"], 16)
+        opening = dict(
+            internal_key=internal_key,
+            snapshot=proof["snapshot"],
+            blind_opening=None,
+        )
+        # Entry 0 — the spawn — opens the dat commitment via its blind-opening.
+        if idx == 0:
+            blind_hex = proof.get("blind_hex")
+            if blind_hex is None:
+                raise click.UsageError(
+                    f"{path} is the spawn but has no blind_hex — cannot open the dat commitment"
+                )
+            f = proof.get("funding", {})
+            opening["blind_opening"] = dict(
+                spawn=dict(txid_hex=f["txid"], vout=int(f["vout"]), off=int(f.get("off", 0))),
+                start_height=int(proof.get("start_height", height)),
+                blind=bytes.fromhex(blind_hex),
+            )
+        entries.append(dict(txid_hex=txid, height=height, opening=opening))
+        print(f"  {os.path.basename(path)}: confirmed in block {height}")
 
     xtr = build_xtr_atom(entries)
     chain[-1]["xtr_hex"] = hex(xtr)
@@ -2709,17 +2355,18 @@ def _build_spawn_psbt_and_proof(
     *,
     utxo: dict,
     source: KeySource,
-    attestation_bytes: bytes,
+    snapshot: dict,
     fee_rate: int,
     include_change: bool = True,
+    publication_pass_atom: int | None = None,
+    publication_opening: dict | None = None,
 ) -> tuple[psbt.PSBT, dict]:
-    """Assemble the confidential commit PSBT for a spawn op.
+    """Assemble the kelvin-9 spawn PSBT for a spawn op.
 
-    Uses the funding UTXO's own xonly as the commit output's internal key so
-    the sat stays key-path-spendable by the point owner. If include_change and
-    funding is large enough, splits the remainder into a change output at
-    m/<account>/1/0.
-    """
+    The funding UTXO's own xonly is the sat-carrying output's internal key, so
+    the sat stays key-path-spendable by the point owner for every future custody
+    move. If include_change and funding is large enough, the remainder splits
+    into a change output at m/<account>/1/0."""
     change_args: dict = {}
     if include_change and utxo["value"] > 2_000:
         change_addr, change_spk, change_xonly, change_path = source.derive_address(1, 0)
@@ -2729,7 +2376,7 @@ def _build_spawn_psbt_and_proof(
             change_path=change_path,
         )
 
-    psbt_obj, proof = build_confidential_commit_psbt(
+    psbt_obj, proof = build_spawn_psbt(
         utxo_txid=utxo["txid"],
         utxo_vout=utxo["vout"],
         utxo_value=utxo["value"],
@@ -2737,7 +2384,9 @@ def _build_spawn_psbt_and_proof(
         funding_internal_xonly=utxo["xonly"],
         funding_path=utxo["path"],
         funding_fingerprint=source.master_fingerprint,
-        attestation_bytes=attestation_bytes,
+        snapshot=snapshot,
+        publication_pass_atom=publication_pass_atom,
+        publication_opening=publication_opening,
         fee_rate=fee_rate,
         network=source.network,
         **change_args,
@@ -2809,10 +2458,53 @@ def _broadcast_tx(tx_hex: str, *, mempool_base: str = MEMPOOL_API_URL) -> str:
     return r.text.strip()
 
 
-def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, legacy_tweak: bool = False) -> None:
+def _initial_snapshot(pass_atom: int, sponsor: int | None = None) -> dict:
+    """The snapshot a fresh spawn commits: life 1, rift 0, messaging key from
+    the mined pass, and (in kelvin-9) an optional sponsor that carries in the
+    snapshot; absent projects to self-sponsorship."""
+    return {
+        "life": 1,
+        "rift": 0,
+        "key": messaging_key_from_pass(pass_atom),
+        "sponsor": sponsor,
+        "fief": None,
+    }
+
+
+def _spawn_publication_opening(internal_xonly: bytes, snapshot: dict, utxo: dict, blind: bytes) -> dict:
+    """The opening a PUBLIC spawn publishes on-chain: reveals the snapshot and
+    opens the hiding dat commitment via the spawn blind-opening."""
+    return {
+        "internal_key": int.from_bytes(b"\x02" + internal_xonly, "big"),
+        "snapshot": snapshot,
+        "blind_opening": {
+            "spawn": {"txid_hex": utxo["txid"], "vout": utxo["vout"], "off": 0},
+            "start_height": 0,   # transport metadata; filled/refined at finalize
+            "blind": blind,
+        },
+    }
+
+
+def _finish_spawn_proof(proof: dict, *, comet: str, pass_atom: int, blind: bytes, blind_seed: int, utxo: dict) -> None:
+    """Attach the kelvin-9 spawn bookkeeping to a freshly built spawn proof."""
+    proof["op"] = "spawn"
+    proof["patp"] = comet
+    proof["dom"] = PKI_DOM
+    proof["kelvin"] = KELVIN
+    proof["pass_atom_hex"] = hex(pass_atom)
+    # The seed-derived blind + spawn satpoint form the dat opening; store both so
+    # `causeway finalize` can attach entry 0's blind-opening and any peer can
+    # recompute dat = can(0, mat(dom), mat(9), [256 spawn-commit(spawn, blind)]).
+    proof["blind_hex"] = blind.hex()
+    proof["blind_seed_hex"] = format(blind_seed, "x")
+    proof["spawn_sont"] = {"txid_hex": utxo["txid"], "vout": utxo["vout"], "off": 0}
+    proof["dat_hex"] = hex(build_dat_atom(utxo["txid"], utxo["vout"], 0, blind_seed))
+
+
+def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False) -> None:
     print()
     print("=" * 60)
-    print("  CAUSEWAY — Confidential Comet Spawn (Connect Wallet)")
+    print(f"  CAUSEWAY — {'Public' if publish else 'Confidential'} Comet Spawn (Connect Wallet)")
     print("=" * 60)
 
     source = parse_key_source(xpub_str, network=network)
@@ -2839,9 +2531,11 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     utxos = scan_addresses(source, mempool_base=mempool_base)
     utxo = pick_utxo_interactive(utxos)
 
-    fmt = "v9" if legacy_tweak else "cc2"
-    print(f"\n  Mining comet with {fmt} tweak from ({utxo['txid']}:{utxo['vout']},0)...")
-    miner_result = mine_comet_from_utxo(utxo["txid"], utxo["vout"], 0, miner, legacy_tweak=legacy_tweak)
+    # Seed-derived blind so the dat opening is recoverable; the dat depends on it.
+    blind_seed = int.from_bytes(secrets.token_bytes(32), "big")
+    blind = make_blind(blind_seed)
+    print(f"\n  Mining comet (kelvin-9 dat) from ({utxo['txid']}:{utxo['vout']},0)...")
+    miner_result = mine_comet_from_utxo(utxo["txid"], utxo["vout"], 0, blind_seed, miner)
     comet = miner_result["comet"]
     feed = miner_result["feed"]
     ring_uw = miner_result.get("ring", "")
@@ -2849,32 +2543,22 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     print(f"         @p {comet}")
 
     pass_atom = derive_pass_from_ring(ring_uw)
-    comet_p = patp_to_int(comet)
+    snapshot = _initial_snapshot(pass_atom)
 
-    # Build the attestation
-    spkh = compute_spkh(utxo["address"], utxo["value"])
-    attestation = encode_spawn_sotx(
-        comet_p=comet_p,
-        pass_atom=pass_atom,
-        spkh=spkh,
-        vout=utxo["vout"],
-        off=0,
-        tej=0,
-        fief=None,
-    )
+    pub_pass = pub_opening = None
+    if publish:
+        pub_pass = pass_atom
+        pub_opening = _spawn_publication_opening(utxo["xonly"], snapshot, utxo, blind)
 
     psbt_obj, proof = _build_spawn_psbt_and_proof(
         utxo=utxo,
         source=source,
-        attestation_bytes=attestation,
+        snapshot=snapshot,
         fee_rate=fee_rate,
+        publication_pass_atom=pub_pass,
+        publication_opening=pub_opening,
     )
-    proof["op"] = "spawn"
-    proof["patp"] = comet
-    proof["pass_atom_hex"] = hex(pass_atom)
-    proof["tweak_format"] = fmt
-    if not legacy_tweak:
-        proof["dom"] = PKI_DOM
+    _finish_spawn_proof(proof, comet=comet, pass_atom=pass_atom, blind=blind, blind_seed=blind_seed, utxo=utxo)
 
     os.makedirs(output_dir, exist_ok=True)
     pier = comet.lstrip("~")
@@ -2898,7 +2582,7 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     write_proof_json(proof, proof_path)
     print(f"  Wrote proof: {proof_path}")
 
-    print("\n  Broadcasting commit...")
+    print("\n  Broadcasting spawn...")
     try:
         broadcast_id = _broadcast_tx(tx_hex, mempool_base=mempool_base)
     except Exception as e:
@@ -2909,10 +2593,10 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     _print_boot_oneliner(comet, feed, proof_path)
 
 
-def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, legacy_tweak: bool = False) -> None:
+def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False) -> None:
     print()
     print("=" * 60)
-    print("  CAUSEWAY — Confidential Comet Spawn (Generate New Wallet)")
+    print(f"  CAUSEWAY — {'Public' if publish else 'Confidential'} Comet Spawn (Generate New Wallet)")
     print("=" * 60)
 
     mnemonic = generate_new_mnemonic(strength_bits=128)
@@ -2949,9 +2633,10 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
         print(f"  No confirmed UTXO yet ({len(utxos)} unconfirmed). Sleeping {POLL_INTERVAL}s...", end="\r")
         time.sleep(POLL_INTERVAL)
 
-    fmt = "v9" if legacy_tweak else "cc2"
-    print(f"\n  Mining comet ({fmt} tweak)...")
-    miner_result = mine_comet_from_utxo(utxo["txid"], utxo["vout"], 0, miner, legacy_tweak=legacy_tweak)
+    blind_seed = int.from_bytes(secrets.token_bytes(32), "big")
+    blind = make_blind(blind_seed)
+    print("\n  Mining comet (kelvin-9 dat)...")
+    miner_result = mine_comet_from_utxo(utxo["txid"], utxo["vout"], 0, blind_seed, miner)
     comet = miner_result["comet"]
     feed = miner_result["feed"]
     ring_uw = miner_result.get("ring", "")
@@ -2959,51 +2644,36 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
     print(f"         @p {comet}")
 
     pass_atom = derive_pass_from_ring(ring_uw)
-    comet_p = patp_to_int(comet)
+    snapshot = _initial_snapshot(pass_atom)
 
-    spkh = compute_spkh(utxo["address"], utxo["value"])
-    attestation = encode_spawn_sotx(
-        comet_p=comet_p,
-        pass_atom=pass_atom,
-        spkh=spkh,
-        vout=utxo["vout"],
-        off=0,
-        tej=0,
-        fief=None,
-    )
+    pub_pass = pub_opening = None
+    if publish:
+        pub_pass = pass_atom
+        pub_opening = _spawn_publication_opening(utxo["xonly"], snapshot, utxo, blind)
+
     psbt_obj, proof = _build_spawn_psbt_and_proof(
         utxo=utxo,
         source=source,
-        attestation_bytes=attestation,
+        snapshot=snapshot,
         fee_rate=fee_rate,
+        publication_pass_atom=pub_pass,
+        publication_opening=pub_opening,
     )
-    proof["op"] = "spawn"
-    proof["patp"] = comet
-    proof["pass_atom_hex"] = hex(pass_atom)
+    _finish_spawn_proof(proof, comet=comet, pass_atom=pass_atom, blind=blind, blind_seed=blind_seed, utxo=utxo)
 
     # Sign the PSBT in-process (we have the seed).
     p_signed = psbt_obj
-    # Populate sighash, sign with taproot key at the funding derivation.
-    sub_path = source.account_path + [utxo["change"], utxo["index"]]
-    sub_xprv = root.derive(_path_to_str(sub_path))
-    sub_pub = sub_xprv.key.get_public_key()
-    # sign_with will sign any input where the descendant key matches
     p_signed.sign_with(root)
-    # Extract finalised tx
-    # The PSBT now has taproot_key_sig on input 0
     signed_b64 = p_signed.to_base64()
     commit_txid, tx_hex = _extract_tx_from_psbt(signed_b64)
 
-    proof["tweak_format"] = fmt
-    if not legacy_tweak:
-        proof["dom"] = PKI_DOM
     proof["commit_txid"] = commit_txid
     os.makedirs(output_dir, exist_ok=True)
     pier = comet.lstrip("~")
     proof_path = os.path.join(output_dir, f"{pier}-spawn.proof.json")
     write_proof_json(proof, proof_path)
 
-    print("\n  Broadcasting commit...")
+    print("\n  Broadcasting spawn...")
     try:
         broadcast_id = _broadcast_tx(tx_hex, mempool_base=mempool_base)
     except Exception as e:
@@ -3040,8 +2710,8 @@ def _print_boot_oneliner(comet: str, feed: str, proof_path: str) -> None:
         fg="yellow",
     ))
     click.echo(click.style(
-        "  Once the commit tx confirms, bake the reveal log into your boot\n"
-        "  feed so peers can verify you on first contact (cc-draft-2 §2.5):\n"
+        "  Once the spawn tx confirms, bake the custody log (xtr) into your\n"
+        "  boot feed so peers can verify you on first contact (kelvin-9 §5):\n"
         f"    causeway finalize {proof_path} --feed {feed[:24]}…\n",
         fg="cyan",
     ))
