@@ -2,7 +2,7 @@
   "description": "Shared golden vectors for the %gw-btc kelvin-9 (OP_RETURN) formats. The authority is the Hoon desk; values were computed with `urbit eval` against zuse's secp tagged hash and jam, and cross-checked in Python. Consumed by the Hoon tests (groundwire/tests/lib/gw-btc-pass.hoon), Causeway web (TS), and Causeway desktop (Python). All three MUST agree with this file byte-for-byte.",
   "conventions": {
     "tagged_hash": "H_tag(tag, msg) = sha256(sha256(tag) || sha256(tag) || msg); tag is the ASCII tag string; output is 32 big-endian bytes.",
-    "jam": "A jammed noun is serialized to its minimal little-endian byte string. In this file every `jam_*_le` field is that byte string in hex (first byte = least significant). A noun is an atom (unsigned int) or a cell [head, tail]; cells right-associate: [a b c] == [a [b c]].",
+    "jam": "A jammed noun is serialized to its minimal little-endian byte string. In this file every `jam_*_le` field is that byte string in hex (first byte = least significant. Tagged-hash preimages consume a jam in exactly this little-endian byte order (matching the Hoon lib's jam-octs); do NOT byte-reverse). A noun is an atom (unsigned int) or a cell [head, tail]; cells right-associate: [a b c] == [a [b c]].",
     "unit": "(unit x): the null unit ~ is the atom 0; a full unit [~ v] is the cell [0, v].",
     "dat": "dat = can(0, [mat(dom), mat(9), [256, d]]) — bit-level: mat-encoded domain tag at bit 0, then mat-encoded kelvin 9, then exactly 256 bits of d. `dat` below is the resulting atom in big-endian hex. Decoders reject trailing data.",
     "spawn_commit": "d = H_tag('gw/spawn-commit', jam(spawn_sont)_le_bytes || blind)",
@@ -25,23 +25,22 @@
       "seed_bytes_le": "efbeadde",
       "jam_spawn_le": "0176786f5e4d3c2b1a190b",
       "blind": "f0dedc6a72ecb8c16b5daf252b8db53b25104f32c2d9e9bc3459db716535ef2e",
-      "spawn_commit_d": "f70d9e37739af8b1cf48d2a643f16ca6b1e6bc47f699226861b28241af993112",
-      "dat": "1ee1b3c6ee735f1639e91a54c87e2d94d63cd788fed3244d0c36504835f326225246374622d77677c0",
+      "spawn_commit_d": "134aab80f09d97d80efc2573570e2767279aad7b43ea274018a7570d26fc57e0",
+      "dat": "26955701e13b2fb01df84ae6ae1c4ece4f355af687d44e80314eae1a4df8afc1246374622d77677c0",
       "kelvin": 9,
       "domain": "gw-btc",
       "snapshot": { "life": 2, "rift": 0, "key": "abcd", "sponsor": "zod", "fief": null },
       "jam_snapshot_le": "21332034af960a",
-      "state_commit_c": "8b4d1c6c95a809c98e1113f5b79f6e01f73f213fd5cc9940e2856969bf9c39f3",
+      "state_commit_c": "0bea6bbe757e070b8ad98345414f03e494ec67cfbf1e424d2c6e92ca1a59df2b",
       "internal_key_compressed": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
-      "state_leaf_script": "6a026777208b4d1c6c95a809c98e1113f5b79f6e01f73f213fd5cc9940e2856969bf9c39f3",
-      "state_output_key_q_for_that_snapshot_note": "recompute with the internal key; the leaf hash / Q pinned below use the sponsor=null snapshot commitment c=c31d... from the earlier basic-spawn snapshot, kept for the +state-key Hoon test",
+      "state_leaf_script": "6a026777200bea6bbe757e070b8ad98345414f03e494ec67cfbf1e424d2c6e92ca1a59df2b",
       "publication": {
         "note": "publication = [pass, [internal_key, snapshot, blind_opening]]; here pass=0xdeadbeefcafe, internal_key=0x2cafe, snapshot as above, blind_opening=[spawn_sont, start_height=778000, blind]",
         "pass": "deadbeefcafe",
         "internal_key": "2cafe",
         "start_height": 778000,
         "jam_publication_le": "01427fe577df56ef80e2af6c21332034af969a05d8e1bd7935f1ac68646c4082f85e0002b8bcd794c56d67d1f0a6670bcb3c4194ecd436ae94bc76ad05e3b2cba9717bc303",
-        "op_return_script": "6a037572620145 <pushdata1 0x4c len jam_publication>"
+        "op_return_script": "6a03757262 01 09 <pushdata: 0x4c len jam_publication_le bytes> (OP_RETURN PUSH3 urb PUSH1 kelvin=0x09 PUSHDATA1)"
       },
       "xtr": {
         "note": "two entries oldest-first: entry0 = [txid=0x123...def0, height=778000, opening (full, with blind_opening)], entry1 = [txid=0xfeedface, height=778010, opening=~]",
