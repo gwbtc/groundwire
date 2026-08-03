@@ -234,7 +234,7 @@
       ?.  =(kelvin:cc kel.u.meta)  cor
       =/  cac  (com:nu:cric:crypto pass)
       ?.  ?=(%c suite.+<.cac)  cor
-      =/  who  fig:ex:cac
+      =/  who  `@p`fig:ex:cac
       ?~  blind-opening.op
         (apply-state who pass op)
       (apply-spawn who pass d.u.meta op u.blind-opening.op)
@@ -318,8 +318,10 @@
       =.  unv-ids  (~(put by unv-ids) who point)
       %-  emil
       %+  weld
+        ^-  (list effect:urb)
         ?.  spawn  ~
         ~[[%point who %owner sont]]
+      ^-  (list effect:urb)
       :~  [%point who %sponsor ?~(sponsor.snap `who `u.sponsor.snap)]
           [%point who %keys life.snap pass]
           [%point who %rift rift.snap]
