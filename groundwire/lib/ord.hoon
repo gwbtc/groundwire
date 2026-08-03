@@ -236,6 +236,15 @@
     ^-  (unit @p)
     ?~(b=(get +<) ~ com.u.b)
   ::
+  ::  A sat may name at most one comet.  Re-inserting the same comet is
+  ::  idempotent, but a different comet must not replace the occupant and
+  ::  leave its reverse entry in unv-ids stale.
+  ++  can-put-com
+    |=  [a=sont-map:ord =txid:ord =vout:ord =off:ord com=@p]
+    ^-  ?
+    ?~  old=(get-com a txid vout off)  &
+    =(com u.old)
+  ::
   ++  get-vout
     |=  [a=sont-map:ord =txid:ord =vout:ord]
     ^-  (unit vout-map:ord)
@@ -270,8 +279,21 @@
     ^-  sont-map:ord
     ?~  b=(~(get by a) [txid vout])  a
     =/  c  (~(del by sats.u.b) off)
-    ?:  =(c ~)  (~(del by a) txid off)
+    ?:  =(c ~)  (~(del by a) [txid vout])
     (~(put by a) [txid vout] u.b(sats c))
+  ::
+  ::  Remove only a comet association from a sat.  Co-located inscriptions
+  ::  are independent index entries and must survive; if there are none, do
+  ::  not retain an otherwise-private satpoint in the map.
+  ++  del-com
+    |=  [a=sont-map:ord =txid:ord =vout:ord =off:ord]
+    ^-  sont-map:ord
+    ?~  b=(~(get by a) [txid vout])  a
+    ?~  c=(~(get by sats.u.b) off)  a
+    ?:  =(~ ins.u.c)
+      (del a txid vout off)
+    %+  ~(put by a)  [txid vout]
+    u.b(sats (~(put by sats.u.b) off u.c(com ~)))
   --
 ::++  ming
 ::  |%

@@ -1,6 +1,6 @@
 ::  %urb-core
 ::
-::  This is where most of the heavy block processing in %urb-watcher happens.
+::  This is where most of the heavy block processing in %gw-btc happens.
 ::  Before engaging with this codebase, make sure that you understand
 ::  Taproot script-path spends and ordinal inscriptions.
 ::  See sur/urb and lib/urb-encoder for more details on the types at play here.
@@ -15,26 +15,26 @@
 ::  associated prevouts and inscriptions.
 ::
 ::  The logic flow here is:
-::  1. %urb-watcher receives a block from RPC and then
+::  1. %gw-btc receives a block from RPC and then
 ::     calls ++find-block-reveals, which filters it
 ::     down to txs containing urb reveals.
-::  2. %urb-watcher asynchronously fetches the prevout 
+::  2. %gw-btc asynchronously fetches the prevout
 ::     values for each tx in the filtered block.
-::  3. %urb-watcher checks each tx for %spawn sotx.
+::  3. %gw-btc checks each tx for %spawn sotx.
 ::     If it finds one, it fetches a commit and
 ::     precommit transaction. See the %spawn case
 ::     down below for extensive detail on how and why
 ::     we do this.
-::  4. %urb-watcher calls ++apply-prevouts-and-urbify
+::  4. %gw-btc calls ++apply-prevouts-and-urbify
 ::     on the block. This converts it to an urb-block.
-::  5. %urb-watcher calls ++handle-block on the
+::  5. %gw-btc calls ++handle-block on the
 ::     urb-block, which processes its txs for sotx and
 ::     returns an updated state and a list of fx.
-::  6. %urb-watcher turns these fx into udiffs and
+::  6. %gw-btc turns these fx into udiffs and
 ::     gives them to Jael.
 ::
 /-  bitcoin, ord, urb
-/+  bscr=btc-script, ol=ord, urb-encoder
+/+  bscr=btc-script, cc=gw-btc-pass, ol=ord, urb-encoder
 |%
 ++  urb-core
   =|  state:urb
@@ -163,7 +163,8 @@
       (add-to-reveals ~ value)
     ~|  [=+(u.raw-script [p `@ux`q]) =+((en:bscr u.descr) [p `@ux`q])]
     ?.  =(u.raw-script (en:bscr u.descr))
-      ~&  >>>  "%urb-core: round-trip mismatch in witness parsing"  !!
+      ~&  >>>  "%urb-core: round-trip mismatch in witness parsing"
+      (add-to-reveals ~ value)
     ~&  >  "%urb-core: script parsed successfully, extracting unvs..."
     =/  unvs=(unit (list @))  (some (unv:de:urb-encoder u.descr))
     ?~  unvs
@@ -173,10 +174,14 @@
     ::  If there is sots, get it, add it to reveals, 
     ::  flag this tx as needed, and recurse.
     ::  ~&  >>  unvs
-    =/  sots=(list raw-sotx:urb)
-      (zing (turn u.unvs parse-roll:urb-encoder))
+    =/  sots=(unit (list raw-sotx:urb))
+      %-  mole
+      |.((zing (turn u.unvs parse-roll:urb-encoder)))
+    ?~  sots
+      ~&  >>>  "%urb-core: malformed urb payload"
+      (add-to-reveals ~ value)
     ::  ~&  >>  sots
-    (add-to-reveals(need-tx &) sots value)
+    (add-to-reveals(need-tx &) u.sots value)
     ::
     ::  ^$ recurses to the inputs loop.
     ++  add-to-reveals
@@ -243,10 +248,6 @@
             precommits=(map [txid:ord vout:ord] [commit=urb-tx:urb precommit=urb-tx:urb])
         ==
     ^+  cor
-    :: XX num is actually not included in the urb-block type
-    :: ?.  =(num.urb-block +(num.block-id.state))
-    ::   %-  (slog leaf+"can't handle block {<num:block>}, expected block {<+(num.block-id.state)>}" ~)
-    ::   cor  ::  XX crash instead?
     =.  num.block-id.state  +(num.block-id.state)
     ?~  txs.urb-block
       cor  ::  XX crash instead?
@@ -355,26 +356,10 @@
         =/  commit-tx  commit.u.pcmtx
         ?~  precommit-sat=(calc-precommit-sont precommit-tx to.sot)  
           cor
-        ::  tweak = [%version payload]
-        ::  payload = [pki-agent-source-ship pki-agent pki-data]
-        ::  pki-agent has a required interface for handling out-of-band attestation
-        ::            (does nothing yet)
-        ::  pki-data = [%src-name %protocol-name %protocol-version crypto-data]
-        =/  tweak
-          %+  rap 
-            3
-          :~  %9
-              ~tyr
-              %urb-watcher
-              %btc 
-              %gw
-              %9  :: in this version we stipulate a fixed list of sotxes that mirrors azimuth
-              txid=txid.u.precommit-sat 
-              vout=vout.u.precommit-sat 
-              off=off.u.precommit-sat
-          ==
-        ::  ~&  >>  ["%urb-core: based on the precommit sat we found, we're expecting this tweak data: " %btc %gw [txid vout off]:u.precommit-sat]
-        ::  ~&  >>  ["%urb-core: this tweak data as an atom is: " tweak]
+        ::  The immutable suite-C tweak is the canonical %gw-btc domain
+        ::  prefix followed by the jammed spawn satpoint.  Use the same
+        ::  encoder as the confidential verifier and onboarding client.
+        =/  tweak  (make-dat:cc u.precommit-sat)
         ::
         ::  Check that the given comet networking key encodes the tweak 
         ::  that corresponds to the attestation.
@@ -412,6 +397,19 @@
           ~&  >>>  'The commit sat did not get spent in the reveal tx. Rejecting.' 
           cor
         ::
+        ::  sont-map has a single comet slot at each sat.  Do not overwrite a
+        ::  different public comet here: doing so would leave that comet's
+        ::  unv-ids point referring to a forward-index entry it no longer owns.
+        ?.  %:  can-put-com:si:ol
+                sont-map
+                txid.u.commit-sat
+                vout.u.commit-sat
+                off.u.commit-sat
+                who
+            ==
+          ~&  >>>  ['The spawn sat is already occupied by another comet. Rejecting.' u.commit-sat]
+          cor
+        ::
         ::  Now that we know where the sat ended up after the commit tx,
         ::  we provisionally update sont-map and unv-ids with the
         ::  commit-sat. We do NOT call ++update-sonts here; the outer
@@ -435,7 +433,7 @@
               rift=0
               life=1
               pass=pass.sot
-              sponsor=~ :: no explicit sponsor on spawn (projects to self)
+              sponsor=[| who] :: no sponsor on spawn
               escape=~
               fief=fief.sot
           ==
@@ -446,7 +444,7 @@
         =/  reveal-sat=sont:ord
           ?~  reveal-sunt  [0x0 0 0]
           u.reveal-sunt
-        ~&  >  ["%urb-watcher found comet: " who]
+        ~&  >  ["%gw-btc found comet: " who]
         =.  cor
           %-  emil
           :~  [%point who %owner reveal-sat]
@@ -463,7 +461,7 @@
         cor
       ?-    -.sot
           %set-mang
-        !!
+        $(sots t.sots)
         ::=.  cor  (emit [%point who %mang mang.sot])
         ::%_    $
         ::    sots     t.sots
@@ -481,7 +479,7 @@
           %escape
         ::  sponsoring self, update now
         ?:  =(parent.sot who)
-          =.  sponsor.net.u.point  `who
+          =.  sponsor.net.u.point  &/who
           =.  escape.net.u.point   ~
           =.  cor  (emit [%point who %sponsor `who])
           %_    $
@@ -506,7 +504,7 @@
               |=(h=@ud (veri-octs:ed:crypto u.sig.sot 512^(shaz (jam [who h])) sgn:ded:ex:cac))
             ~&  >>>  ["%urb-core: escape sig from {<parent.sot>} for {<who>} failed verification (checked block heights {<lower-bound>} to {<(add num.block-id.state 1)>})"]
             cor
-          =.  sponsor.net.u.point  `parent.sot
+          =.  sponsor.net.u.point  &/parent.sot
           =.  escape.net.u.point   ~
           =.  cor  (emit [%point who %sponsor `parent.sot])
           %_    $
@@ -532,9 +530,9 @@
       ::
           %detach
         ?~  child=(~(get by unv-ids) ship.sot)  cor ::$(sots t.sots)
-        ?.  =(`who sponsor.net.u.child)  cor ::$(sots t.sots)
-        =.  sponsor.net.u.child  ~
-        =.  cor  (emit [%point ship.sot %sponsor `who]) :: the ames devs say we should never send a null sponsor
+        ?.  =([& who] sponsor.net.u.child)  cor ::$(sots t.sots)
+        =.  sponsor.net.u.child  |/ship.sot
+        =.  cor  (emit [%point ship.sot %sponsor `ship.sot])
         %_    $
             sots     t.sots
             unv-ids   (~(put by unv-ids) ship.sot u.child)
@@ -545,7 +543,7 @@
       ::     so that they can auto-accept it when the %escape comes in.
           %adopt
         ?:  =(ship.sot who)
-          =.  sponsor.net.u.point  `who
+          =.  sponsor.net.u.point  &/who
           =.  escape.net.u.point   ~
           =.  cor  (emit [%point ship.sot %sponsor `who])
           %_    $
@@ -555,7 +553,7 @@
         ?~  child=(~(get by unv-ids) ship.sot)  cor ::$(sots t.sots)
         ?.  =([~ who] escape.net.u.child)  cor ::$(sots t.sots)
         =.  escape.net.u.child  ~
-        =.  sponsor.net.u.child  `who
+        =.  sponsor.net.u.child  &/who
         =.  cor  (emit [%point ship.sot %sponsor `who])
         %_    $
             sots     t.sots
@@ -591,13 +589,6 @@
             sots     t.sots
             unv-ids   (~(put by unv-ids) who u.point)
         ==
-      ::
-      ::  %state (opcode 9) is a CONFIDENTIAL off-chain networking-state
-      ::  re-attestation; the on-chain block indexer never enacts it -- it
-      ::  is meaningful only inside a comet's xtr reveal log, verified by
-      ::  lib/gw-verify.  If one ever appears in an on-chain reveal, skip it.
-          %state
-        $(sots t.sots)
       ==
       ::
       ::  Is this sont in the input that's being processed?

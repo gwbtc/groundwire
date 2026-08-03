@@ -332,7 +332,7 @@
   ::=.  oc  test-1
   ::oc
 ::
-++  test-0
+++  make-vector-0
   |=  [ali=_wallet car=_wallet]
   ^-  (list byts)
   =+  [ali=(nu:walt 0 ali) car=(nu:walt 0 car)]

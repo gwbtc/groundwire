@@ -1,4 +1,4 @@
-::  %gw-btc (né %urb-watcher, né %groundwire)
+::  %gw-btc
 ::
 ::  This agent is the Groundwire equivalent of %azimuth and %eth-watcher.
 ::  It fetches Bitcoin blocks on a timer and parses them for Jael events.
@@ -10,69 +10,65 @@
 ::  pkg/arvo/doc/spec/confidential-comets.md).  On boot it registers
 ::  itself with Jael via a %anex task, so that when a confidential
 ::  (suite-%c) comet self-attests to us, Ames routes the attestation
-::  here as a %jael-writ poke.  We answer with a %writ-response fact; on
-::  success Jael stores the point and promotes the comet.  Two verify
-::  paths:
-::    - INDEXED (fast, synchronous): the comet did an on-chain reveal our
-::      block-watcher already parsed into unv-ids -- consult that point.
-::    - CONFIDENTIAL (async khan thread): the comet is unknown to our
-::      index, so run lib/gw-verify's full section-7 custody walk against
-::      our bitcoin node, answering with the fact when the thread returns.
-::  A %jael-anew poke (our own comet asking for a fresh attestation) is
-::  answered with an %anew-response fact carrying the re-encoded pass.
+::  here as a %jael-writ poke.  We decode the custody log carried in the
+::  pass, fetch its transactions asynchronously through %light-client,
+::  and answer with a %writ-response fact; on success
+::  Jael stores the point and promotes the comet.  A %jael-anew poke
+::  (our own comet asking for a fresh attestation) is answered only when
+::  our indexed confidential tip still matches the last verified pass;
+::  extending that pass with new custody entries is not implemented yet.
 ::
 ::  The domain name is this agent's name (1:1 by construction): a comet
-::  commits the tag %gw-btc in its key tweak, and Jael derives the same
-::  tag from the gall duct our %anex arrives on.  Because the tag is
-::  hashed into every comet's signing key (and thus its @p), it names the
-::  Groundwire Bitcoin PKI DOMAIN, not this implementation -- do not
-::  rename it to track code changes.
+::  commits the tag %gw-btc in its key tweak, and Jael derives the
+::  same tag from the gall duct our %anex arrives on.
 ::
-::  Change new-rpc and start-height in ++init to change the network.
-::  If you're using this in conjunction with the SPV wallet, that
-::  will need to be pointed to the same Bitcoin network as this.
-::  The RPC node must have -txindex enabled for ++get-raw-transaction to succeed,
-::  which means it can't be pruned.
+::  Configure the legacy public block indexer for the local Bitcoin RPC used
+::  by the deployment.  No remote credential is compiled into the desk.
+::  The legacy block-indexing path still uses this RPC endpoint and requires
+::  -txindex; confidential-comet verification itself uses local %light-client.
 ::
 ::  You may want to change block-confirmations as well.
 ::
-/-  bitcoin, spider, ord, urb
-/+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb
-/+  gwv=gw-verify
+/-  bitcoin, spider, ord, urb, sa=self-attestation, lc=light-client
+/+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb,
+    ol=ord, cc=gw-btc-pass, lsa=self-attestation, lca=lc-attestation
 ::
 |%
 +$  card  card:agent:gall
-+$  versioned-state  $%(state-0 state-1)
-+$  state-0
-  $:  %0
-      rpc=req-to:btcio
-      urb-state=state:urb
++$  pending-writ
+  $:  dom=@tas
+      =pass
+      sat=self-attestation:sa
   ==
-::  state-1 adds the confidential-comet watch registry.
-::
-::  +++  MERGE BLOCKER / TODO  +++
-::  We watch the tip sat of every confidential comet we verify so that when
-::  it MOVES we can request a fresh attestation.  The WATCH is implemented
-::  (+check-conf polls each sat on the block timer and logs a move).  The
-::  RE-REQUEST is NOT: the cc-draft-2 kernel has no peer-re-attestation task
-::  yet (hd/cc-e2e poked a placeholder %ames agent the refactor removed; the
-::  spec §2.6 auto-fire is still XX).  The mechanism will be some special
-::  case "halfway between a snub and a task" -- it MUST be resolved before
-::  this is merged.  Today a detected move is only logged.
-+$  state-1
-  $:  %1
-      rpc=req-to:btcio
++$  inflight-job
+  $:  job=@uv
+      token=@uv
+      context=@ux
+      epoch=@uv
+  ==
++$  launch-result
+  $:  cards=(list card)
+      started=(map ship inflight-job)
+      next-job=@uv
+  ==
++$  gw-state
+  $:  rpc=req-to:btcio
       urb-state=state:urb
-      ::  confidential comet @p -> the tip sat we are watching.  Kept OUT of
-      ::  urb-state/unv-ids, so the served snapshot omits confidential comets
-      ::  by construction (they are not public).
-      conf=(map @p sont:ord)
+      ready=?
+      best=(unit id:block:bc)
+      pending=(map ship pending-writ)
+      inflight=(map ship inflight-job)
+      confidential=(set ship)
+      attested=(map ship sont:ord)
+      publicizing=(set ship)
+      next-job=@uv
+      chain-epoch=@uv
   ==
 --
 ::
 %-  agent:dbug
 ^-  agent:gall
-=|  state-1
+=|  gw-state
 =*  state  -
 %+  verb  |
 =<
@@ -87,12 +83,11 @@
   ::  %anew-response / %azimuth-udiffs facts.
   ::
   :_  %=  this
-        rpc  :*  'https://alpha.groundwire.dev/rpc'
-                 %basic
-                 'mainnetrpcuser:fc3d36ce83e15484e75a658b2a9a8a90a66f4cb017ace74c8631fe082b93adbf'
-             ==
+        rpc    ['http://localhost:8332' ~]
+        ready  |
       ==
   :~  [%pass /anex %arvo %j %anex /writs]
+      [%pass /best-block %agent [our.bowl %light-client] %watch /best-block]
   ==
 ::
 ++  on-save
@@ -102,59 +97,68 @@
 ++  on-load
   |=  =vase
   ^-  (quip card _this)
-  =/  old  !<(versioned-state vase)
-  ?-  -.old
-    %1  `this(state old)
-    %0  `this(state [%1 rpc.old urb-state.old conf=~])
-  ==
+  `this(state !<(gw-state vase))
 ::
 ++  on-poke
   |=  [=mark =vase]
   ^-  (quip card _this)
   ?+    mark  !!
-      ::  Jael forwards a comet self-attestation for on-chain verification
-      ::  (%jael-writ) or asks us to refresh our own (%jael-anew).  Both are
-      ::  local vane->agent pokes ([our our /jael]), so gate on src.
+      ::  Jael forwards a comet self-attestation for on-chain
+      ::  verification.  The pass's xtr carries a jammed Groundwire
+      ::  custody locator log; the verification strand fetches each named
+      ::  transaction through %light-client before running the pure checks.
       ::
       %noun
-    ?.  =(our.bowl src.bowl)
-      ~&  >>>  [%gw-btc %foreign-noun-poke src.bowl]
-      `this
+    ?>  =(our src):bowl
     =/  poke  !<(jael-poke:urb vase)
     ?-    -.poke
         %jael-writ
-      ::  INDEXED fast path: only a SUCCESSFUL indexed verify short-circuits.
-      ::  If our block-watcher parsed this comet's on-chain reveal into
-      ::  unv-ids and it still validates, answer synchronously; otherwise
-      ::  fall through to the confidential walk (an indexed comet may have
-      ::  rotated its key off-chain via a %state commitment the walk
-      ::  validates -- so a stale indexed key must NOT hard-fail the writ).
-      =/  ind=(unit point:jael)
-        ?~  pt=(~(get by unv-ids.urb-state) who.poke)  ~
-        (verify-indexed dom.poke who.poke pass.poke u.pt)
-      ?^  ind
-        :_  this
-        :~  :*  %give  %fact  ~[/writs]
-                %writ-response  !>(`writ-response:jael`[dom.poke who.poke ind])
-            ==
-        ==
-      ::  CONFIDENTIAL path (unindexed, or indexed-but-unverified): run
-      ::  lib/gw-verify's full section-7 custody walk in a khan thread; the
-      ::  %writ-response fact is emitted when it returns (the [%writ @ @ ~]
-      ::  case in +on-arvo).  dom + who ride the wire so the response is
-      ::  answered under the routed domain, not just our name.
-      :_  this
-      :~  :*  %pass  /writ/(scot %tas dom.poke)/(scot %p who.poke)  %arvo  %k
-              %lard  q.byk.bowl
-              (writ-shed dom.poke who.poke pass.poke ~(key by unv-ids.urb-state) rpc)
+      ::  A prior block result has already proved this is a public spawn and
+      ::  an exact sanitized replay is in progress.  Ignore reinsertion until
+      ::  that block job resolves.
+      ?:  (~(has in publicizing) who.poke)
+        `this(pending (~(del by pending) who.poke))
+      ?~  sat=(pass-attestation [dom who pass]:poke)
+        ::  The public onboarding packet is a valid suite-C %gw-btc pass
+        ::  with no xtr tail at all.  It is resolved by the block scanner,
+        ::  so neither queue it nor turn its temporary absence into a sticky
+        ::  negative Jael verdict.  Other decode failures are malformed.
+        ?:  (public-pass [dom who pass]:poke)
+          `this(pending (~(del by pending) who.poke))
+        :_  this(pending (~(del by pending) who.poke))
+        ~[(writ-card dom.poke who.poke ~)]
+      ::  A present, canonically decoded xtr must contain the spawn reveal.
+      ::  The raw-0 public shape was classified above before +from-xtr.
+      ?~  chain.u.sat
+        :_  this(pending (~(del by pending) who.poke))
+        ~[(writ-card dom.poke who.poke ~)]
+      ?:  (gth (lent chain.u.sat) 1.024)
+        :_  this(pending (~(del by pending) who.poke))
+        ~[(writ-card dom.poke who.poke ~)]
+      ?:  (known-public who.poke)
+        `this(pending (~(del by pending) who.poke))
+      ?:  ?&  !(~(has by pending) who.poke)
+              (gte ~(wyt by pending) max-pending)
           ==
-      ==
+        `this
+      =/  req=pending-writ  [dom.poke pass.poke u.sat]
+      =.  pending  (~(put by pending) who.poke req)
+      ?:  ?|(=(| ready) ?=(~ best))
+        `this
+      =/  queued
+        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
+      =.  next-job  next-job.queued
+      =.  inflight  (~(uni by inflight) started.queued)
+      [cards.queued this]
     ::
         %jael-anew
-      ::  our own comet asking for a fresh self-attestation.  re-encode
-      ::  our current pass (the block-watcher keeps xtr current); if we
-      ::  don't index ourselves yet, stay silent.
+      ::  Our own comet asking for a fresh self-attestation.  Return the last
+      ::  verified pass only while its recorded tip is still current; custody
+      ::  discovery/xtr extension is not implemented yet.  If we do not index
+      ::  ourselves, stay silent.
       ::
+      ?.  =(dom.poke domain:cc)
+        `this
       ?~  pas=(fresh-pass our.bowl)
         `this
       :_  this
@@ -165,23 +169,38 @@
     ==
   ::
       %urb-start-indexing
+    ?>  =(our src):bowl
+    ::  Bootstrap is one-shot. Replacing the public snapshot while private
+    ::  points or verifier jobs exist would mix incompatible index epochs;
+    ::  an operator who deliberately needs to rebootstrap must nuke first.
+    ?:  ready
+      `this
     =/  start-urb  ;;((unit state:urb) !<((unit noun) vase))
     ?~  start-urb
       %-  (slog :_(~ [%leaf "%gw-btc: indexing from block {<num.block-id:(state:urb default-urb-state)>}"]))
-      :_  this(urb-state default-urb-state)
-      :~  :*  %pass  /timer
+      =.  urb-state  default-urb-state
+      =.  ready  &
+      =/  queued
+        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
+      =.  next-job  next-job.queued
+      =.  inflight  (~(uni by inflight) started.queued)
+      :_  this
+      :-  :*  %pass  /timer
               %arvo  %b
               %wait  now.bowl
           ==
-      ==
-    %-  (slog :_(~ [%leaf "%gw-btc: processing groundwire snapshot ({<~(wyt by unv-ids.u.start-urb)>} points)"]))
-    :_  this(urb-state u.start-urb)
-    :~  (listen-to-urb ~(key by unv-ids.u.start-urb) [%| dap.bowl])
-        :*  %pass  /timer
-            %arvo  %b
-            %wait  (add ~s30 now.bowl)
-        ==
-    ==
+      cards.queued
+    %-  (slog :_(~ [%leaf "%gw-btc: processing Groundwire snapshot ({<~(wyt by unv-ids.u.start-urb)>} points)"]))
+    =.  urb-state  u.start-urb
+    =.  ready  &
+    =/  queued
+      (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
+    =.  next-job  next-job.queued
+    =.  inflight  (~(uni by inflight) started.queued)
+    :_  this
+    :-  (listen-to-urb ~(key by unv-ids.u.start-urb) [%| dap.bowl])
+    :-  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
+    cards.queued
   ==
 ::
 ++  on-peek
@@ -196,17 +215,20 @@
     ::
       [%x %point ship=@ ~]
     ?~  who=(slaw %p ship.pole)  ~
+    ?:  (~(has in confidential) u.who)
+      [~ ~]
     ?~  point=(~(get by unv-ids.urb-state) u.who)
       [~ ~]
     ``urb-point+!>(u.point)
     ::  /x/points — all spawned identities
     ::
       [%x %points ~]
-    ``urb-points+!>(unv-ids.urb-state)
+    =/  public  (filter-snapshot urb-state confidential)
+    ``urb-points+!>(unv-ids.public)
     ::  /x/urb-state — entire urb-state for snapshots
     ::
       [%x %urb-state ~]
-    ``noun+!>(urb-state)
+    ``noun+!>((filter-snapshot urb-state confidential))
   ==
 ::
 ++  on-watch
@@ -214,21 +236,34 @@
   ^-  (quip card _this)
   ?+    pole  (on-watch:def pole)
   ::
+  ::  Jael's %anex registration watches this path for asynchronous
+  ::  %writ-response and %anew-response facts.
+      [%writs ~]
+    ?>  =(our src):bowl
+    `this
+  ::
   ::  %urb-snapshot listens for new urb-states
       [%urb-state ~]
+    ?>  =(our src):bowl
+    =/  public  (filter-snapshot urb-state confidential)
     :_  this
     :~  :*  %give  %fact  ~
-            %urb-state  !>(urb-state)
+            %urb-state  !>(public)
         ==
     ==
   ::
   ::  Jael subscribes to / (aka ~) if it hears
   ::  that this agent is the default PKI source
       ~
+    ?>  =(our src):bowl
     `this
   ::
   ::  Jael subcribes to /ship when it hears about a new ship
       [=ship ~]
+    ?>  =(our src):bowl
+    =/  who  (slav %p ship.pole)
+    ?:  (~(has in confidential) who)
+      `this
     :_  this
     :~  :*  %give
             %fact
@@ -240,7 +275,7 @@
             |=  [=ship =udiff:point:jael]
             ^-  (unit [^ship udiff:point:jael])
             ::  ignore all ships but /ship
-            ?.  =(ship (slav %p ship.pole))
+            ?.  =(ship who)
               ~
             `[ship udiff]
         ==
@@ -252,68 +287,158 @@
   ^-  (quip card _this)
   ?+    wire  (on-arvo:def wire sign-arvo)
   ::
-  ::  A confidential +writ-shed verify thread returned.  Give the
-  ::  %writ-response fact carrying its verdict (or ~ on failure / crash).
-  ::  dom + who ride the wire (/writ/<dom>/<who>).
-      [%writ @ @ ~]
-    ?+    sign-arvo  (on-arvo:def wire sign-arvo)
-        [%khan %arow *]
-      =/  dom=@tas  (slav %tas i.t.wire)
-      =/  who=ship  (slav %p i.t.t.wire)
-      =/  res=(unit [=point:jael tip=sont:ord])
-        ?.  ?=([%khan %arow %.y %noun *] sign-arvo)
-          ::  thread bailed (rpc failure, unparsable packet): report failure.
-          %-  (slog leaf+"%gw-btc: writ verify thread failed for {<who>}" ~)
-          ~
-        =/  [%khan %arow %.y %noun =vase]  sign-arvo
-        !<((unit [point:jael sont:ord]) vase)
-      ::  on success, record the confidential comet's tip sat so +check-conf
-      ::  watches it for a move (kept out of unv-ids -> omitted from snapshots).
-      =?  conf.state  ?=(^ res)  (~(put by conf.state) who tip.u.res)
-      :_  this
-      :~  :*  %give  %fact  ~[/writs]
-              %writ-response
-              !>(`writ-response:jael`[dom who ?~(res ~ `point.u.res)])
-          ==
-      ==
-    ==
-  ::
-  ::  A +check-conf watch thread returned the confidential comets whose tip
-  ::  sat has moved.  TODO(merge-blocker): we can only LOG the move -- the
-  ::  kernel has no peer-re-attestation task yet (see the state-1 note).
-  ::  Drop each from the watch registry after logging.
-      [%conf ~]
-    ?+    sign-arvo  (on-arvo:def wire sign-arvo)
-        [%khan %arow *]
-      ?.  ?=([%khan %arow %.y %noun *] sign-arvo)  `this
-      =/  [%khan %arow %.y %noun =vase]  sign-arvo
-      =/  moved=(list @p)  !<((list @p) vase)
-      |-  ^-  (quip card _this)
-      ?~  moved  `this
-      =/  msg=tang
-        :~  leaf+"%gw-btc: TODO(merge-blocker) confidential comet {<i.moved>} moved its sat"
-            leaf+"  -> its attestation is now stale; a fresh one must be requested,"
-            leaf+"  but the cc-draft-2 kernel has no peer-re-attestation task yet."
-        ==
-      %-  (slog msg)
-      $(moved t.moved, conf.state (~(del by conf.state) i.moved))
-    ==
-  ::
   ::  Run +get-blocks at regular intervals.
       [%timer ~]
     :_  this
-    %+  weld
-      :~  :*  %pass  /blocks  %arvo  %k
-              %lard  q.byk.bowl
-              (get-blocks [rpc urb-state]:state)
-          ==
-      ==
-    ::  also poll the watched confidential sats (if any) for a move
-    ?:  =(~ conf.state)  ~
-    :~  :*  %pass  /conf  %arvo  %k
+    :~  :*  %pass  /blocks  %arvo  %k
             %lard  q.byk.bowl
-            (check-conf rpc.state conf.state)
+            (get-blocks [rpc urb-state]:state)
         ==
+    ==
+  ::
+  ::  A %light-client-backed attestation verification returned.
+      [%lc-retry ~]
+    :_  this
+    :~  [%pass /best-block %agent [our.bowl %light-client] %watch /best-block]
+    ==
+  ::
+      [%verify-timeout ship=@ job=@ ~]
+    ?.  ?=([%behn %wake *] sign-arvo)
+      (on-arvo:def wire sign-arvo)
+    =/  who  (slav %p i.t.wire)
+    =/  job  (slav %uv i.t.t.wire)
+    =/  active  (~(get by inflight) who)
+    ?~  active
+      `this
+    ?.  =(job job.u.active)
+      `this
+    =/  token  token.u.active
+    =/  context  context.u.active
+    =/  epoch  epoch.u.active
+    =/  req  (~(get by pending) who)
+    ?~  req
+      `this(inflight (~(del by inflight) who))
+    =/  current-token  (request-token u.req)
+    ?.  =(token current-token)
+      =.  inflight  (~(del by inflight) who)
+      =/  queued
+        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
+      =.  next-job  next-job.queued
+      =.  inflight  (~(uni by inflight) started.queued)
+      [cards.queued this]
+    ?.  ?&  =(context (context-token urb-state attested))
+            =(epoch chain-epoch)
+        ==
+      =.  inflight  (~(del by inflight) who)
+      =/  queued
+        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
+      =.  next-job  next-job.queued
+      =.  inflight  (~(uni by inflight) started.queued)
+      [cards.queued this]
+    =.  pending  (~(del by pending) who)
+    =.  inflight  (~(del by inflight) who)
+    =/  queued
+      (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
+    =.  next-job  next-job.queued
+    =.  inflight  (~(uni by inflight) started.queued)
+    ::  A timeout is an infrastructure failure, not evidence that the
+    ::  attestation is invalid.  Release the slot silently so a later packet
+    ::  can retry; emitting res=~ here would cause Ames to snub a valid peer.
+    [cards.queued this]
+  ::
+      [%verify ship=@ job=@ ~]
+    =/  who  (slav %p i.t.wire)
+    =/  job  (slav %uv i.t.t.wire)
+    =/  active  (~(get by inflight) who)
+    ?~  active
+      `this
+    ?.  =(job job.u.active)
+      `this
+    =/  token  token.u.active
+    =/  context  context.u.active
+    =/  epoch  epoch.u.active
+    =/  req  (~(get by pending) who)
+    ?~  req
+      =.  inflight  (~(del by inflight) who)
+      =/  queued
+        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
+      =.  next-job  next-job.queued
+      =.  inflight  (~(uni by inflight) started.queued)
+      [cards.queued this]
+    =/  current-token  (request-token u.req)
+    ?.  =(token current-token)
+      =.  inflight  (~(del by inflight) who)
+      =/  queued
+        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
+      =.  next-job  next-job.queued
+      =.  inflight  (~(uni by inflight) started.queued)
+      [cards.queued this]
+    ?.  ?&  =(context (context-token urb-state attested))
+            =(epoch chain-epoch)
+        ==
+      =.  inflight  (~(del by inflight) who)
+      =/  queued
+        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
+      =.  next-job  next-job.queued
+      =.  inflight  (~(uni by inflight) started.queued)
+      [cards.queued this]
+    ?:  ?|(=(| ready) ?=(~ best))
+      `this(inflight (~(del by inflight) who))
+    ?+    sign-arvo  (on-arvo:def wire sign-arvo)
+        [%khan %arow *]
+      ?.  -.p.sign-arvo
+        ?>  ?=([%khan %arow %.n *] sign-arvo)
+        %-  (slog leaf+"%gw-btc: verification thread for {<who>} ended without a verdict" +.p.p.sign-arvo)
+        =.  pending  (~(del by pending) who)
+        =.  inflight  (~(del by inflight) who)
+        =/  queued
+          (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
+        =.  next-job  next-job.queued
+        =.  inflight  (~(uni by inflight) started.queued)
+        ::  A generic strand crash is likewise retryable/indeterminate.
+        ::  Only a mold-valid verifier result may emit a Jael verdict.
+        [cards.queued this]
+      ?>  ?=([%khan %arow %.y %noun *] sign-arvo)
+      =/  [%khan %arow %.y %noun =vase]  sign-arvo
+      =/  [res=result:sa tip-spk=hexb:bc]
+        !<([result:sa hexb:bc] vase)
+      =.  pending  (~(del by pending) who)
+      =.  inflight  (~(del by inflight) who)
+      ::  A concurrently indexed public spawn wins this race.  It no longer
+      ::  belongs to the confidential verifier, but that is not evidence the
+      ::  peer supplied a bad attestation, so do not emit a sticky failure.
+      ?:  (known-public who)
+        =/  queued
+          (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
+        =.  next-job  next-job.queued
+        =.  inflight  (~(uni by inflight) started.queued)
+        [cards.queued this]
+      %-  (slog (report:lsa verdict.res))
+      =/  verified=(unit point:urb)
+        ?.  &(ok.verdict.res =(who who.verdict.res))  ~
+        ?~  point.res  ~
+        ?.  (attested-point-ok pass.u.req u.point.res)  ~
+        ?:  (known-public who)  ~
+        ?.  (tip-owner-ok urb-state who sont.own.u.point.res)  ~
+        `u.point.res(pass.net pass.u.req)
+      ?~  verified
+        =/  queued
+          (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
+        =.  next-job  next-job.queued
+        =.  inflight  (~(uni by inflight) started.queued)
+        [[(writ-card dom.u.req who ~) cards.queued] this]
+      =/  applied  (apply-verified who u.verified tip-value.res)
+      =.  urb-state  -.applied
+      =.  confidential  +.applied
+      =.  attested  (~(put by attested) who sont.own.u.verified)
+      ::  Launch queued work only after the verified point is visible, so a
+      ::  dependent attestation snapshots the newest sponsor map.
+      =/  queued
+        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
+      =.  next-job  next-job.queued
+      =.  inflight  (~(uni by inflight) started.queued)
+      :_  this
+      [(writ-card dom.u.req who `(urb-point-to-jael u.verified who)) cards.queued]
     ==
   ::
   ::  Our +get-blocks thread returned. Update
@@ -325,16 +450,18 @@
         [%khan %arow *]
       ?.  -.p.sign-arvo
         ?>  ?=([%khan %arow %.n *] sign-arvo)
-        %-  (slog leaf+"%gw-btc: thread failed, retrying" +.p.p.sign-arvo)
+        %-  (slog leaf+"%gw-btc: block thread failed, retrying" +.p.p.sign-arvo)
         :_  this
         :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
         ==
       ?>  ?=([%khan %arow %.y %noun *] sign-arvo)
       =/  [%khan %arow %.y %noun =vase]  sign-arvo
-      =/  fx-and-state
+      =/  block-result
         !<  
-        [(list [id:block:bitcoin effect:urb]) state:urb]
+        [state:urb [(list [id:block:bitcoin effect:urb]) state:urb]]
         vase
+      =/  base-state  -.block-result
+      =/  fx-and-state  +.block-result
       ::  Jael is subscribed to %gw-btc to receive udiffs for some ships,
       ::  and it isn't subscribed yet for others. For the ones in fx it is, we 
       ::  send udiffs. For the ones it isn't subscribed to yet, we tell it to,
@@ -354,27 +481,73 @@
         `ship.eu
       ::
       =/  tracked-ships=(set ship)
-        %-  silt
-        %+  murn
-          ~(val by sup.bowl)
-        |=  [ship =path]
-        ^-  (unit ship)
-        ::  ignore subscriptions that aren't to a /ship
-        ?.  ?=([@p ~] path)
-          ~
-        `i.path
+        (subs-to-ships sup.bowl)
       ::
+      ::  A point absent from the block thread's base but introduced by an
+      ::  on-chain %owner effect is a genuine public spawn.  This narrowly
+      ::  resolves the race where asynchronous verification inserted the same
+      ::  ship while the block thread was running.  Existing confidential
+      ::  points never declassify merely because a later block names them:
+      ::  effects lack the input provenance required to make that inference.
+      =/  public-new
+        (public-spawns base-state +.fx-and-state -.fx-and-state)
+      =/  new-confidential  (~(dif in confidential) public-new)
+      =/  new-attested  (drop-attested attested public-new)
+      ::
+      ::  Three-way merge block-derived custody with any verifier result that
+      ::  landed since `base-state`.  A divergent double move is ambiguous;
+      ::  discard the whole batch and rerun from the unchanged cursor rather
+      ::  than mixing two incompatible histories.
+      =/  merged
+        (reconcile-block base-state urb-state.state +.fx-and-state new-confidential)
+      ?~  merged
+        %-  (slog leaf+"%gw-btc: concurrent custody conflict; retrying block batch")
+        ::  If this rejected batch also proved a public spawn that raced a
+        ::  verifier-only insertion, remove just that private insertion before
+        ::  retrying.  Otherwise the duplicate spawn would be suppressed on
+        ::  replay and could never produce another %owner effect.
+        =/  retry-state  (drop-private-insertions urb-state public-new)
+        :_  %=  this
+              urb-state     retry-state
+              confidential  new-confidential
+              attested     new-attested
+              publicizing  (~(uni in publicizing) public-new)
+              pending      (drop-pending pending public-new)
+              inflight     (drop-inflight inflight public-new)
+            ==
+        ::  Schedule the sanitized snapshot for immediate retry. The publicizing
+        ::  guard keeps this exact base stable while Behn schedules the retry,
+        ::  and also across any transient block-thread failure.
+        :~  [%pass /timer %arvo %b %wait now.bowl]
+        ==
       =/  filtered-udiffs=udiffs:point:jael
         %+  murn
           (fx-to-udiffs -.fx-and-state)
         |=  [=ship =udiff:point:jael]
         ^-  (unit [^ship udiff:point:jael])
-        ::  ignore ships Jael hasn't subscribed to yet
-        ?.  (~(has in tracked-ships) ship)
+        ::  Ignore ships Jael has not subscribed to and all confidential
+        ::  points. Declassification is deliberately not inferred per block.
+        ?.  ?&  (~(has in tracked-ships) ship)
+                !(~(has in new-confidential) ship)
+            ==
           ~
         `[ship udiff]
-      =/  new-urb-state  +.fx-and-state
-      :_  this(urb-state.state new-urb-state)
+      =/  new-urb-state  u.merged
+      =/  old-block-id  block-id.urb-state.state
+      ::  Commit the merged view before waking queued verification work.  A
+      ::  successful block result can free slots, resolve a public-spawn race,
+      ::  or advance sponsor state; leaving the queue asleep until some later
+      ::  best-block fact makes progress depend on unrelated traffic.
+      =.  urb-state     new-urb-state
+      =.  confidential  new-confidential
+      =.  attested      new-attested
+      =.  publicizing   ~
+      =/  queued
+        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
+      =.  next-job  next-job.queued
+      =.  inflight  (~(uni by inflight) started.queued)
+      :_  this
+      %+  welp
       %+  welp
         ?.  =(~ fx-ships)
           ::  don't send a %listen task for ships
@@ -389,26 +562,70 @@
       %+  welp
         :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
         ==
-      ?:  =(num.block-id.new-urb-state num.block-id.urb-state.state)
+      ?:  =(num.block-id.new-urb-state num.old-block-id)
         ~
-      :~  [%give %fact ~[/urb-state] %urb-state !>(new-urb-state)]
+      :~  :*  %give  %fact  ~[/urb-state]  %urb-state
+              !>((filter-snapshot new-urb-state new-confidential))
+          ==
       ==
+      cards.queued
     ==
   ==
 ::
-++  on-agent  on-agent:def
+++  on-agent
+  |=  [=wire =sign:agent:gall]
+  ^-  (quip card _this)
+  ?+    wire  (on-agent:def wire sign)
+      [%best-block ~]
+    ?+    -.sign  (on-agent:def wire sign)
+        %watch-ack
+      ?~  p.sign  `this
+      %-  (slog leaf+"%gw-btc: %light-client /best-block watch rejected" u.p.sign)
+      :_  this(best ~, chain-epoch +(chain-epoch))
+      :~  [%pass /lc-retry %arvo %b %wait (add ~s30 now.bowl)]
+      ==
+    ::
+        %kick
+      :_  this(best ~, chain-epoch +(chain-epoch))
+      :~  [%pass /best-block %agent [our.bowl %light-client] %watch /best-block]
+      ==
+    ::
+        %fact
+      ?.  ?=(%light-client-best-block p.cage.sign)
+        (on-agent:def wire sign)
+      =/  upd  !<(best-block-update:lc q.cage.sign)
+      =/  old-best  best
+      =.  best  `id.upd
+      ::  A positive /tx-out answer is valid only at the light-client view
+      ::  against which it was obtained.  Even an ordinary tip advance can
+      ::  spend that output, so every changed best id invalidates old jobs.
+      =?  chain-epoch  ?|(!=(old-best best) ?=(^ reorg.upd))
+        +(chain-epoch)
+      =/  queued
+        (launch-pending q.byk.bowl now.bowl ready best urb-state pending inflight next-job)
+      =.  next-job  next-job.queued
+      =.  inflight  (~(uni by inflight) started.queued)
+      [cards.queued this]
+    ==
+  ==
 ++  on-leave  on-leave:def
 ++  on-fail   on-fail:def
 --
 ::
 |%
+::  Keep alien traffic from turning readiness recovery into an unbounded
+::  khan/watch fan-out.
+++  max-pending   1.024
+++  max-inflight  16
+++  verify-timeout  ~m2
+::
 ::
 ::  Hard-coded initial sync state used if
 ::  %urb-start-indexing receives a null snapshot
 ++  default-urb-state
   ^-  state:urb
-  =/  start-height  959.031
-  =/  start-hash    0x1.b6e0.9c0a.aa11.0057.1fc0.7062.bae4.4418.da9d.d14c.bf55
+  =/  start-height  943.140
+  =/  start-hash    0x1.62b3.04e4.d48c.3a53.d80a.96de.0210.d325.c0a9.a464.8b3c
   :*  [start-hash start-height]
       *sont-map:ord
       *insc-ids:ord
@@ -437,7 +654,7 @@
   =/  last-settled-block  (sub u.latest-block block-confirmations)
   |-  
   ?.  (lte i last-settled-block)
-    (pure:m !>([fx state]:uc))
+    (pure:m !>([urb-state [fx state]:uc]))
   ;<    bluck=(unit block:bitcoin)
       bind:m
     (get-block-by-number:btcio rpc ~ i)
@@ -617,56 +834,440 @@
     ==
   --
 ::
-::  Conversion arms. 
-::  fx are urb-core's type for urb effects. 
-::  udiffs are Jael's type for PKI updates. 
-::  cards for Jael contain udiffs.
-::  Confidential-comets verifier arms (see on-poke).
+::  Confidential-comet verification helpers.
 ::
-::  +verify-indexed: verify a comet's self-attestation against a point our
-::  block-watcher already parsed from an on-chain reveal, returning the
-::  verified Jael point or ~.  The caller looked the point up in unv-ids.
+::  Decode the immutable %gw-btc domain + spawn satpoint from dat and the
+::  mutable custody log from xtr.  Malformed or non-canonical xtr is rejected
+::  by +from-xtr before any asynchronous fetches are launched.
+++  request-token
+  |=  req=pending-writ
+  ^-  @uv
+  (sham [dom.req pass.req])
 ::
-++  verify-indexed
-  |=  [dom=@tas who=ship =pass pt=point:urb]
-  ^-  (unit point:jael)
-  ::  1. suite-%c pass, carrying the tweak-committed domain at the head
-  ::     of its tweak data; it must match the domain Jael routed on
-  ::
-  =/  cek  +<:(com:nu:cric:crypto pass)
-  ?.  ?=([%c *] cek)  ~
-  ?.  =(dom `@tas`q:(rub 0 dat.tw.pub.cek))  ~
-  ::  2. the name must be the hash of the tweaked key (Ames/Jael
-  ::     already checked this; re-derive rather than trust)
+++  context-token
+  |=  [st=state:urb ats=(map ship sont:ord)]
+  ^-  @ux
+  ::  Bind both identity state and the legacy scanner cursor.  If a block
+  ::  result advances first, a delayed verification may otherwise install a
+  ::  tip whose spend the scanner has already passed.
+  (shax (jam [block-id.st unv-ids.st ats]))
+::
+++  pass-attestation
+  |=  [dom=@tas who=ship =pass]
+  ^-  (unit self-attestation:sa)
+  ?.  =(dom domain:cc)  ~
+  =/  meta  (parse-pass:cc pass)
+  ?~  meta  ~
+  ?.  =(dom dom.u.meta)  ~
   ?.  =(who fig:ex:(com:nu:cric:crypto pass))  ~
-  ::  3. the attested MESSAGING KEY (cry) must match the one we indexed as
-  ::     current.  Compare cry, not the whole pass: the pass's xtr reveal
-  ::     log grows independently of the key, so a whole-pass compare would
-  ::     spuriously reject a comet whose attestation carries a longer log
-  ::     than the (public) reveal we parsed.  (The signing key that fixes
-  ::     the @p is already pinned by the fig check in step 2.)
-  =/  ind  +<:(com:nu:cric:crypto pass.net.pt)
-  ?.  ?=([%c *] ind)  ~
-  ?.  =(cry.pub.cek cry.pub.ind)  ~
-  `(urb-point-to-jael pt who)
+  (from-xtr:lsa who pass)
 ::
-::  +writ-shed: run lib/gw-verify's full section-7 custody walk in a khan
-::  thread (the confidential / unindexed path), producing its verdict as a
-::  vase for the [%writ @ @ ~] case in +on-arvo.
+::  Recognize the public onboarder's intentionally absent xtr tail.  This is
+::  narrower than an empty decoded custody log: `(jam ~)` is a present but
+::  invalid confidential attestation and must receive a negative verdict.
+++  public-pass
+  |=  [dom=@tas who=ship =pass]
+  ^-  ?
+  ?.  =(dom domain:cc)  %.n
+  =/  meta  (parse-pass:cc pass)
+  ?~  meta  %.n
+  =/  cic  (com:nu:cric:crypto pass)
+  ?&  =(dom dom.u.meta)
+      =(0 xtr.u.meta)
+      ?=(%c suite.+<.cic)
+      =(who fig:ex:cic)
+      =(dat.tw.pub:+<.cic (make-dat:cc spawn.u.meta))
+  ==
 ::
-++  writ-shed
-  |=  [dom=@tas who=ship =pass known=(set ship) rpc=req-to:btcio]
-  ^-  shed:khan
-  =/  m  (strand:strandio ,vase)
-  ;<  res=(unit [point:jael sont:ord])  bind:m  (verify:gwv dom who pass known rpc)
-  (pure:m !>(res))
+::  Launch one %light-client-backed verification thread.  The block watcher
+::  state supplies both the previously tracked tip and any sponsor points
+::  needed while replaying signed Groundwire events.
+++  verify-card
+  |=  [byk=desk who=ship job=@uv req=pending-writ st=state:urb]
+  ^-  card
+  :*  %pass  /verify/(scot %p who)/(scot %uv job)  %arvo  %k
+      %lard  byk
+      %+  (set-timeout:strandio ,vase)  verify-timeout
+      (verify-lc:lca sat.req (tracked-anchor st who) unv-ids.st)
+  ==
+::
+::  The verification strand has its own +set-timeout so Khan/Spider tears
+::  down outstanding light-client watches. Pair it with an app-level deadline
+::  as a backstop so a delayed or lost Khan result cannot retain an in-flight
+::  slot indefinitely.
+++  verify-cards
+  |=  [byk=desk now=@da who=ship job=@uv req=pending-writ st=state:urb]
+  ^-  (list card)
+  :~  (verify-card byk who job req st)
+      :*  %pass  /verify-timeout/(scot %p who)/(scot %uv job)
+          %arvo  %b  %wait  (add now verify-timeout)
+      ==
+  ==
+::
+::  Start every queued request once both the Groundwire snapshot and the
+::  light client's first best-block fact have arrived.  Requests already in
+::  flight remain queued in the map but are not launched twice.
+++  launch-pending
+  |=  $:  byk=desk
+          now=@da
+          ready=?
+          best=(unit id:block:bc)
+          st=state:urb
+          pending=(map ship pending-writ)
+          inflight=(map ship inflight-job)
+          next-job=@uv
+      ==
+  ^-  launch-result
+  ?.  &(ready ?=(^ best))  [~ ~ next-job]
+  ?:  (gte ~(wyt by inflight) max-inflight)  [~ ~ next-job]
+  =/  slots  (sub max-inflight ~(wyt by inflight))
+  =/  entries  ~(tap by pending)
+  =/  context  (context-token st attested)
+  =|  cards=(list card)
+  =|  started=(map ship inflight-job)
+  |-
+  ?~  entries  [(flop cards) started next-job]
+  ?:  (gte ~(wyt by started) slots)  [(flop cards) started next-job]
+  =/  [who=ship req=pending-writ]  i.entries
+  ?:  (~(has by inflight) who)
+    $(entries t.entries)
+  =/  token  (request-token req)
+  =/  job  next-job
+  %=  $
+    entries  t.entries
+    cards    (weld (flop (verify-cards byk now who job req st)) cards)
+    started  (~(put by started) who [job token context chain-epoch])
+    next-job  +(next-job)
+  ==
+::
+::  A verifier result may carry a pass reconstructed from the latest
+::  committed Groundwire event.  Its cryptographic key must equal the pass
+::  Jael forwarded, but xtr is intentionally allowed to differ.
+++  attested-point-ok
+  |=  [submitted=pass verified=point:urb]
+  ^-  ?
+  (same-key:cc submitted pass.net.verified)
+::
+::  Emit an asynchronous Jael verdict on the path registered by %anex.
+++  writ-card
+  |=  [dom=@tas who=ship res=(unit point:jael)]
+  ^-  card
+  :*  %give  %fact  ~[/writs]
+      %writ-response  !>(`writ-response:jael`[dom who res])
+  ==
+::
+::  A ship already indexed publicly may not transition into the confidential
+::  registry.  Re-check this after async verification to close the race with
+::  the block thread.
+++  known-public
+  |=  who=ship
+  ^-  ?
+  ?&  (~(has by unv-ids.urb-state) who)
+      !(~(has in confidential) who)
+  ==
+::
+::  Anchor replay at the last accepted attestation while retaining any newer
+::  scanner-derived custody position in the private point.
+++  tracked-anchor
+  |=  [st=state:urb who=ship]
+  ^-  (unit anchor:sa)
+  ?~  point=(~(get by unv-ids.st) who)  ~
+  ?~  tip=(~(get by attested) who)  ~
+  `[u.point u.tip]
+::
+::  A verified confidential identity may claim an empty or inscription-only
+::  sat, or its own existing sat, but never overwrite a different comet.
+++  tip-owner-ok
+  |=  [st=state:urb who=ship tip=sont:ord]
+  ^-  ?
+  ?~  val=(get:si:ol sont-map.st [txid vout off]:tip)
+    &
+  ?~  com.u.val
+    &
+  =(who u.com.u.val)
+::
+::  Apply a successful verification to the block watcher's indexes.  The real
+::  tip output value is required because urb-core later uses it for sat-offset
+::  arithmetic when that output is spent.
+++  apply-verified
+  |=  [who=ship new=point:urb tip-value=@ud]
+  ^-  [state:urb (set ship)]
+  =/  st  urb-state
+  =/  old  (~(get by unv-ids.st) who)
+  =/  old-sont=(unit sont:ord)
+    ?~(old ~ `sont.own.u.old)
+  =/  old-val=(unit sont-val:ord)
+    ?~  old-sont  ~
+    ?:  =([0x0 0 0] u.old-sont)  ~
+    (get:si:ol sont-map.st [txid vout off]:u.old-sont)
+  =/  moved-ins=(set insc:ord)
+    ?~(old-val ~ ins.u.old-val)
+  ::  A comet and every inscription on the same ordinal sat move together.
+  ::  Deleting the old sont-val without carrying `ins` forward corrupts both
+  ::  the sat index and insc-ids on the next spend.
+  =?  sont-map.st  ?&  ?=(^ old-sont)
+                           !=(u.old-sont sont.own.new)
+                           !=([0x0 0 0] u.old-sont)
+                       ==
+    (del:si:ol sont-map.st [txid vout off]:u.old-sont)
+  =.  unv-ids.st  (~(put by unv-ids.st) who new)
+  =.  sont-map.st
+    %:  put-all:si:ol
+        sont-map.st
+        txid.sont.own.new
+        vout.sont.own.new
+        off.sont.own.new
+        tip-value
+        `who
+        moved-ins
+    ==
+  =.  insc-ids.st  (move-insc-ids insc-ids.st moved-ins sont.own.new)
+  [st (~(put in confidential) who)]
+::
+::  Move the reverse inscription index alongside a sat.
+++  move-insc-ids
+  |=  [ids=insc-ids:ord moving=(set insc:ord) to=sont:ord]
+  ^-  insc-ids:ord
+  =/  entries  ~(tap in moving)
+  |-
+  ?~  entries  ids
+  =/  dat  (~(get by ids) i.entries)
+  =?  ids  ?=(^ dat)
+    (~(put by ids) i.entries u.dat(sont to))
+  $(entries t.entries)
+::
+::  Remove this private identity and the inscriptions moving with it from one
+::  sat in a merge target, preserving any unrelated co-located occupants.
+++  strip-private-sat
+  |=  $:  map=sont-map:ord
+          at=sont:ord
+          who=ship
+          moving=(set insc:ord)
+      ==
+  ^-  sont-map:ord
+  ?:  =([0x0 0 0] at)  map
+  =/  vm  (get-vout:si:ol map [txid vout]:at)
+  ?~  vm  map
+  =/  sv  (~(get by sats.u.vm) off.at)
+  ?~  sv  map
+  =/  keep-com=(unit @p)
+    ?:  =(`who com.u.sv)  ~
+    com.u.sv
+  =/  keep-ins  (~(dif in ins.u.sv) moving)
+  =/  out  (del:si:ol map [txid vout off]:at)
+  ?:  &(?=(~ keep-com) =(~ keep-ins))  out
+  (put-all:si:ol out txid.at vout.at off.at value.u.vm keep-com keep-ins)
+::
+::  Overlay a verifier-authoritative private point and its exact sat index
+::  onto a block result.  This is used when the verifier inserted or advanced
+::  the ship after the block thread took its base snapshot.
+++  graft-private
+  |=  [result=state:urb live=state:urb who=ship point=point:urb]
+  ^-  (unit state:urb)
+  =/  to=sont:ord  sont.own.point
+  ?:  =([0x0 0 0] to)
+    `result(unv-ids (~(put by unv-ids.result) who point))
+  =/  vm  (get-vout:si:ol sont-map.live [txid vout]:to)
+  ?~  vm  ~
+  =/  sv  (~(get by sats.u.vm) off.to)
+  ?~  sv  ~
+  ?.  =(`who com.u.sv)  ~
+  =/  scanned  (~(get by unv-ids.result) who)
+  =?  sont-map.result  ?&  ?=(^ scanned)
+                             !=(sont.own.u.scanned to)
+                         ==
+    (strip-private-sat sont-map.result sont.own.u.scanned who ins.u.sv)
+  =.  sont-map.result
+    (put-all:si:ol sont-map.result txid.to vout.to off.to value.u.vm `who ins.u.sv)
+  =.  insc-ids.result  (move-insc-ids insc-ids.result ins.u.sv to)
+  =.  unv-ids.result  (~(put by unv-ids.result) who point)
+  `result
+::
+::  Use the block result's custody position while retaining the live private
+::  networking fields.  The result must contain the exact comet index it
+::  claims; otherwise retry the batch instead of committing inconsistency.
+++  use-scanned-private
+  |=  [result=state:urb who=ship point=point:urb]
+  ^-  (unit state:urb)
+  =/  at=sont:ord  sont.own.point
+  ?:  =([0x0 0 0] at)
+    `result(unv-ids (~(put by unv-ids.result) who point))
+  =/  sv  (get:si:ol sont-map.result [txid vout off]:at)
+  ?~  sv  ~
+  ?.  =(`who com.u.sv)  ~
+  `result(unv-ids (~(put by unv-ids.result) who point))
+::
+::  A block thread computes from `base`, while attestation results can update
+::  `live` concurrently.  Block-derived `sont.own` is accepted, but all other
+::  fields of a confidential point remain live/private.  If both branches
+::  moved the sat away from base to different tips, return ~ so the caller can
+::  discard the entire block batch and retry without advancing its cursor.
+++  reconcile-block
+  |=  [base=state:urb live=state:urb result=state:urb conf=(set ship)]
+  ^-  (unit state:urb)
+  =/  ships  ~(tap in conf)
+  =/  out  result
+  |-
+  ?~  ships  `out
+  =/  who=ship  i.ships
+  =/  before  (~(get by unv-ids.base) who)
+  =/  current  (~(get by unv-ids.live) who)
+  =/  scanned  (~(get by unv-ids.result) who)
+  ::  A verifier-only insertion is absent from the block base.  If this batch
+  ::  advances the cursor, the scanner may have crossed a spend of its tip
+  ::  without knowing the sat was tracked. Retry from live so the insertion is
+  ::  in the next base and every transaction is replayed against it.
+  ?~  before
+    ::  Retry even for a no-op cursor: one deterministic replay is cheaper and
+    ::  safer than relying on a block thread that did not know this sat.
+    ~
+  ?~  current
+    ~
+  ?~  scanned
+    ~
+  =/  base-tip=sont:ord  sont.own.u.before
+  =/  live-tip=sont:ord  sont.own.u.current
+  =/  scan-tip=sont:ord  sont.own.u.scanned
+  =/  live-moved=?  !=(base-tip live-tip)
+  =/  scan-moved=?  !=(base-tip scan-tip)
+  ?:  ?&  live-moved
+           scan-moved
+           !=(live-tip scan-tip)
+       ==
+    ~
+  ::  If the block branch moved (including the same move seen by both), its
+  ::  indexes are authoritative. Otherwise a verifier-only move is grafted.
+  ?:  |(scan-moved !live-moved)
+    =/  point=point:urb  u.current(sont.own scan-tip)
+    =/  used  (use-scanned-private out who point)
+    ?~  used  ~
+    $(ships t.ships, out u.used)
+  =/  graft  (graft-private out live who u.current)
+  ?~  graft  ~
+  $(ships t.ships, out u.graft)
+::
+::  Find public spawns introduced by this block batch.  %owner is emitted only
+::  by a successful on-chain spawn; later point effects are not sufficient to
+::  declassify an existing confidential identity.
+++  public-spawns
+  |=  $:  base=state:urb
+          result=state:urb
+          fx=(list [id:block:bitcoin effect:urb])
+      ==
+  ^-  (set ship)
+  =|  out=(set ship)
+  |-
+  ?~  fx  out
+  =/  eu=effect:urb  +.i.fx
+  ?.  ?=([%point * %owner *] eu)
+    $(fx t.fx)
+  =/  [%point who=ship %owner *]  eu
+  ?.  ?&  !(~(has by unv-ids.base) who)
+          (~(has by unv-ids.result) who)
+      ==
+    $(fx t.fx)
+  $(fx t.fx, out (~(put in out) who))
+::
+++  drop-attested
+  |=  [ats=(map ship sont:ord) ships=(set ship)]
+  ^-  (map ship sont:ord)
+  =/  entries  ~(tap in ships)
+  |-
+  ?~  entries  ats
+  $(entries t.entries, ats (~(del by ats) i.entries))
+::
+++  drop-pending
+  |=  [reqs=(map ship pending-writ) ships=(set ship)]
+  ^-  (map ship pending-writ)
+  =/  entries  ~(tap in ships)
+  |-
+  ?~  entries  reqs
+  $(entries t.entries, reqs (~(del by reqs) i.entries))
+::
+++  drop-inflight
+  |=  [jobs=(map ship inflight-job) ships=(set ship)]
+  ^-  (map ship inflight-job)
+  =/  entries  ~(tap in ships)
+  |-
+  ?~  entries  jobs
+  $(entries t.entries, jobs (~(del by jobs) i.entries))
+::
+::  Roll back only verifier insertions that a rejected batch independently
+::  proved were public spawns.  Clear their private comet association while
+::  preserving any unrelated inscriptions co-located on the sat.
+++  drop-private-insertions
+  |=  [st=state:urb ships=(set ship)]
+  ^-  state:urb
+  =/  entries  ~(tap in ships)
+  |-
+  ?~  entries  st
+  =/  who=ship  i.entries
+  =/  point  (~(get by unv-ids.st) who)
+  ?~  point
+    $(entries t.entries)
+  =/  at=sont:ord  sont.own.u.point
+  =?  sont-map.st  !=([0x0 0 0] at)
+    (del-com:si:ol sont-map.st [txid vout off]:at)
+  =.  unv-ids.st  (~(del by unv-ids.st) who)
+  $(entries t.entries)
+::
+::  Strip confidential identities from snapshots and public scries.  Their
+::  points propagate only through self-attestation, never through the classic
+::  Groundwire snapshot path.
+++  filter-snapshot
+  |=  [st=state:urb conf-ships=(set ship)]
+  ^-  state:urb
+  ?:  =(~ conf-ships)  st
+  =.  unv-ids.st
+    =/  ships  ~(tap in conf-ships)
+    |-
+    ^+  unv-ids.st
+    ?~  ships  unv-ids.st
+    $(ships t.ships, unv-ids.st (~(del by unv-ids.st) i.ships))
+  =.  sont-map.st
+    =/  entries  ~(tap by sont-map.st)
+    =|  acc=sont-map:ord
+    |-
+    ^-  sont-map:ord
+    ?~  entries  acc
+    =/  [key=[=txid:ord =vout:ord] vm=vout-map:ord]  i.entries
+    =/  sats
+      %-  ~(gas by *(map off:ord sont-val:ord))
+      %+  murn  ~(tap by sats.vm)
+      |=  [o=off:ord sv=sont-val:ord]
+      ^-  (unit [off:ord sont-val:ord])
+      ?.  &(?=(^ com.sv) (~(has in conf-ships) u.com.sv))
+        `[o sv]
+      ::  Keep public inscriptions on a confidential comet's sat, but clear
+      ::  the comet association.  With no inscriptions, omit the exact
+      ::  private satpoint altogether.
+      ?:  =(~ ins.sv)  ~
+      `[o sv(com ~)]
+    ?:  =(~ sats)
+      $(entries t.entries)
+    $(entries t.entries, acc (~(put by acc) key vm(sats sats)))
+  st
+::
+::  The ships Jael currently watches through /<ship> paths.
+++  subs-to-ships
+  |=  sup=bitt:gall
+  ^-  (set ship)
+  %-  silt
+  %+  murn  ~(val by sup)
+  |=  [who=ship =path]
+  ^-  (unit ship)
+  ?.  ?=([@ ~] path)  ~
+  (slaw %p i.path)
 ::
 ::  +fresh-pass: our own current pass, for a %jael-anew refresh
 ::
 ++  fresh-pass
   |=  who=ship
   ^-  (unit pass)
+  ?.  (~(has in confidential) who)  ~
   ?~  pt=(~(get by unv-ids.urb-state) who)  ~
+  ?~  tip=(~(get by attested) who)  ~
+  ?.  =(u.tip sont.own.u.pt)  ~
   `pass.net.u.pt
 ::
 ::  +urb-point-to-jael: project a urb $point onto Jael's $point
@@ -677,29 +1278,10 @@
   :*  rift.net.pt
       life.net.pt
       (my [life.net.pt (sub (end 3 pass.net.pt) 'a') pass.net.pt] ~)
-      ::  (fall sponsor self): the point's sponsor if set, else self
-      ::  (issue #117), never a null sponsor to Jael.
-      `(fall sponsor.net.pt who)
+      ?:  has.sponsor.net.pt  `who.sponsor.net.pt
+      `who
       fief.net.pt
   ==
-::
-::  +check-conf: poll each watched confidential comet's tip sat and return
-::  the @p list whose sat has been spent (moved).  gettxout is
-::  mempool-inclusive, so a move by an unconfirmed tx is reported
-::  conservatively.  Result handled by the [%conf ~] case in +on-arvo.
-::
-++  check-conf
-  |=  [rpc=req-to:btcio conf=(map @p sont:ord)]
-  ^-  shed:khan
-  =/  m  (strand:strandio ,vase)
-  =/  entries  ~(tap by conf)
-  =|  moved=(list @p)
-  |-  ^-  form:m
-  ?~  entries  (pure:m !>(`(list @p)`(flop moved)))
-  =/  [who=@p sat=sont:ord]  i.entries
-  ;<  live=(unit ?)  bind:m  (get-tx-out:btcio rpc ~ txid.sat vout.sat)
-  =?  moved  =(`%.n live)  [who moved]
-  $(entries t.entries)
 ::
 ++  listen-to-urb
   |=  [ships=(set ship) =source:point:jael]
@@ -775,7 +1357,9 @@
           :*  ship
               id
               %spon
-              `(fall sponsor.net ship)
+              ?.  has.sponsor.net
+                `ship
+              `who.sponsor.net
           ==
       ==
     new-udiffs

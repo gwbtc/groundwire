@@ -2,7 +2,7 @@
 ::
 ::  Ported into the groundwire desk from spv-wallet/lib/taproot.hoon, trimmed to
 ::  the arms the self-attestation verifier (lib/self-attestation, used by
-::  %urb-watcher) needs to VERIFY a confidential comet's commitments:
+::  %gw-btc) needs to VERIFY a confidential comet's commitments:
 ::  TapLeaf/TapBranch hashing, BIP-341 key tweaking, and the output-key
 ::  reconstruction used to check that an off-chain-revealed tapleaf was committed
 ::  in an on-chain taproot output. The bech32/address helpers were dropped.
@@ -199,18 +199,21 @@
   |=  [internal-pubkey=@ux merkle-root=(unit @ux)]
   ^-  [x=@ux parity=?]
   =,  secp256k1:secp:crypto
-  ::  Get internal pubkey as a point
-  =/  p=point  (decompress-point internal-pubkey)
-  ::  If P has odd y, negate it (lift to even y) for consistent tweaking
-  =/  p-even=point
-    ?:  =(0 (mod y.p 2))
-      p
-    [x.p (sub p:domain:curve y.p)]
+  ::  The wire format carries a compressed key, while BIP-341 commits only
+  ::  its x-coordinate and lifts it to the unique even-y curve point.
+  =/  prefix  (rsh [3 32] internal-pubkey)
+  ?>  |(=(2 prefix) =(3 prefix))
+  =/  internal-x  (x-only internal-pubkey)
+  =/  lifted  (lift-x:schnorr internal-x)
+  ?~  lifted  !!
+  =/  p-even=point  u.lifted
   ::  Compute tweak
-  =/  tweak=@ux  (compute-tweak (x-only internal-pubkey) merkle-root)
+  =/  tweak=@ux  (compute-tweak internal-x merkle-root)
+  ?>  (lth tweak secp-n)
   ::  Q = P + t*G
   =/  t-times-g=point  (mul-point-scalar g:domain:curve tweak)
   =/  q=point  (add-points p-even t-times-g)
+  ?<  =([0 0] q)
   :-  x.q
   !=(0 (mod y.q 2))
 ::
