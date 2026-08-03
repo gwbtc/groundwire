@@ -1,12 +1,12 @@
-/-  spider, bitcoin, urb, ord, uw=urb-watcher
+/-  spider, bitcoin, urb, ord, uw=urb
 /+  tag=test-agent, btcio, btcl=bitcoin, ol=ord
-/=  mock-agent  /app/urb-watcher
+/=  mock-agent  /app/gw-btc
 =>
 ::
 ::  def
 |%
-++  dap   %mock-urb-watcher
-++  dek   %groundwire
+++  dap   %mock-gw-btc
+++  dek   %gw-btc
 ++  doc   [~zod dap]
 ::
 ++  mock-req-to
