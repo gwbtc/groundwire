@@ -356,15 +356,24 @@
         =/  commit-tx  commit.u.pcmtx
         ?~  precommit-sat=(calc-precommit-sont precommit-tx to.sot)  
           cor
-        ::  The immutable suite-C tweak is the canonical %gw-btc domain
-        ::  prefix followed by the jammed spawn satpoint.  Use the same
-        ::  encoder as the confidential verifier and onboarding client.
-        =/  tweak  (make-dat:cc u.precommit-sat)
+        ::  XX  OP_RETURN revision, public-comet path.  Under kelvin 9 the
+        ::  immutable dat is a HIDING commitment
+        ::  (make-dat:cc [spawn blind]); a public spawn reveals its blind
+        ::  in an OP_RETURN output, not in this witness-parsed
+        ::  precommit/commit/reveal flow.  Recovering the blind here
+        ::  requires the OP_RETURN output scanner rework
+        ::  (opret-revision/02 item 8), a separate workstream that does
+        ::  not affect confidential-comet verification (lib/self-attestation).
+        ::  Until it lands, the public-spawn tweak check cannot recover the
+        ::  blind, so it fails closed: a public spawn is not indexed rather
+        ::  than indexed unverified.
+        =/  blind=@ux  *@ux
+        =/  tweak  (make-dat:cc u.precommit-sat blind)
         ::
-        ::  Check that the given comet networking key encodes the tweak 
+        ::  Check that the given comet networking key encodes the tweak
         ::  that corresponds to the attestation.
         ?.  =(dat.tw.pub:+<:cac tweak)
-          ~&  >>>  ["%urb-core: provided pass's networking key does not match tweak: " dat.tw.pub:+<:cac]
+          ~&  >>>  ["%urb-core: public-spawn tweak check disabled pending OP_RETURN scanner" dat.tw.pub:+<:cac]
           cor
         ::  ~&  >>  "%urb-core: provided pass encodes the correct tweaked networking key!"
         ::

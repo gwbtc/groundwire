@@ -165,7 +165,7 @@
   =/  psh=hexb:btc
     ?:  (lte wid.payload 75)  [1 wid.payload]
     (cat:byt:bcu ~[[1 0x4c] [1 wid.payload]])
-  (cat:byt:bcu ~[[5 0x6a03.7572.62] [1 0x1] [1 kelvin] psh payload])
+  (cat:byt:bcu ~[[5 0x6a.0375.7262] [1 0x1] [1 kelvin] psh payload])
 ::  +parse-publication: (unit [kelvin payload]) from an output script
 ::
 ++  parse-publication
@@ -174,7 +174,7 @@
   %-  mole
   |.
   ?>  (gte wid.script 7)
-  ?>  =(0x6a03.7572.62 dat:(take:byt:bcu 5 script))
+  ?>  =(0x6a.0375.7262 dat:(take:byt:bcu 5 script))
   =/  rst  (drop:byt:bcu 5 script)
   ?>  =(0x1 dat:(take:byt:bcu 1 rst))
   =/  kel  dat:(take:byt:bcu 1 (drop:byt:bcu 1 rst))

@@ -456,7 +456,6 @@
         %+  turn  ~(tap in gone-stale)
         |=(=ship (stale-card dap.bowl ship))
       :_  this
-      %+  welp
       %+  welp  stale-cards
       %+  welp
         ?.  =(~ fx-ships)
@@ -775,7 +774,7 @@
   :~  :*  %pass  [%verify wir]  %arvo  %k
           %lard  byk
           %+  (set-timeout:strandio ,vase)  verify-timeout
-          (verify-lc:lca sat.req (tracked-anchor urb-state who) unv-ids.urb-state)
+          (verify-lc:lca sat.req (tracked-anchor urb-state who) ~(key by unv-ids.urb-state))
       ==
       :*  %pass  [%verify-timeout wir]
           %arvo  %b  %wait  (add now verify-timeout)
