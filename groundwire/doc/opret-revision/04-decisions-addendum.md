@@ -81,18 +81,42 @@ NOT produce `%fail` (a snub would block the replacement packet).
   API: sat moves are owner-initiated, so the moving ship refreshes its own
   pass (`%anew`, §5) and re-handshakes of its own accord.
 
-## 4. Publication payload for public spawn (resolves §9 Q4)
+## 4. Publication payload + public scanning (resolves §9 Q4)
+
+A **public** comet publishes on-chain by adding one OP_RETURN output to
+its custody transaction (spawn or state update). The confidential path
+never publishes; there is nothing to grep for a confidential comet.
 
 ```
 scriptPubKey = OP_RETURN OP_PUSH3 "urb" OP_PUSH1 <kelvin=0x09> OP_PUSHDATA <payload>
-payload      = (jam [pass spawn-sont blind])
+payload      = (jam publication)
+publication  = [=pass =opening]        :: sur/self-attestation
+opening      = [internal-key=@ux snapshot blind-opening=(unit [spawn blind])]
 ```
 
-Maximum payload size: **512 bytes** (actual size ≈ 200–250 bytes). The
-payload publicly opens the spawn commitment, making the name verifiable and
-indexable by scanners with no packet exchange. Confidential spawns omit the
-output entirely. Reachability-restoration and advertisement payloads
-(01 §6.2–6.3) are deferred (§7).
+The publication is the on-chain twin of a confidential `xtr` entry: the
+`pass` binds the name (`who = fig(pass)`) and the `opening` reveals the
+state committed in the transaction's sat-carrying output. A **present**
+`blind-opening` marks a **spawn** (it also opens the hiding `dat`
+commitment); an **absent** one marks a **state update** (rekey/breach)
+of an already-tracked comet.
+
+Maximum payload size: **512 bytes**. Confidential custody transactions
+carry no publication output at all. Reachability-restoration and
+advertisement payloads (01 §6.2–6.3) are deferred (§7).
+
+The scanner (`lib/urb-core`) discovers public comets by grepping
+transaction **outputs** for the `OP_RETURN "urb"` prefix — never by
+parsing witnesses. Per publication it runs the same verification the
+confidential walk does for one hop: for a spawn, the `pass`↔`dat`
+hiding-commitment binding, the input-0 funding spend, the `state-key`
+output commitment, and sat-occupancy; for a state update, input-0
+custody continuity, the `state-key` commitment, and a life advance.
+Sat movement (with or without a publication) is followed by the
+ordinal tracker. The pre-OP_RETURN precommit/commit/reveal machinery
+and the on-chain sotx opcodes (spawn/keys/escape/adopt/reject/detach/
+fief/set-mang) are removed; sponsorship is a snapshot field, resolved
+off-chain (§2, and 01 §8).
 
 ## 5. `%anew` / custody-log extension (resolves §9 Q7)
 
