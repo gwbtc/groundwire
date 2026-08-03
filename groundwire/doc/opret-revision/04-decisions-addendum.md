@@ -1,0 +1,186 @@
+# OP_RETURN revision — decisions addendum
+
+Status: adopted 2026-08-03. This document records the architect decisions
+resolving the open questions of `01-spec-revision.md` §9 and fixing the scope
+of the first implementation ("v9" below). It amends `01-spec-revision.md`
+where they differ; everything not mentioned here stands as written there.
+
+The guiding scope rule: rely on economic sybil resistance (on-chain cost)
+rather than mechanical DOS resistance. Urbit as a whole is not DOS-resistant;
+piecemeal hardening here buys little and costs complexity. A kernel-wide DOS
+pass is a separate, later effort.
+
+## 1. Protocol version: a Kelvin number in `dat`
+
+The domain `dat` carries an explicit protocol version, Kelvin-style
+(counting down), starting at **9**:
+
+```
+dat = (can 0 (mat %gw-btc) (mat 9) [256 d] ~)
+d   = H_tag("gw/spawn-commit", (jam spawn-sont) || blind)
+```
+
+- The domain tag remains the first `+mat` item at bit 0 — Ames reads only
+  that and nothing else changes in the kernel.
+- The Kelvin is plaintext (not inside the hiding commitment) so any holder
+  of a pass can read a comet's mint version without an opening.
+- `dat` is hashed into the name, so a comet's mint Kelvin is immutable.
+  A Kelvin decrement changes what new comets mint under; verifiers advertise
+  the set of Kelvins they accept, and retiring a Kelvin is a deliberate
+  (breach-class) network decision.
+- One number governs interpretation of everything downstream for that comet:
+  snapshot mold, xtr grammar, tag-string semantics, publication payload.
+  Consequently (resolving §9 Q1): the tagged-hash strings
+  (`gw/spawn-commit`, `gw/state-commit`, `gw/spawn-blind`) are themselves
+  **unversioned**; the OP_RETURN publication envelope's version byte **is
+  the Kelvin** (`0x09`). No separate registry is needed.
+- Decoders MUST reject trailing data: the bit-width of `dat` is exactly
+  `p:(mat %gw-btc) + p:(mat 9) + 256`.
+
+## 2. Snapshot mold (resolves §9 Q2)
+
+On-chain committed snapshots carry sponsorship and routing state:
+
+```
++$  snapshot
+  $:  life=@ud
+      rift=@ud
+      key=@                    ::  current messaging key (cry.pub)
+      sponsor=(unit @p)
+      fief=(unit fief)
+  ==
+```
+
+- `rift` stays explicit on-chain (not derived from key discontinuity).
+  Revisit removal only once the codebase is settled.
+- **Every snapshot change increments `life`; a `rift` increment implies a
+  `life` increment.** This makes life comparison a total order over a ship's
+  states, so the kernel's existing life-based intake triage is sufficient
+  and no same-life re-verification path is needed.
+- Sponsor semantics at verification: a named sponsor must exist as a public
+  point (existence check only — **no consent signature in v9**; consent
+  material, sponsor-chain evidence, multi-sponsor fallback, and all other
+  off-chain sponsorship coordination are one deferred workstream). An absent
+  sponsor projects to self-sponsorship in the Jael udiff, and is never
+  treated as fraud.
+
+## 3. Stale attestations: demote to alien, never snub
+
+When `%gw-btc` observes a confidential comet's tip outpoint spent (conf
+registry), the identity's attestation is stale. This is not fraud and MUST
+NOT produce `%fail` (a snub would block the replacement packet).
+
+- `writ-result` gains a variant: `[%stale dom=@tas =ship]`.
+- On `%stale`, Jael drops the stored point (the `%lyfe` scry reports the
+  ship unknown again) and Ames **demotes the peer to `%alien`**: channel
+  state is dropped; queued/pending outbound accumulates as ordinary alien
+  todos.
+- The ship's next open packet re-enters the normal suite-C `%writ` path.
+  On the eventual `%full` verdict the alien is promoted and pending state
+  drains through the existing promotion machinery. No new request/response
+  API: sat moves are owner-initiated, so the moving ship refreshes its own
+  pass (`%anew`, §5) and re-handshakes of its own accord.
+
+## 4. Publication payload for public spawn (resolves §9 Q4)
+
+```
+scriptPubKey = OP_RETURN OP_PUSH3 "urb" OP_PUSH1 <kelvin=0x09> OP_PUSHDATA <payload>
+payload      = (jam [pass spawn-sont blind])
+```
+
+Maximum payload size: **512 bytes** (actual size ≈ 200–250 bytes). The
+payload publicly opens the spawn commitment, making the name verifiable and
+indexable by scanners with no packet exchange. Confidential spawns omit the
+output entirely. Reachability-restoration and advertisement payloads
+(01 §6.2–6.3) are deferred (§7).
+
+## 5. `%anew` / custody-log extension (resolves §9 Q7)
+
+Owner-driven, no auto-detection in v9:
+
+1. The owner performs a custody transaction (e.g. rotation) via Causeway.
+2. After confirmation, Causeway hands `%gw-btc` the new xtr entry and its
+   opening (a poke, same channel as proof ingestion).
+3. `%gw-btc` validates the entry against the chain (light client), extends
+   the log, rebuilds the pass, and answers Jael's `%anew` with
+   `%anew-response`; Ames installs the refreshed pass via the existing path.
+
+Known accepted gap (unchanged): the refreshed pass is not written back to
+the boot keyfile.
+
+## 6. Packet bound: one fragment (resolves §9 Q3 scope)
+
+- A complete jammed first-contact attestation MUST fit **one Mesa fragment**
+  (~1 KiB). No two-fragment bound, no anonymous-reassembly subsystem.
+- Under this revision that is comfortable: no inline raw transaction, no key
+  history; entries are ~40 bytes, openings only on spawn and tip. Golden
+  fixtures MUST include a maximal single-fragment packet to pin the
+  achievable log length; packet-local checks reject oversized logs.
+- Fetch-heavy verification is the accepted trade: the verifier fetches
+  per-entry evidence itself (§8). Packet-carried inclusion proofs /
+  progressive merkle hydration are a deferred workstream.
+- Entry 0 MUST open the spawn commitment (strict rule retained). Re-anchoring
+  and the degraded tier (01 §7.5) are deferred (§7).
+
+## 7. Deferred workstreams (out of scope for v9)
+
+- Sponsorship wire layer: routing records, sponsor-chain hints, multi-sponsor
+  fallback, consent tokens/signatures, liveness-enforced rejection.
+- Stranger discovery, reachability restoration, sponsor advertisement.
+- Degraded-tier (plain `tr(P)`) ships and any-entry re-anchoring.
+- Two-fragment packets / bounded anonymous reassembly.
+- Packet-carried inclusion evidence and merkle trust hydration.
+- Jael domain tombstones (`%bane` permanence) — requires a proper Jael state
+  version bump and migration; not an in-place `%5` edit.
+- Kernel-wide DOS pass.
+
+## 8. Verification backend: `%light-client` = gwbtc/node `%bitcoin-client`
+
+The fetch layer targets the update API of `desk/app/bitcoin-client.hoon`
+(gwbtc/node, `develop`): watch paths `/best-block` (with `%reorg-rollback`),
+`/block-header/{hash,height}/…`, `/block-filter/{hash,height}/…`,
+`/block/{hash,height}/…`, `/transaction/<block-hash>/<txid>`; all facts carry
+`block-info` (height, hash, confirmations, chainwork).
+
+- xtr entries name `[txid height]`; fetching is
+  `/block-header/height` → hash → `/transaction/<hash>/<txid>`.
+- **Tip liveness has no `gettxout` analogue.** Spentness is determined by
+  filter scan: walk BIP-158 filters from the tip's height to best-block for
+  the tip output's scriptPubKey; on filter match fetch the block and check
+  for an input spending the outpoint. Any unavailable filter/block in the
+  range → undeterminable → fail closed (never a negative verdict). Reorg
+  (`%reorg-rollback`) re-checks tip liveness at apply time.
+- Development shim: until `%bitcoin-client` runs in the harness (it lacks
+  `%regtest` network parameters and requires the `%tcp` sidecar), a shim
+  agent implements the identical watch paths over Bitcoin Core RPC. The
+  verifier is agnostic between them.
+
+## 9. Verifier concurrency (descope of the queue economy)
+
+- **Single-flight per ship**: at most one verification job per ship;
+  a duplicate `%jael-writ` for the same `[ship life]` while a job is
+  pending, or after a terminal verdict for that exact pass, is dropped
+  silently. No pending queue, no inflight-slot economy, no global
+  chain-epoch invalidation, no probe pools, no policy/receipt/economic-
+  reservation machinery.
+- Retained correctness invariants (these are not DOS machinery): a verdict
+  applies only if it matches the pass currently under verification for that
+  ship; apply-time re-checks against live state (known-public, sat-owner);
+  crashes/timeouts/undeterminable fetches never produce a negative verdict;
+  bounded log length and per-entry size checks at parse time.
+- Kernel suspension machinery (`%gost`/`%ghul`/`%bane` + Clay `%tire`
+  wiring) is retained as-is, with one fix: an additive
+  `[%snub ?(%add %del %set) …]` Ames task so domain suspension does not
+  clobber manually curated snub lists.
+
+## 10. New kernel surface (both items small)
+
+- **Jael scry: domain of a ship.** New care (`%dome`):
+  `.^((unit @tas) %j /=dome=/<ship>)` — looks up the ship's point, extracts
+  the leading `+mat` domain tag from the latest life's pass. Requires
+  hoisting `+pass-pki-dom` from Ames's packet core into lull. Returns `~`
+  for non-suite-C ships and unknown ships.
+- **Udiff source authorization**: Jael accepts generic `%azimuth-udiffs`
+  facts only from a live registered domain agent or an explicitly configured
+  legacy source. (The authorization guard from the `%bane` prototype branch,
+  landed without the unsafe state edit.)
