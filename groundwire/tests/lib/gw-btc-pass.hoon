@@ -48,6 +48,13 @@
         0x6a.0267.7720.c31d.0c5c.e2b3.5a94.79ce.af7b.284a.fac8.e955.324c.0b40.59f6.bdc8.b182.22aa.ba75
     !>  (state-leaf:cc (state-commit:cc snap))
 ::
+++  test-golden-state-key
+  ::  P = 02 || secp generator x; Q = +state-key over the basic snapshot
+  =/  p  0x2.79be.667e.f9dc.bbac.55a0.6295.ce87.0b07.029b.fcdb.2dce.28d9.59f2.815b.16f8.1798
+  %+  expect-eq
+    !>  0xc136.d880.9683.7f8d.167e.6141.555a.6e1d.0068.e24b.7df6.a973.7cea.44c8.29ab.1e7b
+    !>  (state-key:cc p snap)
+::
 ++  test-dat-roundtrip
   %+  expect-eq
     !>(`(unit [dom=@tas kel=@ud d=@ux])``[%gw-btc 9 (spawn-commit:cc spawn blind)])

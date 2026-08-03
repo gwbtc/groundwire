@@ -29,7 +29,10 @@
       "jam_snapshot_bytes_le": "710684e6d514",
       "state_commit": "c31d0c5ce2b35a9479ceaf7b284afac8e955324c0b4059f6bdc8b18222aaba75",
       "state_leaf_version": "c0",
-      "state_leaf_script": "6a02677720c31d0c5ce2b35a9479ceaf7b284afac8e955324c0b4059f6bdc8b18222aaba75"
+      "state_leaf_script": "6a02677720c31d0c5ce2b35a9479ceaf7b284afac8e955324c0b4059f6bdc8b18222aaba75",
+      "state_leaf_hash": "bc09d1123f8023ba9d1f0cbb9574fd727b1a406c288e0b5d2e9f719720f54c2e",
+      "internal_key_compressed": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "state_output_key_q": "c136d88096837f8d167e6141555a6e1d0068e24b7df6a9737cea44c829ab1e7b"
     }
   ]
 }
