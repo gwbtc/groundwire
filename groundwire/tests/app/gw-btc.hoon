@@ -552,9 +552,9 @@
     %+  ex-cards:tag  timer
     ~[(ex-arvo:tag /timer %b %wait now.bowl)]
   ;<  =bowl:gall       bind:m  get-bowl:tag
-  =/  upd=best-block-update:lc  [best-id ~]
+  =/  upd=best-block:update:lc  [%new num.best-id hax.best-id]
   ;<  launched=(list card)  bind:m
-    (do-agent:tag /best-block [~zod %light-client] [%fact %light-client-best-block !>(upd)])
+    (do-agent:tag /best-block [~zod %light-client] [%fact %best-block !>(upd)])
   ;<  *                bind:m
     %+  ex-cards:tag  launched
     :~  (ex-verify-card /verify/(scot %p comet)/(scot %uv 0) q.byk.bowl)
@@ -583,9 +583,9 @@
   ;<  *                bind:m  (do-init:tag dap mock-agent)
   ;<  *                bind:m
     (do-poke:tag %urb-start-indexing !>(`(unit state:urb)`~))
-  =/  upd=best-block-update:lc  [best-id ~]
+  =/  upd=best-block:update:lc  [%new num.best-id hax.best-id]
   ;<  *                bind:m
-    (do-agent:tag /best-block [~zod %light-client] [%fact %light-client-best-block !>(upd)])
+    (do-agent:tag /best-block [~zod %light-client] [%fact %best-block !>(upd)])
   ;<  =bowl:gall       bind:m  get-bowl:tag
   ;<  first=(list card)  bind:m
     (do-poke:tag %noun !>(`jael-poke:urb`[%jael-writ %gw-btc comet pass-a]))
@@ -626,9 +626,9 @@
   ;<  *                bind:m  (do-init:tag dap mock-agent)
   ;<  *                bind:m
     (do-poke:tag %urb-start-indexing !>(`(unit state:urb)`~))
-  =/  upd=best-block-update:lc  [best-id ~]
+  =/  upd=best-block:update:lc  [%new num.best-id hax.best-id]
   ;<  *                bind:m
-    (do-agent:tag /best-block [~zod %light-client] [%fact %light-client-best-block !>(upd)])
+    (do-agent:tag /best-block [~zod %light-client] [%fact %best-block !>(upd)])
   ;<  *                bind:m  (poke-ready-prefix 0 16)
   =/  seventeenth-pass  (pass-at 16)
   =/  seventeenth       (comet-for seventeenth-pass)
@@ -653,9 +653,9 @@
   ;<  *                bind:m  (do-init:tag dap mock-agent)
   ;<  *                bind:m
     (do-poke:tag %urb-start-indexing !>(`(unit state:urb)`~))
-  =/  upd=best-block-update:lc  [best-id ~]
+  =/  upd=best-block:update:lc  [%new num.best-id hax.best-id]
   ;<  *                bind:m
-    (do-agent:tag /best-block [~zod %light-client] [%fact %light-client-best-block !>(upd)])
+    (do-agent:tag /best-block [~zod %light-client] [%fact %best-block !>(upd)])
   ;<  =bowl:gall       bind:m  get-bowl:tag
   ;<  first=(list card)  bind:m
     (do-poke:tag %noun !>(`jael-poke:urb`[%jael-writ %gw-btc comet pass-a]))
