@@ -67,9 +67,9 @@
 ::
 ++  test-verify-dat
   ;:  weld
-    (expect-eq !>(%.y) !>((verify-dat:cc dat [spawn blind])))
-    (expect-eq !>(%.n) !>((verify-dat:cc dat [spawn +(blind)])))
-    (expect-eq !>(%.n) !>((verify-dat:cc dat [[txid.spawn 2 off.spawn] blind])))
+    (expect-eq !>(%.y) !>((verify-dat:cc dat [spawn 0 blind])))
+    (expect-eq !>(%.n) !>((verify-dat:cc dat [spawn 0 +(blind)])))
+    (expect-eq !>(%.n) !>((verify-dat:cc dat [[0x1234.5678.9abc.def0 2 0] 0 blind])))
   ==
 ::
 ++  test-pass-roundtrip
@@ -110,5 +110,5 @@
 ++  test-publication-rejects-garbage
   %+  expect-eq
     !>(*(unit [kel=@ud payload=hexb:btc]))
-    !>((parse-publication:cc [5 0x6a6a.6a6a.6a]))
+    !>((parse-publication:cc [5 0x6a.6a6a.6a6a]))
 --
