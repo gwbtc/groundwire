@@ -808,3 +808,127 @@ def test_int_to_patp_comet_roundtrip():
         "~mosnyt-londen-lacrux-rosmeg--mitrev-larder-loddux-daplyd"
     )
     assert cw.int_to_patp(0x42CD) == "~daplyd"
+
+
+# ---------------------------------------------------------------------------
+# start-height: the FUNDING tx's block, never the spawn tx's
+#
+# sur/self-attestation defines a blind-opening's start-height as the block
+# containing the transaction that CREATED the spawn satpoint. `finalize` used
+# to write the SPAWN tx's height instead, and no proof ever carried an explicit
+# start_height, so the wrong default always won. The verifier fetches that
+# height first and can only address a tx by [height txid], so the packet died
+# with attestation-tx-not-found and NO verdict: every comet Causeway had ever
+# minted was unverifiable. Confirmed live on mainnet against all three of the
+# comets minted with the old code.
+# ---------------------------------------------------------------------------
+
+FUNDING_TXID = "aa" * 32
+SPAWN_TXID = "bb" * 32
+FUNDING_HEIGHT = 961_044
+SPAWN_HEIGHT = 961_055
+
+
+def _spawn_proof(**over) -> dict:
+    proof = {
+        "version": 2,
+        "protocol": "kelvin-9",
+        "sat_vout": 0,
+        "internal_pubkey_hex": "11" * 32,
+        "snapshot": {"life": 1, "rift": 0, "key": 0xABCD, "sponsor": None, "fief": None},
+        "network": "main",
+        "funding": {"txid": FUNDING_TXID, "vout": 1, "value": 2_000},
+        "commit_txid": SPAWN_TXID,
+        "blind_hex": "cc" * 32,
+    }
+    proof.update(over)
+    return proof
+
+
+def _stub_mempool(monkeypatch, *, funding_confirmed=True, funding_height=FUNDING_HEIGHT):
+    """mempool.space stub: the spawn confirms at SPAWN_HEIGHT, its funding at
+    funding_height. The two heights differ, which is the whole point."""
+    calls: list[str] = []
+
+    def stub(path, base=None):
+        calls.append(path)
+        if path == f"/tx/{SPAWN_TXID}":
+            return {"status": {"confirmed": True, "block_height": SPAWN_HEIGHT,
+                               "block_hash": "de" * 32}}
+        if path == f"/tx/{FUNDING_TXID}":
+            if not funding_confirmed:
+                return {"status": {"confirmed": False}}
+            return {"status": {"confirmed": True, "block_height": funding_height,
+                               "block_hash": "ad" * 32}}
+        raise AssertionError(f"unexpected mempool call {path}")
+
+    monkeypatch.setattr(cw, "mempool_get", stub)
+    return calls
+
+
+def test_resolve_start_height_uses_the_funding_tx_not_the_spawn(monkeypatch):
+    _stub_mempool(monkeypatch)
+    assert cw.resolve_start_height(_spawn_proof()) == FUNDING_HEIGHT
+
+
+def test_resolve_start_height_prefers_a_recorded_height(monkeypatch):
+    def boom(path, base=None):
+        raise AssertionError("must not hit the network when the height is known")
+    monkeypatch.setattr(cw, "mempool_get", boom)
+    p = _spawn_proof()
+    p["funding"]["height"] = FUNDING_HEIGHT
+    assert cw.resolve_start_height(p) == FUNDING_HEIGHT
+    assert cw.resolve_start_height(_spawn_proof(start_height=FUNDING_HEIGHT)) == FUNDING_HEIGHT
+
+
+def test_resolve_start_height_ignores_the_zero_placeholder(monkeypatch):
+    # 0 is what a published spawn's opening carries (unknowable pre-broadcast);
+    # it must never be mistaken for a real funding height.
+    _stub_mempool(monkeypatch)
+    p = _spawn_proof(start_height=0)
+    p["funding"]["height"] = 0
+    assert cw.resolve_start_height(p) == FUNDING_HEIGHT
+
+
+def test_resolve_start_height_refuses_to_guess(monkeypatch):
+    _stub_mempool(monkeypatch, funding_confirmed=False)
+    with pytest.raises(Exception):
+        cw.resolve_start_height(_spawn_proof())
+    monkeypatch.setattr(cw, "mempool_get", lambda p, base=None: {})
+    no_funding = _spawn_proof()
+    no_funding["funding"] = {}
+    with pytest.raises(Exception):
+        cw.resolve_start_height(no_funding)
+
+
+def _xtr_start_height(xtr: int) -> int:
+    """Dig the spawn entry's blind-opening start-height out of a jammed xtr.
+
+    xtr           = (jam (list custody-entry))
+    custody-entry = [txid height opening=(unit opening)]
+    opening       = [internal-key snapshot blind-opening=(unit blind-opening)]
+    blind-opening = [spawn start-height blind]
+    """
+    log = cw.hoon_cue(xtr)
+    entry0 = log[0]
+    opening = entry0[1][1][1]          # (unit opening) -> opening
+    blind_opening = opening[1][1][1]   # (unit blind-opening) -> blind-opening
+    return blind_opening[1][0]
+
+
+def test_finalize_bakes_the_funding_height_into_the_blind_opening(tmp_path, monkeypatch):
+    _stub_mempool(monkeypatch)
+    path = tmp_path / "spawn.json"
+    cw.write_proof_json(_spawn_proof(), str(path))
+
+    cw.cmd_finalize.callback(
+        proofs=(str(path),), feed=None, wait=False,
+        poll_interval=1, mempool_base="stub",
+    )
+
+    out = cw.load_proof_json(str(path))
+    # the spawn tx's own height is recorded, and is NOT the start-height
+    assert out["block_height"] == SPAWN_HEIGHT
+    assert out["start_height"] == FUNDING_HEIGHT
+    assert out["funding"]["height"] == FUNDING_HEIGHT
+    assert _xtr_start_height(int(out["xtr_hex"], 16)) == FUNDING_HEIGHT

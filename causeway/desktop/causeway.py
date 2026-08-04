@@ -2007,6 +2007,10 @@ def scan_addresses(
                     "vout": u["vout"],
                     "value": u["value"],
                     "confirmed": u.get("status", {}).get("confirmed", False),
+                    # The block that created this outpoint. For the UTXO a spawn
+                    # is minted from, this is the blind-opening's start-height —
+                    # see resolve_start_height().
+                    "height": u.get("status", {}).get("block_height"),
                 })
     return found
 
@@ -2458,9 +2462,14 @@ def cmd_finalize(proofs, feed, wait, poll_interval, mempool_base):
                     f"{path} is the spawn but has no blind_hex — cannot open the dat commitment"
                 )
             f = proof.get("funding", {})
+            # start-height names the FUNDING tx's block, never this spawn tx's
+            # (`height`) — that is the transaction the verifier fetches first.
+            start_height = resolve_start_height(proof, mempool_base=mempool_base)
+            proof["start_height"] = start_height
+            proof["funding"]["height"] = start_height
             opening["blind_opening"] = dict(
                 spawn=dict(txid_hex=f["txid"], vout=int(f["vout"]), off=int(f.get("off", 0))),
-                start_height=int(proof.get("start_height", height)),
+                start_height=start_height,
                 blind=bytes.fromhex(blind_hex),
             )
         entries.append(dict(txid_hex=txid, height=height, opening=opening))
@@ -2530,6 +2539,13 @@ def _build_spawn_psbt_and_proof(
         network=source.network,
         **change_args,
     )
+    # Carry the funding tx's block height into the proof: it IS the
+    # blind-opening's start-height (see resolve_start_height), and knowing it
+    # here saves finalize a lookup — and saves it entirely if the outpoint is
+    # later pruned from the API's view.
+    if utxo.get("height"):
+        proof["funding"]["height"] = int(utxo["height"])
+        proof["start_height"] = int(utxo["height"])
     return psbt_obj, proof
 
 
@@ -2597,6 +2613,45 @@ def _broadcast_tx(tx_hex: str, *, mempool_base: str = MEMPOOL_API_URL) -> str:
     return r.text.strip()
 
 
+def resolve_start_height(proof: dict, *, mempool_base: str = MEMPOOL_API_URL) -> int:
+    """The block height of the transaction that CREATED the spawn satpoint.
+
+    sur/self-attestation.hoon defines a blind-opening's start-height as "the
+    block containing the transaction that CREATED the spawn satpoint" — i.e.
+    the FUNDING tx, the one whose output the spawn spends. That is the first
+    transaction the verifier fetches, and it can only fetch by [height txid]
+    (the light client has no lookup by bare txid), so a wrong height is not a
+    cosmetic error: the fetch fails with attestation-tx-not-found and the
+    attestation dies with no verdict at all.
+
+    It is emphatically NOT the spawn tx's own height. Defaulting to that made
+    every comet Causeway had ever minted unverifiable.
+
+    Order of preference: a start_height already recorded on the proof, the
+    funding entry's height (recorded at spawn time from the UTXO scan), then
+    mempool.space. Never the spawn height, and never a silent default — if
+    the funding height cannot be established, say so and stop.
+    """
+    for candidate in (proof.get("start_height"), (proof.get("funding") or {}).get("height")):
+        # 0 is the pre-broadcast placeholder, not a real funding height.
+        if candidate not in (None, "", 0):
+            return int(candidate)
+    txid = (proof.get("funding") or {}).get("txid")
+    if not txid:
+        raise click.UsageError(
+            "proof carries no funding txid, so the spawn's start-height "
+            "(the funding tx's block) cannot be determined"
+        )
+    status = mempool_get(f"/tx/{txid}", base=mempool_base).get("status", {})
+    height = status.get("block_height")
+    if not status.get("confirmed") or not height:
+        raise click.UsageError(
+            f"funding tx {txid} is not confirmed; its block height is the "
+            "blind-opening's start-height and must not be guessed"
+        )
+    return int(height)
+
+
 def _initial_snapshot(pass_atom: int, sponsor: int | None = None) -> dict:
     """The snapshot a fresh spawn commits: life 1, rift 0, messaging key from
     the mined pass, and (in kelvin-9) an optional sponsor that carries in the
@@ -2612,13 +2667,21 @@ def _initial_snapshot(pass_atom: int, sponsor: int | None = None) -> dict:
 
 def _spawn_publication_opening(internal_xonly: bytes, snapshot: dict, utxo: dict, blind: bytes) -> dict:
     """The opening a PUBLIC spawn publishes on-chain: reveals the snapshot and
-    opens the hiding dat commitment via the spawn blind-opening."""
+    opens the hiding dat commitment via the spawn blind-opening.
+
+    start_height is 0 here BY DESIGN and stays 0 on-chain. The publication is
+    built and broadcast in the same transaction it describes, so at write time
+    nothing knows what block it will land in. A published spawn does not need
+    it: the scanner learns the height from the block it finds the publication
+    in, whereas a packet-borne blind-opening must carry it because the verifier
+    has no block to start from. See doc/opret-revision/04-decisions-addendum.md.
+    """
     return {
         "internal_key": int.from_bytes(b"\x02" + internal_xonly, "big"),
         "snapshot": snapshot,
         "blind_opening": {
             "spawn": {"txid_hex": utxo["txid"], "vout": utxo["vout"], "off": 0},
-            "start_height": 0,   # transport metadata; filled/refined at finalize
+            "start_height": 0,   # unknowable pre-broadcast; see docstring
             "blind": blind,
         },
     }
