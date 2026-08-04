@@ -134,11 +134,23 @@
       ?:  (~(has in declined) who.poke)
         `this
       ?~  sat=(pass-attestation [dom who pass]:poke)
-        ::  The public onboarding packet is a valid suite-C %gw-btc pass
-        ::  with no xtr tail at all.  It is resolved by the block scanner,
-        ::  so neither queue it nor turn its temporary absence into a sticky
-        ::  negative Jael verdict.  Other decode failures are malformed.
-        ?:  (public-pass [dom who pass]:poke)
+        ::  Two shapes we decline to JUDGE rather than judge negatively,
+        ::  because a negative verdict becomes a Jael %fail and an Ames
+        ::  snub:
+        ::
+        ::    - the public onboarding packet: a valid suite-C %gw-btc pass
+        ::      with no xtr tail at all, resolved by the block scanner.
+        ::      Its temporary absence from the index is not evidence.
+        ::
+        ::    - a pass minted under a FOREIGN protocol kelvin: we cannot
+        ::      verify it and must not blacklist it.  Snubbing here would
+        ::      make old and new ships mutually snub each other across a
+        ::      kelvin bump, i.e. partition the network on upgrade.
+        ::
+        ::  Everything else that fails to decode really is malformed.
+        ?:  ?|  (public-pass [dom who pass]:poke)
+                (foreign-kelvin [dom who pass]:poke)
+            ==
           `this
         :_  this
         ~[(writ-card dom.poke who.poke ~)]
@@ -332,7 +344,9 @@
     :~  [%pass /best-block %agent [our.bowl light-client-agent:lca] %watch /best-block]
     ==
   ::
-      [%verify-timeout ship=@ job=@ ~]
+      ::  (%verify-timeout is the pre-rename wire; accepted so a timer set
+      ::  by an older revision cannot crash the agent on upgrade.)
+      [?(%stuck-job %verify-timeout) ship=@ job=@ ~]
     ?.  ?=([%behn %wake *] sign-arvo)
       (on-arvo:def wire sign-arvo)
     =/  who  (slav %p i.t.wire)
@@ -342,10 +356,12 @@
       `this
     ?.  =(job job.u.active)
       `this
-    ::  A timeout is an infrastructure failure, not evidence that the
-    ::  attestation is invalid.  Release the ship's slot silently so a
-    ::  later packet can retry; emitting res=~ here would cause Ames to
-    ::  snub a valid peer.
+    ::  The leak guard fired: this job made no progress for +stuck-job-guard
+    ::  and is presumed dead.  That is an infrastructure failure, not
+    ::  evidence that the attestation is invalid.  Release the ship's slot
+    ::  silently so a later packet can retry; emitting res=~ here would
+    ::  cause Ames to snub a valid peer.
+    %-  (slog leaf+"%gw-btc: releasing stuck verification slot for {(scow %p who)}" ~)
     `this(inflight (~(del by inflight) who))
   ::
       [%verify ship=@ job=@ ~]
@@ -362,7 +378,7 @@
         [%khan %arow *]
       ?.  -.p.sign-arvo
         ?>  ?=([%khan %arow %.n *] sign-arvo)
-        %-  (slog leaf+"%gw-btc: verification thread for {<who>} ended without a verdict" +.p.p.sign-arvo)
+        %-  (slog leaf+"%gw-btc: verification thread for {(scow %p who)} ended without a verdict" +.p.p.sign-arvo)
         ::  A generic strand crash is retryable/indeterminate.  Only a
         ::  mold-valid verifier result may emit a Jael verdict.
         `this
@@ -588,7 +604,27 @@
 --
 ::
 |%
-++  verify-timeout  ~m2
+::  +stuck-job-guard: RESOURCE-LEAK BACKSTOP -- NOT a verification deadline
+::
+::    Verification has no wall-clock policy deadline, deliberately.  It is
+::    fully asynchronous (the peer sits as an %alien until a verdict
+::    arrives; nothing in the kernel blocks on it), and its cost is
+::    dominated by the BIP-158 filter scan, which is O(blocks since the
+::    comet last moved its sat).  A fixed deadline would therefore make
+::    long-dormant comets arbitrarily unverifiable as a function of a magic
+::    number, silently converting "slow" into "no verdict".  A
+::    slow-but-progressing verification is allowed to take as long as it
+::    takes.
+::
+::    This constant exists only so a job that dies SILENTLY -- a strand
+::    wedged on a subscription that never answers, say -- cannot hold a
+::    ship's single-flight `inflight` slot forever and make that ship
+::    permanently unverifiable.  When it fires it releases the slot and
+::    lets Khan tear the thread (and its light-client watches) down.  It
+::    emits NO verdict, ever: a stuck job is infrastructure failure, never
+::    evidence about the peer.  Hence: absurdly generous.
+::
+++  stuck-job-guard  ~h2
 ::
 ::
 ::  Hard-coded initial sync state used if
@@ -743,18 +779,35 @@
       =(who fig:ex:cic)
   ==
 ::
+::  Recognize a well-formed %gw-btc pass minted under a protocol kelvin
+::  that is not ours.  We have no way to check such a pass and no business
+::  condemning it: a negative verdict here becomes a Jael %fail and an Ames
+::  snub, so across a kelvin bump every old ship would blacklist every new
+::  one and vice versa.  Treat it exactly like the public-onboarding packet
+::  -- silence, no verdict.  The comet's OWN kelvin is plaintext in dat by
+::  design precisely so this is decidable without an opening.
+++  foreign-kelvin
+  |=  [dom=@tas who=ship =pass]
+  ^-  ?
+  ?.  =(dom domain:cc)  %.n
+  =/  meta  (parse-pass:cc pass)
+  ?~  meta  %.n
+  ?&  =(dom dom.u.meta)
+      !=(kelvin:cc kel.u.meta)
+  ==
+::
 ::  Launch the single light-client-backed verification thread for a ship,
-::  with an app-level timeout backstop.  The block watcher state supplies
-::  the previously tracked tip and the set of known-public ships used for
-::  the sponsor-existence check; .best-height is the chain tip our own
-::  /best-block subscription last reported.
+::  with a resource-leak backstop (see +stuck-job-guard).  The block watcher
+::  state supplies the previously tracked tip and the set of known-public
+::  ships used for the sponsor-existence check; .best-height is the chain
+::  tip our own /best-block subscription last reported.
 ++  verify-cards
   |=  [byk=desk now=@da who=ship req=inflight-writ best-height=@ud]
   ^-  (list card)
   =/  wir  /(scot %p who)/(scot %ud job.req)
   :~  :*  %pass  [%verify wir]  %arvo  %k
           %lard  byk
-          %+  (set-timeout:strandio ,vase)  verify-timeout
+          %+  (set-timeout:strandio ,vase)  stuck-job-guard
           %:  verify-lc:lca
               sat.req
               (tracked-anchor urb-state who)
@@ -762,8 +815,8 @@
               best-height
           ==
       ==
-      :*  %pass  [%verify-timeout wir]
-          %arvo  %b  %wait  (add now verify-timeout)
+      :*  %pass  [%stuck-job wir]
+          %arvo  %b  %wait  (add now stuck-job-guard)
       ==
   ==
 ::

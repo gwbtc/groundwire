@@ -7,7 +7,7 @@
 ::  must not be snubbed.
 ::
 /-  urb, sa=self-attestation
-/+  *test
+/+  *test, cc=gw-btc-pass
 /=  gw-btc  /app/gw-btc
 =>
 |%
@@ -23,12 +23,40 @@
 ::  declined one.
 ::
 ++  bad-pass  ^-(pass 0x0)
-::  the mark+vase for a %jael-writ poke naming .who
+::  a well-formed suite-C %gw-btc pass at protocol kelvin .kel, carrying a
+::  canonically-empty custody log.  Only the kelvin varies, so the two
+::  passes below differ in exactly the property under test.
+::
+++  kelvin-dat
+  |=  kel=@ud
+  ^-  @
+  %+  can  0
+  :~  (mat domain:cc)
+      (mat kel)
+      [256 0xd0.d0d0.d0d0.d0d0.d0d0.d0d0.d0d0.d0d0.d0d0.d0d0.d0d0.d0d0.d0d0.d0d0]
+  ==
+::
+++  kelvin-pass
+  |=  kel=@ud
+  ^-  pass
+  =/  seed  (shaz 'gw-btc-kelvin-probe')
+  pub:ex:(pit:nu:cric:crypto 512 seed %c (kelvin-dat kel) (jam ~))
+::
+++  fig-of
+  |=  =pass
+  ^-  ship
+  `@p`fig:ex:(com:nu:cric:crypto pass)
+::  the mark+vase for a %jael-writ poke naming .who and carrying .pass
+::
+++  writ-vase-pass
+  |=  [who=ship =pass]
+  ^-  vase
+  !>(`jael-poke:urb`[%jael-writ %gw-btc who pass])
 ::
 ++  writ-vase
   |=  who=ship
   ^-  vase
-  !>(`jael-poke:urb`[%jael-writ %gw-btc who bad-pass])
+  (writ-vase-pass who bad-pass)
 ::  extract the noun a %x scry returned
 ::
 ++  peek-noun
@@ -121,6 +149,45 @@
       !>  ^-  (unit *)
           ?~  pay=(fact-payload (snag 0 und))  `**
           res:;;([dom=@tas =ship res=(unit *)] u.pay)
+  ==
+::  A pass minted under a FOREIGN protocol kelvin gets SILENCE, not a
+::  negative verdict.  A negative verdict becomes a Jael %fail and an Ames
+::  snub, so condemning foreign kelvins would make every old ship and
+::  every new ship blacklist each other across a kelvin bump -- a network
+::  partition on upgrade.  We cannot verify such a pass; we also have no
+::  business declaring it bad.
+::
+::  The control is the SAME pass at our own kelvin, which is well-formed
+::  but carries a canonically-empty custody log: that one does draw the
+::  negative verdict.  So the silence below is caused by the kelvin and
+::  nothing else.
+::
+++  test-foreign-kelvin-writ-is-silent
+  =/  ours    (kelvin-pass kelvin:cc)
+  =/  theirs  (kelvin-pass +(kelvin:cc))
+  =/  agent  gw-btc
+  =^  c-for  agent
+    (~(on-poke agent bowl0) %noun (writ-vase-pass (fig-of theirs) theirs))
+  =^  c-own  agent
+    (~(on-poke agent bowl0) %noun (writ-vase-pass (fig-of ours) ours))
+  =/  for  (app-cards c-for)
+  =/  own  (app-cards c-own)
+  ;:  weld
+    ::  foreign kelvin: NO cards at all -- no verdict, no snub
+    ::
+    (expect-eq !>(~) !>(for))
+    ::  our kelvin, same construction: exactly one NEGATIVE writ-response
+    ::
+    (expect-eq !>(1) !>((lent own)))
+    (expect-eq !>(`%writ-response) !>((fact-mark (snag 0 own))))
+    %+  expect-eq
+      !>  `(unit *)`~
+      !>  ^-  (unit *)
+          ?~  pay=(fact-payload (snag 0 own))  `**
+          res:;;([dom=@tas =ship res=(unit *)] u.pay)
+    ::  and the two really are distinct ships (the kelvin is in the tweak)
+    ::
+    (expect !>(!=((fig-of ours) (fig-of theirs))))
   ==
 ::  A sponsorship request the operator has NOT declined is not short-
 ::  circuited: /x/declined and /x/sponsees start empty.
