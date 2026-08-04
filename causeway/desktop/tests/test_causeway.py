@@ -119,6 +119,242 @@ def test_blind_depends_on_seed():
 
 
 # ---------------------------------------------------------------------------
+# Blind derivation — the blind must NEVER be random: it is the only thing that
+# opens the dat commitment, so a comet whose blind is not reproducible from a
+# BIP-39 phrase the user holds is an identity that dies with its artifact file.
+# ---------------------------------------------------------------------------
+
+# Test vector, pinned so any drift in the (frozen) scheme is loud.  Scheme:
+#   blind_seed = int(sha256(bip39_seed_64 || b"gw/spawn-blind-seed"
+#                           || txid_be32 || vout_le4), "big")
+#   blind      = H_tag("gw/spawn-blind", minimal_LE_bytes(blind_seed))
+BLIND_M = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+BLIND_TXID = "00" * 31 + "01"
+BLIND_VOUT = 0
+BLIND_SEED_PIN = 0x9A38D802E6820AE8E327475C15F7F56E891EAD2174CE3D092A47F7046ED7A814
+BLIND_PIN = "cd2085c8c8fb1345ee6a84dde2e1b48df4fea154295eb12ffcff210f5c1adafa"
+
+
+def _bip39_seed(mnemonic: str) -> bytes:
+    from embit import bip39 as _b39
+    return _b39.mnemonic_to_seed(mnemonic, "")
+
+
+def test_derive_blind_seed_matches_frozen_scheme():
+    # Recompute from first principles rather than trusting our own helper.
+    import hashlib
+    seed = _bip39_seed(BLIND_M)
+    assert len(seed) == 64
+    want = int.from_bytes(hashlib.sha256(
+        seed + b"gw/spawn-blind-seed"
+        + bytes.fromhex(BLIND_TXID) + BLIND_VOUT.to_bytes(4, "little")
+    ).digest(), "big")
+    got = cw.derive_blind_seed(seed, BLIND_TXID, BLIND_VOUT)
+    assert got == want == BLIND_SEED_PIN
+
+
+def test_derive_blind_seed_is_deterministic():
+    seed = _bip39_seed(BLIND_M)
+    a = cw.derive_blind_seed(seed, BLIND_TXID, 3)
+    b = cw.derive_blind_seed(seed, BLIND_TXID, 3)
+    assert a == b
+    assert cw.make_blind(a) == cw.make_blind(b)
+
+
+def test_derive_blind_seed_is_outpoint_sensitive():
+    """One phrase can back several spawns: each outpoint gets its own blind."""
+    seed = _bip39_seed(BLIND_M)
+    by_vout = {v: cw.make_blind(cw.derive_blind_seed(seed, BLIND_TXID, v)) for v in range(4)}
+    assert len(set(by_vout.values())) == 4, "different vout must give a different blind"
+    other_txid = "11" * 32
+    assert cw.derive_blind_seed(seed, BLIND_TXID, 0) != cw.derive_blind_seed(seed, other_txid, 0)
+
+
+def test_derive_blind_seed_depends_on_the_phrase():
+    other = "absurd amount doctor acoustic avoid letter advice cage absurd amount doctor adjust"
+    assert cw.normalize_blind_mnemonic(other) == other  # a real, valid phrase
+    assert cw.derive_blind_seed(_bip39_seed(BLIND_M), BLIND_TXID, 0) != \
+        cw.derive_blind_seed(_bip39_seed(other), BLIND_TXID, 0)
+
+
+def test_derive_blind_seed_rejects_malformed_outpoint():
+    seed = _bip39_seed(BLIND_M)
+    with pytest.raises(ValueError):
+        cw.derive_blind_seed(seed, "abcd", 0)          # not 32 bytes
+    with pytest.raises(ValueError):
+        cw.derive_blind_seed(seed, BLIND_TXID, 2**32)  # vout doesn't fit in 4 bytes
+
+
+def test_blind_from_mnemonic_round_trips_to_known_blind():
+    """The blind-mnemonic path: a known phrase yields a known blind."""
+    blind_seed, blind = cw.blind_from_mnemonic(BLIND_M, BLIND_TXID, BLIND_VOUT)
+    assert blind_seed == BLIND_SEED_PIN
+    assert blind.hex() == BLIND_PIN
+    # …and composes exactly as make_blind ∘ derive_blind_seed.
+    assert blind == cw.make_blind(cw.derive_blind_seed(_bip39_seed(BLIND_M), BLIND_TXID, BLIND_VOUT))
+    # Same phrase again -> same blind (a re-spawn with --blind-mnemonic recovers it).
+    assert cw.blind_from_mnemonic(BLIND_M, BLIND_TXID, BLIND_VOUT) == (blind_seed, blind)
+
+
+def test_recovery_drill_from_phrase_and_satpoint_alone():
+    """Lose every artifact; keep the phrase and the (public, on-chain) spawn
+    satpoint. The blind, d and dat must all come back."""
+    txid = "de" * 32
+    vout, off = 2, 0
+
+    # --- spawn time -------------------------------------------------------
+    blind_seed, blind = cw.blind_from_mnemonic(BLIND_M, txid, vout)
+    dat_at_spawn = cw.build_dat_atom(txid, vout, off, blind_seed)
+    d_at_spawn = cw.spawn_commit(txid, vout, off, blind)
+
+    # --- much later: only BLIND_M + the satpoint survive -------------------
+    rec_seed = cw.derive_blind_seed(_bip39_seed(BLIND_M), txid, vout)
+    rec_blind = cw.make_blind(rec_seed)
+    rec_d = cw.spawn_commit(txid, vout, off, rec_blind)
+    rec_dat = cw.build_dat_atom(txid, vout, off, rec_seed)
+
+    assert rec_blind == blind
+    assert rec_d == d_at_spawn
+    assert rec_dat == dat_at_spawn
+    # The recovered opening reproduces the miner's tweak expression too, so the
+    # @p that was mined from it can be re-derived.
+    assert cw.make_dat_expr(txid, vout, off, rec_seed) == cw.make_dat_expr(txid, vout, off, blind_seed)
+
+
+def test_normalize_blind_mnemonic_accepts_valid_and_rejects_junk():
+    assert cw.normalize_blind_mnemonic("  " + BLIND_M.upper() + "  ") == BLIND_M
+    with pytest.raises(ValueError):
+        cw.normalize_blind_mnemonic("not actually a bip39 phrase at all")
+    with pytest.raises(ValueError):
+        # Valid words, bad checksum.
+        cw.normalize_blind_mnemonic(" ".join(["abandon"] * 12))
+
+
+def test_finish_spawn_proof_records_blind_and_its_derivation():
+    txid, vout = "cd" * 32, 1
+    blind_seed, blind = cw.blind_from_mnemonic(BLIND_M, txid, vout)
+    proof: dict = {}
+    cw._finish_spawn_proof(
+        proof, comet="~zod", pass_atom=0x1234, blind=blind, blind_seed=blind_seed,
+        utxo={"txid": txid, "vout": vout, "xonly": b"\x00" * 32},
+        blind_derivation=cw.BLIND_DERIV_BLIND_MNEMONIC,
+    )
+    assert proof["blind_hex"] == blind.hex()
+    assert int(proof["blind_seed_hex"], 16) == blind_seed
+    assert proof["blind_derivation"] == "blind-mnemonic+outpoint"
+    assert proof["spawn_sont"] == {"txid_hex": txid, "vout": vout, "off": 0}
+    # dat in the proof is the one the phrase reproduces.
+    assert int(proof["dat_hex"], 16) == cw.build_dat_atom(txid, vout, 0, blind_seed)
+
+
+def test_spawn_flows_never_use_a_random_blind():
+    """Regression guard for the unrecoverable-blind bug: both CLI spawn flows
+    must derive the blind from a BIP-39 phrase, never from secrets.token_bytes."""
+    import inspect
+    for fn in (cw.run_spawn_connect, cw.run_spawn_generate):
+        src = inspect.getsource(fn)
+        assert "blind_from_mnemonic" in src, f"{fn.__name__} must derive its blind"
+        assert "token_bytes" not in src, f"{fn.__name__} still randomizes something"
+
+
+def _stub_spawn_io(monkeypatch, captured: dict, txid: str, vout: int):
+    """Stub every network/miner touchpoint of the spawn flows, capturing the
+    blind seed the miner is handed (it is baked into the @p, so it is the value
+    that must be reproducible)."""
+    def stub_scan(source, **kw):
+        addr, spk, xonly, path = source.derive_address(0, 0)
+        return [{"address": addr, "scriptpubkey": spk, "xonly": xonly, "path": path,
+                 "change": 0, "index": 0, "txid": txid, "vout": vout,
+                 "value": 10_000, "confirmed": True}]
+
+    def stub_mine(_txid, _vout, off=0, seed=0, miner_bin="", dom=cw.PKI_DOM):
+        captured["mine_seed"] = seed
+        captured["mine_outpoint"] = (_txid, _vout, off)
+        return {"comet": "~zod", "feed": "0vfeed", "ring": "0wring"}
+
+    monkeypatch.setattr(cw, "scan_addresses", stub_scan)
+    monkeypatch.setattr(cw, "mine_comet_from_utxo", stub_mine)
+    monkeypatch.setattr(cw, "derive_pass_from_ring", lambda r, t=None: 0xDEADBEEF)
+    monkeypatch.setattr(cw, "_broadcast_tx", lambda tx_hex, mempool_base=None: "bc" * 32)
+    monkeypatch.setattr(cw, "_print_boot_oneliner", lambda *a, **k: None)
+    monkeypatch.setattr(cw, "pick_utxo_interactive", lambda u, **kw: u[0])
+    monkeypatch.setattr(cw, "confirm_seed_saved", lambda m, **kw: None)
+
+
+def _assert_proof_blind_recoverable(proof: dict, phrase: str, derivation: str, captured: dict):
+    """The whole point: phrase + spawn satpoint must rebuild blind / seed / dat."""
+    assert proof["blind_derivation"] == derivation
+    sp = proof["spawn_sont"]
+    seed, blind = cw.blind_from_mnemonic(phrase, sp["txid_hex"], sp["vout"])
+    assert proof["blind_hex"] == blind.hex()
+    assert int(proof["blind_seed_hex"], 16) == seed
+    assert int(proof["dat_hex"], 16) == cw.build_dat_atom(sp["txid_hex"], sp["vout"], 0, seed)
+    # And that same seed is what the miner mined the @p under.
+    assert captured["mine_seed"] == seed
+    assert captured["mine_outpoint"] == (sp["txid_hex"], sp["vout"], 0)
+
+
+def test_spawn_generate_blind_is_recoverable_from_its_wallet_seed(tmp_path, monkeypatch):
+    captured: dict = {}
+    _stub_spawn_io(monkeypatch, captured, "ab" * 32, 1)
+    real_gen = cw.generate_new_mnemonic
+    monkeypatch.setattr(cw, "generate_new_mnemonic",
+                        lambda **kw: captured.setdefault("phrase", real_gen(**kw)))
+
+    cw.run_spawn_generate(None, 2, "main", str(tmp_path), "miner", "http://stub", False)
+
+    proof = cw.load_proof_json(str(tmp_path / "zod-spawn.proof.json"))
+    _assert_proof_blind_recoverable(proof, captured["phrase"], "wallet-seed+outpoint", captured)
+
+
+def test_spawn_connect_blind_is_recoverable_from_the_blind_mnemonic(tmp_path, monkeypatch):
+    from embit import psbt as _psbt
+    captured: dict = {}
+    _stub_spawn_io(monkeypatch, captured, "cd" * 32, 0)
+
+    seed_phrase = cw.generate_new_mnemonic()
+    root = cw.mnemonic_to_hdkey(seed_phrase)
+    acct = root.derive("m/86h/0h/0h").to_public()
+    desc = f"tr([{cw.hdkey_fingerprint(root).hex()}/86h/0h/0h]{acct.to_base58()}/0/*)"
+
+    def sign(unsigned_b64):
+        p = _psbt.PSBT.from_base64(unsigned_b64)
+        p.sign_with(root)
+        return p.to_base64()
+
+    monkeypatch.setattr(cw, "_await_signed_psbt", sign)
+    blind_phrase = "absurd amount doctor acoustic avoid letter advice cage absurd amount doctor adjust"
+
+    cw.run_spawn_connect(desc, None, 2, "main", str(tmp_path), "miner", "http://stub", False,
+                         blind_mnemonic=blind_phrase)
+
+    proof = cw.load_proof_json(str(tmp_path / "zod-spawn.proof.json"))
+    _assert_proof_blind_recoverable(proof, blind_phrase, "blind-mnemonic+outpoint", captured)
+    # The wallet seed must NOT be what backs the blind on this path.
+    assert cw.blind_from_mnemonic(seed_phrase, "cd" * 32, 0)[1].hex() != proof["blind_hex"]
+
+
+def test_spawn_connect_rejects_an_invalid_blind_mnemonic(tmp_path, monkeypatch):
+    captured: dict = {}
+    _stub_spawn_io(monkeypatch, captured, "cd" * 32, 0)
+    with pytest.raises(SystemExit):
+        cw.run_spawn_connect("xpub-unused", None, 2, "main", str(tmp_path), "miner",
+                             "http://stub", False, blind_mnemonic="clearly not bip39")
+    assert "mine_seed" not in captured, "must bail before mining an unrecoverable comet"
+
+
+def test_tui_mining_screen_never_uses_a_random_blind():
+    pytest.importorskip("textual")
+    import inspect
+    import causeway_tui as tui
+    src = inspect.getsource(tui.MiningScreen.run_mine)
+    assert "blind_from_mnemonic" in src
+    assert "token_bytes" not in src
+    # The connect flow (no wallet seed) must route through the phrase screen.
+    assert "BlindPhraseScreen" in inspect.getsource(tui.UtxoPickerScreen.pick_current)
+
+
+# ---------------------------------------------------------------------------
 # Golden vectors — snapshot / state commitment / leaf / output key Q
 # ---------------------------------------------------------------------------
 

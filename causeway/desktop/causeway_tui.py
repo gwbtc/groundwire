@@ -66,9 +66,15 @@ class FlowState:
     pass_atom: Optional[int] = None
     # kelvin-9: the sat output commits a snapshot; a seed-derived blind hides the
     # spawn satpoint in dat and is opened later in the xtr / a public OP_RETURN.
+    # The blind is ALWAYS derived from a BIP-39 phrase the user holds — the
+    # wallet seed when we generated it, else `blind_mnemonic`, a dedicated
+    # recovery phrase minted on the connect-wallet path (where we only have an
+    # xpub).  A random blind would make the comet unrecoverable.
     snapshot: Optional[dict] = None
     blind: Optional[bytes] = None
     blind_seed: Optional[int] = None
+    blind_mnemonic: Optional[str] = None  # connect-wallet: no seed to derive from
+    blind_derivation: Optional[str] = None
     publish: bool = False
     psbt_b64_unsigned: Optional[str] = None
     psbt_b64_signed: Optional[str] = None
@@ -172,11 +178,21 @@ class SpawnMethodScreen(BaseScreen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         state: FlowState = self.app.state  # type: ignore[attr-defined]
+        if event.button.id not in ("connect", "generate"):
+            return
+        state.op_name = "spawn"
+        # FlowState survives a trip back to the landing screen, so clear the
+        # key material a previous spawn left behind. Otherwise a stale
+        # `mnemonic` would silently back the next comet's blind (and skip the
+        # blind-phrase prompt) even though that wallet is not the one funding it.
+        state.mnemonic = None
+        state.blind_mnemonic = None
+        state.blind = state.blind_seed = state.blind_derivation = None
+        state.source = None
+        state.picked_utxo = None
         if event.button.id == "connect":
-            state.op_name = "spawn"
             self.app.push_screen(XpubInputScreen(mode="connect"))
-        elif event.button.id == "generate":
-            state.op_name = "spawn"
+        else:
             self.app.push_screen(GenerateSeedScreen())
 
 
@@ -495,11 +511,15 @@ class UtxoPickerScreen(BaseScreen):
                 f"UTXO too small: {state.picked_utxo['value']} < 630 sats minimum"
             )
             return
-        # For spawn we need to mine; for manage we skip mining.
-        if state.op_name == "spawn":
-            self.app.push_screen(MiningScreen())
-        else:
+        # For spawn we need to mine; for manage we skip mining.  Connect-wallet
+        # spawns have no seed to derive the blind from, so they stop off at
+        # BlindPhraseScreen first (mining bakes the blind into the @p).
+        if state.op_name != "spawn":
             self.app.push_screen(PsbtBuildScreen())
+        elif state.mnemonic is None and state.blind_mnemonic is None:
+            self.app.push_screen(BlindPhraseScreen())
+        else:
+            self.app.push_screen(MiningScreen())
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "pick":
@@ -508,6 +528,94 @@ class UtxoPickerScreen(BaseScreen):
             self.scan()
         elif event.button.id == "back":
             self.app.pop_screen()
+
+
+# ---------------------------------------------------------------------------
+# Blind recovery phrase — connect-wallet only
+# ---------------------------------------------------------------------------
+
+
+class BlindPhraseScreen(BaseScreen):
+    """Collect the BIP-39 phrase a connect-wallet spawn derives its blind from.
+
+    The connect flow only ever holds an account xpub (watch-only wallet or
+    hardware signer), so there is no wallet seed to derive the blind from.
+    Rather than mint an unrecoverable random blind, we generate a dedicated
+    phrase and make the user write it back, or accept one they already hold."""
+
+    CSS = """
+    Screen { align: center middle; }
+    #panel { width: 92; border: round #ff6a00; padding: 2 4; }
+    #title { content-align: center middle; color: #ff6a00; text-style: bold; padding-bottom: 1; }
+    #warn { color: #ff6a00; text-style: bold; padding: 1 0; }
+    #seed-box { border: heavy #ff6a00; padding: 1 2; margin: 1 0; height: auto; }
+    #seed-box > Static { width: 1fr; height: auto; }
+    Button { margin-right: 2; }
+    #actions { padding-top: 1; }
+    #err { color: red; }
+    #note { color: #888; }
+    """
+
+    def compose(self) -> ComposeResult:
+        state: FlowState = self.app.state  # type: ignore[attr-defined]
+        if state.blind_mnemonic is None:
+            state.blind_mnemonic = cw.generate_new_mnemonic(strength_bits=128)
+        yield Header()
+        words = state.blind_mnemonic.split()
+        rows = (len(words) + 2) // 3
+        cols: list[list[str]] = [[] for _ in range(3)]
+        for i, w in enumerate(words):
+            cols[i // rows].append(f"{i+1:>2}. {w}")
+        col_static = [Static("\n".join(c)) for c in cols]
+        yield Vertical(
+            Static("BLIND RECOVERY PHRASE", id="title"),
+            Static(
+                "Your wallet is external, so Causeway cannot derive this comet's\n"
+                "blind from your wallet seed. This separate phrase is REQUIRED to\n"
+                "ever prove or recover the identity — without it nobody, not even\n"
+                "the holder of the wallet seed, can open the dat commitment your\n"
+                "@p is built from. As important as your wallet seed. Write it down.",
+                id="warn",
+            ),
+            Horizontal(*col_static, id="seed-box"),
+            Static("Type the full phrase back below to confirm you wrote it down:"),
+            Input(placeholder="word1 word2 word3 ...", id="confirm"),
+            Static(
+                "Or paste an existing blind recovery phrase (re-spawn / recovery):",
+                id="note",
+            ),
+            Input(placeholder="blank to use the generated phrase above", id="existing"),
+            Horizontal(
+                Button("I saved it — continue", id="continue", variant="primary"),
+                Button("Back", id="back"),
+                id="actions",
+            ),
+            Static("", id="err"),
+            id="panel",
+        )
+        yield Footer()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "back":
+            self.app.pop_screen()
+            return
+        if event.button.id != "continue":
+            return
+        state: FlowState = self.app.state  # type: ignore[attr-defined]
+        err = self.query_one("#err", Static)
+        existing = self.query_one("#existing", Input).value.strip()
+        if existing:
+            try:
+                state.blind_mnemonic = cw.normalize_blind_mnemonic(existing)
+            except ValueError as e:
+                err.update(f"supplied phrase rejected: {e}")
+                return
+        else:
+            typed = self.query_one("#confirm", Input).value.strip().lower()
+            if typed != (state.blind_mnemonic or "").lower():
+                err.update("That doesn't match. Try again.")
+                return
+        self.app.push_screen(MiningScreen())
 
 
 # ---------------------------------------------------------------------------
@@ -550,10 +658,22 @@ class MiningScreen(BaseScreen):
             self.app.call_from_thread(log.write_line, f"ERROR: miner binary not found at {state.miner_bin}")
             self.app.call_from_thread(self.query_one("#status", Static).update, "miner not found — configure --miner")
             return
-        # Seed-derived blind so the dat opening is recoverable; dat depends on it.
-        import secrets as _secrets
-        state.blind_seed = int.from_bytes(_secrets.token_bytes(32), "big")
-        state.blind = cw.make_blind(state.blind_seed)
+        # Seed-derived blind so the dat opening is recoverable from a phrase the
+        # user holds: the wallet seed if we generated it, else the dedicated
+        # blind recovery phrase collected by BlindPhraseScreen.
+        phrase = state.mnemonic or state.blind_mnemonic
+        if not phrase:
+            self.app.call_from_thread(log.write_line,
+                "ERROR: no seed or blind recovery phrase — refusing to mint an "
+                "unrecoverable comet")
+            self.app.call_from_thread(self.query_one("#status", Static).update,
+                                      "missing blind recovery phrase — go back")
+            return
+        state.blind_derivation = (
+            cw.BLIND_DERIV_WALLET_SEED if state.mnemonic else cw.BLIND_DERIV_BLIND_MNEMONIC
+        )
+        state.blind_seed, state.blind = cw.blind_from_mnemonic(phrase, u["txid"], u["vout"])
+        self.app.call_from_thread(log.write_line, f"Blind derived from {state.blind_derivation}")
         try:
             result = cw.mine_comet_from_utxo(u["txid"], u["vout"], 0, state.blind_seed, state.miner_bin)
         except Exception as e:
@@ -647,6 +767,7 @@ class PsbtBuildScreen(BaseScreen):
                 cw._finish_spawn_proof(
                     proof, comet=state.comet or "", pass_atom=state.pass_atom or 0,
                     blind=state.blind or b"", blind_seed=state.blind_seed or 0, utxo=u,
+                    blind_derivation=state.blind_derivation or cw.BLIND_DERIV_WALLET_SEED,
                 )
             else:
                 # Rekey: spend the point's current sat output key-path, identified
@@ -704,9 +825,10 @@ class PsbtBuildScreen(BaseScreen):
         try:
             # The signed tx's txid is deterministic (segwit), so we know the
             # commit_txid before broadcasting. Persist the proof FIRST — it is
-            # the only durable record of the snapshot + blind opening; if we
-            # broadcast first and then crash before writing it, an already-spent
-            # sat is left with no recoverable proof (identity-burning for a spawn).
+            # the only durable record of the snapshot (the blind itself is
+            # re-derivable from the user's phrase + the spawn outpoint, but the
+            # snapshot and pass are not); if we broadcast first and then crash
+            # before writing it, an already-spent sat is left with no proof.
             commit_txid, tx_hex = cw._extract_tx_from_psbt(state.psbt_b64_signed or "")
             proof = getattr(self, "_pending_proof", None) or {}
             proof["commit_txid"] = commit_txid
@@ -751,12 +873,22 @@ class DoneScreen(BaseScreen):
                 f"  bash -s -- --comet {comet} --feed {feed} --proof {proof_path}"
             )
             comet_mnemo = cw.patp_to_mnemonym(comet) if comet != "<unknown>" else comet
+            recovery = (
+                "Recovery: this comet's blind is derived from your BLIND RECOVERY\n"
+                "PHRASE + the spawn outpoint. Keep the phrase — it is the only way\n"
+                "to reopen the dat commitment if the proof file is lost."
+                if state.blind_derivation == cw.BLIND_DERIV_BLIND_MNEMONIC else
+                "Recovery: this comet's blind is derived from your wallet seed\n"
+                "phrase + the spawn outpoint, so the seed alone can reopen the dat\n"
+                "commitment even if the proof file is lost."
+            )
             yield Vertical(
                 Static("SPAWN COMPLETE", id="title"),
                 Static(f"Comet: {comet_mnemo}", classes="label"),
                 Static(f"@p:    {comet}", classes="label"),
                 Static(f"Commit txid: {state.commit_txid}", classes="label"),
                 Static(f"Proof: {proof_path}", classes="label"),
+                Static(recovery, classes="label"),
                 Static("Run this to boot:", classes="label"),
                 Static(cmd, id="boot"),
                 Static(

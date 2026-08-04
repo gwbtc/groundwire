@@ -38,6 +38,8 @@ causeway spawn generate --invite <FAUCET_CODE>
 
 Prints a fresh 12-word seed phrase, derives a P2TR address, requests 1000 sats from the faucet, waits for confirmation, mines a comet under `~daplyd`, signs + broadcasts a single spawn tx (confidential by default; pass `--publish` for a public on-chain publication), then prints the boot command.
 
+That seed phrase is a **complete** backup: the comet's blind is derived from it (see [Recovery](#recovery--keep-the-phrase-not-just-the-file)).
+
 ## Quickstart (Connect Wallet)
 
 ```bash
@@ -45,6 +47,39 @@ causeway spawn connect --xpub <YOUR_XPUB>
 ```
 
 Same flow, but you sign the PSBT externally (scan a UR animated QR into Passport/Keystone, or load the `.psbt` file in Sparrow/BlueWallet).
+
+Because your wallet never hands over its seed, this path prints a **separate
+12-word blind recovery phrase** and makes you write it back before mining. Keep
+it with the same care as your wallet seed — see below. To re-derive a blind you
+already hold a phrase for, pass `--blind-mnemonic "<12 words>"`.
+
+## Recovery — keep the phrase, not just the file
+
+A comet's `@p` commits to a hiding `dat` whose spawn satpoint sits behind a
+32-byte `blind`. The `blind` is what lets you *open* that commitment: without it
+you can never prove or re-attest the identity, even holding the wallet seed and
+the coins. So Causeway never picks it randomly — it is always derived from a
+BIP-39 phrase you hold, plus the funding outpoint:
+
+```
+blind_seed = sha256(bip39_seed || "gw/spawn-blind-seed" || txid_be32 || vout_le4)
+blind      = H_tag("gw/spawn-blind", minimal_LE_bytes(blind_seed))
+d          = H_tag("gw/spawn-commit", jam(spawn-sont) || blind)
+dat        = (can 0 (mat %gw-btc) (mat 9) [256 d] ~)
+```
+
+| flow | phrase the blind comes from | `blind_derivation` in the proof |
+| --- | --- | --- |
+| `spawn generate` | the wallet seed phrase it printed | `wallet-seed+outpoint` |
+| `spawn connect` | the separate blind recovery phrase | `blind-mnemonic+outpoint` |
+
+Folding the outpoint in means one phrase can safely back several spawns. Each
+`proof.json` still records `blind_hex` and `blind_seed_hex` verbatim
+(belt-and-braces) plus `blind_derivation`, which names *which* phrase
+regenerates them. **The phrase plus the spawn satpoint — which is public,
+on-chain, and in the proof — is enough to rebuild `blind`, `d` and `dat` from
+nothing.** (`tests/test_causeway.py::test_recovery_drill_from_phrase_and_satpoint_alone`
+is that drill.)
 
 ## Management (rekey)
 

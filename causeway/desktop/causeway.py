@@ -449,6 +449,12 @@ def _unit(value):
 # reveals it, never `dat` itself.  Because dat is hashed into the signing
 # key, the comet's @p commits to it forever.  Ames reads only the leading
 # `mat %gw-btc` to route the pass to the %gw-btc agent.
+#
+# The blind is NEVER random: it is always derived from a BIP-39 seed the
+# user holds (see derive_blind_seed / blind_from_mnemonic below).  A random
+# blind that lives only in an artifact file is an identity-loss bug — lose
+# the file and no one, not even the holder of the wallet seed, can ever open
+# the dat commitment and prove the spawn.
 
 
 def spawn_sont_noun(txid_hex: str, vout: int, off: int = 0) -> tuple:
@@ -459,10 +465,72 @@ def spawn_sont_noun(txid_hex: str, vout: int, off: int = 0) -> tuple:
 def make_blind(seed: int) -> bytes:
     """blind = H_tag('gw/spawn-blind', minimal-LE-bytes(seed)). 32 bytes.
 
-    Recommended derivation from the ship's master seed so the opening is
-    recoverable from the seed alone (spec §4)."""
+    `seed` must come from derive_blind_seed() so the opening is recoverable
+    from a BIP-39 phrase alone (spec §4)."""
     seed_le = seed.to_bytes((seed.bit_length() + 7) // 8, "little") if seed else b""
     return _tagged_hash("gw/spawn-blind", seed_le)
+
+
+# Domain separator for the blind-seed KDF.  Distinct from the 'gw/spawn-blind'
+# tagged hash below it: this one turns a BIP-39 seed into the blind *seed*, the
+# tagged hash turns that seed into the blind itself.
+BLIND_SEED_TAG = b"gw/spawn-blind-seed"
+
+
+def derive_blind_seed(bip39_seed: bytes, txid: str, vout: int) -> int:
+    """Deterministically derive a spawn blind seed from a BIP-39 seed and the
+    funding outpoint the comet is minted from.
+
+        blind_seed = int(sha256(bip39_seed || "gw/spawn-blind-seed"
+                                || txid_be32 || vout_le4), "big")
+        blind      = make_blind(blind_seed)
+
+    This is the whole recovery story for a comet's `dat` opening.  Given the
+    12/24-word phrase and the spawn satpoint (both of which the owner has:
+    the satpoint is the funding outpoint, publicly visible on-chain and
+    recorded in the proof), anyone can recompute `blind`, then
+    d = H_tag('gw/spawn-commit', jam(spawn-sont) || blind), then `dat` — and
+    so re-prove the spawn even if every artifact file is lost.
+
+    Arguments:
+      bip39_seed  the 64-byte BIP-39 seed, i.e. bip39.mnemonic_to_seed(m, "").
+                  In `spawn generate` this is the wallet's own seed; in
+                  `spawn connect` (watch-only / hardware signer, no wallet
+                  seed available) it is a separate blind recovery phrase the
+                  user is made to write down.
+      txid        funding txid in DISPLAY order hex (as mempool.space and
+                  Bitcoin Core report it); hashed as its 32 raw bytes.
+      vout        funding output index; hashed as 4 little-endian bytes.
+
+    Folding the outpoint in makes each comet's blind distinct, so one phrase
+    can safely back several spawns.
+
+    Scheme is frozen: it is the derivation used by the three live mainnet
+    comets minted before this was factored out, and it passed a recovery
+    drill.  Do not "improve" it without a migration.
+    """
+    txid_be32 = bytes.fromhex(txid)
+    if len(txid_be32) != 32:
+        raise ValueError(f"txid must be 32 bytes of hex, got {len(txid_be32)}")
+    if not 0 <= int(vout) < 2**32:
+        raise ValueError(f"vout out of range: {vout}")
+    preimage = (
+        bytes(bip39_seed) + BLIND_SEED_TAG + txid_be32 + int(vout).to_bytes(4, "little")
+    )
+    return int.from_bytes(hashlib.sha256(preimage).digest(), "big")
+
+
+def blind_from_mnemonic(
+    mnemonic: str, txid: str, vout: int, passphrase: str = ""
+) -> tuple[int, bytes]:
+    """(blind_seed, blind) for a BIP-39 mnemonic + funding outpoint.
+
+    The one call both spawn flows use, so `spawn generate` (wallet seed) and
+    `spawn connect` (separate blind recovery phrase) derive identically and a
+    recovery tool only needs to know one rule."""
+    seed = bip39.mnemonic_to_seed(mnemonic, passphrase)
+    blind_seed = derive_blind_seed(seed, txid, vout)
+    return blind_seed, make_blind(blind_seed)
 
 
 def spawn_commit(txid_hex: str, vout: int, off: int, blind: bytes) -> bytes:
@@ -2001,15 +2069,39 @@ def hdkey_fingerprint(root: bip32.HDKey) -> bytes:
     return _eh.hash160(compressed)[:4]
 
 
-def print_seed_box(mnemonic: str) -> None:
+WALLET_SEED_BOX_HEADER = (
+    "SAVE THIS — your BIP-39 seed phrase controls your comet identity",
+    "and the funds that back it. Write it down. Losing it is fatal.",
+)
+
+# `spawn connect` has no wallet seed to derive from (watch-only xpub or a
+# hardware signer), so it mints a SEPARATE phrase for the blind alone.  The
+# wording has to be blunt: this phrase is not in the user's wallet backup,
+# and losing it loses the identity even though the coins stay spendable.
+BLIND_SEED_BOX_HEADER = (
+    "SAVE THIS — your comet's BLIND RECOVERY PHRASE.",
+    "",
+    "It is NOT your wallet seed, and your wallet does NOT back it up.",
+    "It is REQUIRED to ever prove, re-attest, or recover this comet:",
+    "without it nobody — not even the holder of the wallet seed — can",
+    "open the dat commitment your @p is built from. Treat it as being",
+    "exactly as important as your wallet seed phrase. Write it down.",
+)
+
+
+def print_seed_box(mnemonic: str, *, header: tuple[str, ...] = WALLET_SEED_BOX_HEADER) -> None:
+    """Render a mnemonic in a warning box.
+
+    `header` is the text above the words; overridable so the spawn-blind
+    recovery phrase (which is NOT the wallet seed) gets its own wording."""
     words = mnemonic.split()
     width = max(len(w) for w in words) + 4
     rows = (len(words) + 2) // 3
     print()
     print("  ┌" + "─" * 68 + "┐")
-    print("  │  SAVE THIS — your BIP-39 seed phrase controls your comet identity│")
-    print("  │  and the funds that back it. Write it down. Losing it is fatal.  │")
-    print("  │                                                                  │")
+    for line in header:
+        print("  │  " + line.ljust(66) + "│")
+    print("  │" + " " * 68 + "│")
     for r in range(rows):
         cells = []
         for c in range(3):
@@ -2018,13 +2110,13 @@ def print_seed_box(mnemonic: str) -> None:
                 cells.append(f"{idx+1:>2}. {words[idx]:<{width-4}}")
             else:
                 cells.append(" " * width)
-        print("  │  " + "  ".join(cells) + "│")
+        print("  │  " + "  ".join(cells).ljust(66) + "│")
     print("  └" + "─" * 68 + "┘")
 
 
-def confirm_seed_saved(mnemonic: str) -> None:
+def confirm_seed_saved(mnemonic: str, *, label: str = "seed phrase") -> None:
     print()
-    print("  Please re-enter your seed phrase to confirm you wrote it down")
+    print(f"  Please re-enter your {label} to confirm you wrote it down")
     print("  (space-separated — spelling must match exactly):")
     while True:
         try:
@@ -2035,7 +2127,40 @@ def confirm_seed_saved(mnemonic: str) -> None:
         if entry.lower() == mnemonic.lower():
             print("  Confirmed!")
             return
-        print("  That doesn't match. Try again. (Your seed phrase is above.)")
+        print("  That doesn't match. Try again. (Your phrase is above.)")
+
+
+def normalize_blind_mnemonic(supplied: str) -> str:
+    """Validate + normalize a user-supplied blind recovery phrase."""
+    m = " ".join(supplied.split()).lower()
+    if not bip39.mnemonic_is_valid(m):
+        raise ValueError(
+            "not a valid BIP-39 phrase (wrong word, wrong count, or bad checksum)"
+        )
+    return m
+
+
+def obtain_blind_mnemonic(supplied: str | None = None) -> str:
+    """The BIP-39 phrase that a `spawn connect` blind is derived from.
+
+    `spawn connect` only ever sees an account xpub — a watch-only wallet or a
+    hardware signer never hands over its seed — so the blind cannot be derived
+    from the wallet.  Rather than fall back to an unrecoverable random blind,
+    we mint a dedicated phrase and force the user to record it, or accept one
+    they already hold (re-spawn / recovery)."""
+    if supplied:
+        m = normalize_blind_mnemonic(supplied)
+        print("\n  Using the blind recovery phrase you supplied.")
+        print("  (It was passed on the command line — clear it from your shell history.)")
+        return m
+    print()
+    print("  Your wallet is external (xpub / hardware signer), so Causeway cannot")
+    print("  derive this comet's blind from your wallet seed. It is generating a")
+    print("  separate BIP-39 recovery phrase for the blind instead.")
+    m = generate_new_mnemonic(strength_bits=128)
+    print_seed_box(m, header=BLIND_SEED_BOX_HEADER)
+    confirm_seed_saved(m, label="blind recovery phrase")
+    return m
 
 
 # =========================================================================
@@ -2057,7 +2182,9 @@ def mine_comet_from_utxo(
     dat = (can 0 (mat dom) (mat 9) [256 d] ~), d hiding the spawn satpoint under
     blind = H_tag('gw/spawn-blind', seed).  The dat is passed to comet-miner's
     --tweak flag; the miner varies the ship's own key material to hit the PoW
-    target, so the caller's blind seed must be chosen before mining."""
+    target, so the caller's blind seed must be fixed before mining — and must
+    come from derive_blind_seed(), never from an ephemeral random source, or
+    the resulting comet can never be opened again (see derive_blind_seed)."""
     tweak_expr = make_dat_expr(txid_hex, vout, off, seed, dom)
     return run_comet_miner(tweak_expr, miner_bin)
 
@@ -2213,9 +2340,18 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
 @click.option("--publish", is_flag=True, default=False,
               help="Public spawn: add an OP_RETURN publication output opening the dat commitment (default off = confidential)")
-def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish):
-    """Spawn using a user-provided wallet (xpub / descriptor). You sign the PSBT externally."""
-    run_spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish)
+@click.option("--blind-mnemonic", default=None,
+              help="Existing BIP-39 blind recovery phrase to derive this comet's blind from "
+                   "(re-spawn / recovery). Omit and Causeway mints one and makes you record it.")
+def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish, blind_mnemonic):
+    """Spawn using a user-provided wallet (xpub / descriptor). You sign the PSBT externally.
+
+    Your wallet's seed never reaches Causeway, so the comet's blind — the
+    secret that opens its `dat` commitment — is derived from a SEPARATE BIP-39
+    phrase that this command prints and makes you write down (or that you pass
+    in with --blind-mnemonic). Losing it loses the identity."""
+    run_spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish,
+                      blind_mnemonic=blind_mnemonic)
 
 
 @spawn.command("generate")
@@ -2228,7 +2364,10 @@ def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_ba
 @click.option("--publish", is_flag=True, default=False,
               help="Public spawn: add an OP_RETURN publication output (default off = confidential)")
 def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish):
-    """Generate a fresh BIP-39 wallet, fund it, spawn, and emit a boot one-liner."""
+    """Generate a fresh BIP-39 wallet, fund it, spawn, and emit a boot one-liner.
+
+    The comet's blind is derived from the generated seed phrase + the funding
+    outpoint, so that one phrase recovers both the coins and the `dat` opening."""
     run_spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish)
 
 
@@ -2485,8 +2624,30 @@ def _spawn_publication_opening(internal_xonly: bytes, snapshot: dict, utxo: dict
     }
 
 
-def _finish_spawn_proof(proof: dict, *, comet: str, pass_atom: int, blind: bytes, blind_seed: int, utxo: dict) -> None:
-    """Attach the kelvin-9 spawn bookkeeping to a freshly built spawn proof."""
+BLIND_DERIV_WALLET_SEED = "wallet-seed+outpoint"
+BLIND_DERIV_BLIND_MNEMONIC = "blind-mnemonic+outpoint"
+
+
+def _finish_spawn_proof(
+    proof: dict,
+    *,
+    comet: str,
+    pass_atom: int,
+    blind: bytes,
+    blind_seed: int,
+    utxo: dict,
+    blind_derivation: str,
+) -> None:
+    """Attach the kelvin-9 spawn bookkeeping to a freshly built spawn proof.
+
+    `blind_derivation` records WHICH BIP-39 phrase regenerates the blind:
+      "wallet-seed+outpoint"     — the wallet seed printed by `spawn generate`
+      "blind-mnemonic+outpoint"  — the separate blind recovery phrase that
+                                   `spawn connect` prints (or that was passed
+                                   in with --blind-mnemonic)
+    In both cases blind = make_blind(derive_blind_seed(bip39_seed, txid, vout))
+    over this proof's own spawn_sont, so a future reader knows how to recover
+    the opening from the phrase alone."""
     proof["op"] = "spawn"
     proof["patp"] = comet
     proof["dom"] = PKI_DOM
@@ -2495,17 +2656,28 @@ def _finish_spawn_proof(proof: dict, *, comet: str, pass_atom: int, blind: bytes
     # The seed-derived blind + spawn satpoint form the dat opening; store both so
     # `causeway finalize` can attach entry 0's blind-opening and any peer can
     # recompute dat = can(0, mat(dom), mat(9), [256 spawn-commit(spawn, blind)]).
+    # Verbatim blind_hex/blind_seed_hex are belt-and-braces: the phrase named by
+    # blind_derivation regenerates both if this file is ever lost.
     proof["blind_hex"] = blind.hex()
     proof["blind_seed_hex"] = format(blind_seed, "x")
+    proof["blind_derivation"] = blind_derivation
     proof["spawn_sont"] = {"txid_hex": utxo["txid"], "vout": utxo["vout"], "off": 0}
     proof["dat_hex"] = hex(build_dat_atom(utxo["txid"], utxo["vout"], 0, blind_seed))
 
 
-def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False) -> None:
+def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False, blind_mnemonic: str | None = None) -> None:
     print()
     print("=" * 60)
     print(f"  CAUSEWAY — {'Public' if publish else 'Confidential'} Comet Spawn (Connect Wallet)")
     print("=" * 60)
+
+    # Validate a supplied blind phrase up front — before any faucet/scan work,
+    # and long before we mine an @p that would bake in the wrong blind.
+    if blind_mnemonic:
+        try:
+            blind_mnemonic = normalize_blind_mnemonic(blind_mnemonic)
+        except ValueError as e:
+            raise SystemExit(f"  --blind-mnemonic: {e}")
 
     source = parse_key_source(xpub_str, network=network)
     print(f"\n  Parsed key source: network={source.network}, account={_path_to_str(source.account_path)}")
@@ -2531,9 +2703,11 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     utxos = scan_addresses(source, mempool_base=mempool_base)
     utxo = pick_utxo_interactive(utxos)
 
-    # Seed-derived blind so the dat opening is recoverable; the dat depends on it.
-    blind_seed = int.from_bytes(secrets.token_bytes(32), "big")
-    blind = make_blind(blind_seed)
+    # Seed-derived blind so the dat opening is recoverable.  We hold only an
+    # xpub here, so the blind comes from a dedicated recovery phrase the user
+    # records (or supplies) — never from ephemeral randomness.
+    blind_mnemonic = obtain_blind_mnemonic(blind_mnemonic)
+    blind_seed, blind = blind_from_mnemonic(blind_mnemonic, utxo["txid"], utxo["vout"])
     print(f"\n  Mining comet (kelvin-9 dat) from ({utxo['txid']}:{utxo['vout']},0)...")
     miner_result = mine_comet_from_utxo(utxo["txid"], utxo["vout"], 0, blind_seed, miner)
     comet = miner_result["comet"]
@@ -2558,7 +2732,10 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
         publication_pass_atom=pub_pass,
         publication_opening=pub_opening,
     )
-    _finish_spawn_proof(proof, comet=comet, pass_atom=pass_atom, blind=blind, blind_seed=blind_seed, utxo=utxo)
+    _finish_spawn_proof(
+        proof, comet=comet, pass_atom=pass_atom, blind=blind, blind_seed=blind_seed,
+        utxo=utxo, blind_derivation=BLIND_DERIV_BLIND_MNEMONIC,
+    )
 
     os.makedirs(output_dir, exist_ok=True)
     pier = comet.lstrip("~")
@@ -2589,6 +2766,11 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
         click.echo(click.style(f"  Broadcast failed: {e}\n  Signed tx hex: {tx_hex}", fg="red"))
         sys.exit(1)
     print(f"  Broadcast: {tx_link(broadcast_id)}")
+
+    print("\n  Your blind recovery phrase is the ONLY way to reopen this comet's")
+    print(f"  dat commitment if {proof_path} is lost. Check you have it — last chance:")
+    print_seed_box(blind_mnemonic, header=BLIND_SEED_BOX_HEADER)
+    confirm_seed_saved(blind_mnemonic, label="blind recovery phrase")
 
     _print_boot_oneliner(comet, feed, proof_path)
 
@@ -2633,8 +2815,10 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
         print(f"  No confirmed UTXO yet ({len(utxos)} unconfirmed). Sleeping {POLL_INTERVAL}s...", end="\r")
         time.sleep(POLL_INTERVAL)
 
-    blind_seed = int.from_bytes(secrets.token_bytes(32), "big")
-    blind = make_blind(blind_seed)
+    # We generated this wallet, so the blind is derived straight from its
+    # BIP-39 seed + the funding outpoint: the seed phrase printed above is a
+    # complete backup of the dat opening, no extra secret to lose.
+    blind_seed, blind = blind_from_mnemonic(mnemonic, utxo["txid"], utxo["vout"])
     print("\n  Mining comet (kelvin-9 dat)...")
     miner_result = mine_comet_from_utxo(utxo["txid"], utxo["vout"], 0, blind_seed, miner)
     comet = miner_result["comet"]
@@ -2659,7 +2843,10 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
         publication_pass_atom=pub_pass,
         publication_opening=pub_opening,
     )
-    _finish_spawn_proof(proof, comet=comet, pass_atom=pass_atom, blind=blind, blind_seed=blind_seed, utxo=utxo)
+    _finish_spawn_proof(
+        proof, comet=comet, pass_atom=pass_atom, blind=blind, blind_seed=blind_seed,
+        utxo=utxo, blind_derivation=BLIND_DERIV_WALLET_SEED,
+    )
 
     # Sign the PSBT in-process (we have the seed).
     p_signed = psbt_obj
@@ -2681,7 +2868,9 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
         sys.exit(1)
     print(f"  Broadcast: {tx_link(broadcast_id)}")
 
-    print("\n  WRITE DOWN YOUR SEED PHRASE AGAIN — last chance:")
+    print("\n  WRITE DOWN YOUR SEED PHRASE AGAIN — last chance.")
+    print("  It backs both the funds and this comet's blind (the dat opening),")
+    print("  so it alone can recover the identity if the proof file is lost:")
     print_seed_box(mnemonic)
     confirm_seed_saved(mnemonic)
 
