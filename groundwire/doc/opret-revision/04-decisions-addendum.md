@@ -36,6 +36,15 @@ d   = H_tag("gw/spawn-commit", (jam spawn-sont) || blind)
   the Kelvin** (`0x09`). No separate registry is needed.
 - Decoders MUST reject trailing data: the bit-width of `dat` is exactly
   `p:(mat %gw-btc) + p:(mat 9) + 256`.
+- **A pass at a Kelvin we do not implement gets SILENCE, never a negative
+  verdict.** A negative verdict is a Jael `%fail`, which Ames turns into a
+  *snub*. If a verifier condemned foreign Kelvins, then across a Kelvin
+  bump every old ship would snub every new one and vice versa — a network
+  partition on upgrade, produced by the very mechanism meant to make
+  versioning orderly. Retiring a Kelvin is a deliberate breach-class
+  decision (above); it is not something a verifier does by accident to
+  every peer it cannot parse. Treated exactly like the `xtr = 0`
+  public-onboarding packet: no verdict at all.
 
 ## 2. Snapshot mold (resolves §9 Q2)
 
@@ -124,6 +133,40 @@ Maximum payload size: **512 bytes**. Confidential custody transactions
 carry no publication output at all. Reachability-restoration and
 advertisement payloads (01 §6.2–6.3) are deferred (§7).
 
+### 4a. Byte order of the payload
+
+The payload is the jam's **ordinary little-endian byte serialization** —
+the same `+jam-octs` convention every hash preimage in this protocol uses,
+and the same bytes Causeway's `jam_bytes` produces. It is *not* the jam
+atom read as a big-endian byte string. An encoder/decoder pair can be
+self-consistent in the wrong order and still be unable to exchange a
+single publication with any other implementation; the pair shipped that
+way once, so this is now pinned by a test that decodes a real mainnet
+OP_RETURN.
+
+### 4b. A published spawn's `start-height` is `0`, on purpose
+
+`blind-opening` carries `start-height`, defined as the block containing
+the transaction that **created** the spawn satpoint (i.e. the funding
+tx). In a *packet* the field is load-bearing: the verifier has no block
+to start from, and the light client can only address a transaction by
+`[height txid]`, so a wrong or missing height means the fetch fails and
+the attestation gets no verdict.
+
+In a **publication** it is not, and it cannot be filled in: the
+publication output is built and broadcast inside the very transaction it
+describes, so at write time nothing knows what block it will land in.
+Published spawns therefore carry `start-height = 0` permanently. This is
+correct and requires no format change — the public scanner is *reading a
+block* when it finds the publication, so it already knows the height, and
+the funding tx is the direct parent of the transaction in hand. A scanner
+must ignore the field on a publication rather than trust it, and must
+never treat `0` as a real height (see `resolve_start_height` in
+`causeway.py`, which refuses `0` as an answer for the packet path).
+
+`start-height` is transport metadata and enters no hash preimage, so
+correcting it in a transport artifact never invalidates a minted comet.
+
 The scanner (`lib/urb-core`) discovers public comets by grepping
 transaction **outputs** for the `OP_RETURN "urb"` prefix — never by
 parsing witnesses. Per publication it runs the same verification the
@@ -198,6 +241,26 @@ The fetch layer targets the update API of `desk/app/bitcoin-client.hoon`
   agent implements the identical watch paths over Bitcoin Core RPC. The
   verifier is agnostic between them.
 
+Two properties of that API are load-bearing and were each fatal when got
+wrong against a real node:
+
+- **`/best-block` is a *persistent* subscription**, not a request. It gives
+  a fact for every new block and never kicks, unlike every other endpoint
+  above (which end their response with `end (kick sub)`). It must never be
+  read with a fact-then-kick one-shot from a strand — that blocks forever,
+  so tip liveness is never determined and *no* confidential attestation can
+  ever produce a verdict. `%gw-btc` holds the subscription and passes the
+  chain tip into the verification thread as an argument.
+- **The node's `$hexb` is byte-reversed relative to the desk's.** The node
+  puts the first wire byte in the low byte of `dat`; the desk (and
+  `+p2tr-xonly`, `+state-key`, the BIP-340 code) put it in the high byte.
+  The two molds are structurally identical, so a missing conversion type-
+  checks perfectly and fails only against real chain data. Note the flip
+  has two halves: the node's own GCS matcher consumes filter targets in the
+  *node's* order, so converting transaction bytes without converting the
+  filter target back makes the filter stop matching — and a spent tip then
+  reports **unspent**, which is fail-open. Change both or neither.
+
 ## 9. Verifier concurrency (descope of the queue economy)
 
 - **Single-flight per ship**: at most one verification job per ship;
@@ -211,6 +274,23 @@ The fetch layer targets the update API of `desk/app/bitcoin-client.hoon`
   ship; apply-time re-checks against live state (known-public, sat-owner);
   crashes/timeouts/undeterminable fetches never produce a negative verdict;
   bounded log length and per-entry size checks at parse time.
+- **No wall-clock deadline decides a verification.** Verification is fully
+  asynchronous — the peer sits as an `%alien` until a verdict arrives and
+  nothing in the kernel blocks on it — while its cost is dominated by the
+  filter scan, which is O(blocks since the comet last moved its sat). A
+  fixed timeout would therefore make long-dormant comets arbitrarily
+  unverifiable as a function of a magic number, silently converting "slow"
+  into "no verdict". A slow-but-progressing verification runs to
+  completion. The one remaining timer (`+stuck-job-guard`, `~h2`) is a
+  resource-leak backstop, not a policy: its only job is to stop a job that
+  died silently from holding a ship's single-flight slot forever. It emits
+  no verdict.
+- Measured cost, mainnet, 2-vCPU droplet, comet spawned ~20 blocks back:
+  **100–110 s** per verification, ~11 filter fetches plus 2 block
+  downloads. Scan cost grows with dormancy. A light-client-side primitive
+  (batched filter fetches, or a "has this scriptPubKey been spent since
+  height H" query) would collapse most of it; that is a feature request for
+  gwbtc/node, not a change to the verifier's shape.
 - Kernel suspension machinery (`%gost`/`%ghul`/`%bane` + Clay `%tire`
   wiring) is retained as-is, with one fix: an additive
   `[%snub ?(%add %del %set) …]` Ames task so domain suspension does not
