@@ -47,6 +47,11 @@
       sat=self-attestation:sa
       job=@ud
   ==
+::  $sponsee: a comet whose verified snapshot names us as its sponsor
+::  and whose sponsorship this ship has accepted.  life is the life we
+::  accepted at; the policy re-runs on every re-attestation.
+::
++$  sponsee  [=life since=@da]
 +$  gw-state
   $:  rpc=req-to:btcio
       urb-state=state:urb
@@ -57,6 +62,8 @@
       attested=(map ship sont:ord)
       publicizing=(set ship)
       next-job=@ud
+      sponsees=(map ship sponsee)
+      declined=(set ship)
   ==
 --
 ::
@@ -119,6 +126,13 @@
       ::  limit.  No queue, no slot economy.
       ?:  (~(has by inflight) who.poke)
         `this
+      ::  A ship whose sponsorship we declined re-attests on every
+      ::  retry; short-circuit before spending a full verification on
+      ::  it.  Clearing the entry (%gw-sponsor-clear) restores normal
+      ::  handling immediately -- the refusal is never sticky in the
+      ::  kernel, only here.
+      ?:  (~(has in declined) who.poke)
+        `this
       ?~  sat=(pass-attestation [dom who pass]:poke)
         ::  The public onboarding packet is a valid suite-C %gw-btc pass
         ::  with no xtr tail at all.  It is resolved by the block scanner,
@@ -166,6 +180,22 @@
       ==
     ==
   ::
+      ::  Operator control over sponsorship.  %gw-sponsor-decline
+      ::  refuses (and drops) a sponsee; %gw-sponsor-clear undoes that
+      ::  so the ship's next attestation is handled normally again.
+      ::  Neither touches the kernel: a declined ship is never snubbed.
+      ::
+      %gw-sponsor-decline
+    ?>  =(our src):bowl
+    =/  who  !<(ship vase)
+    %-  (slog leaf+"%gw-btc: sponsorship of {<who>} declined by operator" ~)
+    `this(declined (~(put in declined) who), sponsees (~(del by sponsees) who))
+  ::
+      %gw-sponsor-clear
+    ?>  =(our src):bowl
+    =/  who  !<(ship vase)
+    `this(declined (~(del in declined) who))
+  ::
       %urb-start-indexing
     ?>  =(our src):bowl
     ::  Bootstrap is one-shot. Replacing the public snapshot while private
@@ -198,6 +228,15 @@
       [%x %block-id ~]
     ``block-id+!>(block-id.urb-state)
     ::  /x/point/<ship> — look up a ship in unv-ids
+    ::
+    ::  /x/sponsees — comets we are sponsoring (and thus relaying for)
+    ::
+      [%x %sponsees ~]
+    ``noun+!>(sponsees)
+    ::  /x/declined — comets whose sponsorship we have refused
+    ::
+      [%x %declined ~]
+    ``noun+!>(declined)
     ::
       [%x %point ship=@ ~]
     ?~  who=(slaw %p ship.pole)  ~
@@ -341,10 +380,36 @@
       ?~  verified
         :_  this
         ~[(writ-card dom.req who ~)]
+      ::  Sponsorship decision point.  A valid attestation whose snapshot
+      ::  names US as sponsor IS the sponsorship request -- there is no
+      ::  separate handshake and no consent signature.  Declining is
+      ::  NOT a %fail: the attestation is valid, only the sponsorship
+      ::  role is refused, so we stay silent (no verdict) rather than
+      ::  emitting a negative one that would snub a legitimate ship.
+      ::
+      ::  Silence withholds the point, so the peer never becomes %known
+      ::  here and we never acquire a lane for it -- which is exactly
+      ::  what stops us relaying (+on-hear-forward forwards for any
+      ::  ship we hold a lane to).  It also declines direct contact;
+      ::  splitting those two would need a kernel no-relay gate, which
+      ::  is deferred until a policy actually wants it.
+      ::
+      =/  claims-us=?
+        ?&  has.sponsor.net.u.verified
+            =(our.bowl who.sponsor.net.u.verified)
+        ==
+      ?:  ?&  claims-us
+              ?=(%decline (sponsor-policy who life.net.u.verified))
+          ==
+        %-  (slog leaf+"%gw-btc: declining sponsorship of {<who>}" ~)
+        `this(declined (~(put in declined) who))
       =/  applied  (apply-verified who u.verified tip-value.res)
       =.  urb-state  -.applied
       =.  confidential  +.applied
       =.  attested  (~(put by attested) who sont.own.u.verified)
+      =?  sponsees  claims-us
+        (~(put by sponsees) who [life.net.u.verified now.bowl])
+      =?  declined  claims-us  (~(del in declined) who)
       :_  this
       ~[(writ-card dom.req who `(urb-point-to-jael u.verified who))]
     ==
@@ -499,10 +564,18 @@
       ==
     ::
         %fact
-      ?.  ?=(%light-client-best-block p.cage.sign)
+      ::  The node's %bitcoin-client gives /best-block facts under its own
+      ::  fact mark %best-block, carrying best-block:update (a %new / a
+      ::  %reorg-rollback with block-height + block-hash).
+      ?.  ?=(%best-block p.cage.sign)
         (on-agent:def wire sign)
-      =/  upd  !<(best-block-update:lc q.cage.sign)
-      `this(best `id.upd)
+      =/  upd  !<(best-block:update:lc q.cage.sign)
+      =/  new-best=id:block:bc
+        ?-  -.upd
+          %new             [block-hash.upd block-height.upd]
+          %reorg-rollback  [block-hash.upd block-height.upd]
+        ==
+      `this(best `new-best)
     ==
   ==
 ++  on-leave  on-leave:def
@@ -741,6 +814,21 @@
   ?~  point=(~(get by unv-ids.st) who)  ~
   ?~  tip=(~(get by attested) who)  ~
   `[u.point u.tip]
+::
+::  +sponsor-policy: accept or decline sponsoring .who at .life
+::
+::    The single place sponsorship policy lives.  v9 accepts every
+::    request: a comet that commits sponsor=us and proves its identity
+::    gets carried.  Replace this arm (capacity limits, an allowlist,
+::    payment, whatever) without touching the surrounding flow.  It is
+::    consulted on EVERY re-attestation, so a sponsor can drop a
+::    sponsee at its next state change with no extra machinery.
+::
+++  sponsor-policy
+  |=  [who=ship =life]
+  ^-  ?(%accept %decline)
+  ?:  (~(has in declined) who)  %decline
+  %accept
 ::
 ::  A verified confidential identity may claim an empty or inscription-only
 ::  sat, or its own existing sat, but never overwrite a different comet.
