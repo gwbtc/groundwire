@@ -11,9 +11,24 @@
 ::  $bitcoin-common shapes; the fetch layer converts them to $tx:bitcoin.
 ::  No Bitcoin node or Gall mock is needed.
 ::
+::  TWO THINGS THIS FILE EXISTS TO PIN, both of which shipped broken and
+::  made confidential comets 100% non-functional against real mainnet:
+::
+::    1. The strand must never watch /best-block.  That endpoint is a
+::       PERSISTENT subscription (fact per block, no kick), so a
+::       +watch-one on it hangs forever.  The chain tip is an ARGUMENT.
+::       +test-no-best-block-watch asserts no such card is ever emitted.
+::
+::    2. The node's $hexb is byte-reversed relative to the desk's.  The
+::       fixtures below therefore build node facts in the NODE's real byte
+::       order (+bc-hexb-to-common reverses), so a fetch layer that forgets
+::       to convert fails these tests instead of failing on mainnet.  Note
+::       the flip has TWO halves that must move together -- see
+::       +test-spent-tip-is-not-masked-by-byte-order.
+::
 /-  bitcoin, ord, urb, sa=self-attestation, lc=light-client, bcm=bitcoin-common
-/+  *test, lca=lc-attestation, tr=taproot, bc=bitcoin, cc=gw-btc-pass,
-    b-fil=compact-block-filters, strandio, libstrand=strand
+/+  *test, lca=lc-attestation, lsa=self-attestation, tr=taproot, bc=bitcoin,
+    cc=gw-btc-pass, b-fil=compact-block-filters, strandio, libstrand=strand
 =,  strand=strand:libstrand
 =/  m  (strand:strandio ,vase)
 =>
@@ -71,22 +86,32 @@
   ?>  &(=(~ cards.fac) ?=(%wait -.halt.fac))
   (inject fac [%agent watch+wire %kick ~])
 ::
+++  watch-card
+  |=  [=wire =path]
+  ^-  card:agent:gall
+  [%pass watch+wire %agent [~zod light-client-agent:lca] %watch path]
+::
 ++  expect-watch
   |=  [st=pace =wire =path]
   ^-  tang
   ;:  weld
     (expect !>(?=(%wait -.halt.st)))
-    %+  expect-eq
-      !>(~[[%pass watch+wire %agent [~zod %light-client] %watch path]])
-      !>(cards.st)
+    (expect-eq !>(~[(watch-card wire path)]) !>(cards.st))
   ==
 ::  --------------------------------------------------------------------
 ::  Node-shape (bitcoin-common) fact builders.
 ::  --------------------------------------------------------------------
+::  +bc-hexb-to-common: put a desk byte string into the NODE's byte order
+::
+::    The node holds the first wire byte in the LOW byte of `dat`; the desk
+::    holds it in the HIGH byte.  This is the exact inverse of
+::    +flip-hexb:lca, so a fixture built here and read back through the
+::    fetch layer reproduces the original desk value.
+::
 ++  bc-hexb-to-common
   |=  h=hexb:bitcoin
   ^-  hexb:bcm
-  [`@ud`wid.h `@ux`dat.h]
+  [`@ud`wid.h `@ux`(rev 3 wid.h dat.h)]
 ::
 ++  bc-out-to-common
   |=  o=output:tx:bitcoin
@@ -139,11 +164,6 @@
 ++  tx-fact-empty
   ^-  cage
   [%noun !>(`transaction:update:lc`~)]
-::
-++  best-fact
-  |=  [het=@ud haz=@ux]
-  ^-  cage
-  [%noun !>(`best-block:update:lc`[%new het haz])]
 ::
 ++  filter-fact
   |=  [haz=@ux het=@ud f=hexb:bcm]
@@ -292,35 +312,95 @@
 ++  hdr-path  |=(h=@ud /block-header/height/(scot %ud h))
 ++  tx-wire   |=([haz=@ux tid=@ux] /lc/transaction/(scot %ux haz)/(scot %ux tid))
 ++  tx-path   |=([haz=@ux tid=@ux] /transaction/(scot %ux haz)/(scot %ux tid))
-++  best-wire  /lc/best
+::  the persistent endpoint the strand must NEVER watch
 ++  best-path  /best-block
 ++  filter-wire  |=(h=@ud /lc/filter-height/(scot %ud h))
 ++  filter-path  |=(h=@ud /block-filter/height/(scot %ud h))
 ++  block-wire   |=(h=@ud /lc/block-height/(scot %ud h))
 ++  block-path   |=(h=@ud /block/height/(scot %ud h))
 ::  --------------------------------------------------------------------
-::  Drive the six transaction fetches + best-block, leaving the strand
-::  blocked on the first filter watch (height = tip-height = 101).
+::  Drive the six transaction fetches, leaving the strand blocked on the
+::  first filter watch (height = tip-height = 101).  .best-het is the
+::  chain tip the CALLER supplies -- there is no /best-block round trip.
 ::  --------------------------------------------------------------------
-++  drive-fetches
-  |=  [best-het=@ud best-haz=@ux]
+++  start-verify
+  |=  best-het=@ud
   ^-  pace
-  =/  s0  (step (verify-lc:lca good-sat ~ no-points) ~)
+  (step (verify-lc:lca good-sat ~ no-points best-het) ~)
+::
+++  drive-fetches
+  |=  best-het=@ud
+  ^-  pace
+  =/  s0  (start-verify best-het)
   =/  s1  (answer-watch s0 (hdr-wire 778.000) (hdr-fact h-start 778.000))
   =/  s2  (answer-watch s1 (tx-wire h-start start-id) (tx-fact h-start 778.000 start-id start-tx))
   =/  s3  (answer-watch s2 (hdr-wire 100) (hdr-fact h-c0 100))
   =/  s4  (answer-watch s3 (tx-wire h-c0 c0-id) (tx-fact h-c0 100 c0-id c0-tx))
   =/  s5  (answer-watch s4 (hdr-wire 101) (hdr-fact h-c1 101))
-  =/  s6  (answer-watch s5 (tx-wire h-c1 c1-id) (tx-fact h-c1 101 c1-id c1-tx))
-  (answer-watch s6 best-wire (best-fact best-het best-haz))
+  (answer-watch s5 (tx-wire h-c1 c1-id) (tx-fact h-c1 101 c1-id c1-tx))
+::
+::  every card a run of the strand emitted, in order
+++  all-cards
+  |=  states=(list pace)
+  ^-  (list card:agent:gall)
+  (zing (turn states |=(st=pace cards.st)))
 ::
 ++  done-result
   |=  st=pace
   ^-  [result:sa hexb:bitcoin]
   ?>  ?=(%done -.halt.st)
   !<([result:sa hexb:bitcoin] value.halt.st)
+::  --------------------------------------------------------------------
+::  REAL mainnet byte-order vector.  The sat-carrying output of the spawn
+::  transaction of the live comet ~havnyl-lonpub-botben-hidleb--lomper-
+::  marryc-lanmec-daplyd (2c66c654...  in block 961.055).  `real-spk` is
+::  the scriptPubKey as Bitcoin and this desk write it; `real-spk-node` is
+::  the byte string the node's %bitcoin-client actually delivered for it,
+::  observed on a synced mainnet light client.
+::  --------------------------------------------------------------------
+++  real-spk
+  ^-  hexb:bitcoin
+  :-  34
+  0x5120.be3a.7444.26a8.7262.b1bd.cc14.4b43.5109.9503.34de.f1f2.6747.d316.367d.6af6.8341
+::
+++  real-spk-node
+  ^-  hexb:bcm
+  :-  34
+  0x4183.f66a.7d36.16d3.4767.f2f1.de34.0395.0951.434b.14cc.bdb1.6272.a826.4474.3abe.2051
+::
+++  real-xonly
+  ^-  @ux
+  0xbe3a.7444.26a8.7262.b1bd.cc14.4b43.5109.9503.34de.f1f2.6747.d316.367d.6af6.8341
 --
 |%
+::  ---- node <-> desk byte order, pinned to real mainnet data ---------
+::
+::    $hexb:bitcoin-common and $hexb:bitcoin are structurally identical,
+::    so a missing conversion type-checks perfectly and only fails against
+::    a real node.  Shipped code passed scriptPubKeys straight through and
+::    +p2tr-xonly then read 0x2051 as the version prefix, so EVERY
+::    entry-N-commitment and tip-p2tr check failed on real chain data.
+::
+++  test-node-hexb-byte-order
+  =/  converted  (flip-hexb:lca real-spk-node)
+  ;:  weld
+    ::  the node's bytes convert to exactly the on-chain scriptPubKey
+    (expect-eq !>(real-spk) !>(converted))
+    ::  ... which +p2tr-xonly can actually read
+    (expect-eq !>(`(unit @ux)`[~ real-xonly]) !>((p2tr-xonly:lsa converted)))
+    ::  ... and which the UNconverted value cannot pretend to be
+    (expect-eq !>(`(unit @ux)`~) !>((p2tr-xonly:lsa `hexb:bitcoin`real-spk-node)))
+    ::  round trip is the identity in both directions
+    (expect-eq !>(real-spk-node) !>((unflip-hexb:lca converted)))
+    (expect-eq !>(real-spk) !>((flip-hexb:lca (unflip-hexb:lca real-spk))))
+  ==
+::  ---- a whole output crosses the boundary intact --------------------
+++  test-common-out-conversion
+  =/  out  (common-out-to-bc:lca `transaction-output:bcm`[1.889 real-spk-node])
+  ;:  weld
+    (expect-eq !>(real-spk) !>(`hexb:bitcoin`-.out))
+    (expect-eq !>(`@ud`1.889) !>(`@ud`+.out))
+  ==
 ::  ---- filter encoder sanity ----------------------------------------
 ++  test-filter-encoder
   =/  fil  (mk-filter h-c1 ~[tip-spk-bcm])
@@ -331,7 +411,8 @@
   ==
 ::  ---- full fetch path assertions + unspent verdict -----------------
 ++  test-fetch-sequence-and-unspent
-  =/  s0  (step (verify-lc:lca good-sat ~ no-points) ~)
+  ::  best-height == tip-height (101): the scan visits only the tip block.
+  =/  s0  (start-verify 101)
   =/  c0c  (expect-watch s0 (hdr-wire 778.000) (hdr-path 778.000))
   =/  s1  (answer-watch s0 (hdr-wire 778.000) (hdr-fact h-start 778.000))
   =/  c1c  (expect-watch s1 (tx-wire h-start start-id) (tx-path h-start start-id))
@@ -344,51 +425,100 @@
   =/  s5  (answer-watch s4 (hdr-wire 101) (hdr-fact h-c1 101))
   =/  c5c  (expect-watch s5 (tx-wire h-c1 c1-id) (tx-path h-c1 c1-id))
   =/  s6  (answer-watch s5 (tx-wire h-c1 c1-id) (tx-fact h-c1 101 c1-id c1-tx))
-  =/  c6c  (expect-watch s6 best-wire best-path)
-  ::  best-height == tip-height (101): the scan visits only the tip block.
-  =/  s7  (answer-watch s6 best-wire (best-fact 101 h-c1))
-  =/  c7c  (expect-watch s7 (filter-wire 101) (filter-path 101))
-  =/  s8  (answer-watch s7 (filter-wire 101) (filter-fact h-c1 101 (mk-filter h-c1 ~[tip-spk-bcm])))
-  =/  c8c  (expect-watch s8 (block-wire 101) (block-path 101))
+  =/  c6c  (expect-watch s6 (filter-wire 101) (filter-path 101))
+  =/  s7  (answer-watch s6 (filter-wire 101) (filter-fact h-c1 101 (mk-filter h-c1 ~[tip-spk-bcm])))
+  =/  c7c  (expect-watch s7 (block-wire 101) (block-path 101))
   ::  tip block contains only c1-tx (no tx spends the tip outpoint) -> unspent
-  =/  s9  (answer-watch s8 (block-wire 101) (block-fact h-c1 101 ~[(bc-to-common c1-tx)]))
-  =/  [res=result:sa tip=hexb:bitcoin]  (done-result s9)
+  =/  s8  (answer-watch s7 (block-wire 101) (block-fact h-c1 101 ~[(bc-to-common c1-tx)]))
+  =/  [res=result:sa tip=hexb:bitcoin]  (done-result s8)
   ;:  weld
-    c0c  c1c  c2c  c3c  c4c  c5c  c6c  c7c  c8c
-    (expect !>(=(~ cards.s9)))
+    c0c  c1c  c2c  c3c  c4c  c5c  c6c  c7c
+    (expect !>(=(~ cards.s8)))
     (expect !>(ok.verdict.res))
     (expect !>(?=(^ point.res)))
+    ::  the tip scriptPubKey came back through the node's byte order and
+    ::  out again in the desk's -- unchanged.
     (expect-eq !>(tip-spk) !>(tip))
     (expect-eq !>(`sont:ord`[c1-id 0 0]) !>(sont.own:(need point.res)))
   ==
-::  ---- tip spent in a later block -----------------------------------
-++  test-tip-spent-in-later-block
-  ::  best-height 102: tip block (101) clean, spend lands at 102 -> spent
-  =/  s7  (drive-fetches 102 h-102)
-  =/  s8  (answer-watch s7 (filter-wire 101) (filter-fact h-c1 101 (mk-filter h-c1 ~[tip-spk-bcm])))
-  =/  s9  (answer-watch s8 (block-wire 101) (block-fact h-c1 101 ~[(bc-to-common c1-tx)]))
-  =/  s10  (answer-watch s9 (filter-wire 102) (filter-fact h-102 102 (mk-filter h-102 ~[tip-spk-bcm])))
-  =/  s11  (answer-watch s10 (block-wire 102) (block-fact h-102 102 ~[spend-tx-common]))
-  =/  [res=result:sa tip=hexb:bitcoin]  (done-result s11)
+::  ---- /best-block must never be watched from the strand -------------
+::
+::    /best-block is a PERSISTENT subscription on the node: it gives a
+::    fact for every new block and NEVER kicks.  A +watch-one on it blocks
+::    the strand forever, so tip liveness is never determined and NO
+::    confidential attestation can ever produce a verdict.  The chain tip
+::    is passed in by %gw-btc instead, which holds its own subscription.
+::
+++  test-no-best-block-watch
+  =/  s0  (start-verify 101)
+  =/  s1  (answer-watch s0 (hdr-wire 778.000) (hdr-fact h-start 778.000))
+  =/  s2  (answer-watch s1 (tx-wire h-start start-id) (tx-fact h-start 778.000 start-id start-tx))
+  =/  s3  (answer-watch s2 (hdr-wire 100) (hdr-fact h-c0 100))
+  =/  s4  (answer-watch s3 (tx-wire h-c0 c0-id) (tx-fact h-c0 100 c0-id c0-tx))
+  =/  s5  (answer-watch s4 (hdr-wire 101) (hdr-fact h-c1 101))
+  =/  s6  (answer-watch s5 (tx-wire h-c1 c1-id) (tx-fact h-c1 101 c1-id c1-tx))
+  =/  s7  (answer-watch s6 (filter-wire 101) (filter-fact h-c1 101 (mk-filter h-c1 ~[tip-spk-bcm])))
+  =/  s8  (answer-watch s7 (block-wire 101) (block-fact h-c1 101 ~[(bc-to-common c1-tx)]))
   ;:  weld
-    (expect-watch s7 (filter-wire 101) (filter-path 101))
-    (expect-watch s9 (filter-wire 102) (filter-path 102))
-    (expect-watch s10 (block-wire 102) (block-path 102))
+    ::  the run completed rather than blocking on a subscription
+    (expect !>(?=(%done -.halt.s8)))
+    ::  EVERY card a complete verification emits, exhaustively.  No
+    ::  best-path watch appears, and none can be added without failing
+    ::  here.
+    %+  expect-eq
+      !>  ^-  (list card:agent:gall)
+          :~  (watch-card (hdr-wire 778.000) (hdr-path 778.000))
+              (watch-card (tx-wire h-start start-id) (tx-path h-start start-id))
+              (watch-card (hdr-wire 100) (hdr-path 100))
+              (watch-card (tx-wire h-c0 c0-id) (tx-path h-c0 c0-id))
+              (watch-card (hdr-wire 101) (hdr-path 101))
+              (watch-card (tx-wire h-c1 c1-id) (tx-path h-c1 c1-id))
+              (watch-card (filter-wire 101) (filter-path 101))
+              (watch-card (block-wire 101) (block-path 101))
+          ==
+      !>((all-cards ~[s0 s1 s2 s3 s4 s5 s6 s7 s8]))
+  ==
+::  ---- tip spent in a later block -----------------------------------
+::
+::    THE fail-open regression guard.  The GCS matcher is the NODE's own,
+::    and consumes its targets in the NODE's byte order, while the tip
+::    scriptPubKey now reaches +scan-liveness in the DESK's.  Convert the
+::    transaction side (+common-out-to-bc) without also converting back
+::    here and the filter silently stops matching: a SPENT tip is reported
+::    UNSPENT and a stale identity verifies.  Because the filter below is
+::    built from the same node-order bytes a real node would use, half a
+::    fix fails this test rather than shipping a fail-open.
+::
+++  test-spent-tip-is-not-masked-by-byte-order
+  ::  best-height 102: tip block (101) clean, spend lands at 102 -> spent
+  =/  s6  (drive-fetches 102)
+  =/  s7  (answer-watch s6 (filter-wire 101) (filter-fact h-c1 101 (mk-filter h-c1 ~[tip-spk-bcm])))
+  =/  s8  (answer-watch s7 (block-wire 101) (block-fact h-c1 101 ~[(bc-to-common c1-tx)]))
+  =/  s9  (answer-watch s8 (filter-wire 102) (filter-fact h-102 102 (mk-filter h-102 ~[tip-spk-bcm])))
+  =/  s10  (answer-watch s9 (block-wire 102) (block-fact h-102 102 ~[spend-tx-common]))
+  =/  [res=result:sa tip=hexb:bitcoin]  (done-result s10)
+  ;:  weld
+    (expect-watch s6 (filter-wire 101) (filter-path 101))
+    (expect-watch s8 (filter-wire 102) (filter-path 102))
+    (expect-watch s9 (block-wire 102) (block-path 102))
+    ::  the filter for 102 MATCHED (else no block would have been fetched)
     (expect !>(!ok.verdict.res))
     (expect !>(?=(~ point.res)))
+    ::  and the failure named is tip liveness, not something incidental
+    (expect !>((lien checks.verdict.res |=(c=check:sa &(=(%tip-unspent name.c) !ok.c)))))
   ==
 ::  ---- same-block spend (scan must start AT tip-height) --------------
 ++  test-same-block-spend
   ::  best-height 101: the tip output is created and spent in block 101
-  =/  s7  (drive-fetches 101 h-c1)
-  =/  s8  (answer-watch s7 (filter-wire 101) (filter-fact h-c1 101 (mk-filter h-c1 ~[tip-spk-bcm])))
+  =/  s6  (drive-fetches 101)
+  =/  s7  (answer-watch s6 (filter-wire 101) (filter-fact h-c1 101 (mk-filter h-c1 ~[tip-spk-bcm])))
   ::  the tip block holds c1-tx AND a later tx spending the tip outpoint
-  =/  s9
-    %^    answer-watch  s8  (block-wire 101)
+  =/  s8
+    %^    answer-watch  s7  (block-wire 101)
     (block-fact h-c1 101 ~[(bc-to-common c1-tx) spend-tx-common])
-  =/  [res=result:sa tip=hexb:bitcoin]  (done-result s9)
+  =/  [res=result:sa tip=hexb:bitcoin]  (done-result s8)
   ;:  weld
-    (expect-watch s7 (filter-wire 101) (filter-path 101))
+    (expect-watch s6 (filter-wire 101) (filter-path 101))
     (expect !>(!ok.verdict.res))
     (expect !>(?=(~ point.res)))
   ==
@@ -396,18 +526,18 @@
 ++  test-unknown-filter-fails-closed
   ::  a filter fact whose block-info height disagrees with the request is
   ::  unusable; liveness is undeterminable (~) and run-checks fails closed.
-  =/  s7  (drive-fetches 101 h-c1)
-  =/  s8
-    %^    answer-watch  s7  (filter-wire 101)
+  =/  s6  (drive-fetches 101)
+  =/  s7
+    %^    answer-watch  s6  (filter-wire 101)
     (filter-fact h-c1 999 (mk-filter h-c1 ~[tip-spk-bcm]))
-  =/  [res=result:sa tip=hexb:bitcoin]  (done-result s8)
+  =/  [res=result:sa tip=hexb:bitcoin]  (done-result s7)
   ;:  weld
     (expect !>(!ok.verdict.res))
     (expect !>(?=(~ point.res)))
   ==
 ::  ---- height mismatch on a tx fetch -> strand fail ------------------
 ++  test-header-height-mismatch-fails-strand
-  =/  s0  (step (verify-lc:lca good-sat ~ no-points) ~)
+  =/  s0  (start-verify 101)
   =/  s1  (answer-watch s0 (hdr-wire 778.000) (hdr-fact h-start 778.000))
   =/  s2  (answer-watch s1 (tx-wire h-start start-id) (tx-fact h-start 778.000 start-id start-tx))
   ::  entry 0 header comes back with the wrong height
@@ -419,7 +549,7 @@
   ==
 ::  ---- txid mismatch on a tx fetch -> strand fail --------------------
 ++  test-txid-mismatch-fails-strand
-  =/  s0  (step (verify-lc:lca good-sat ~ no-points) ~)
+  =/  s0  (start-verify 101)
   =/  s1  (answer-watch s0 (hdr-wire 778.000) (hdr-fact h-start 778.000))
   ::  the transaction fact reports a different txid than requested
   =/  s2  (answer-watch s1 (tx-wire h-start start-id) (tx-fact h-start 778.000 0xdead.beef start-tx))
@@ -430,7 +560,7 @@
   ==
 ::  ---- transaction unknown (~) -> strand fail -----------------------
 ++  test-tx-not-found-fails-strand
-  =/  s0  (step (verify-lc:lca good-sat ~ no-points) ~)
+  =/  s0  (start-verify 101)
   =/  s1  (answer-watch s0 (hdr-wire 778.000) (hdr-fact h-start 778.000))
   =/  s2  (answer-watch s1 (tx-wire h-start start-id) tx-fact-empty)
   ?>  ?=(%fail -.halt.s2)

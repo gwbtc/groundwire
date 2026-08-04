@@ -1,15 +1,22 @@
 ::  lib/lc-attestation.hoon
 ::
-::  Resolve a current %gw-btc custody log through the local %light-client
-::  (the REAL gwbtc/node %bitcoin-client agent), then hand the deterministic
-::  transaction vector to ++run-checks:lsa.
+::  Resolve a current %gw-btc custody log through the local light client
+::  (the REAL gwbtc/node agent, +light-client-agent below), then hand the
+::  deterministic transaction vector to ++run-checks:lsa.
 ::
-::  The node's %light-client API is subscription-based: each watch answers
-::  exactly one fact under the agent's fact mark and then kicks, so every
-::  fetch here is a one-shot +watch-one.  There is no lookup by bare txid and
-::  no /tx-out; a transaction is addressed by [block-hash txid], and tip
-::  liveness is decided by a BIP-158 compact-filter scan of every block from
-::  the tip height to the chain tip.
+::  The node's light-client API is subscription-based: each REQUEST watch
+::  answers exactly one fact under the agent's fact mark and then kicks, so
+::  every fetch here is a one-shot +watch-one.  There is no lookup by bare
+::  txid and no /tx-out; a transaction is addressed by [block-hash txid], and
+::  tip liveness is decided by a BIP-158 compact-filter scan of every block
+::  from the tip height to the chain tip.
+::
+::  /best-block is NOT such an endpoint: it is a PERSISTENT subscription that
+::  gives a fact per block and never kicks, so it must never be read with
+::  +watch-one (that deadlocks the strand forever, and with it every
+::  confidential verification).  The chain tip height is therefore supplied
+::  by the caller -- %gw-btc holds a live /best-block subscription of its own
+::  and passes its current height in.
 ::
 ::  Fetch molds mirror the node's ++update (see sur/light-client), and the
 ::  node's transactions/blocks arrive as $bitcoin-common values which we
@@ -18,11 +25,21 @@
 /-  bc=bitcoin, ord, urb, sa=self-attestation, lc=light-client, bcm=bitcoin-common
 /+  lsa=self-attestation, strandio, b-fil=compact-block-filters
 |%
+::  +light-client-agent: the gall agent name of the local light client
+::
+::    gwbtc/node's desk.bill installs it as %bitcoin-client.  Every watch
+::    below and %gw-btc's own /best-block subscription must name the SAME
+::    agent: a wrong name is not an error anywhere, it just nacks the watch,
+::    and %gw-btc then silently drops every %jael-writ forever.  One
+::    constant, one place to change it.
+::
+++  light-client-agent  %bitcoin-client
 ::
 ++  verify-lc
   |=  $:  sat=self-attestation:sa
           tracked=(unit anchor:sa)
           known-public=(set ship)
+          best-height=@ud
       ==
   ^-  shed:khan
   =/  m  (strand:strandio ,vase)
@@ -56,7 +73,7 @@
   ::  TIP LIVENESS: scan every block above the tip for a spend of the exact
   ::  outpoint.  `%.y`/`%.n`/~ = unspent/spent/undeterminable (fails closed).
   ;<  live=(unit ?)  bind:m
-    (scan-liveness our u.tip tip-spk tip-height)
+    (scan-liveness our u.tip tip-spk tip-height best-height)
   =/  result=result:sa
     (run-checks:lsa sat start txl live tracked known-public)
   (pure:m !>([result tip-spk]))
@@ -104,8 +121,9 @@
 ::
 ::  +scan-liveness: is the tip output still unspent?
 ::
-::    Read /best-block for the current height, then for each height from the
-::    tip block up to the chain tip: pull the compact filter, GCS-test the tip
+::    .best-height is the chain tip the caller currently believes in (see
+::    +light-client-agent's note on /best-block).  For each height from the
+::    tip block up to that tip: pull the compact filter, GCS-test the tip
 ::    scriptPubKey, and on a match pull the block and look for an input
 ::    spending the exact outpoint.  The scan STARTS AT tip-height itself, not
 ::    tip-height+1: the tip output may be created and spent inside the same
@@ -117,19 +135,21 @@
 ::    failed/unavailable fetch or inconsistency => ~ (undeterminable).
 ::
 ++  scan-liveness
-  |=  [our=@p tip=sont:ord tip-spk=hexb:bc tip-height=@ud]
+  |=  $:  our=@p
+          tip=sont:ord
+          tip-spk=hexb:bc
+          tip-height=@ud
+          best-height=@ud
+      ==
   =/  m  (strand:strandio ,(unit ?))
   ^-  form:m
-  ;<  best-cage=cage  bind:m  (watch-best our)
-  =/  bres  !<(best-block:update:lc q.best-cage)
-  =/  best-height=@ud
-    ?-  -.bres
-      %new             block-height.bres
-      %reorg-rollback  block-height.bres
-    ==
-  ::  cast the desk's hexb scriptPubKey into a bitcoin-common script-pubkey
-  ::  so the node's own filter matcher consumes it unchanged.
-  =/  spk=hexb:bcm  [`@ud`wid.tip-spk `@ux`dat.tip-spk]
+  ::  Back into the NODE's byte order for the GCS matcher.  +match:b-fil is
+  ::  the node's own matcher and consumes its targets LSB-first, exactly as
+  ::  the node encoded them into the filter; .tip-spk arrives here in the
+  ::  desk's big-endian order (see +flip-hexb).  THIS FLIP AND THE ONE IN
+  ::  +common-out-to-bc MUST MOVE TOGETHER: drop it and the filter silently
+  ::  stops matching, turning a SPENT tip into `unspent` -- a fail-OPEN.
+  =/  spk=hexb:bcm  (unflip-hexb tip-spk)
   =/  h=@ud  tip-height
   |-
   ^-  form:m
@@ -197,30 +217,57 @@
       ?:(=(0 flag.ct) ~ `flag.ct)
   ==
 ::
+::  +flip-hexb / +unflip-hexb: the node's byte order <-> the desk's
+::
+::    $hexb:bitcoin-common and $hexb:bitcoin are structurally identical
+::    ([wid dat]) so they cast into each other silently, but they are NOT
+::    the same value: the node stores a byte string with the FIRST WIRE BYTE
+::    IN THE LOW BYTE (its serializers and its BIP-158 siphash both consume
+::    `dat` LSB-first), while the desk's $hexb -- and +p2tr-xonly,
+::    +state-key and the BIP-340 code that read it -- put the first wire
+::    byte in the HIGH byte.  Real mainnet example: a P2TR scriptPubKey
+::    0x5120.be3a...8341 arrives from the node as 0x4183...6a20.51.
+::
+::    So EVERY byte string crossing this boundary must be reversed.  Passing
+::    them through unconverted makes +p2tr-xonly read the last two bytes as
+::    the version prefix, and every entry-N-commitment and tip-p2tr check
+::    fails on real chain data.
+::
+++  flip-hexb
+  |=  h=hexb:bcm
+  ^-  hexb:bc
+  [`@ud`wid.h `@ux`(rev 3 wid.h dat.h)]
+::
+++  unflip-hexb
+  |=  h=hexb:bc
+  ^-  hexb:bcm
+  [`@ud`wid.h `@ux`(rev 3 wid.h dat.h)]
+::
 ++  common-in-to-bc
   |=  ti=transaction-input:bcm
   ^-  inputw:tx:bc
-  :*  witness.ti
+  :*  (turn witness.ti flip-hexb)
       txid.ti
       vout.ti
       [4 sequence.ti]
-      ?:(=(0 wid.script-sig.ti) ~ `script-sig.ti)
+      ?:(=(0 wid.script-sig.ti) ~ `(flip-hexb script-sig.ti))
       ~
   ==
 ::
 ++  common-out-to-bc
   |=  to=transaction-output:bcm
   ^-  output:tx:bc
-  [script-pubkey.to value.to]
+  [(flip-hexb script-pubkey.to) value.to]
 ::
-::  One-shot %light-client subscriptions.  Each returns the single fact cage
-::  the node gives before it kicks; the caller +!< s it with the update mold.
+::  One-shot light-client REQUEST subscriptions.  Each returns the single
+::  fact cage the node gives before it kicks; the caller +!< s it with the
+::  update mold.  (/best-block is deliberately absent -- it never kicks.)
 ::
 ++  watch-header-height
   |=  [our=@p height=@ud]
   %-  watch-one:strandio
   :*  /lc/header-height/(scot %ud height)
-      [our %light-client]
+      [our light-client-agent]
       /block-header/height/(scot %ud height)
   ==
 ::
@@ -228,23 +275,15 @@
   |=  [our=@p haz=@ux tid=@ux]
   %-  watch-one:strandio
   :*  /lc/transaction/(scot %ux haz)/(scot %ux tid)
-      [our %light-client]
+      [our light-client-agent]
       /transaction/(scot %ux haz)/(scot %ux tid)
-  ==
-::
-++  watch-best
-  |=  our=@p
-  %-  watch-one:strandio
-  :*  /lc/best
-      [our %light-client]
-      /best-block
   ==
 ::
 ++  watch-filter-height
   |=  [our=@p height=@ud]
   %-  watch-one:strandio
   :*  /lc/filter-height/(scot %ud height)
-      [our %light-client]
+      [our light-client-agent]
       /block-filter/height/(scot %ud height)
   ==
 ::
@@ -252,7 +291,7 @@
   |=  [our=@p height=@ud]
   %-  watch-one:strandio
   :*  /lc/block-height/(scot %ud height)
-      [our %light-client]
+      [our light-client-agent]
       /block/height/(scot %ud height)
   ==
 --

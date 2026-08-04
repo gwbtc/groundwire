@@ -88,7 +88,7 @@
         ready  |
       ==
   :~  [%pass /anex %arvo %j %anex /writs]
-      [%pass /best-block %agent [our.bowl %light-client] %watch /best-block]
+      [%pass /best-block %agent [our.bowl light-client-agent:lca] %watch /best-block]
   ==
 ::
 ++  on-save
@@ -153,15 +153,20 @@
       ?:  (known-public who.poke)
         `this
       ::  Drop silently until the index and light client are ready;
-      ::  readiness is infrastructure, never evidence.
-      ?:  ?|(=(| ready) ?=(~ best))
+      ::  readiness is infrastructure, never evidence.  `best` doubles as
+      ::  the chain tip the verification strand scans up to: we hold a live
+      ::  /best-block subscription, and the strand must NOT re-read that
+      ::  persistent endpoint itself (it never kicks).
+      ?:  =(| ready)
+        `this
+      ?~  best
         `this
       =/  job  next-job
       =.  next-job  +(next-job)
       =/  req=inflight-writ  [dom.poke pass.poke u.sat job]
       =.  inflight  (~(put by inflight) who.poke req)
       :_  this
-      (verify-cards q.byk.bowl now.bowl who.poke req)
+      (verify-cards q.byk.bowl now.bowl who.poke req num.u.best)
     ::
         %jael-anew
       ::  Our own comet asking for a fresh self-attestation.  Return the last
@@ -324,7 +329,7 @@
   ::  A %light-client-backed attestation verification returned.
       [%lc-retry ~]
     :_  this
-    :~  [%pass /best-block %agent [our.bowl %light-client] %watch /best-block]
+    :~  [%pass /best-block %agent [our.bowl light-client-agent:lca] %watch /best-block]
     ==
   ::
       [%verify-timeout ship=@ job=@ ~]
@@ -553,14 +558,14 @@
     ?+    -.sign  (on-agent:def wire sign)
         %watch-ack
       ?~  p.sign  `this
-      %-  (slog leaf+"%gw-btc: %light-client /best-block watch rejected" u.p.sign)
+      %-  (slog leaf+"%gw-btc: {<light-client-agent:lca>} /best-block watch rejected" u.p.sign)
       :_  this(best ~)
       :~  [%pass /lc-retry %arvo %b %wait (add ~s30 now.bowl)]
       ==
     ::
         %kick
       :_  this(best ~)
-      :~  [%pass /best-block %agent [our.bowl %light-client] %watch /best-block]
+      :~  [%pass /best-block %agent [our.bowl light-client-agent:lca] %watch /best-block]
       ==
     ::
         %fact
@@ -738,18 +743,24 @@
       =(who fig:ex:cic)
   ==
 ::
-::  Launch the single %light-client-backed verification thread for a ship,
+::  Launch the single light-client-backed verification thread for a ship,
 ::  with an app-level timeout backstop.  The block watcher state supplies
 ::  the previously tracked tip and the set of known-public ships used for
-::  the sponsor-existence check.
+::  the sponsor-existence check; .best-height is the chain tip our own
+::  /best-block subscription last reported.
 ++  verify-cards
-  |=  [byk=desk now=@da who=ship req=inflight-writ]
+  |=  [byk=desk now=@da who=ship req=inflight-writ best-height=@ud]
   ^-  (list card)
   =/  wir  /(scot %p who)/(scot %ud job.req)
   :~  :*  %pass  [%verify wir]  %arvo  %k
           %lard  byk
           %+  (set-timeout:strandio ,vase)  verify-timeout
-          (verify-lc:lca sat.req (tracked-anchor urb-state who) ~(key by unv-ids.urb-state))
+          %:  verify-lc:lca
+              sat.req
+              (tracked-anchor urb-state who)
+              ~(key by unv-ids.urb-state)
+              best-height
+          ==
       ==
       :*  %pass  [%verify-timeout wir]
           %arvo  %b  %wait  (add now verify-timeout)
