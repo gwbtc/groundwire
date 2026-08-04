@@ -63,6 +63,25 @@ On-chain committed snapshots carry sponsorship and routing state:
   off-chain sponsorship coordination are one deferred workstream). An absent
   sponsor projects to self-sponsorship in the Jael udiff, and is never
   treated as fraud.
+- **Sponsorship flow (v9, adopted 2026-08-04).** Requesting sponsorship IS
+  attesting to the sponsor: a comet that commits `sponsor=S` in its
+  snapshot connects to S and self-attests like any peer. The moment S's
+  verifier sees a VALID attestation whose snapshot names S itself as
+  sponsor is the accept/reject decision point: on accept (the v9 default —
+  a policy hook with no rejection mechanism yet) S records the sponsee and
+  forwards for it; a future rejection is expressed by declining the
+  sponsorship role, NEVER by a `%fail` verdict or snub (the attestation
+  itself is valid). Peers route to a confidential comet via the sponsor
+  committed in its verified snapshot; a failed/unconsented sponsorship is
+  self-announcing (the sponsor does not forward). The old on-chain
+  escape/adopt handshake and the sponsor-signer desk are retired.
+- **Fief scope.** A fief is for ships with STATIC addresses — sponsors and
+  other infrastructure (its `%turf` form is literally DNS). A reliable
+  sponsor should commit a fief on-chain. Roaming/confidential comets set
+  `fief=~` and are reached via their sponsor plus dynamically learned
+  lanes; their transient addresses never touch the chain. A comet with
+  neither sponsor nor fief is not cold-reachable (reply-lane peers only) —
+  legal, but clients should warn.
 
 ## 3. Stale attestations: demote to alien, never snub
 
