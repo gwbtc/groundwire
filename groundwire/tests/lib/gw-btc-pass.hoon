@@ -111,4 +111,84 @@
   %+  expect-eq
     !>(*(unit [kel=@ud payload=hexb:btc]))
     !>((parse-publication:cc [5 0x6a.6a6a.6a6a]))
+::  ------------------------------------------------------------------
+::  Publication payload BYTE ORDER.
+::
+::  The payload is the jam's ordinary LITTLE-endian byte dump (+jam-octs),
+::  the same convention as every hash preimage in this lib and as
+::  Causeway's jam_bytes.  The shipped encoder/decoder instead used the raw
+::  jam atom as a big-endian byte string; that pair was self-consistent and
+::  inconsistent with everything else, so the desk could neither write a
+::  publication Causeway could read nor read a real one off the chain.
+::
+::  +test-publication-real-onchain is the one that matters: it decodes the
+::  ACTUAL mainnet OP_RETURN of the public comet
+::  ~ligdes-risbur-folmus-mattyp--firpec-lispec-noddyl-daplyd (spawn
+::  ec5c1fbe... in block 961.059) and re-derives the name, the spawn
+::  satpoint and the sat output's P2TR key from it alone.
+::  ------------------------------------------------------------------
+++  test-publication-payload-is-jam-octs
+  =/  pub  ^-(publication:sa [(key 'pubkey' 0) [0x2 snap ~]])
+  =/  script  (make-publication:cc pub)
+  =/  env  (parse-publication:cc script)
+  ;:  weld
+    (expect !>(?=(^ env)))
+    ::  the payload IS +jam-octs, not the raw jam atom read big-endian
+    (expect-eq !>((jam-octs:cc pub)) !>(payload:(need env)))
+    ::  ... and reading it back reproduces the publication exactly
+    (expect-eq !>(`(unit publication:sa)``pub) !>((read-publication:cc script)))
+  ==
+::
+++  c3-onchain-opret
+  ^-  hexb:btc
+  :-  263
+  0x6a.0375.7262.0109.4cfe.01e0.d7b1.e431.8330.b6a4.cbf6.1189.b748.431a.
+    2f0d.b8d5.2c9d.5a33.a360.b913.daec.f231.3fac.2b1c.523e.5eb8.af73.6889.
+    af70.cab7.8248.c063.3675.d362.06af.effe.b27a.194b.986f.008b.80ef.ecae.
+    458c.6e8c.2405.5937.5259.bd9d.df4e.c3e0.104e.c2b4.931a.7bcc.f74d.2dea.
+    253c.ed83.3454.eaa3.6900.1418.b843.cfe7.6c4d.bfa4.06af.b441.8126.649f.
+    5346.aba7.318c.f0e1.1467.2d5d.7f4f.09b7.3803.20c0.150e.291f.2fdc.d739.
+    b4c4.5738.e55b.4124.e031.9bba.6931.83d7.777f.59bd.8c25.cc77.9a05.e09f.
+    8a37.559b.eece.5d7e.3f66.0661.aad9.6486.3c4f.6444.b4e1.3f7c.de42.6863.
+    5981.461e.9b00.0448.208c.b04b.69dd.4170.9a02.b357.5877.1ba7.b840.3e86.
+    f2d1.1450.f26b.623b.bd79.5d07
+::
+++  test-publication-real-onchain
+  =/  pub  (read-publication:cc c3-onchain-opret)
+  ?~  pub
+    (expect-eq !>('decodes') !>('SHIPPED DECODER CANNOT READ A REAL PUBLICATION'))
+  =*  o    opening.u.pub
+  =/  cic  (com:nu:cric:crypto pass.u.pub)
+  ?.  ?=(%c suite.+<.cic)
+    (expect-eq !>('suite-c') !>('published pass is not suite-C'))
+  ;:  weld
+    ::  the published pass fingerprints to the comet's real @p
+    %+  expect-eq
+      !>  `@p`~ligdes-risbur-folmus-mattyp--firpec-lispec-noddyl-daplyd
+      !>  `@p`fig:ex:cic
+    ::  the blind-opening opens that pass's own hiding dat commitment
+    (expect !>(?=(^ blind-opening.o)))
+    (expect !>((verify-dat:cc dat.tw.pub.+<.cic (need blind-opening.o))))
+    ::  ... to the real spawn satpoint 72340acb...:1
+    %+  expect-eq
+      !>  ^-  sont:ord
+          :+  0x7234.0acb.1b42.16f3.e1ff.0da2.2322.79e4.3326.cd53.0833.31fb.f2ee.7774.daa9.bc54
+            1
+          0
+      !>  spawn:(need blind-opening.o)
+    ::  the published snapshot is life 1 / rift 0 with the messaging key
+    %+  expect-eq
+      !>  ^-  snapshot:sa
+          :*  life=1
+              rift=0
+              key=0xdf30.9632.f565.fddf.5e0c.c5a6.ea6c.c780.9105.6f94.e15f.12d0.e75f.70bc.7ca4.3857
+              sponsor=~
+              fief=~
+          ==
+      !>  snapshot.o
+    ::  and it recomputes the sat output's on-chain P2TR key exactly
+    %+  expect-eq
+      !>  0xca2.828c.764a.0f3e.76e3.3df0.7be9.8703.06ec.5650.af8e.cae8.8f6f.0c64.2ec8.0bee
+      !>  (state-key:cc internal-key.o snapshot.o)
+  ==
 --

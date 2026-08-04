@@ -168,14 +168,20 @@
   (cat:byt:bcu ~[[5 0x6a.0375.7262] [1 0x1] [1 kelvin] psh payload])
 ::  +make-publication: full OP_RETURN scriptPubKey for a $publication
 ::
+::    The payload is the jam's ORDINARY LITTLE-ENDIAN byte dump, i.e.
+::    exactly +jam-octs -- the same convention used by every hash preimage
+::    in this file and by Causeway's jam_bytes.  Do not "simplify" this to
+::    [(met 3 jm) jm]: that treats the jam atom as a big-endian byte string
+::    and produces a payload no other implementation can read (and cannot
+::    read a real one back).
+::
 ++  make-publication
   |=  pub=publication:sa
   ^-  hexb:btc
-  =/  jm  (jam pub)
-  (publication-script [(met 3 jm) jm])
-::  +parse-publication-payload: decode a publication from an output
-::  script.  Rejects a wrong kelvin so a future protocol version's
-::  publications are ignored, not mis-parsed.
+  (publication-script (jam-octs pub))
+::  +read-publication: decode a publication from an output script.
+::  Rejects a wrong kelvin so a future protocol version's publications
+::  are ignored, not mis-parsed.
 ::
 ++  read-publication
   |=  script=hexb:btc
@@ -184,7 +190,9 @@
   ?~  env  ~
   ?.  =(kelvin kel.u.env)  ~
   %-  mole
-  |.  ;;(publication:sa (cue dat.payload.u.env))
+  |.
+  ::  undo +jam-octs: little-endian byte dump back into the jam atom
+  ;;(publication:sa (cue (rev 3 wid.payload.u.env dat.payload.u.env)))
 ::  +parse-publication: (unit [kelvin payload]) from an output script
 ::
 ++  parse-publication
