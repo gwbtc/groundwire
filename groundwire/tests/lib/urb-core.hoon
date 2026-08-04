@@ -1,551 +1,237 @@
-/-  ord, urb, bitcoin
-/+  *test, ul=urb-core, urb-encoder, scr=btc-script, cc=gw-btc-pass
+::  tests/lib/urb-core.hoon
+::
+::  Current-protocol (kelvin-9) vectors for the OP_RETURN scanner in
+::  lib/urb-core: +find-block-reveals discovers public identities by
+::  grepping outputs for the OP_RETURN "urb" publication (and follows
+::  tracked-sat spends); +process-publication's +apply-spawn indexes a
+::  public comet and +apply-state advances its snapshot under a life
+::  gate; +update-sonts follows sat movement.  Real secp via cric/taproot.
+::
+/-  ord, urb, bitcoin, sa=self-attestation
+/+  *test, ul=urb-core, ol=ord, cc=gw-btc-pass, tr=taproot
 =>
 |%
-++  start-hash
-  0x1.62b3.04e4.d48c.3a53.d80a.96de.0210.d325.c0a9.a464.8b3c
-::
-++  start-height  943.140
-::
-++  bunt-id
-  ^-  id:block:bitcoin
-  [start-hash start-height]
-::
-++  mock-tx
-  ^-  tx:bitcoin
-  :*  id=0xabc1.2345.6789.def0.1234.5678.9abc.def0.1234.5678.9abc.def0.1234.5678
-      ^=  is
-      ^-  (list inputw:tx:bitcoin)
-      :~  :*  witness=~
-              id=0x1234.5678.9abc.def0.1234.5678.9abc.def0.1234.5678.9abc.def0.1234.5678
-              pos=0
-              sequence=[wid=4 dat=0xffff.ffff]
-              script-sig=`[wid=70 dat=0x3045.0221.00ab.cdef]
-              pubkey=`[wid=33 dat=0x279.be66.7ef9.dcbb.ac55]
-          ==
-      ==
-      ^=  os
-      ^-  (list output:tx:bitcoin)
-      :~  :*  script-pubkey=[wid=25 dat=0x76.a914.88ac]
-              value=50.000.000
-          ==
-          :*  script-pubkey=[wid=25 dat=0x76.a914.99ac]
-              value=50.000.000
-          ==
-      ==
-      locktime=0
-      nversion=1
-      segwit=~
-  ==
-::
-++  mock-block
-  ^-  block:bitcoin
-  :*  start-hash        ::  hash
-      50.000.000        ::  reward
-      start-height      ::  height
-      txs=[mock-tx]~    ::  transactions
-  ==
-::
-::  generate mock keypair
-++  cut
-  |=  sed=pass
-  =/  lyf  1  ::  $life
-  =/  xtr  0  ::  extra data
-  =<  ?>(&(?=(%c suite.+<) ?=(^ sek.+<)) .)
-  %:  pit:nu:cric:crypto
-      512  (shaz (jam sed lyf))
-      %c   (make-dat:cc [(shax sed) 0 0])
-      xtr
-  ==
-::
-++  mock-output
-  |=  sed=pass
-  ^-  output:tx:bitcoin
-  ::  use seed for script pubkey
-  :*  script-pubkey=[wid=34 dat=(end 5 sed)]
-      value=50.000.000
-  ==
-::
-++  mock-output-hash
-  |=  sed=pass
+++  secp  secp256k1:secp:crypto
+++  mk-ikey
+  |=  k=@
   ^-  @ux
-  =/  out  (mock-output sed)
-  =/  en-out  (can 3 script-pubkey.out [8 value.out] ~)
-  (shay (add 8 wid.script-pubkey.out) en-out)
-::
-++  mk-sot
-  |=  [sot=skim-sotx:urb sed=pass]
-  ^-  sotx:urb
-  =/  ent  (skim:encode:urb-encoder sot)
-  =/  sig  (sign-octs-raw:ed:crypto [512 (shaz ent)] [sgn.pub sgn.sek]:+<:(cut sed))
-  [[`@p`fig:ex:(cut sed) [~ sig]] sot]
-::
-++  mk-raw-sot
-  |=  [sot=skim-sotx:urb sed=pass]
-  ^-  octs
-  =/  ent  (skim:encode:urb-encoder sot)
-  [(met 3 ent) ent]
-::
-++  mk-skim-spawn
-  |=  sed=pass
-  ^-  skim-sotx:urb
-  [%spawn pub:ex:(cut sed) ~ [spkh=(mock-output-hash sed) vout=`0 off=0 tej=0]]
-::
-++  mk-skim-adopt
-  |=  sed=pass
-  ^-  skim-sotx:urb
-  [%adopt `@p`fig:ex:(cut sed)]
-::
-++  mock-skim-batch
-  ^-  skim-sotx:urb
-  :-  %batch
-  :~  [%fief `[%if p=.127.0.0.1 q=8.080]]  ::  set IPv4 fief
-      [%fief `[%if p=.192.168.1.1 q=80]]   ::  update IPv4 fief
-      [%fief ~]                            ::  clear fief
-  ==
-::
-++  mock-skim-fief
-  ^-  skim-sotx:urb
-  [%fief `[%if p=.127.0.0.1 q=8.080]]
-::
-++  mk-skim-escape
-  |=  sed=pass
-  ^-  skim-sotx:urb
-  [%escape `@p`fig:ex:(cut sed) ~]
-::
-++  mk-skim-cancel-escape
-  |=  sed=pass
-  ^-  skim-sotx:urb
-  [%cancel-escape parent=`@p`fig:ex:(cut sed)]
-::
-++  mk-skim-detach
-  |=  sed=pass
-  ^-  skim-sotx:urb
-  [%detach `@p`fig:ex:(cut sed)]
-::
-++  mk-skim-reject
-  |=  sed=pass
-  ^-  skim-sotx:urb
-  [%reject `@p`fig:ex:(cut sed)]
-::
-++  mk-tx-with-urb-witness
-  |=  =skim-sotx:urb
+  (compress-point:secp (mul-point-scalar:secp g:domain:curve:secp k))
+++  p2tr-spk
+  |=  q=@ux
+  ^-  hexb:bitcoin
+  [34 `@ux`(can 3 ~[[32 q] [2 0x5120]])]
+++  state-spk
+  |=  [ikey=@ux snap=snapshot:sa]
+  ^-  hexb:bitcoin
+  (p2tr-spk (state-key:cc ikey snap))
+++  mk-inputw
+  |=  [=txid:ord pos=@ud]
+  ^-  inputw:tx:bitcoin
+  [~ txid pos [4 0xffff.ffff] ~ ~]
+++  mk-tx
+  |=  [id=@ux is=(list inputw:tx:bitcoin) os=(list output:tx:bitcoin)]
   ^-  tx:bitcoin
-  =/  =urb-tx:urb       (mk-urb-tx skim-sotx 0xdead.beef)
-  =/  =data:urb-tx:urb  +.urb-tx
-  :*  id.urb-tx
-      ^-  dataw:tx:bitcoin
-      :*  ::  Convert urb inputs to bitcoin inputs
-          ^-  (list inputw:tx:bitcoin)
-          %+  turn
-            is.data
-          |=  inp=input:urb-tx:urb
-          +.inp
-          os.data
-          locktime.data
-          nversion.data
-          segwit.data
-      ==
-  ==
-::
-++  mock-coinbase-tx
+  [id is os 0 1 ~]
+++  coinbase
   ^-  tx:bitcoin
-  :*  id=0x1111.2222.3333.4444.5555.6666.7777.8888.9999.aaaa.bbbb.cccc.dddd.eeee.ffff
-      ^-  dataw:tx:bitcoin
-      :*  ^=  is
-          ^-  (list inputw:tx:bitcoin)
-          :~  :-  ~       ::  coinbase usually has no witness
-              :*  id=0x0  ::  coinbase input references null hash
-                  pos=4.294.967.295
-                  sequence=[wid=4 dat=0xffff.ffff]
-                  script-sig=~
-                  pubkey=~
-              ==
-          ==
-          ^=  os
-          ^-  (list output:tx:bitcoin)
-          :~  :*  script-pubkey=[wid=25 dat=0x76.a914.88ac]  ::  output
-                  value=50.000.000                           ::  reward
-              ==
-          ==
-          locktime=0
-          nversion=1
-          segwit=~
-      ==
+  (mk-tx 0xc0.1bba ~[(mk-inputw 0x0 4.294.967.295)] ~[[[25 0x76.a914.88ac] 50.000.000]])
+++  effs
+  |=  fx=(list [id:block:bitcoin effect:urb])
+  ^-  (list effect:urb)
+  (turn fx |=([* e=effect:urb] e))
+::  run one block through the full scanner pipeline
+::
+++  scan
+  |=  [st=state:urb =block:bitcoin]
+  ^-  [(list [id:block:bitcoin effect:urb]) state:urb]
+  =/  oc   (abed:urb-core:ul st)
+  =/  fbr  (find-block-reveals:oc block)
+  =/  ub   (apply-prevouts-and-urbify:oc +.fbr -.fbr)
+  abet:(handle-block:oc ub)
+::  ---- identity ------------------------------------------------------
+++  seed   'urb-core-comet'
+++  fund   ^-(sont:ord [0xf00d 0 0])
+++  blind  (make-blind:cc seed)
+++  dat    (make-dat:cc fund blind)
+++  pass-of
+  |=  xtr=@
+  ^-  pass
+  pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat xtr)
+++  who
+  ^-  @p
+  =/  cic  (com:nu:cric:crypto (pass-of 0))
+  `@p`fig:ex:cic
+++  cry
+  ^-  @
+  =/  cic  (com:nu:cric:crypto (pass-of 0))
+  ?>  ?=(%c suite.+<.cic)
+  `@`cry.pub.+<.cic
+::  ---- fixtures ------------------------------------------------------
+++  snap0     ^-(snapshot:sa [life=1 rift=0 key=cry sponsor=~ fief=~])
+++  ikey0     (mk-ikey 11)
+++  opening0  ^-(opening:sa [ikey0 snap0 `[fund start-height=700 blind]])
+++  pub0      ^-(publication:sa [(pass-of 0) opening0])
+++  spawn-id  0x5.9a17
+++  spawn-tx
+  ^-  tx:bitcoin
+  %:  mk-tx  spawn-id
+    ~[(mk-inputw 0xf00d 0)]
+    ~[[(state-spk ikey0 snap0) 9.500] [(make-publication:cc pub0) 0]]
   ==
+++  spawn-block  ^-(block:bitcoin [0xb.10c1 0 700 ~[coinbase spawn-tx]])
+::  a spawn whose sat-carrying output commits a DIFFERENT internal key
+::  than the opening reveals: the state-key reconstruction must not match.
 ::
-++  mk-block-with-urb-deps-output
-  |=  =skim-sotx:urb
-  ^-  block:bitcoin
-  :*  hax=0x0
-      reward=0
-      height=start-height
-      =/  tx
-        (mk-tx-with-urb-witness skim-sotx)
-      ^=  txs
-      ^-  (list tx:bitcoin)
-      :~  mock-coinbase-tx  ::  coinbase tx comes first
-          ::  XX duplicated because ned=&
-          ::       what is ned?
-          tx
-          tx
-      ==
+++  bad-spawn-tx
+  ^-  tx:bitcoin
+  %:  mk-tx  spawn-id
+    ~[(mk-inputw 0xf00d 0)]
+    ~[[(state-spk (mk-ikey 99) snap0) 9.500] [(make-publication:cc pub0) 0]]
   ==
+++  bad-spawn-block  ^-(block:bitcoin [0xb.10c1 0 700 ~[coinbase bad-spawn-tx]])
+::  a public state update: input 0 spends the comet's tracked sat, output
+::  0 commits snap1 (life 2), and the publication carries no blind-opening.
 ::
-++  bunt-deps
-  *(map [txid:ord vout:ord] [sots=(list raw-sotx:urb) value=(unit @ud)])
-::
-++  mock-deps
-  |=  sed=pass
-  ^+  bunt-deps
-  %-  my
-  :~  :-  ^-  [txid:ord vout:ord]
-          [(shax sed) 0]
-      :-  ^=  sots
-          ^-  (list raw-sotx:urb)
-          :~  :-  raw=(mk-raw-sot (mk-skim-spawn sed) sed)
-              sot=(mk-sot (mk-skim-spawn sed) sed)
-          ==
-      value=(some 50.000.000)
+++  snap1     ^-(snapshot:sa [life=2 rift=0 key=cry sponsor=~ fief=~])
+++  ikey1     (mk-ikey 13)
+++  opening1  ^-(opening:sa [ikey1 snap1 ~])
+++  pub1      ^-(publication:sa [(pass-of 1) opening1])
+++  state-id  0x5.7a7e
+++  state-tx
+  ^-  tx:bitcoin
+  %:  mk-tx  state-id
+    ~[(mk-inputw spawn-id 0)]
+    ~[[(state-spk ikey1 snap1) 9.000] [(make-publication:cc pub1) 0]]
   ==
+++  state-block  ^-(block:bitcoin [0xb.10c2 0 701 ~[coinbase state-tx]])
+::  a state update that does NOT advance life (life stays 1): rejected.
 ::
-++  mock-deps-no-value
-  |=  sed=pass
-  ^+  bunt-deps
-  %-  my
-  :~  :-  ^-  [txid:ord vout:ord]
-          [(shax sed) 0]
-      :-  ^=  sots
-          ^-  (list raw-sotx:urb)
-          :~  :-  raw=(mk-raw-sot (mk-skim-spawn sed) sed)
-              sot=(mk-sot (mk-skim-spawn sed) sed)
-          ==
-      value=~
+++  snap-noadv  ^-(snapshot:sa [life=1 rift=1 key=cry sponsor=~ fief=~])
+++  opening-noadv  ^-(opening:sa [ikey1 snap-noadv ~])
+++  pub-noadv   ^-(publication:sa [(pass-of 1) opening-noadv])
+++  noadv-tx
+  ^-  tx:bitcoin
+  %:  mk-tx  state-id
+    ~[(mk-inputw spawn-id 0)]
+    ~[[(state-spk ikey1 snap-noadv) 9.000] [(make-publication:cc pub-noadv) 0]]
   ==
+++  noadv-block  ^-(block:bitcoin [0xb.10c2 0 701 ~[coinbase noadv-tx]])
+::  a plain custody move (no publication) spending the tracked sat.
 ::
-++  bunt-effect
-  *effect:urb
-::
-++  init-state
-  ^-  state:urb
-  :*  bunt-id        ::  last indexed block
-      *sont-map:ord  ::  known satpoints
-      *insc-ids:ord  ::  transactions with inscriptions
-      *unv-ids:urb   ::  transactions with unvelopes
-  ==
-::
-++  bunt-fx
-  ^-  (list [id:block:bitcoin effect:urb])
-  [[bunt-id bunt-effect]]~
-::
-++  mock-urb-coinbase-tx
-  ^-  tx:urb-tx:urb
-  :-  id=0x1111.2222.3333.4444.5555.6666.7777.8888.9999.aaaa.bbbb.cccc.dddd.eeee.ffff
-  :*  ^=  is
-      ^-  (list input:urb-tx:urb)
-      :~  :-  :-  ~  ::  empty sots list - coinbase has no urb data
-              0      ::  value 0 - coinbase has no input value
-          ^-  inputw:tx:bitcoin
-          :-  ~
-          :*  id=0x0
-              pos=4.294.967.295
-              sequence=[wid=4 dat=0xffff.ffff]
-              script-sig=~
-              pubkey=~
-          ==
-      ==
-      ^=  os
-      ^-  (list output:tx:bitcoin)
-      :~  :*  script-pubkey=[wid=25 dat=0x76.a914.88ac]  ::  output
-              value=50.000.000                           ::  reward
-          ==
-      ==
-      locktime=0
-      nversion=1
-      segwit=~
-  ==
-::
-++  mk-urb-tx
-  |=  [=skim-sotx:urb sed=pass]
-  ^-  tx:urb-tx:urb
-  =/  sot  (mk-sot skim-sotx sed)      ::  signed sotx
-  =/  raw  (mk-raw-sot skim-sotx sed)  ::  encoded unvelope
-  :*  id=(shax sed)
-      ^-  data:urb-tx:urb
-      :*  ^=  is
-          ^-  (list input:urb-tx:urb)
-          :~  :-  :-  :~  :-  raw
-                          sot
-                      ==
-                  50.000.000
-              :-  ^=  witness
-                      :~  raw
-                      [wid=0 dat=0x0]  :: OP_0 (for P2TR structure)
-                  ==
-              :*  id=(shax sed)
-                  pos=0
-                  sequence=[wid=4 dat=0xffff.ffff]
-                  script-sig=~  ::  empty for P2TR
-                  pubkey=~      ::  empty for P2TR
-              ==
-          ==
-          ^=  os
-          ^-  (list output:tx:bitcoin)
-          :~  (mock-output sed)
-              (mock-output (add 1 sed))
-          ==
-          locktime=0
-          nversion=2  ::  version 2 for taproot
-          segwit=`1   ::  segwit version 1 for taproot
-      ==
-  ==
-::
-++  mk-urb-block
-  |=  =skim-sotx:urb
-  ^-  urb-block:urb
-  =/  urb-tx
-    (mk-urb-tx skim-sotx 0xdead.beef)
-  :*  hax=start-hash
-      reward=0
-      height=start-height
-      ^=  txs
-      ^-  (list urb-tx:urb)
-      :~  mock-urb-coinbase-tx
-          ::  XX duplicated for .ned in +urb-core
-          urb-tx
-          urb-tx
-      ==
-  ==
-::
-++  mock-precommits
-  |=  sed=pass
-  ^-  (map [txid:ord vout:ord] [commit=urb-tx:urb precommit=urb-tx:urb])
-  =/  tx  (mk-urb-tx mock-skim-fief sed)
-  %-  my
-  ~[[[(shax sed) 0] [tx tx]]]
-::
-++  comet-for
-  |=  sed=pass
-  ^-  ship
-  `@p`fig:ex:(cut sed)
-::
-++  dead-comet  (comet-for 0xdead.beef)
-++  cafe-comet  (comet-for 0xcafe.babe)
-++  feed-comet  (comet-for 0xfeed.face)
+++  move-id  0x3.0edd
+++  move-tx
+  ^-  tx:bitcoin
+  (mk-tx move-id ~[(mk-inputw spawn-id 0)] ~[[(p2tr-spk (mk-ikey 21)) 9.400]])
+++  move-block  ^-(block:bitcoin [0xb.10c2 0 701 ~[coinbase move-tx]])
 --
-::
 |%
-++  test-abed
-  =/  oc  urb-core:ul
-  =.  oc  oc(state init-state)
-  %+  expect-eq
-    !>  oc
-    !>  (abed:oc init-state)
+::  ---- find-block-reveals -------------------------------------------
+++  test-find-detects-op-return
+  =/  oc   (abed:urb-core:ul *state:urb)
+  =/  fbr  (find-block-reveals:oc spawn-block)
+  ;:  weld
+    ::  the spawn's funding input is recorded in the reveals map
+    ::
+    (expect !>(?=(^ -.fbr)))
+    ::  the filtered block keeps the coinbase + the publishing tx
+    ::
+    (expect-eq !>(2) !>((lent txs.+.fbr)))
+  ==
 ::
-++  test-emit
-  =/  oc  urb-core:ul
-  =.  oc  oc(block-id.state bunt-id)
-  %+  expect-eq
-    !>  oc(fx :-([bunt-id bunt-effect] ~))
-    !>  (emit:oc bunt-effect)
-::
-++  test-emil
-  =/  oc  urb-core:ul
-  %+  expect-eq
-    !>  (emit:oc bunt-effect)
-    !>  (emil:oc [bunt-effect]~)
-::
-++  test-abet
-  =/  oc  urb-core:ul
-  =.  oc  (abed:oc init-state)
-  =.  oc  (emit:oc bunt-effect)
-  %+  expect-eq
-    !>  [(flop fx:oc) state:oc]
-    !>  abet:oc
-::
-++  test-handle-block-state
-  =/  oc     urb-core:ul
-  =.  oc     (abed:oc init-state)
-  =.  oc
-    %+  handle-block:oc
-      (mk-urb-block (mk-skim-spawn 0xdead.beef))
-    (mock-precommits 0xdead.beef)
-  =/  ex-oc  urb-core:ul
-  =.  ex-oc  (abed:ex-oc init-state)
-  =.  ex-oc  ex-oc(num.block-id.state +(start-height))
-  =.  ex-oc
-    %+  handle-tx:ex-oc
-      (mk-urb-tx (mk-skim-spawn 0xdead.beef) 0xdead.beef)
-    (mock-precommits 0xdead.beef)
-  %+  expect-eq
-    !>  state.ex-oc
-    !>  state.oc
-::
-++  test-handle-tx-spawn
-  =/  oc  urb-core:ul
-  =.  oc  (abed:oc init-state)
-  =.  oc
-    %+  handle-tx:oc
-      (mk-urb-tx (mk-skim-spawn 0xdead.beef) 0xdead.beef)
-    (mock-precommits 0xdead.beef)
-  =/  ex-spawn-fx
-    ^-  (list [id:block:bitcoin effect:urb])
-    :~  :-  bunt-id
-        [%xfer [(shax 0xdead.beef) 0 0] [(shax 0xdead.beef) 0 0]]
-        :-  bunt-id
-        [%point dead-comet %fief ~]
-        :-  bunt-id
-        [%point dead-comet %keys 1 pub:ex:(cut 0xdead.beef)]
-        :-  bunt-id
-        [%point dead-comet %sponsor `dead-comet]
-        :-  bunt-id
-        [%point dead-comet %owner [(shax 0xdead.beef) 0 0]]
+++  test-find-detects-tracked-spend
+  ::  a tx carrying no publication but spending a tracked sat is still
+  ::  relevant (owner-initiated custody move).
+  ::
+  =/  tracked=state:urb
+    :*  [0xb007 699]
+        (put-com:si:ol *sont-map:ord spawn-id 0 0 9.500 who)
+        *insc-ids:ord
+        *unv-ids:urb
     ==
-  %+  expect-eq
-    !>  ex-spawn-fx
-    !>  fx.oc
+  =/  oc   (abed:urb-core:ul tracked)
+  =/  fbr  (find-block-reveals:oc move-block)
+  ;:  weld
+    (expect !>(?=(^ -.fbr)))
+    (expect-eq !>(2) !>((lent txs.+.fbr)))
+  ==
+::  ---- apply-spawn --------------------------------------------------
+++  test-apply-spawn-indexes-public-comet
+  =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]
+    (scan *state:urb spawn-block)
+  =/  pt  (~(get by unv-ids.st) who)
+  ;:  weld
+    ::  the comet is indexed at its landing satpoint
+    ::
+    %+  expect-eq
+      !>  `[[[spawn-id 0 0] ~] 0 1 (pass-of 0) [%.n who] ~ ~]
+      !>  pt
+    ::  the sat is recorded as owned by the comet
+    ::
+    (expect-eq !>(`who) !>((get-com:si:ol sont-map.st spawn-id 0 0)))
+    ::  the jael udiffs are emitted, owner first
+    ::
+    %+  expect-eq
+      !>  ^-  (list effect:urb)
+          :~  [%point who %owner [spawn-id 0 0]]
+              [%point who %sponsor `who]
+              [%point who %keys 1 (pass-of 0)]
+              [%point who %rift 0]
+              [%point who %fief ~]
+          ==
+      !>  (effs fx)
+  ==
 ::
-++  test-handle-tx-adopt
-  =/  oc  urb-core:ul
-  =.  oc  (abed:oc init-state)
-  =.  oc
-    %+  handle-tx:oc
-      (mk-urb-tx (mk-skim-spawn 0xdead.beef) 0xdead.beef)
-    (mock-precommits 0xdead.beef)
-  =.  oc
-    %+  handle-tx:oc
-      (mk-urb-tx (mk-skim-spawn 0xcafe.babe) 0xcafe.babe)
-    (mock-precommits 0xcafe.babe)
-  =.  oc
-    (handle-tx:oc (mk-urb-tx (mk-skim-escape 0xcafe.babe) 0xdead.beef) ~)
-  =.  fx.oc  ~
-  =.  oc
-    (handle-tx:oc (mk-urb-tx (mk-skim-adopt 0xdead.beef) 0xcafe.babe) ~)
-  =/  ex-adopt-fx
-    ^-  (list [id:block:bitcoin effect:urb])
-    :~  :-  bunt-id
-        [%xfer [(shax 0xcafe.babe) 0 0] [(shax 0xcafe.babe) 0 0]]
-        :-  bunt-id
-        [%point dead-comet %sponsor [~ cafe-comet]]
-    ==
-  %+  expect-eq
-    !>  ex-adopt-fx
-    !>  fx.oc
+++  test-apply-spawn-rejects-bad-state-key
+  ::  the sat output commits a state-key the opening did not; not indexed
+  ::
+  =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]
+    (scan *state:urb bad-spawn-block)
+  ;:  weld
+    (expect !>(?=(~ (~(get by unv-ids.st) who))))
+    (expect !>(?=(~ (effs fx))))
+  ==
+::  ---- apply-state --------------------------------------------------
+++  test-apply-state-advances-life
+  =/  [* st1=state:urb]  (scan *state:urb spawn-block)
+  =/  [* st2=state:urb]  (scan st1 state-block)
+  =/  pt  (need (~(get by unv-ids.st2) who))
+  ;:  weld
+    ::  networking fields advanced to snap1
+    ::
+    (expect-eq !>(2) !>(life.net.pt))
+    (expect-eq !>((pass-of 1)) !>(pass.net.pt))
+    ::  update-sonts moved the comet's owned sat to the new tx
+    ::
+    (expect-eq !>([state-id 0 0]) !>(sont.own.pt))
+  ==
 ::
-++  test-handle-tx-escape
-  =/  oc  urb-core:ul
-  =.  oc  (abed:oc init-state)
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xdead.beef) 0xdead.beef) (mock-precommits 0xdead.beef))
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xcafe.babe) 0xcafe.babe) (mock-precommits 0xcafe.babe))
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xfeed.face) 0xfeed.face) (mock-precommits 0xfeed.face))
-  =.  fx.oc  ~
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-escape 0xfeed.face) 0xcafe.babe) ~)
-  =/  ex-escape-fx
-    ^-  (list [id:block:bitcoin effect:urb])
-    :~  :-  bunt-id
-        [%xfer [(shax 0xcafe.babe) 0 0] [(shax 0xcafe.babe) 0 0]]
-        :-  bunt-id
-        [%point cafe-comet %escape [~ feed-comet]]
-    ==
-  %+  expect-eq
-    !>  ex-escape-fx
-    !>  fx.oc
-::
-++  test-handle-tx-cancel-escape
-  =/  oc  urb-core:ul
-  =.  oc  (abed:oc init-state)
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xdead.beef) 0xdead.beef) (mock-precommits 0xdead.beef))
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xcafe.babe) 0xcafe.babe) (mock-precommits 0xcafe.babe))
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xfeed.face) 0xfeed.face) (mock-precommits 0xfeed.face))
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-escape 0xfeed.face) 0xcafe.babe) ~)
-  =.  fx.oc  ~
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-cancel-escape 0xfeed.face) 0xcafe.babe) ~)
-  =/  ex-cancel-escape-fx
-    ^-  (list [id:block:bitcoin effect:urb])
-    :~  :-  bunt-id
-        [%xfer [(shax 0xcafe.babe) 0 0] [(shax 0xcafe.babe) 0 0]]
-        :-  bunt-id
-        [%point cafe-comet %escape ~]
-    ==
-  %+  expect-eq
-    !>  ex-cancel-escape-fx
-    !>  fx.oc
-::
-++  test-handle-tx-reject
-  =/  oc  urb-core:ul
-  =.  oc  (abed:oc init-state)
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xdead.beef) 0xdead.beef) (mock-precommits 0xdead.beef))
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xcafe.babe) 0xcafe.babe) (mock-precommits 0xcafe.babe))
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xfeed.face) 0xfeed.face) (mock-precommits 0xfeed.face))
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-escape 0xfeed.face) 0xcafe.babe) ~)
-  =.  fx.oc  ~
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-reject 0xcafe.babe) 0xfeed.face) ~)
-  =/  ex-reject-fx
-    ^-  (list [id:block:bitcoin effect:urb])
-    :~  :-  bunt-id
-        [%xfer [(shax 0xfeed.face) 0 0] [(shax 0xfeed.face) 0 0]]
-        :-  bunt-id
-        [%point cafe-comet %escape ~]
-    ==
-  %+  expect-eq
-    !>  ex-reject-fx
-    !>  fx.oc
-::
-++  test-handle-tx-detach
-  =/  oc  urb-core:ul
-  =.  oc  (abed:oc init-state)
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xdead.beef) 0xdead.beef) (mock-precommits 0xdead.beef))
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xcafe.babe) 0xcafe.babe) (mock-precommits 0xcafe.babe))
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-escape 0xdead.beef) 0xcafe.babe) ~)
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-adopt 0xcafe.babe) 0xdead.beef) ~)
-  =.  fx.oc  ~
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-detach 0xcafe.babe) 0xdead.beef) ~)
-  =/  ex-detach-fx
-    ^-  (list [id:block:bitcoin effect:urb])
-    :~  :-  bunt-id
-        [%xfer [(shax 0xdead.beef) 0 0] [(shax 0xdead.beef) 0 0]]
-        :-  bunt-id
-        [%point cafe-comet %sponsor `cafe-comet]
-    ==
-  %+  expect-eq
-    !>  ex-detach-fx
-    !>  fx.oc
-::
-++  test-handle-tx-fief
-  =/  oc  urb-core:ul
-  =.  oc  (abed:oc init-state)
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xdead.beef) 0xdead.beef) (mock-precommits 0xdead.beef))
-  =.  fx.oc  ~
-  =.  oc  (handle-tx:oc (mk-urb-tx mock-skim-fief 0xdead.beef) ~)
-  =/  ex-fief-fx
-    ^-  (list [id:block:bitcoin effect:urb])
-    :~  :-  bunt-id
-        [%xfer [(shax 0xdead.beef) 0 0] [(shax 0xdead.beef) 0 0]]
-        :-  bunt-id
-        [%point dead-comet %fief `[%if p=.127.0.0.1 q=8.080]]
-    ==
-  %+  expect-eq
-    !>  ex-fief-fx
-    !>  fx.oc
-::
-++  test-handle-tx-batch
-  =/  oc  urb-core:ul
-  =.  oc  (abed:oc init-state)
-  =.  oc  (handle-tx:oc (mk-urb-tx (mk-skim-spawn 0xdead.beef) 0xdead.beef) (mock-precommits 0xdead.beef))
-  =.  fx.oc  ~
-  =.  oc  (handle-tx:oc (mk-urb-tx mock-skim-batch 0xdead.beef) ~)
-  =/  ex-batch-fx
-    ^-  (list [id:block:bitcoin effect:urb])
-    :~  :-  bunt-id
-        [%xfer [(shax 0xdead.beef) 0 0] [(shax 0xdead.beef) 0 0]]
-        :-  bunt-id
-        [%point dead-comet %fief ~]
-        :-  bunt-id
-        [%point dead-comet %fief `[%if p=.192.168.1.1 q=80]]
-        :-  bunt-id
-        [%point dead-comet %fief `[%if p=.127.0.0.1 q=8.080]]
-    ==
-  %+  expect-eq
-    !>  ex-batch-fx
-    !>  fx.oc
+++  test-apply-state-life-gate-rejects
+  ::  a publication that does not advance life leaves the networking
+  ::  state untouched (life stays 1), even though the sat still moves.
+  ::
+  =/  [* st1=state:urb]  (scan *state:urb spawn-block)
+  =/  [* st2=state:urb]  (scan st1 noadv-block)
+  =/  pt  (need (~(get by unv-ids.st2) who))
+  ;:  weld
+    (expect-eq !>(1) !>(life.net.pt))
+    (expect-eq !>((pass-of 0)) !>(pass.net.pt))
+  ==
+::  ---- update-sonts -------------------------------------------------
+++  test-update-sonts-follows-sat
+  ::  a plain move relocates the comet's sat and emits %xfer; no publication
+  ::
+  =/  [* st1=state:urb]     (scan *state:urb spawn-block)
+  =/  [fx=(list [id:block:bitcoin effect:urb]) st2=state:urb]
+    (scan st1 move-block)
+  =/  pt  (need (~(get by unv-ids.st2) who))
+  ;:  weld
+    (expect-eq !>([move-id 0 0]) !>(sont.own.pt))
+    ::  the old sat entry no longer names the comet
+    ::
+    (expect-eq !>(~) !>((get-com:si:ol sont-map.st2 spawn-id 0 0)))
+    (expect-eq !>(`who) !>((get-com:si:ol sont-map.st2 move-id 0 0)))
+    ::  a %xfer effect from the old to the new satpoint was emitted
+    ::
+    (expect !>((lien (effs fx) |=(e=effect:urb =(e [%xfer [spawn-id 0 0] [move-id 0 0]])))))
+  ==
 --
