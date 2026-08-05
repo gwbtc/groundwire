@@ -705,6 +705,23 @@
 ::
 ++  scan-batch  100
 ::
+::  +block-fetch-timeout: how long one /block/height/<h> fetch may take
+::
+::    A light-client watch has no timeout of its own: if the node never
+::    answers (no peer will serve the block, the sidecar died, ...) the
+::    strand waits forever, and because the block timer is only re-armed
+::    when the thread RETURNS, the public scanner would stop permanently
+::    with no error and no retry.  The confidential verifier is covered
+::    against the same hazard by +stuck-job-guard; this is the scanner's
+::    equivalent.  Bounding the individual fetch rather than the batch
+::    keeps a legitimately slow +scan-batch run from being killed.
+::
+::    On expiry the strand fails, +on-arvo's %blocks failure branch logs
+::    and re-arms in 30s, and the batch is simply rescanned -- the cursor
+::    only advances on a thread that returned.
+::
+++  block-fetch-timeout  ~m5
+::
 ::  +scan-again: re-arm the block timer
 ::
 ::    Immediately if the scanner is still behind the settled tip (a batch
@@ -760,7 +777,9 @@
     ?:  =(i from)  (pure:m !>([urb-state [fx state]:uc]))
     ~&  >  [%gw-btc-scanned from=from to=(dec i) settled-tip=last-settled-block]
     (pure:m !>([urb-state [fx state]:uc]))
-  ;<  =block:bitcoin  bind:m  (fetch-block-at:lca our i)
+  ;<  =block:bitcoin  bind:m
+    %+  (set-timeout:strandio ,block:bitcoin)  block-fetch-timeout
+    (fetch-block-at:lca our i)
   ::  Filter the block to urb-relevant txs, fill in the input values we
   ::  already track, and run the OP_RETURN scanner over the result.
   =/  revs-and-block  (find-block-reveals:uc block)
