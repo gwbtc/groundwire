@@ -71,9 +71,13 @@
 ::    earlier revision did) forced operators to poke the public-indexer
 ::    bootstrap just to turn confidential verification on.
 ::
+::    (.indexing bunts to %.n on purpose -- the bunt of ? is %.y, and an
+::    agent that came up believing its index was already bootstrapped
+::    would never scan a block.)
+::
 +$  gw-state
   $:  urb-state=state:urb
-      indexing=?
+      indexing=_|
       best=(unit id:block:bc)
       inflight=(map ship inflight-writ)
       confidential=(set ship)
@@ -101,7 +105,7 @@
   ::  agent name).  Jael watches /writs for %writ-response /
   ::  %anew-response / %azimuth-udiffs facts.
   ::
-  :_  this(indexing |)
+  :_  this
   :~  [%pass /anex %arvo %j %anex /writs]
       [%pass /best-block %agent [our.bowl light-client-agent:lca] %watch /best-block]
   ==

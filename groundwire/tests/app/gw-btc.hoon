@@ -6,7 +6,7 @@
 ::  a negative Jael verdict -- a valid ship whose sponsorship we refuse
 ::  must not be snubbed.
 ::
-/-  urb, sa=self-attestation
+/-  urb, sa=self-attestation, ord, bitcoin
 /+  *test, cc=gw-btc-pass
 /=  gw-btc  /app/gw-btc
 =>
@@ -197,5 +197,67 @@
   ;:  weld
     (expect-eq !>(*(set ship)) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/declined)))))
     (expect-eq !>(*(map ship *)) !>(;;((map ship *) (peek-noun (~(on-peek agent bowl0) /x/sponsees)))))
+  ==
+::  The public block scanner is bootstrapped by HEIGHT.  Under the light
+::  client a block is addressed by height alone, so choosing a start point
+::  no longer means hand-building a $state:urb around a block hash.
+::  .start is the FIRST block to scan, so the cursor lands one below it.
+::
+++  test-index-from-height-sets-cursor
+  =/  agent  gw-btc
+  =^  cards  agent  (~(on-poke agent bowl0) %gw-index-from !>(`@ud`961.055))
+  =/  bid  (peek-noun (~(on-peek agent bowl0) /x/block-id))
+  ;:  weld
+    (expect-eq !>(`id:block:bitcoin`[0x0 961.054]) !>(;;(id:block:bitcoin bid)))
+    ::  and the block timer is armed immediately
+    (expect-eq !>(1) !>((lent (app-cards cards))))
+  ==
+::  Bootstrap is one-shot: a second poke must not silently rewind the
+::  cursor (it would mix two index epochs).
+::
+++  test-index-from-height-is-one-shot
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-poke agent bowl0) %gw-index-from !>(`@ud`961.055))
+  =^  cards  agent  (~(on-poke agent bowl0) %gw-index-from !>(`@ud`700.000))
+  =/  bid  (peek-noun (~(on-peek agent bowl0) /x/block-id))
+  ;:  weld
+    (expect-eq !>(`id:block:bitcoin`[0x0 961.054]) !>(;;(id:block:bitcoin bid)))
+    (expect-eq !>(~) !>((app-cards cards)))
+  ==
+::  UPGRADE.  Revisions before the light-client port carried a leading
+::  `rpc=req-to:btcio` ([url=@t auth]) ahead of urb-state.  +on-load must
+::  drop it rather than crash -- an unmigrated +on-load bricks every
+::  existing pier on upgrade, and a %gw-btc that will not load is a ship
+::  that answers no attestation at all.
+::
+++  test-on-load-drops-legacy-rpc-field
+  =/  legacy=*
+    :*  ['http://localhost:8332' ~]                  :: rpc  (dropped)
+        `state:urb`[[0xdead.beef 943.140] ~ ~ ~]     :: urb-state
+        %.y                                          :: ready -> indexing
+        ~                                            :: best
+        ~  ~  ~  ~  0  ~  ~
+    ==
+  =/  agent  gw-btc
+  =^  cards  agent  (~(on-load agent bowl0) !>(legacy))
+  ;:  weld
+    ::  the index survived the migration intact
+    %+  expect-eq
+      !>  `id:block:bitcoin`[0xdead.beef 943.140]
+      !>  ;;(id:block:bitcoin (peek-noun (~(on-peek agent bowl0) /x/block-id)))
+    (expect-eq !>(~) !>((app-cards cards)))
+  ==
+::  ... and the current shape still loads, unchanged.
+::
+++  test-on-load-round-trips-current-state
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-poke agent bowl0) %gw-index-from !>(`@ud`961.055))
+  =^  *      agent  (~(on-poke agent bowl0) %gw-sponsor-decline !>(`ship`~wes))
+  =^  *      agent  (~(on-load agent bowl0) ~(on-save agent bowl0))
+  ;:  weld
+    %+  expect-eq
+      !>  `id:block:bitcoin`[0x0 961.054]
+      !>  ;;(id:block:bitcoin (peek-noun (~(on-peek agent bowl0) /x/block-id)))
+    (expect-eq !>((silt ~[~wes])) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/declined)))))
   ==
 --
