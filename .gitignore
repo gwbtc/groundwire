@@ -12,3 +12,6 @@ __pycache__/
 
 # claude
 .claude
+
+# regtest harness runtime state (piers, bitcoind datadir, logs) — never commit
+testnet/run/
