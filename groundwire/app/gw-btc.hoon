@@ -1277,7 +1277,18 @@
     udiffs
   |=  [=ship =udiff:point:jael]
   ^-  card
-  [%give %fact [/(scot %p ship)]~ %azimuth-udiffs !>([udiff]~)]
+  ::  The per-ship fact must carry the SAME $udiffs shape as the broadcast
+  ::  on ~[/]: jael mold-casts every %azimuth-udiffs fact with
+  ::  ;;(=udiffs:point ...) (sys/vane/jael.hoon +take, ~985), and
+  ::  $udiffs is (list [=ship =udiff]) -- not (list udiff).  Dropping the
+  ::  .ship head put the udiff's $id (a cell) where jael wanted an @p, so
+  ::  the clam bailed %exit and took the whole event down with it.  Jael
+  ::  only subscribes to /<ship> once it already tracks that ship, which
+  ::  is why a SPAWN indexed fine and the first STATE UPDATE afterwards
+  ::  crashed: the scanner's batch was rolled back forever and no peer
+  ::  could ever learn a public comet's new fief/sponsor/life/key.
+  =/  =udiffs:point:jael  [ship udiff]~
+  [%give %fact [/(scot %p ship)]~ %azimuth-udiffs !>(udiffs)]
 ::
 ++  fx-to-udiffs
   |=  fx=(list [id:block:bitcoin effect:urb])
