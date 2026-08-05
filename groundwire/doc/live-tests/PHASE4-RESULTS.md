@@ -1,7 +1,49 @@
-# Phase 4 — sponsorship (live mainnet), run 2
+# Phase 4 — sponsorship (live mainnet)
 
-Date: 2026-08-05 (UTC). Operator: Claude (agent). Second attempt: run 1 completed
-setup, then all three ships wedged and produced no matrix results.
+> **Read this first — there were TWO concurrent run-2s, and that was an
+> orchestration error, not a plan.** The coordinator wrongly believed run 1 had
+> died (it had not — see the liveness-signal correction below) and dispatched a
+> second agent onto the same three droplets and the same three comet
+> identities. Both wrote to this same results path, so earlier revisions of
+> this file mix the two. The second agent stood down rather than contest the
+> ports. Consequences to keep straight:
+>
+> - **Run 1 DID complete the matrix.** Its results: 4.1 PASS, 4.2 PASS,
+>   **4.3 FAIL**, 4.4 PASS, 4.5 PASS, 4.6 PASS, 4.7 PASS, 4.8 PASS
+>   (characterised). Caveat: 4.4/4.5/4.6 were driven by injecting the
+>   `[%jael-writ …]` poke rather than by real network re-attestation, because
+>   the sponsor already held C1's point at life 2 and `+on-hear-open` only
+>   re-issues a writ on a life *increase*. The no-snub half was read from live
+>   `/ax/snubbed`. Run 1 also broadcast the two on-chain state updates
+>   (`8e713009…` @961129, `a8553a3a…` @961130) and diagnosed the
+>   `~hopned-…` anomaly as our own unit-test fixture.
+> - **Run 2 did NOT complete the matrix** — it stood down first. Its value is
+>   the infrastructure findings below, which are the more durable output:
+>   the autocommit diagnosis, the corrected liveness signal, and the
+>   watchdog counts.
+> - **Neither run tested the fixed kernel.** Both ran a pill predating
+>   `c0d8bb95c7`, so kernel bugs A (post-promotion re-attestation dropped)
+>   and B (rekey does not re-attest) were PRESENT throughout. Do not quote
+>   either run as evidence that the fixed kernel works.
+>
+> Two corrections that supersede earlier claims, including ones the
+> coordinator made confidently:
+>
+> - **The `<pier>/.urb/log` mtime liveness signal is inert.** That path is a
+>   directory; LMDB writes into an already-created `data.mdb` and never
+>   touches the dirent — measured 21 h stale on a ship demonstrably
+>   processing events. Use the newest mtime across `<pier>/.urb/log/*/data.mdb`
+>   (glob: piers roll epochs). Every earlier "the ship is wedged" diagnosis
+>   built on the directory mtime is unproven.
+> - **The ship-killer was kiln autocommit, not the light client.** `|commit
+>   <desk> %.y` arms a 1 Hz repeating timer that unmounting does not cancel
+>   (`lib/hood/kiln.hoon:659-670`), measured at 0.4–0.8 events/s/desk forever
+>   on a 2-vCPU box. `|cancel-autocommit` stopped it dead. This is a harness
+>   bug, and it materially weakens the earlier claim that the light client had
+>   wedged us five times: run 2 logged **zero unexplained light-client wedges
+>   in ~80 ship-minutes**.
+
+Date: 2026-08-05 (UTC). Operator: Claude (agent). What follows is run 2.
 
 Repo `/Users/trent/gw-building/groundwire`, branch `hd/cc-landing`, desk deployed
 from tip **`0c300ac`** (`git archive HEAD groundwire`, `doc/` stripped so a
