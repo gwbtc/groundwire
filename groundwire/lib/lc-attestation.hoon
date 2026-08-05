@@ -1,8 +1,22 @@
 ::  lib/lc-attestation.hoon
 ::
-::  Resolve a current %gw-btc custody log through the local light client
-::  (the REAL gwbtc/node agent, +light-client-agent below), then hand the
-::  deterministic transaction vector to ++run-checks:lsa.
+::  THE light-client access layer.  Every byte %gw-btc reads off the chain
+::  comes through here, for BOTH of its jobs:
+::
+::    - the CONFIDENTIAL verifier: resolve a current %gw-btc custody log
+::      through the local light client (the REAL gwbtc/node agent,
+::      +light-client-agent below), then hand the deterministic transaction
+::      vector to ++run-checks:lsa.
+::
+::    - the PUBLIC block scanner: fetch whole blocks by height and hand
+::      them to lib/urb-core's OP_RETURN scanner as $block:bitcoin (see
+::      +fetch-block-at).  There is NO Bitcoin Core RPC anywhere in %gw-btc
+::      and no -txindex requirement: a light-client-only deployment indexes
+::      public comets and verifies confidential ones with the same node.
+::
+::  Both jobs share one set of node<->desk conversions (+flip-hexb and
+::  friends).  Do not add a second copy: the two byte orders type-check
+::  into each other silently and a missing flip fails only on mainnet.
 ::
 ::  The node's light-client API is subscription-based: each REQUEST watch
 ::  answers exactly one fact under the agent's fact mark and then kicks, so
@@ -258,6 +272,124 @@
   |=  to=transaction-output:bcm
   ^-  output:tx:bc
   [(flip-hexb script-pubkey.to) value.to]
+::
+::  ------------------------------------------------------------------
+::  PUBLIC BLOCK SCANNER: whole blocks, by height
+::  ------------------------------------------------------------------
+::
+::  +fetch-block-at: block .height as the desk's $block:bitcoin
+::
+::    One /block/height/<h> watch, one fact, one kick.  The node answers
+::    the height form for any height it has, so a disagreeing block-info
+::    height is a protocol violation and fails the strand rather than
+::    silently indexing the wrong block.
+::
+++  fetch-block-at
+  |=  [our=@p height=@ud]
+  =/  m  (strand:strandio ,block:bc)
+  ^-  form:m
+  ;<  b-cage=cage  bind:m  (watch-block-height our height)
+  =/  bres  !<(block-by-height:update:lc q.b-cage)
+  ?.  =(height block-height.bres)
+    %+  strand-fail:strandio  %scan-block-height-mismatch
+    [>[height block-height.bres]< ~]
+  (pure:m (common-block-to-bc block-hash.bres height +.bres))
+::
+::  +common-block-to-bc: a node $block into the desk's $block:bitcoin
+::
+::    The node's $block is just [header txs] -- no block hash, no height,
+::    and (crucially) NO TXIDS: its transactions are positional.  The
+::    desk's scanner keys everything on txids, so each one is recomputed
+::    here from the transaction itself (+node-txid).  The reward is the
+::    height's block subsidy, exactly as the old RPC path derived it.
+::
+++  common-block-to-bc
+  |=  [haz=@ux height=@ud blk=block:bcm]
+  ^-  block:bc
+  :*  haz
+      (block-subsidy height)
+      height
+      %+  turn  txs.blk
+      |=  ct=transaction:bcm
+      ^-  tx:bc
+      (common-tx-to-bc (node-txid ct) ct)
+  ==
+::
+::  +block-subsidy: newly issued sats at .height
+::
+::    The first sats of the coinbase output range, before the fees that
+::    ++handle-block:urb-core accumulates behind them.
+::
+++  block-subsidy
+  |=  height=@ud
+  ^-  @ud
+  (div 5.000.000.000 (bex (div height 210.000)))
+::
+::  +node-txid: the txid of a node-shape transaction
+::
+::    A faithful port of +make-txid:serialization in gwbtc/node: double
+::    SHA-256 over the LEGACY (witness-stripped) serialization.  It works
+::    entirely in the NODE's byte order -- `dat` accumulates with the
+::    first wire byte in the low byte, which is also what +shay consumes
+::    -- so no flip appears anywhere in here.  The result is the ordinary
+::    display-order txid as a number, i.e. the same convention the node's
+::    own /transaction facts and Causeway's custody logs use.
+::
+::    Getting this wrong is silent: a wrong txid still indexes, it just
+::    indexes a satpoint nothing will ever match.  It is pinned against
+::    real mainnet data in tests/lib/lc-attestation.
+::
+++  node-txid
+  |=  ct=transaction:bcm
+  ^-  @ux
+  =/  ser=hexb:bcm  (en-legacy-tx ct)
+  `@ux`(shay 32 (shay wid.ser dat.ser))
+::
+::  +en-node-cat: append .wid bytes of .dat after the bytes already held
+::
+++  en-node-cat
+  |=  [acc=hexb:bcm wid=@ud dat=@]
+  ^-  hexb:bcm
+  [(add wid.acc wid) `@ux`(can 3 ~[[wid.acc dat.acc] [wid dat]])]
+::
+::  +en-node-csiz: Bitcoin's compactsize varint
+::
+++  en-node-csiz
+  |=  [acc=hexb:bcm n=@]
+  ^-  hexb:bcm
+  ?:  (lte n 0xfc)  (en-node-cat acc 1 n)
+  =/  len  (met 3 n)
+  ?:  (lte len 2)  (en-node-cat (en-node-cat acc 1 0xfd) 2 n)
+  ?:  (lte len 4)  (en-node-cat (en-node-cat acc 1 0xfe) 4 n)
+  (en-node-cat (en-node-cat acc 1 0xff) 8 n)
+::
+::  +en-legacy-tx: pre-segwit transaction serialization (no witness)
+::
+++  en-legacy-tx
+  |=  ct=transaction:bcm
+  ^-  hexb:bcm
+  =/  acc=hexb:bcm  (en-node-cat [0 0x0] 4 version.ct)
+  =.  acc  (en-node-csiz acc (lent inputs.ct))
+  =.  acc
+    =/  ins  inputs.ct
+    |-  ^-  hexb:bcm
+    ?~  ins  acc
+    =/  a  (en-node-cat acc 32 txid.i.ins)
+    =.  a  (en-node-cat a 4 vout.i.ins)
+    =.  a  (en-node-csiz a wid.script-sig.i.ins)
+    =.  a  (en-node-cat a wid.script-sig.i.ins dat.script-sig.i.ins)
+    =.  a  (en-node-cat a 4 sequence.i.ins)
+    $(ins t.ins, acc a)
+  =.  acc  (en-node-csiz acc (lent outputs.ct))
+  =.  acc
+    =/  ous  outputs.ct
+    |-  ^-  hexb:bcm
+    ?~  ous  acc
+    =/  a  (en-node-cat acc 8 value.i.ous)
+    =.  a  (en-node-csiz a wid.script-pubkey.i.ous)
+    =.  a  (en-node-cat a wid.script-pubkey.i.ous dat.script-pubkey.i.ous)
+    $(ous t.ous, acc a)
+  (en-node-cat acc 4 locktime.ct)
 ::
 ::  One-shot light-client REQUEST subscriptions.  Each returns the single
 ::  fact cage the node gives before it kicks; the caller +!< s it with the

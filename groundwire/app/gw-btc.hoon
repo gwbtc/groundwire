@@ -4,6 +4,11 @@
 ::  It fetches Bitcoin blocks on a timer and parses them for Jael events.
 ::  Its helper core at the bottom works in conjunction with lib/urb-core.
 ::
+::  Every byte it reads off the chain comes from the local
+::  %bitcoin-client light client (lib/lc-attestation), for BOTH the
+::  public block scanner and the confidential verifier.  There is no
+::  Bitcoin Core RPC anywhere in this agent and no -txindex requirement.
+::
 ::  It is also the verifier agent for the %gw-btc PKI domain in the
 ::  confidential-comets kernel protocol (see the companion spec
 ::  doc/confidential-comets-agent.md and, in gwbtc/urbit,
@@ -22,15 +27,10 @@
 ::  commits the tag %gw-btc in its key tweak, and Jael derives the
 ::  same tag from the gall duct our %anex arrives on.
 ::
-::  Configure the legacy public block indexer for the local Bitcoin RPC used
-::  by the deployment.  No remote credential is compiled into the desk.
-::  The legacy block-indexing path still uses this RPC endpoint and requires
-::  -txindex; confidential-comet verification itself uses local %light-client.
-::
-::  You may want to change block-confirmations as well.
+::  You may want to change block-confirmations and scan-batch as well.
 ::
 /-  bitcoin, spider, ord, urb, sa=self-attestation, lc=light-client
-/+  bc=bitcoin, btcio, dbug, default-agent, uc=urb-core, strandio, verb,
+/+  bc=bitcoin, dbug, default-agent, uc=urb-core, strandio, verb,
     ol=ord, cc=gw-btc-pass, lsa=self-attestation, lca=lc-attestation
 ::
 |%
@@ -52,10 +52,28 @@
 ::  accepted at; the policy re-runs on every re-attestation.
 ::
 +$  sponsee  [=life since=@da]
+::  $gw-state
+::
+::    .indexing and .best are the two INDEPENDENT readiness signals, and
+::    keeping them apart is load-bearing:
+::
+::      .indexing -- the PUBLIC index has been bootstrapped (an operator
+::      chose a start height with %urb-start-indexing / %gw-index-from).
+::      It gates only the block scanner's timer.
+::
+::      .best -- the light client is usable: our persistent /best-block
+::      subscription has reported a chain tip.  It gates only the
+::      confidential verifier, which needs a tip to scan up to.
+::
+::    A light-client-only deployment that never bootstraps a public index
+::    still verifies confidential comets, and a node with no confidential
+::    traffic still indexes public ones.  Conflating the two (as an
+::    earlier revision did) forced operators to poke the public-indexer
+::    bootstrap just to turn confidential verification on.
+::
 +$  gw-state
-  $:  rpc=req-to:btcio
-      urb-state=state:urb
-      ready=?
+  $:  urb-state=state:urb
+      indexing=?
       best=(unit id:block:bc)
       inflight=(map ship inflight-writ)
       confidential=(set ship)
@@ -83,10 +101,7 @@
   ::  agent name).  Jael watches /writs for %writ-response /
   ::  %anew-response / %azimuth-udiffs facts.
   ::
-  :_  %=  this
-        rpc    ['http://localhost:8332' ~]
-        ready  |
-      ==
+  :_  this(indexing |)
   :~  [%pass /anex %arvo %j %anex /writs]
       [%pass /best-block %agent [our.bowl light-client-agent:lca] %watch /best-block]
   ==
@@ -98,7 +113,15 @@
 ++  on-load
   |=  =vase
   ^-  (quip card _this)
-  `this(state !<(gw-state vase))
+  ::  Revisions before the light-client port carried a leading
+  ::  `rpc=req-to:btcio` ([url=@t auth]) ahead of urb-state.  Nothing
+  ::  reads a Bitcoin Core RPC any more, so drop it.  Discriminate on the
+  ::  head of the head: legacy is the url ATOM, current is urb-state's
+  ::  block-id CELL.
+  ::
+  =/  nou=*  q.vase
+  =.  nou  ?:(?=([[@ *] *] nou) +.nou nou)
+  `this(state ;;(gw-state nou))
 ::
 ++  on-poke
   |=  [=mark =vase]
@@ -164,13 +187,17 @@
         ~[(writ-card dom.poke who.poke ~)]
       ?:  (known-public who.poke)
         `this
-      ::  Drop silently until the index and light client are ready;
-      ::  readiness is infrastructure, never evidence.  `best` doubles as
-      ::  the chain tip the verification strand scans up to: we hold a live
-      ::  /best-block subscription, and the strand must NOT re-read that
-      ::  persistent endpoint itself (it never kicks).
-      ?:  =(| ready)
-        `this
+      ::  Drop silently until the LIGHT CLIENT is usable; readiness is
+      ::  infrastructure, never evidence.  `best` doubles as the chain tip
+      ::  the verification strand scans up to: we hold a live /best-block
+      ::  subscription, and the strand must NOT re-read that persistent
+      ::  endpoint itself (it never kicks).
+      ::
+      ::  Deliberately NOT gated on .indexing.  Confidential verification
+      ::  needs nothing from the public index except the sponsor-existence
+      ::  set, which is allowed to be empty; requiring a public-indexer
+      ::  bootstrap here would make a light-client-only deployment unable
+      ::  to verify anything at all.
       ?~  best
         `this
       =/  job  next-job
@@ -218,22 +245,40 @@
     ::  Bootstrap is one-shot. Replacing the public snapshot while private
     ::  points or verifier jobs exist would mix incompatible index epochs;
     ::  an operator who deliberately needs to rebootstrap must nuke first.
-    ?:  ready
+    ?:  indexing
       `this
     =/  start-urb  ;;((unit state:urb) !<((unit noun) vase))
     ?~  start-urb
       %-  (slog :_(~ [%leaf "%gw-btc: indexing from block {<num.block-id:(state:urb default-urb-state)>}"]))
       =.  urb-state  default-urb-state
-      =.  ready  &
+      =.  indexing  &
       :_  this
       ~[[%pass /timer %arvo %b %wait now.bowl]]
     %-  (slog :_(~ [%leaf "%gw-btc: processing Groundwire snapshot ({<~(wyt by unv-ids.u.start-urb)>} points)"]))
     =.  urb-state  u.start-urb
-    =.  ready  &
+    =.  indexing  &
     :_  this
     :~  (listen-to-urb ~(key by unv-ids.u.start-urb) [%| dap.bowl])
         [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
     ==
+  ::
+      ::  Bootstrap the public index at a bare HEIGHT: the first block to
+      ::  scan.  Under the light client a block is addressed by height
+      ::  alone, so an operator no longer has to supply (or fake) a block
+      ::  hash to choose a start point -- the whole reason
+      ::  %urb-start-indexing needed a hand-built $state:urb.
+      ::
+      %gw-index-from
+    ?>  =(our src):bowl
+    ?:  indexing
+      `this
+    =/  start=@ud  !<(@ud vase)
+    ?:  =(0 start)  `this
+    %-  (slog leaf+"%gw-btc: indexing from block {<start>}" ~)
+    =.  urb-state  [[0x0 (dec start)] *sont-map:ord *insc-ids:ord *unv-ids:urb]
+    =.  indexing   &
+    :_  this
+    ~[[%pass /timer %arvo %b %wait now.bowl]]
   ==
 ::
 ++  on-peek
@@ -329,12 +374,17 @@
   ^-  (quip card _this)
   ?+    wire  (on-arvo:def wire sign-arvo)
   ::
-  ::  Run +get-blocks at regular intervals.
+  ::  Run +get-blocks at regular intervals.  The chain tip comes from our
+  ::  own persistent /best-block subscription -- the scanner never asks the
+  ::  node for a tip, and with no tip yet there is simply nothing to do.
       [%timer ~]
+    ?~  best
+      :_  this
+      ~[[%pass /timer %arvo %b %wait (add ~s30 now.bowl)]]
     :_  this
     :~  :*  %pass  /blocks  %arvo  %k
             %lard  q.byk.bowl
-            (get-blocks [rpc urb-state]:state)
+            (get-blocks urb-state num.u.best)
         ==
     ==
   ::
@@ -555,7 +605,7 @@
       %+  welp
         (jael-update filtered-udiffs)
       %+  welp
-        :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
+        :~  (scan-again now.bowl urb-state best)
         ==
       ?:  =(num.block-id.urb-state num.old-block-id)
         ~
@@ -639,109 +689,82 @@
       *unv-ids:urb
   ==
 ::
-::  Fetch blocks in range(last-processed + 1, latest - block-confirmations)
-::  from the provided RPC endpoint, then use a stateful 
-::  urb-core to process these blocks, returning
-::  a new urb-state and a list of fx in +on-arvo.
+::  +block-confirmations: blocks behind the tip the scanner stays
+++  block-confirmations  1  :: 1 for alpha
+::
+::  +scan-batch: most blocks one run of the block thread will process
+::
+::    A bound on the size of a single Gall event, and on how much work is
+::    thrown away when a batch is rejected by +reconcile-block.  When a
+::    run stops short of the tip, +scan-again re-arms immediately rather
+::    than idling for the poll interval, so catching up is not slowed.
+::
+++  scan-batch  100
+::
+::  +scan-again: re-arm the block timer
+::
+::    Immediately if the scanner is still behind the settled tip (a batch
+::    ended on the +scan-batch bound), otherwise at the normal poll
+::    interval.
+::
+++  scan-again
+  |=  [now=@da st=state:urb tip=(unit id:block:bc)]
+  ^-  card
+  =/  soon=?
+    ?~  tip  |
+    ?:  (lth num.u.tip block-confirmations)  |
+    (lth num.block-id.st (sub num.u.tip block-confirmations))
+  [%pass /timer %arvo %b %wait ?:(soon now (add ~s30 now))]
+::
+::  +get-blocks: index range(last-processed + 1, tip - block-confirmations)
+::
+::    Every block comes whole from the local light client's
+::    /block/height/<h> endpoint -- no Bitcoin Core, no getblockhash, no
+::    getrawtransaction, and therefore no -txindex.  .best-height is the
+::    chain tip OUR OWN persistent /best-block subscription reported; the
+::    scanner must not read that endpoint itself (it never kicks, so a
+::    +watch-one on it hangs forever).
+::
+::    Under the OP_RETURN revision no per-transaction fetch is needed at
+::    all: a public identity is spawned and updated in single transactions
+::    whose sat-carrying output commits the state and whose OP_RETURN
+::    output opens it, and +find-block-reveals takes every input value it
+::    needs from the sont index it already holds.  (The old RPC path still
+::    carried a prevout-fetch loop for this; it had been dead code since
+::    the OP_RETURN revision, because +find-block-reveals records a value
+::    for every input of every saved tx.)
+::
 ++  get-blocks
-  |=  [rpc=req-to:btcio urb-state=state:urb]
+  |=  [urb-state=state:urb best-height=@ud]
   ^-  shed:khan
-  =/  block-confirmations  1 :: 1 for alpha
-  =/  i  (add block-confirmations num.block-id.urb-state) :: last processed block height + 1
   =/  uc
     %-  abed:urb-core:uc
     urb-state
-  |^
   =/  m  (strand:strandio ,vase)
-  ;<    latest-block=(unit @ud)
-      bind:m
-    (get-block-count:btcio rpc ~)
-  ?~  latest-block  ~|  %couldnt-find-latest-block  !!
-  ::  ~&  >  "latest block is {<u.latest-block>}"
-  =/  last-settled-block  (sub u.latest-block block-confirmations)
-  |-  
-  ?.  (lte i last-settled-block)
+  ^-  form:m
+  ;<  our=@p  bind:m  get-our:strandio
+  ?:  (lth best-height block-confirmations)
     (pure:m !>([urb-state [fx state]:uc]))
-  ;<    bluck=(unit block:bitcoin)
-      bind:m
-    (get-block-by-number:btcio rpc ~ i)
-  ?~  bluck  ~|  %cant-find-block-by-number  !!
-  ;<    new=urb-block:urb
-      bind:m
-    (convert-block i u.bluck)
-  ::  ~&  >>  [%new new]
-  ::
-  ::  Under the OP_RETURN revision there is no precommit/commit/reveal
-  ::  fetch: a public identity is spawned and updated in single
-  ::  transactions whose sat-carrying output commits the state and whose
-  ::  OP_RETURN output opens it.  ++handle-block reads those outputs
-  ::  directly.
-  =.  uc  (handle-block:uc new)
-  ~&  >  "processed block {<i>} of {<last-settled-block>}"
+  =/  last-settled-block  (sub best-height block-confirmations)
+  =/  stop
+    (min last-settled-block (add num.block-id.urb-state scan-batch))
+  =/  from  +(num.block-id.urb-state)
+  =/  i  from
+  |-
+  ^-  form:m
+  ?.  (lte i stop)
+    ?:  =(i from)  (pure:m !>([urb-state [fx state]:uc]))
+    ~&  >  [%gw-btc-scanned from=from to=(dec i) settled-tip=last-settled-block]
+    (pure:m !>([urb-state [fx state]:uc]))
+  ;<  =block:bitcoin  bind:m  (fetch-block-at:lca our i)
+  ::  Filter the block to urb-relevant txs, fill in the input values we
+  ::  already track, and run the OP_RETURN scanner over the result.
+  =/  revs-and-block  (find-block-reveals:uc block)
+  =.  uc  uc(hax.block-id.state hax.block)
+  =.  uc
+    %-  handle-block:uc
+    (apply-prevouts-and-urbify:uc +.revs-and-block -.revs-and-block)
   $(i +(i))
-  ::
-  ::  Convert a block:bitcoin into a urb-block:urb.
-  ::  This requires an async +get-raw-transaction call.
-  ++  convert-block
-    |=  [=num:id:block:bitcoin =block:bitcoin]
-    =/  m  (strand:strandio ,urb-block:urb)
-    ::  XX Like urb-block, block:bitcoin apparently doesn't actually
-    ::     include its num yet either
-    :: ?.  =(num num:block)
-    ::   ~&  >>  "error: %ord-watcher's num != num:block"
-    ::   !!
-    ::  Filter block to urb-relevant txs.
-    ::  ~&  >>  "Filtering block {<i>}"
-    =/  revs-and-block  (find-block-reveals:uc block)
-    =/  reveals   -.revs-and-block
-    ::  ~&  [%reveals reveals]
-    =/  block  +.revs-and-block
-    ::  ~&  [%block block]
-    =/  txs    (tail txs.block)  :: cb has no prevouts
-    ::
-    ::  A block:btc does not include input values, but we need those for sont
-    ::  math, so for every remaining tx in our filtered block:btc, fetch the
-    ::  prev-tx that generated each of its inputs, get all outputs of
-    ::  that prev-tx, and associate it with that utxo in the reveals map.
-    ::  
-    ::  ("deps" probably was a better name, then)
-    |-  
-    ^-  form:m
-    ?~  txs
-      ::  ~&  >>  "Applying prevouts to block {<i>}"
-      (pure:m (apply-prevouts-and-urbify:uc block reveals))
-    =/  inputs  is.i.txs
-    :: ~&  [%inputs inputs]
-    |-  
-    ^-  form:m
-    :: XX refactor to use gettxout
-    ?~  inputs  
-      ^$(txs t.txs)
-    =/  rev  (~(get by reveals) [txid pos]:i.inputs)
-    :: ~&  [%rev rev]
-    ?:  &(?=(^ rev) ?=(^ value.u.rev))
-      $(inputs t.inputs)
-    :: ~&  'fetching prev-tx'
-    ;<  prev-tx=(unit tx:bc)  bind:m
-      (get-raw-transaction:btcio rpc ~ txid.i.inputs)
-    :: ~&  [%prev-tx prev-tx]
-    ?~  prev-tx  ~|  %couldnt-fetch-tx  !!
-    =/  prev-outputs  os.u.prev-tx
-    =|  pos=@ud
-    |-  
-    ^-  form:m
-    ?~  prev-outputs  
-      ^$(inputs t.inputs)
-    =/  rev  (~(get by reveals) [id.u.prev-tx pos])
-    ?:  &(?=(^ rev) ?=(^ value.u.rev))  
-      $(prev-outputs t.prev-outputs, pos +(pos))
-    =/  sots=(list raw-sotx:urb)  ?~(rev ~ sots.u.rev)
-    %=  $
-      prev-outputs  t.prev-outputs
-      pos  +(pos)
-      reveals  (~(put by reveals) [id.u.prev-tx pos] [sots `value.i.prev-outputs])
-    ==
-  --
 ::
 ::  Confidential-comet verification helpers.
 ::
