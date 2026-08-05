@@ -185,10 +185,200 @@ distinct IPs to recover 9 peers. First fill produced **208** unique IPs.
 Detected in **5 s**, fully recovered in **19 s**, new sidecar pid 100286.
 **PASS.**
 
-<!-- WATCHDOG-COUNTS -->
+## How often the watchdog fired — the hard data
+
+Window: supervisor start (15:15–15:30 UTC, staggered) to 15:52 UTC, when this
+run's ships were stopped by a **second concurrent operator** (see "RUN STATUS"
+below). ~37, ~22 and ~22 minutes of supervised uptime respectively, all of it
+under header-sync load.
+
+| ship | total interventions | SIDECAR-DOWN | VERE-DOWN | WEDGE (recover) |
+|---|---|---|---|---|
+| **C1** `sp1` | **2** | 1 | 0 | 1 |
+| **C2** `sp2` | **4** | 2 | 0 | 2 |
+| **C3** `sp3` | **14** | 2 | **10** | 2 |
+
+Reading these honestly:
+
+- **The first SIDECAR-DOWN + WEDGE pair on every ship is bookkeeping, not a
+  fault** — the supervisor starts before the sidecar exists, so it starts one
+  and runs the recovery once. Subtract one of each per ship.
+- **C2's second pair is the deliberate kill test** (above). So in ~37 + ~22
+  minutes of real operation, **C1 and C2 each experienced zero spontaneous
+  faults**.
+- **C3's 10 VERE-DOWN restarts are one incident, not ten.** A stale `p4c3` ship
+  from the previous run was resurrected at 15:32 by `/opt/gw/heal.py`, which
+  survived my first cleanup pass, and it took udp/34343. Every relaunch then
+  died on `mesa: bind: address already in use` and the supervisor retried once a
+  minute for ten minutes until I found and killed the squatter. **Root cause was
+  a stale supervisor of mine, not the light client.** This is why `gwsup.sh`
+  gained `free_port`, and why refusing to boot onto an already-bound port
+  (as `bootq.sh` now does) is the better fix.
+
+So: **zero unexplained light-client wedges in ~80 ship-minutes.** That is a
+much weaker indictment of gwbtc/node#1 than run 1 suggested, and it is
+consistent with the `%.y` autocommit storm — not the sidecar — having been what
+actually killed run 1. The sidecar failure mode is real (it is reproducible on
+demand, and the recovery is necessary and works), but on this evidence it is
+rarer than once per 40 ship-minutes, and run 1's "five times" was probably
+counting the autocommit starvation as light-client wedges.
+
+Caveat: 80 ship-minutes is a small sample and none of it reached the
+filter-header phase, which is where run 1 saw the runtime SIGSEGV. The
+supervisor handles that case (VERE-DOWN) but this run never exercised it
+spontaneously.
+
+---
+
+# RUN STATUS — this run did not execute the matrix
+
+**At 15:52 UTC a second agent, working the same brief on the same three
+droplets, ran a `stopold.sh` that stopped `sp1`/`sp2`/`sp3` and both of their
+supervisors, and booted its own `q1`/`q2`/`q3` on the same three @p and the
+same three ames ports.** It is still running as I write this: three live SSH
+sessions, `gwsup.sh q1|q2|q3` supervising, ships header-syncing.
+
+It is building on this run's work — `/opt/gw/gwsup.sh` is byte-identical to
+mine (6 326 bytes, `free_port` and all), and it is using `poolfill.py`,
+`addpeers.py`, `p4ops.py`, `st2.py` and the `%.n` patch to
+`p4setup.py`/`redeploy.py` from this run. It has also done something better
+than I did: it built a **fixed pill**,
+`/opt/gw/pills/gw-cc-kernel-solid-FIXED.pill`
+(sha256 `cf7fe498db64672f98efcce7bb9169ffba1be2ac38d4985e7eb6d91d1522ffb1`,
+from `urbit@a01b073a16`), instead of repairing `%base` in place.
+
+**I stood down rather than contest the rig.** There is exactly one set of comet
+identities with the required on-chain state, and two agents driving the same
+three @p on the same three ports would produce garbage — double-booted piers,
+divergent event logs, and unattributable ames behaviour. The matrix belongs to
+whichever run holds the ports, and that is `q1`/`q2`/`q3`.
+
+State reached before the stop (all three were mid header-sync, none had reached
+`is-synced %.y`, so no matrix test was runnable yet):
+
+```
+15:51:19 | c1 h=372.001 peers=12 | c2 h=590.001 peers=10 | c3 h=202.001 peers=13
+```
+
+A handoff note with everything below was left at
+`/opt/gw/HANDOFF-from-sp-run.md` on all three droplets, and the evidence is on
+disk: `/opt/gw/piers/sp{1,2,3}`, `/opt/gw/sp{1,2,3}.log`,
+`/opt/gw/sup-sp{1,2,3}.log`.
 
 ---
 
 # MATRIX
 
-<!-- MATRIX -->
+**Not executed by this run.** What follows is source-derived analysis of what
+4.1/4.2/4.3 should do and how to read them — it is **prediction, not evidence**,
+and is recorded here because it changes how 4.3 must be run to produce a
+meaningful verdict.
+
+## 4.1 / 4.2 — C1 attests to C3, C3 accepts
+
+Preconditions that are easy to get wrong:
+
+- **C3 must have indexed its own public spawn.** `+verify-cards` passes
+  `known-public = ~(key by unv-ids.urb-state)` (`app/gw-btc.hoon:879`) and
+  `+run-checks` fails `sponsor-known` when the attesting snapshot's named
+  sponsor is not in that set (`lib/self-attestation.hoon:241-247`). C1's
+  snapshot names C3, so **C3 must find C3 in its own index** — that means
+  `:gw-btc &gw-index-from` at a height at or below C3's OP_RETURN publication
+  (961 059) and the scanner walked past 961 130. A ship with `indexing=|` fails
+  `sponsor-known` on every sponsored comet, and the failure looks like a bad
+  attestation rather than a missing index.
+- C1 must have indexed too, or it has no fief for C3 and cannot send anything.
+
+The decision point is `app/gw-btc.hoon:478-493`:
+
+```hoon
+=/  claims-us=?
+  ?&  has.sponsor.net.u.verified
+      =(our.bowl who.sponsor.net.u.verified)
+  ==
+?:  ?&(claims-us ?=(%decline (sponsor-policy who life.net.u.verified)))
+  %-  (slog leaf+"%gw-btc: declining sponsorship of {<who>}" ~)
+  `this(declined (~(put in declined) who))
+…
+=?  sponsees  claims-us  (~(put by sponsees) who [life.net.u.verified now.bowl])
+=?  declined  claims-us  (~(del in declined) who)
+```
+
+with `+sponsor-policy` (`:956-960`) accepting everything not already in
+`declined`. Evidence to capture on C3: the `%gw-btc: attestation for
+~havnyl-… is VALID` report with its `[ok]` check list, `/x/sponsees` containing
+`~havnyl-…` at life 2, and jael's `%lyfe` + `%dome` for `~havnyl-…`
+(`[~ %gw-btc]` from `%dome` is the single cleanest proof the point arrived via
+`%writ`→`%sybl %full` and not via vanilla comet registration).
+
+## 4.3 — and why it must be run in two halves
+
+`+fetch-comet-pki` (`sys/vane/ames.hoon:5961-5977`) requests a comet's
+attestation through
+
+```hoon
+=/  sponsor=@p  (^sein:title ship)
+```
+
+That is the **numeric** `+sein` (`sys/zuse.hoon:5673-5683`): for a `%pawn` it is
+`(end 4 who)` — the star formed by the comet's low 16 bits — **not** its
+Groundwire sponsor. Contrast two other call sites that do the same conceptual
+thing correctly:
+
+- `+on-hear-forward` (`:5006`): `(^^sein:title rof /ames our now sndr.shot)`
+- `+zar` inside `+get-forward-lanes` (`:4257-4266`):
+  `(^^sein:title rof /ames our now her)`
+
+Both use the jael-scry form, and jael's `+sein` (`sys/vane/jael.hoon:285-297`)
+returns the point's `sponsor` when the point is known, falling back to numeric
+when it is not.
+
+The consequence is structural: **cold first contact between two confidential
+comets cannot use the sponsor.** C2 asking for C1's keys sends the `%keys` blob
+to C1's numeric star, which Phase 3 already established does not relay to
+comets. Sponsor-mediated routing engages only once C2 *already holds* C1's point
+— then `+zar` walks C1 → C3, finds C3's fief lane, and C3's `+on-hear-forward`
+(which "performs all forwarding requests without filtering") relays to C1
+because C3 holds C1's lane from 4.2.
+
+So 4.3 answers two different questions and should be reported as two:
+
+- **(a) bootstrap** — C2 `|hi ~havnyl-…` cold. Predicted failure, with
+  `requesting attestion` in the trace and the blob going to C1's numeric star.
+  If it fails, that is a **real design gap**, not a harness problem: a
+  confidential comet is undiscoverable by construction, and the sponsor cannot
+  bridge that because `+fetch-comet-pki` never asks it.
+- **(b) forwarding** — give C2 C1's point the way jael would, by injecting the
+  attestation out of band (`:gw-btc &noun [%jael-writ %gw-btc ~havnyl-…
+  0x<C1's live pass>]`, which still runs the full ~100 s chain verification),
+  then retry. The decisive evidence is, on C2,
+
+  ```hoon
+  .^((list lane) %ax /(scot %p our)//(scot %da now)/peers/(scot %p ~havnyl-…)/forward-lane)
+  ```
+
+  which should be C3's `[%if .64.227.13.22 34343]` and nothing else.
+
+  Read C1's live pass off C1 itself (`p4ops.py <pier> mypass` → jael `%pynt` →
+  `keys` → `pass`). **Do not** use `pass_atom_hex` from `.gw-comet-1.json`: it
+  is 108 bytes, jael's `pass` for these ships is ~330, and they are not the same
+  object.
+
+Also worth separating when reading lanes: the reverse direction has no sponsor
+path at all, because C2's snapshot carries `sponsor=~` and jael's `+sein` for C2
+therefore falls back to its numeric star. C1 can still answer C2, but via the
+`origin.shot` lane that C3 stamps on the forwarded packet — a direct route
+learned through the relay, not sponsor routing. Calling that "4.3 passed in both
+directions" would be wrong.
+
+## 4.4 / 4.6 — decline is silence
+
+`%gw-sponsor-decline` emits **no `%writ-response` at all**, so ames never sees a
+`%fail` and `+sy-sybl`'s additive snub (`sys/vane/ames.hoon:11226-11234`) is
+never reached. The check that matters is therefore
+`.^([?(%allow %deny) (list @p)] %ax /(scot %p our)//(scot %da now)/snubbed)` on
+C3 staying `[%deny ~]` across a declined re-attestation. Note that decline also
+deletes the sponsee entry (`sponsees (~(del by sponsees) who)`), and that a
+declined ship short-circuits at `app/gw-btc.hoon:167` before any verification,
+which is what makes 4.5's repeated retries cheap.
+
