@@ -77,7 +77,11 @@ problem sponsorship exists to solve — so Phase 4 is not merely a feature
 test, it is the real fix for what Phase 3 had to work around.
 
 Consequences for setup:
-- **All three comets currently carry `fief=~`**, so none is reachable by
+- *(Superseded 2026-08-05: C3 now commits `fief=[%if .64.227.13.22 34343]`
+  at life 2, tx `8e713009…` block 961129, and C1 commits `sponsor=~ligdes-…`
+  at life 2, tx `a8553a3a…` block 961130. The paragraph below describes the
+  state that made those two updates necessary.)*
+- **All three comets carried `fief=~`**, so none was reachable by
   a peer that doesn't already have a lane. The sponsor must commit a real
   fief. That needs one on-chain state update on C3
   (`fief=[%if <droplet-ip> <ames-port>]`), and C3 must then be booted on
