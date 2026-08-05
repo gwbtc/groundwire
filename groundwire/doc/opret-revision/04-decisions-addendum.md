@@ -84,6 +84,28 @@ On-chain committed snapshots carry sponsorship and routing state:
   committed in its verified snapshot; a failed/unconsented sponsorship is
   self-announcing (the sponsor does not forward). The old on-chain
   escape/adopt handshake and the sponsor-signer desk are retired.
+- **A comet with neither `sponsor` nor `fief` is a one-way identity — clients
+  must refuse to mint one.** An absent sponsor projects to *self* in
+  `+urb-point-to-jael`, so nothing can route to such a comet: it can still
+  initiate outbound and answer on a reply lane, but once a peer drops its
+  state (any `%stale`, any restart) it can never be re-contacted. Confirmed
+  live — such a comet received zero attestations across a full test run.
+  Deliberately NOT enforced in the `snapshot` mold or as a verifier validity
+  rule: `(each fief sponsor)` would forbid holding BOTH, which is legitimate,
+  and rejecting such snapshots would turn a self-harming choice into a
+  consensus rule while breaking comets that are legitimately outbound-only.
+  Causeway refuses by default with an explicit opt-out; `%gw-btc` slogs a
+  warning so hand-rolled transactions stay visible.
+- **Self-rescue.** An unreachable comet is not permanently lost, because its
+  owner can still act on-chain (spending the sat needs a wallet, not a
+  reachable ship). Two paths, with a real trade-off: **pairwise** — the comet
+  initiates to each peer and hands over its attestation, preserving
+  confidentiality but requiring a personal introduction to every future peer;
+  or **publication** — one state update that adds a route AND carries an
+  OP_RETURN, after which every scanner learns the route from chain alone,
+  at the permanent cost of confidentiality. So: *an unreachable confidential
+  comet can always rescue itself, but only by sacrificing either scalability
+  or confidentiality.*
 - **Fief scope.** A fief is for ships with STATIC addresses — sponsors and
   other infrastructure (its `%turf` form is literally DNS). A reliable
   sponsor should commit a fief on-chain. Roaming/confidential comets set

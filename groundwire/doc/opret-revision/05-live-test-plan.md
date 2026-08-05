@@ -121,6 +121,34 @@ becomes a kernel bug to chase.
 | 5.6 | `%anew` refresh via Causeway → `%gw-btc` → Jael | the owner-driven pass refresh |
 | 5.7 | Publish an OP_RETURN for a previously-confidential comet | confidential → public transition; leaves the conf registry |
 
+## Phase 5b — self-rescue: can an unreachable comet make itself reachable?
+
+Added 2026-08-05, after Phase 5. C2 was minted with **neither `fief` nor
+`sponsor`**, and an absent sponsor projects to *self*, so nothing can route
+to it: it received zero attestations across the entire Phase 5 run, which
+blocked 5.2 and 5.5. Rather than mint a fresh comet, test the edge case we
+landed in by accident — it is a question a real user will ask.
+
+The key asymmetry: C2 is unreachable over the *network*, but its owner can
+still act *on-chain*, because spending the sat needs a wallet, not a
+reachable ship. So recovery is possible; the question is how peers learn.
+
+| # | Test | Chain? | Property under test |
+|---|---|---|---|
+| 5b.1 | **Pairwise rescue.** C2 *initiates* to C1 and hands over its attestation; C1 verifies and gains a route to C2 from that alone, then reaches C2 unprompted. | no | Recovery that **preserves confidentiality**, but scales terribly — C2 must personally introduce itself to every peer that will ever want to reach it. |
+| 5b.2 | **Publication rescue.** One C2 state update that BOTH adds a `fief` (or `sponsor`) AND carries an OP_RETURN publication. Scanners on C1/C3 learn C2's route from the chain alone, with no contact; C1 then cold-initiates to C2. | yes, ~200–400 sats | The confidential→public transition (this subsumes **5.7**) as the general-purpose escape hatch. Costs confidentiality permanently. |
+| 5b.3 | **Rerun 5.2 / 5.5 properly** once C2 is routable: C1 rekeys live, C2 **receives** the updated attestation, `%gw-btc` fetches the new custody entry from chain and re-verifies at the new life, and the two keep talking. Then move C1's sat and drive the full `%stale` → re-attest → promote → drain loop through `%anew`. | reuses 5.1/5.3 | The loop Phase 5 only proved **half** of: C1 emitted three attestation blobs on rekey, but C2 logged `got attestation` **0** times all run, so no peer has ever verified a post-rekey attestation. |
+
+**NOTE on the pre-built 5.7 transaction: do not send it as-is.** It publishes
+C2's *current* snapshot, which has neither `fief` nor `sponsor` — broadcasting
+it would announce C2 to the world and leave it exactly as unreachable. Rebuild
+it as 5b.2 above.
+
+Resulting property, worth stating in the docs: **an unreachable confidential
+comet can always rescue itself, but only by sacrificing either scalability
+(pairwise introductions) or confidentiality (publication).** That is a design
+consequence, not a defect.
+
 ## Phase 6 — resilience and diagnostics
 
 | # | Test | Expected |
