@@ -138,7 +138,13 @@
       ::
       %noun
     ?>  =(our src):bowl
-    =/  poke  !<(jael-poke:urb vase)
+    ::  MOLD-CAST, never +!<.  Jael builds this poke as `!>(pok)` with
+    ::  `pok` typed `*` (sys/vane/jael.hoon, +poke-watch), and a `*`-typed
+    ::  vase does not NEST under a head-tagged union -- so +!< bails on
+    ::  every writ that actually came from Jael, i.e. on every real
+    ::  attestation over the network.  Poking `&noun [%jael-writ ...]`
+    ::  from the dojo builds a fully typed vase and hides this completely.
+    =/  poke  ;;(jael-poke:urb q.vase)
     ?-    -.poke
         %jael-writ
       ::  A prior block result has already proved this is a public spawn and
@@ -549,7 +555,17 @@
       =/  merged
         (reconcile-block base-state urb-state.state +.fx-and-state new-confidential)
       ?~  merged
-        %-  (slog leaf+"%gw-btc: concurrent custody conflict; retrying block batch")
+        ::  NB: the tang MUST be a list.  This read `(slog leaf+"...")` --
+        ::  a bare tank -- which +slog walks as if it were the list,
+        ::  printing nothing at all.  The branch below retries the batch
+        ::  from an UNCHANGED cursor, so a bug that lands here loops
+        ::  forever and, with the message swallowed, does it in total
+        ::  silence: the agent looks alive and simply never indexes again.
+        %-  %-  slog
+            :~  leaf+"%gw-btc: concurrent custody conflict; retrying batch"
+                leaf+"  cursor={<num.block-id.urb-state>} public-new={<public-new>}"
+                leaf+"  confidential={<new-confidential>}"
+            ==
         ::  If this rejected batch also proved a public spawn that raced a
         ::  verifier-only insertion, remove just that private insertion before
         ::  retrying.  Otherwise the duplicate spawn would be suppressed on

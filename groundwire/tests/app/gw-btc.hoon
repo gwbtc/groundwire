@@ -57,6 +57,17 @@
   |=  who=ship
   ^-  vase
   (writ-vase-pass who bad-pass)
+::  the writ poke EXACTLY as Jael builds it: +poke-watch does `!>(pok)`
+::  with `pok` typed `*`, so the vase's type is `*` and carries no
+::  structure at all.  A `*`-typed vase does not nest under a head-tagged
+::  union, so an agent that unpacks with +!< bails on every writ that
+::  really came from Jael -- while every dojo-driven test passes, because
+::  `&noun [%jael-writ ...]` builds a fully typed vase.
+::
+++  writ-vase-untyped
+  |=  [who=ship =pass]
+  ^-  vase
+  !>(`*`[%jael-writ %gw-btc who pass])
 ::  extract the noun a %x scry returned
 ::
 ++  peek-noun
@@ -197,6 +208,43 @@
   ;:  weld
     (expect-eq !>(*(set ship)) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/declined)))))
     (expect-eq !>(*(map ship *)) !>(;;((map ship *) (peek-noun (~(on-peek agent bowl0) /x/sponsees)))))
+  ==
+::  A writ poke whose vase is `*`-typed -- the ONLY shape Jael ever sends
+::  -- must be handled identically to a typed one.  Unpacking with +!<
+::  instead of a mold-cast makes every real, network-originated
+::  attestation crash the agent (`nest-fail`, `-have.*`), which no
+::  dojo-driven test can see because `&noun [%jael-writ ...]` builds a
+::  fully typed vase.  Confidential comets were 100% non-functional over
+::  real networking for exactly this reason.
+::
+++  test-untyped-writ-poke-is-handled
+  =/  agent  gw-btc
+  ::  the SAME bad pass, once through a typed vase and once through the
+  ::  `*`-typed vase Jael actually produces: both must reach the verdict
+  ::  path, neither may bail.
+  ::
+  =^  c-typed    agent  (~(on-poke agent bowl0) %noun (writ-vase ~dev))
+  =^  c-untyped  agent
+    (~(on-poke agent bowl0) %noun (writ-vase-untyped ~rut bad-pass))
+  =/  typed    (app-cards c-typed)
+  =/  untyped  (app-cards c-untyped)
+  ;:  weld
+    ::  the untyped poke produced a verdict rather than crashing
+    (expect-eq !>(1) !>((lent untyped)))
+    (expect-eq !>(`%writ-response) !>((fact-mark (snag 0 untyped))))
+    ::  and it is the same verdict the typed poke drew
+    (expect-eq !>((lent typed)) !>((lent untyped)))
+    %+  expect-eq
+      !>  `(unit *)`~
+      !>  ^-  (unit *)
+          ?~  pay=(fact-payload (snag 0 untyped))  `**
+          res:;;([dom=@tas =ship res=(unit *)] u.pay)
+    ::  ... naming the ship the untyped poke carried
+    %+  expect-eq
+      !>  `ship`~rut
+      !>  ^-  ship
+          ?~  pay=(fact-payload (snag 0 untyped))  ~zod
+          ship:;;([dom=@tas =ship res=(unit *)] u.pay)
   ==
 ::  The public block scanner is bootstrapped by HEIGHT.  Under the light
 ::  client a block is addressed by height alone, so choosing a start point
