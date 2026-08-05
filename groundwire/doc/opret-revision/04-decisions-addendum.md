@@ -106,6 +106,22 @@ On-chain committed snapshots carry sponsorship and routing state:
   at the permanent cost of confidentiality. So: *an unreachable confidential
   comet can always rescue itself, but only by sacrificing either scalability
   or confidentiality.*
+
+  > **⚠️ CONTRADICTED ON MAINNET, 2026-08-05 — neither path is implemented.**
+  > See `doc/live-tests/PHASE5B-RESULTS.md` findings 4 and 10.
+  > *Publication*: `+apply-state:urb-core` silently refuses any publication for
+  > a comet not already in `unv-ids`, and `+apply-spawn` — the only writer of
+  > `unv-ids` — requires input 0 to spend the comet's original **funding**
+  > satpoint, which is a one-time, unrepeatable event. A confidential comet
+  > therefore cannot become public at all. Tested live: tx `0cca2561…`, block
+  > 961 217, correctly formed and fully gated, indexed by nobody.
+  > *Pairwise*: ames has no unsolicited self-attestation push — all three
+  > `+attestation-packet` call sites are reactive, and the only broadcast one
+  > (`+sy-priv`'s rekey blast) iterates peers that are **already** `%known`.
+  > Worse, the attempt is actively harmful: moving the sat makes the ship's
+  > un-refreshed attestation fail `tip-unspent` at its peers, which is a
+  > negative verdict rather than `%stale`, so the comet gets **snubbed** —
+  > see §3, whose "MUST NOT produce `%fail`" rule the packet path violates.
 - **Fief scope.** A fief is for ships with STATIC addresses — sponsors and
   other infrastructure (its `%turf` form is literally DNS). A reliable
   sponsor should commit a fief on-chain. Roaming/confidential comets set
