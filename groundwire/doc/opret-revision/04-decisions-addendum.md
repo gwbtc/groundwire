@@ -114,18 +114,11 @@ On-chain committed snapshots carry sponsorship and routing state:
   neither sponsor nor fief is not cold-reachable (reply-lane peers only) —
   legal, but clients should warn.
 
-### 2a. Unroutable snapshots: a mint-time refusal, never a validity rule
+### 2a. Unroutable snapshots: how the refusal is implemented
 
-A snapshot with **neither** `sponsor` nor `fief` is a **one-way identity**.
-`+urb-point-to-jael` projects an absent sponsor to *self*, so the Jael point
-names the comet as its own sponsor: nothing can route to it, and once a peer
-drops its state it can never be re-contacted. This was proved live — it
-blocked two Phase 5 tests, because a comet minted this way could speak first
-and never be spoken to.
-
-The allowance stands (it is what makes an outbound-only client possible, and
-what lets a comet exist before it has chosen a sponsor), so the response is
-deliberately split:
+This is the mechanics of the one-way-identity bullet above; the decision
+itself (refuse at mint time, never in the mold and never as a verifier
+validity rule) is stated there.
 
 - **Causeway refuses by default**, in all three front ends —
   `causeway/desktop/causeway.py` (`spawn connect`, `spawn generate`,
