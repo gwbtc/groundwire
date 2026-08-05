@@ -28,7 +28,8 @@
 ::
 /-  bitcoin, ord, urb, sa=self-attestation, lc=light-client, bcm=bitcoin-common
 /+  *test, lca=lc-attestation, lsa=self-attestation, tr=taproot, bc=bitcoin,
-    cc=gw-btc-pass, b-fil=compact-block-filters, strandio, libstrand=strand
+    cc=gw-btc-pass, b-fil=compact-block-filters, strandio, libstrand=strand,
+    ul=urb-core, ol=ord, bcu=bitcoin-utils
 =,  strand=strand:libstrand
 =/  m  (strand:strandio ,vase)
 =>
@@ -371,6 +372,140 @@
 ++  real-xonly
   ^-  @ux
   0xbe3a.7444.26a8.7262.b1bd.cc14.4b43.5109.9503.34de.f1f2.6747.d316.367d.6af6.8341
+::  --------------------------------------------------------------------
+::  REAL MAINNET PUBLIC SPAWN -- the whole transaction, byte for byte.
+::
+::    ec5c1fbe...97c8 in block 961.059 is the on-chain spawn of the live
+::    PUBLIC comet C3
+::    ~ligdes-risbur-folmus-mattyp--firpec-lispec-noddyl-daplyd.  Input 0
+::    spends its funding satpoint 72340acb...:1; output 0 is the P2TR
+::    committing its initial snapshot; output 1 is the OP_RETURN
+::    publication that opens that commitment.
+::
+::    Written below in the DESK's byte order and converted to the NODE's
+::    by +bc-hexb-to-common, so what these tests hand the fetch layer is
+::    what a synced %bitcoin-client delivers over /block/height/961059.
+::  --------------------------------------------------------------------
+++  c3-height  961.059
+++  c3-block-hash
+  ^-  @ux
+  0x321b.0588.8664.9375.5cb5.3fd3.7d34.c575.febf.d7bf.de4a
+::
+++  c3-txid
+  ^-  @ux
+  0xec5c.1fbe.b697.211b.fcf5.87e3.b985.f6e9.9e5f.f8e8.d2d9.2f08.3a25.d55b.3bcc.97c8
+::
+++  c3-funding-txid
+  ^-  @ux
+  0x7234.0acb.1b42.16f3.e1ff.0da2.2322.79e4.3326.cd53.0833.31fb.f2ee.7774.daa9.bc54
+::  output 0: the P2TR whose output key IS (state-key ikey snapshot)
+++  c3-state-spk
+  ^-  hexb:bitcoin
+  :-  34
+  0x5120.0ca2.828c.764a.0f3e.76e3.3df0.7be9.8703.06ec.5650.af8e.cae8.8f6f.0c64.2ec8.0bee
+::  output 1: the 263-byte OP_RETURN publication, assembled in 32-byte
+::  pieces because Hoon has no multi-line atom literal
+++  c3-opret-spk
+  ^-  hexb:bitcoin
+  %-  cat:byt:bcu
+  :~  [32 0x6a03.7572.6201.094c.fe01.e0d7.b1e4.3183.30b6.a4cb.f611.89b7.4843.1a2f.0db8.d52c]
+      [32 0x9d5a.33a3.60b9.13da.ecf2.313f.ac2b.1c52.3e5e.b8af.7368.89af.70ca.b782.48c0.6336]
+      [32 0x75d3.6206.afef.feb2.7a19.4b98.6f00.8b80.efec.ae45.8c6e.8c24.0559.3752.59bd.9ddf]
+      [32 0x4ec3.e010.4ec2.b493.1a7b.ccf7.4d2d.ea25.3ced.8334.54ea.a369.0014.18b8.43cf.e76c]
+      [32 0x4dbf.a406.afb4.4181.2664.9f53.46ab.a731.8cf0.e114.672d.5d7f.4f09.b738.0320.c015]
+      [32 0xe29.1f2f.dcd7.39b4.c457.38e5.5b41.24e0.319b.ba69.3183.d777.7f59.bd8c.25cc.779a]
+      [32 0x5e0.9f8a.3755.9bee.ce5d.7e3f.6606.61aa.d964.863c.4f64.44b4.e13f.7cde.4268.6359]
+      [32 0x8146.1e9b.0004.4820.8cb0.4b69.dd41.709a.02b3.5758.771b.a7b8.403e.86f2.d114.50f2]
+      [7 0x6b.623b.bd79.5d07]
+  ==
+::
+++  c3-witness
+  ^-  hexb:bitcoin
+  %-  cat:byt:bcu
+  :~  [32 0xffc8.1c01.1756.f099.9034.69e9.13fa.7414.a333.c51d.333d.226c.2b85.e677.2cce.f066]
+      [32 0x9f.6178.5555.1eda.3750.6a6e.59a6.cd96.a719.daf1.13f5.1f73.fe46.8d19.b375.a90f]
+  ==
+::  the same transaction as the node hands it over: no txid (the node's
+::  $block is positional), witness present, every byte string reversed.
+++  c3-tx-node
+  ^-  transaction:bcm
+  :*  0x2  1
+      :~  ^-  transaction-input:bcm
+          :*  c3-funding-txid
+              1
+              `hexb:bcm`[0 0x0]
+              0xffff.ffff
+              ~[(bc-hexb-to-common c3-witness)]
+          ==
+      ==
+      :~  `transaction-output:bcm`[1.615 (bc-hexb-to-common c3-state-spk)]
+          `transaction-output:bcm`[0 (bc-hexb-to-common c3-opret-spk)]
+      ==
+      0
+  ==
+::  a stand-in coinbase; +find-block-reveals never scans it, but every
+::  block has one and the scanner's sat math indexes through it.
+++  cb-tx-node
+  ^-  transaction:bcm
+  :*  0x1  0
+      ~[`transaction-input:bcm`[0x0 4.294.967.295 [4 0x0] 0xffff.ffff ~]]
+      ~[`transaction-output:bcm`[312.500.000 (bc-hexb-to-common [25 0x76.a914.88ac])]]
+      0
+  ==
+::  THE CONTRAST: a CONFIDENTIAL spawn.  C1
+::  ~havnyl-lonpub-botben-hidleb--lomper-marryc-lanmec-daplyd committed
+::  its snapshot in exactly the same shape -- a real P2TR whose output
+::  key is a real state-key (+real-spk-node, the bytes the node delivered
+::  for it at height 961.055) -- and published NOTHING.  A scanner that
+::  indexed "any taproot output" would pick this up; the real one must
+::  not.  (Only the input's txid is synthetic: C1's funding outpoint is
+::  not needed to make the point, and nothing here reads it.)
+++  conf-tx-node
+  ^-  transaction:bcm
+  :*  0x2  1
+      :~  ^-  transaction-input:bcm
+          :*  0x394f.3678.9ed2.f0f1.b076.a24c
+              1
+              `hexb:bcm`[0 0x0]
+              0xffff.ffff
+              ~[(bc-hexb-to-common c3-witness)]
+          ==
+      ==
+      ~[`transaction-output:bcm`[1.889 real-spk-node]]
+      0
+  ==
+::
+::  +scan-block: exactly what +get-blocks:gw-btc does with a fetched block
+++  scan-block
+  |=  [st=state:urb =block:bitcoin]
+  ^-  [(list [id:block:bitcoin effect:urb]) state:urb]
+  =/  oc   (abed:urb-core:ul st)
+  =/  fbr  (find-block-reveals:oc block)
+  =.  oc   oc(hax.block-id.state hax.block)
+  abet:(handle-block:oc (apply-prevouts-and-urbify:oc +.fbr -.fbr))
+::  the block as it arrives from /block/height/961059, converted by the
+::  code under test.
+++  c3-block
+  ^-  block:bitcoin
+  %^  common-block-to-bc:lca  c3-block-hash  c3-height
+  [dummy-hdr ~[cb-tx-node c3-tx-node]]
+::
+++  conf-block
+  ^-  block:bitcoin
+  %^  common-block-to-bc:lca  c3-block-hash  c3-height
+  [dummy-hdr ~[cb-tx-node conf-tx-node]]
+::
+++  empty-at
+  |=  height=@ud
+  ^-  state:urb
+  [[0x0 (dec height)] *sont-map:ord *insc-ids:ord *unv-ids:urb]
+::
+++  effs
+  |=  fx=(list [id:block:bitcoin effect:urb])
+  ^-  (list effect:urb)
+  (turn fx |=([* e=effect:urb] e))
+::
+++  c3  ~ligdes-risbur-folmus-mattyp--firpec-lispec-noddyl-daplyd
 --
 |%
 ::  ---- node <-> desk byte order, pinned to real mainnet data ---------
@@ -557,6 +692,80 @@
   ;:  weld
     (expect !>(=(~ cards.s2)))
     (expect-eq !>(%attestation-txid-mismatch) !>(-.err.halt.s2))
+  ==
+::  ---- the node's blocks carry no txids; we recompute them -----------
+::
+::    A block fact is positional: [header txs], no hashes anywhere.  The
+::    whole public scanner keys on txids, so every one is recomputed from
+::    the transaction itself.  A wrong txid is SILENT -- the comet still
+::    indexes, just at a satpoint nothing will ever spend -- so this is
+::    pinned against a real mainnet transaction rather than a round trip.
+::
+::    Note it is a SEGWIT transaction (flag=1, a 64-byte key-path witness):
+::    the legacy, witness-stripped serialization is what a txid commits
+::    to, and using the segwit one would produce the wtxid instead.
+::
+++  test-real-mainnet-txid
+  =/  blk  c3-block
+  ;:  weld
+    (expect-eq !>(c3-txid) !>((node-txid:lca c3-tx-node)))
+    ::  ... and it lands on the transaction inside the converted block
+    (expect-eq !>(c3-txid) !>(id:(snag 1 txs.blk)))
+    ::  the block's own identity survives the conversion
+    (expect-eq !>(c3-block-hash) !>(hax.blk))
+    (expect-eq !>(c3-height) !>(height.blk))
+    ::  block 961.059 is in the fourth halving epoch: 3.125 BTC
+    (expect-eq !>(`@ud`312.500.000) !>(reward.blk))
+  ==
+::  ---- a REAL on-chain publication indexes a REAL public comet -------
+::
+::    Phase-1 test 1.5, offline: the identity is learned from the chain
+::    alone, with no packet exchange of any kind.  This is the check that
+::    unblocks sponsorship, because +sponsor-known reads its
+::    `known-public` set out of exactly this index.
+::
+++  test-real-mainnet-publication-indexes-c3
+  =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]
+    (scan-block (empty-at c3-height) c3-block)
+  =/  pt  (~(get by unv-ids.st) c3)
+  ;:  weld
+    ::  C3 is indexed, under the name its own pass fingerprints to
+    (expect !>(?=(^ pt)))
+    ::  at the satpoint its spawn transaction created: output 0, sat 0
+    (expect-eq !>(`sont:ord`[c3-txid 0 0]) !>(sont.own:(need pt)))
+    ::  with the snapshot the OP_RETURN opened
+    (expect-eq !>(`life`1) !>(life.net:(need pt)))
+    (expect-eq !>(`rift`0) !>(rift.net:(need pt)))
+    ::  the sat index records the comet as the owner
+    (expect-eq !>(`c3) !>((get-com:si:ol sont-map.st c3-txid 0 0)))
+    ::  and Jael is told, %owner first
+    (expect !>((lien (effs fx) |=(e=effect:urb =(e [%point c3 %owner [c3-txid 0 0]])))))
+    ::  the scanner's cursor advanced onto the block it just read
+    (expect-eq !>(`id:block:bitcoin`[c3-block-hash c3-height]) !>(block-id.st))
+  ==
+::  ---- a CONFIDENTIAL spawn must NOT appear --------------------------
+::
+::    C1 and C2 spawned with the same on-chain shape as C3 -- a P2TR
+::    output whose key is a genuine state-key -- and published no
+::    OP_RETURN.  They are visible only to the confidential verifier, and
+::    the public index must never learn them.  This is the contrast that
+::    proves the scanner reads PUBLICATIONS and not merely taproot
+::    outputs: same block height, same converted-block path, same
+::    scanner; the only difference is the OP_RETURN.
+::
+++  test-confidential-spawn-is-not-indexed
+  =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]
+    (scan-block (empty-at c3-height) conf-block)
+  ;:  weld
+    (expect-eq !>(*unv-ids:urb) !>(unv-ids.st))
+    (expect-eq !>(*(list effect:urb)) !>((effs fx)))
+    ::  it really is a well-formed P2TR state commitment, not junk that
+    ::  would have been skipped for some incidental reason
+    %+  expect-eq
+      !>  `(unit @ux)`[~ real-xonly]
+      !>  (p2tr-xonly:lsa (flip-hexb:lca real-spk-node))
+    ::  and the cursor still advanced: the block was scanned, not skipped
+    (expect-eq !>(c3-height) !>(num.block-id.st))
   ==
 ::  ---- transaction unknown (~) -> strand fail -----------------------
 ++  test-tx-not-found-fails-strand
