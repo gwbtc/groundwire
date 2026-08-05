@@ -14,6 +14,14 @@
 ::  our own comet's pass with a fresh off-chain reveal log.  see
 ::  app/gw-btc.hoon and, in gwbtc/urbit, sys/vane/jael.hoon.
 ::
+::    The companion poke on the OTHER side of %anew -- the one Causeway
+::    sends %gw-btc to EXTEND that reveal log after an owner-driven
+::    custody transaction -- is $ingest in sur/self-attestation.hoon
+::    (`[%gw-custody-entry entry=custody-entry]`, also on the %noun
+::    mark).  It cannot live here: sur/self-attestation already imports
+::    this file for $point and $fief, so naming $custody-entry from here
+::    would be a Clay import cycle.
+::
 +$  jael-poke
   $%  [%jael-writ dom=@tas who=ship =pass]
       [%jael-anew dom=@tas]

@@ -63,10 +63,17 @@ export interface PersistedSnapshot {
 export interface PersistedOpening {
   internalKeyHex: string;    // 33-byte compressed internal key (02||xonly)
   snapshot: PersistedSnapshot;
-  spawnTxidHex: string;      // spawn satpoint txid (display hex)
+  spawnTxidHex: string;      // spawn satpoint txid (display hex) — the FUNDING tx
   spawnVout: number;
   spawnOff: number;
   blindHex: string;          // 32-byte blind (BE hex) — opens the dat commitment
+  // The blind-opening's start-height: the block of the tx that CREATED the
+  // spawn satpoint (i.e. `spawnTxidHex`, the FUNDING tx). NEVER the spawn tx's
+  // own height — see spawn/start-height.ts. `startHeight` is an explicit
+  // override; `fundingHeight` is what the UTXO scan recorded at spawn time.
+  // 0 / undefined means "unset", and the resolver falls through to a lookup.
+  startHeight?: number;
+  fundingHeight?: number;
 }
 
 export interface PersistedSpawn {

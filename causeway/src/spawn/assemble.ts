@@ -18,7 +18,9 @@ import type { DiscoveredUtxo } from "../chain/discover.js";
 import { deriveKeyInfo } from "../keys/xpub.js";
 import type { KeySource } from "../keys/xpub.js";
 import { buildSpawnPsbt, type KeyInfo, type Utxo } from "../signing/psbt.js";
-import { stateOutputKey, stateOutputScript, type Snapshot } from "./snapshot.js";
+import {
+  assertRoutable, stateOutputKey, stateOutputScript, type Snapshot,
+} from "./snapshot.js";
 import { buildPublicationScript, type Opening } from "./publication.js";
 import type { SpawnSont } from "./dat.js";
 import type { MineResult } from "./miner.js";
@@ -32,6 +34,8 @@ export interface AssembleArgs {
   feeRate?: number;               // default 2 sat/vB
   publish?: boolean;              // PUBLIC spawn (add OP_RETURN); default confidential
   startHeight?: number;           // blind-opening height for a public spawn (default 0)
+  sponsor?: bigint | null;        // sponsor @p committed in the initial snapshot
+  noRoute?: boolean;              // deliberately mint an UNROUTABLE comet (no sponsor, no fief)
   dom?: string;
 }
 
@@ -69,14 +73,17 @@ export function assembleSpawn(args: AssembleArgs): AssembledSpawn {
   const spawnSont: SpawnSont = { txidHex: bytesToDisplayHex(picked.txid), vout: picked.vout, off: 0 };
 
   // Fresh-spawn snapshot: life 1, rift 0, messaging key = cry.pub (mined.cPub),
-  // self-sponsored (sponsor ~), no fief.
+  // the operator's chosen sponsor (absent = self-sponsored), no fief.
   const snapshot: Snapshot = {
     life: 1,
     rift: 0,
     key: bytesToAtomLE(mined.cPub),
-    sponsor: null,
+    sponsor: args.sponsor ?? null,
     fief: null,
   };
+  // Refuse to mint an identity nothing can route to, unless deliberately
+  // opted out. This is a Causeway policy, NOT a protocol validity rule.
+  assertRoutable(snapshot, args.noRoute ?? false);
 
   const q = stateOutputKey(internalKey33, snapshot);
   const outputScript = stateOutputScript(q);

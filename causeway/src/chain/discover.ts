@@ -84,6 +84,9 @@ export async function discoverUtxos(opts: DiscoverOpts): Promise<Discovery> {
         scriptPubKey: script,
         address,
         confirmed: u.status.confirmed,
+        // The block that created this UTXO. If this one is picked to fund a
+        // spawn, its height IS the blind-opening's start-height.
+        ...(u.status.block_height ? { blockHeight: u.status.block_height } : {}),
         change,
         index,
       };

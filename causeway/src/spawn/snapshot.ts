@@ -33,6 +33,29 @@ export interface Snapshot {
   fief: null;               // (unit fief); always null in v9
 }
 
+// A snapshot with NEITHER a sponsor NOR a fief is a one-way identity: the
+// verifier projects an absent sponsor to SELF in the Jael udiff
+// (+urb-point-to-jael in app/gw-btc.hoon), so nothing can route to it and once
+// a peer drops its state the comet can never be re-contacted. It is legal
+// protocol (see doc/opret-revision/04-decisions-addendum.md §2 "Fief scope"),
+// so the verifier must never reject it — but Causeway refuses to MINT one
+// unless the operator deliberately opts out.
+export function isRoutable(s: Snapshot): boolean {
+  return s.sponsor !== null || s.fief !== null;
+}
+
+export const NO_ROUTE_MESSAGE =
+  "this snapshot has neither a sponsor nor a fief, so nothing can cold-contact "
+  + "the comet: an absent sponsor projects to self-sponsorship, and once a peer "
+  + "drops its state the identity is unreachable forever. Pick a sponsor, or "
+  + "tick \"unroutable (no-route)\" / pass --no-route if you really want an "
+  + "outbound-only identity.";
+
+export function assertRoutable(s: Snapshot, noRoute = false): void {
+  if (noRoute || isRoutable(s)) return;
+  throw new Error(NO_ROUTE_MESSAGE);
+}
+
 // (unit x): null → 0; a full unit [~ v] → [0, v].
 function unit(v: bigint | null): Noun {
   return v === null ? 0n : [0n, v];

@@ -699,6 +699,60 @@ def make_publication_script(pass_atom: int, opening: dict) -> bytes:
     return bytes([0x6A, 0x03, 0x75, 0x72, 0x62, 0x01, KELVIN]) + push + payload
 
 
+def _hoon_unit(rendered: str | None) -> str:
+    """(unit x) as a Hoon literal: ~ or `value."""
+    return "~" if rendered is None else f"`{rendered}"
+
+
+def _hoon_ud(n: int) -> str:
+    """A Hoon @ud literal. Hoon REQUIRES dot grouping above 999 — a bare
+    `900142` is a syntax error, so an undotted height makes the printed poke
+    unpasteable."""
+    return f"{int(n):,}".replace(",", ".")
+
+
+def format_custody_entry_poke(entry: dict) -> str:
+    """The dojo line that hands ONE xtr entry to the ship's own %gw-btc.
+
+    This is the in-band %anew path of decisions-addendum section 5: after a
+    custody transaction confirms, the agent takes the entry, re-verifies the
+    WHOLE extended log against the chain through %light-client, and — only on
+    a positive verdict — re-encodes the ship's pass around it and answers
+    jael's %anew. Nothing here is trusted; the poke is evidence, not
+    authority. See $ingest in groundwire/sur/self-attestation.hoon.
+
+    The mark is %noun so no mark file is needed on either side.
+    """
+    o = entry["opening"]
+    snap = o["snapshot"]
+    sponsor = snap.get("sponsor")
+    snap_hoon = (
+        f'[{_hoon_ud(snap["life"])} {_hoon_ud(snap["rift"])} '
+        f'{format_hoon_ux(format(int(snap["key"]), "x"))} '
+        f'{_hoon_unit(int_to_patp(int(sponsor)) if sponsor is not None else None)} '
+        # v9 snapshots carry no fief (a fief is for static-address ships).
+        f'{_hoon_unit(None)}]'
+    )
+    bo = o.get("blind_opening")
+    if bo is None:
+        bo_hoon = "~"
+    else:
+        sp = bo["spawn"]
+        blind = bo["blind"]
+        blind_hex = blind.hex() if isinstance(blind, (bytes, bytearray)) else str(blind)
+        bo_hoon = (
+            f'`[[{format_hoon_ux(sp["txid_hex"])} {_hoon_ud(sp["vout"])} {_hoon_ud(sp.get("off", 0))}] '
+            f'{_hoon_ud(bo["start_height"])} {format_hoon_ux(blind_hex)}]'
+        )
+    opening_hoon = (
+        f'`[{format_hoon_ux(format(int(o["internal_key"]), "x"))} {snap_hoon} {bo_hoon}]'
+    )
+    return (
+        ":gw-btc &noun [%gw-custody-entry "
+        f'[{format_hoon_ux(entry["txid_hex"])} {_hoon_ud(entry["height"])} {opening_hoon}]]'
+    )
+
+
 def build_xtr_atom(entries: list[dict]) -> int:
     """Jam the custody log, oldest first, terminating in ~ (0).
 
@@ -2230,17 +2284,26 @@ _MGMT_PRIOR_PROOF_HELP = (
 @click.option("--network", type=click.Choice(["main", "testnet"]), default="main", show_default=True)
 @click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".", show_default=True)
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
-def cmd_rekey(point, prior_proof, new_pass_hex, breach, fee_rate, network, output_dir, mempool_base):
+@click.option("--sponsor", default=None,
+              help="Set the sponsor committed by the NEW snapshot (@p or mnemonym). "
+                   "Omit to carry the prior snapshot's sponsor forward.")
+@click.option("--no-route", is_flag=True, default=False,
+              help="Allow a new snapshot with no sponsor and no fief (outbound-only). "
+                   "Without this, a state update that would strand the comet is refused.")
+def cmd_rekey(point, prior_proof, new_pass_hex, breach, fee_rate, network, output_dir, mempool_base,
+              sponsor, no_route):
     """Rotate a comet's messaging key — a state update committed in the sat
     output's taproot tweak. Spends the current sat-carrying UTXO key-path;
     chains off --prior-proof."""
     point = int_to_patp(resolve_id(point))  # accept mnemonym or @p
     new_pass = int.from_bytes(bytes.fromhex(new_pass_hex), "little")
     new_key = messaging_key_from_pass(new_pass)
-    _run_rekey_op(point, prior_proof, new_key, breach, fee_rate, network, output_dir, mempool_base)
+    _run_rekey_op(point, prior_proof, new_key, breach, fee_rate, network, output_dir, mempool_base,
+                  sponsor=sponsor, no_route=no_route)
 
 
-def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool, fee_rate: int, network: str, output_dir: str, mempool_base: str) -> None:
+def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool, fee_rate: int, network: str, output_dir: str, mempool_base: str,
+                  sponsor: str | None = None, no_route: bool = False) -> None:
     """Spend the point's current sat-carrying output key-path, commit a new
     snapshot (life+1, rift+1 on breach, rotated key), await signed PSBT,
     broadcast, and emit `<patp>-rekey-<txid>.proof.json`.
@@ -2266,13 +2329,18 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
         sys.exit(1)
 
     prior_snap = prior.get("snapshot") or {}
+    sponsor_atom = resolve_sponsor(sponsor)
     new_snapshot = {
         "life": int(prior_snap.get("life", 0)) + 1,   # every change bumps life
         "rift": int(prior_snap.get("rift", 0)) + (1 if breach else 0),
         "key": new_key,
-        "sponsor": prior_snap.get("sponsor"),          # carries forward
+        # --sponsor sets it; otherwise the prior snapshot's carries forward
+        "sponsor": sponsor_atom if sponsor_atom is not None else prior_snap.get("sponsor"),
         "fief": prior_snap.get("fief"),
     }
+    # A state update that leaves the comet with neither a sponsor nor a fief
+    # strands it from this life onward — refuse unless deliberately opted out.
+    assert_routable(new_snapshot, no_route)
 
     prior_txid = prior.get("commit_txid") or prior.get("sat_txid")
     print(f"\n  Chaining from prior {prior.get('op', '?')} op: "
@@ -2328,8 +2396,12 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
         f"  REKEY broadcast for {patp_to_mnemonym(point)}.\n"
         f"  Custody chain: {str(prior_txid)[:10]}..:0 → {commit_txid[:10]}..:0\n"
         f"  Use {proof_path} as --prior-proof for the NEXT state update.\n"
-        f"  After it confirms, hand the new xtr entry + opening to your ship's\n"
-        f"  %gw-btc agent (the %anew poke) so peers can re-verify you.\n",
+        f"  Once it confirms, run\n"
+        f"    causeway finalize <spawn.proof.json> {proof_path}\n"
+        f"  and paste the `:gw-btc &noun [%gw-custody-entry ...]` line it prints\n"
+        f"  into your RUNNING ship's dojo.  The agent re-verifies the whole\n"
+        f"  custody log on-chain and only then refreshes your pass through\n"
+        f"  jael's %anew -- no reboot, no hand-crafted ring.\n",
         fg="yellow",
     ))
 
@@ -2347,7 +2419,14 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
 @click.option("--blind-mnemonic", default=None,
               help="Existing BIP-39 blind recovery phrase to derive this comet's blind from "
                    "(re-spawn / recovery). Omit and Causeway mints one and makes you record it.")
-def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish, blind_mnemonic):
+@click.option("--sponsor", default=None,
+              help="Sponsor for the initial snapshot (@p or mnemonym). Peers route to a "
+                   "confidential comet through the sponsor committed on-chain.")
+@click.option("--no-route", is_flag=True, default=False,
+              help="Deliberately mint an UNROUTABLE comet (no sponsor, no fief). "
+                   "Outbound-only: no peer will ever be able to contact it first.")
+def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish, blind_mnemonic,
+                  sponsor, no_route):
     """Spawn using a user-provided wallet (xpub / descriptor). You sign the PSBT externally.
 
     Your wallet's seed never reaches Causeway, so the comet's blind — the
@@ -2355,7 +2434,7 @@ def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_ba
     phrase that this command prints and makes you write down (or that you pass
     in with --blind-mnemonic). Losing it loses the identity."""
     run_spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish,
-                      blind_mnemonic=blind_mnemonic)
+                      blind_mnemonic=blind_mnemonic, sponsor=sponsor, no_route=no_route)
 
 
 @spawn.command("generate")
@@ -2367,12 +2446,19 @@ def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_ba
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
 @click.option("--publish", is_flag=True, default=False,
               help="Public spawn: add an OP_RETURN publication output (default off = confidential)")
-def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish):
+@click.option("--sponsor", default=None,
+              help="Sponsor for the initial snapshot (@p or mnemonym). Peers route to a "
+                   "confidential comet through the sponsor committed on-chain.")
+@click.option("--no-route", is_flag=True, default=False,
+              help="Deliberately mint an UNROUTABLE comet (no sponsor, no fief). "
+                   "Outbound-only: no peer will ever be able to contact it first.")
+def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish, sponsor, no_route):
     """Generate a fresh BIP-39 wallet, fund it, spawn, and emit a boot one-liner.
 
     The comet's blind is derived from the generated seed phrase + the funding
     outpoint, so that one phrase recovers both the coins and the `dat` opening."""
-    run_spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish)
+    run_spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish,
+                       sponsor=sponsor, no_route=no_route)
 
 
 @proof.command("show")
@@ -2481,6 +2567,16 @@ def cmd_finalize(proofs, feed, wait, poll_interval, mempool_base):
         write_proof_json(proof, path)
     print(f"  reveal log: {len(entries)} entr{'y' if len(entries) == 1 else 'ies'}, "
           f"xtr = {(xtr.bit_length() + 7) // 8} bytes (recorded in {proofs[-1]})")
+
+    # The in-band route (decisions-addendum 5): a RUNNING ship does not need a
+    # new feed at all. Poke its own %gw-btc with the latest entry; the agent
+    # re-verifies the whole extended log on-chain and, only then, refreshes the
+    # pass through jael's %anew. No reboot, no hand-crafted ring.
+    click.echo(click.style(
+        "\n  To extend a RUNNING ship's reveal log in place (no reboot), poke\n"
+        "  its own %gw-btc with the newest entry — it re-verifies the whole\n"
+        "  log on-chain before it will refresh your pass:\n", fg="cyan"))
+    print(f"    {format_custody_entry_poke(entries[-1])}")
 
     if feed:
         noun = hoon_cue(decode_uw(feed))
@@ -2652,6 +2748,47 @@ def resolve_start_height(proof: dict, *, mempool_base: str = MEMPOOL_API_URL) ->
     return int(height)
 
 
+NO_ROUTE_MESSAGE = (
+    "this snapshot has neither a sponsor nor a fief, so nothing can "
+    "cold-contact the comet: the verifier projects an absent sponsor to SELF "
+    "(+urb-point-to-jael), so no peer that has forgotten the identity can ever "
+    "find it again. Pass --sponsor <@p or mnemonym>, or pass --no-route if you "
+    "really do want an outbound-only identity."
+)
+
+
+def snapshot_is_routable(snapshot: dict) -> bool:
+    """Can anything cold-contact a comet in this committed state?
+
+    A confidential comet has no fixed address; peers reach it through the
+    sponsor committed in its verified snapshot, or (for static infrastructure)
+    through its fief. With NEITHER, it is a one-way identity — legal protocol
+    (doc/opret-revision/04-decisions-addendum.md section 2, "Fief scope"), so
+    the verifier must never reject it, but not something Causeway will mint by
+    accident."""
+    return snapshot.get("sponsor") is not None or snapshot.get("fief") is not None
+
+
+def assert_routable(snapshot: dict, no_route: bool = False) -> None:
+    """Refuse to build a spawn / state update that strands the comet."""
+    if no_route or snapshot_is_routable(snapshot):
+        return
+    raise click.UsageError(NO_ROUTE_MESSAGE)
+
+
+def resolve_sponsor(sponsor: str | None) -> int | None:
+    """Parse a --sponsor option (mnemonym or @p) into a ship atom."""
+    if sponsor is None:
+        return None
+    sponsor = sponsor.strip()
+    if not sponsor:
+        return None
+    try:
+        return resolve_id(sponsor)
+    except Exception as e:  # noqa: BLE001
+        raise click.UsageError(f"--sponsor {sponsor!r}: {e}")
+
+
 def _initial_snapshot(pass_atom: int, sponsor: int | None = None) -> dict:
     """The snapshot a fresh spawn commits: life 1, rift 0, messaging key from
     the mined pass, and (in kelvin-9) an optional sponsor that carries in the
@@ -2728,7 +2865,8 @@ def _finish_spawn_proof(
     proof["dat_hex"] = hex(build_dat_atom(utxo["txid"], utxo["vout"], 0, blind_seed))
 
 
-def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False, blind_mnemonic: str | None = None) -> None:
+def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False, blind_mnemonic: str | None = None,
+                      sponsor: str | None = None, no_route: bool = False) -> None:
     print()
     print("=" * 60)
     print(f"  CAUSEWAY — {'Public' if publish else 'Confidential'} Comet Spawn (Connect Wallet)")
@@ -2741,6 +2879,12 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
             blind_mnemonic = normalize_blind_mnemonic(blind_mnemonic)
         except ValueError as e:
             raise SystemExit(f"  --blind-mnemonic: {e}")
+
+    # Routing, checked BEFORE any faucet / scan / mining work: an unroutable
+    # comet must be refused up front, not after a proof-of-work search and a
+    # broadcast the user cannot take back.
+    sponsor_atom = resolve_sponsor(sponsor)
+    assert_routable({"sponsor": sponsor_atom, "fief": None}, no_route)
 
     source = parse_key_source(xpub_str, network=network)
     print(f"\n  Parsed key source: network={source.network}, account={_path_to_str(source.account_path)}")
@@ -2780,7 +2924,10 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     print(f"         @p {comet}")
 
     pass_atom = derive_pass_from_ring(ring_uw)
-    snapshot = _initial_snapshot(pass_atom)
+    snapshot = _initial_snapshot(pass_atom, sponsor_atom)
+    # Re-check against the real snapshot (belt-and-braces: the early check
+    # above is what saves the user's time, this one is what saves the comet).
+    assert_routable(snapshot, no_route)
 
     pub_pass = pub_opening = None
     if publish:
@@ -2838,11 +2985,16 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     _print_boot_oneliner(comet, feed, proof_path)
 
 
-def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False) -> None:
+def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False,
+                       sponsor: str | None = None, no_route: bool = False) -> None:
     print()
     print("=" * 60)
     print(f"  CAUSEWAY — {'Public' if publish else 'Confidential'} Comet Spawn (Generate New Wallet)")
     print("=" * 60)
+
+    # Refuse an unroutable mint before generating a wallet or asking for funds.
+    sponsor_atom = resolve_sponsor(sponsor)
+    assert_routable({"sponsor": sponsor_atom, "fief": None}, no_route)
 
     mnemonic = generate_new_mnemonic(strength_bits=128)
     print_seed_box(mnemonic)
@@ -2891,7 +3043,10 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
     print(f"         @p {comet}")
 
     pass_atom = derive_pass_from_ring(ring_uw)
-    snapshot = _initial_snapshot(pass_atom)
+    snapshot = _initial_snapshot(pass_atom, sponsor_atom)
+    # Re-check against the real snapshot (belt-and-braces: the early check
+    # above is what saves the user's time, this one is what saves the comet).
+    assert_routable(snapshot, no_route)
 
     pub_pass = pub_opening = None
     if publish:

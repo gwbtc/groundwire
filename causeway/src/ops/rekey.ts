@@ -12,6 +12,10 @@ import type { Snapshot } from "../spawn/snapshot.js";
 export interface RekeyArgs {
   newKey: bigint;   // new messaging key (cry.pub of the new suite-C pass)
   breach: boolean;
+  // Sponsor for the NEW snapshot. `undefined` carries the current one
+  // forward; an explicit `bigint` sets it; explicit `null` clears it (which
+  // needs ctx.noRoute unless a fief is present).
+  sponsor?: bigint | null;
 }
 
 export const rekeyOp: OpModule<RekeyArgs> = {
@@ -21,7 +25,7 @@ export const rekeyOp: OpModule<RekeyArgs> = {
       life: ctx.currentSnapshot.life + 1,
       rift: ctx.currentSnapshot.rift + (args.breach ? 1 : 0),
       key: args.newKey,
-      sponsor: ctx.currentSnapshot.sponsor,
+      sponsor: args.sponsor === undefined ? ctx.currentSnapshot.sponsor : args.sponsor,
       fief: ctx.currentSnapshot.fief,
     };
     return buildStateUpdate(newSnapshot, ctx);

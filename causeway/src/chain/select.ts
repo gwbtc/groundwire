@@ -66,6 +66,11 @@ export function mempoolTxidToAtomHex(displayHex: string): string {
 export interface CandidateUtxo extends Utxo {
   address: string;   // the address this UTXO was found at (for provenance)
   confirmed: boolean;
+  // Block height of the tx that CREATED this UTXO, when known. For the UTXO a
+  // spawn consumes this is the blind-opening's start-height, and recording it
+  // here is the cheap path in spawn/start-height.ts (the fallback is a fresh
+  // mempool lookup). Undefined for an unconfirmed UTXO.
+  blockHeight?: number;
 }
 
 // Enumerate UTXOs at `address` that are *not* inscription-bearing. Returns
@@ -94,6 +99,7 @@ export async function listFundingUtxos(
       scriptPubKey: script,
       address,
       confirmed: u.status.confirmed,
+      ...(u.status.block_height ? { blockHeight: u.status.block_height } : {}),
     }));
 }
 

@@ -72,6 +72,27 @@
   ==
 ::
 +$  custody-log  (list custody-entry)
+::  $ingest: the Causeway -> %gw-btc custody-log ingestion poke
+::
+::    Decisions addendum section 5: after the owner performs a custody
+::    transaction (a rekey, or a plain sat move) through Causeway and it
+::    confirms, Causeway hands the ship's OWN %gw-btc agent the new xtr
+::    entry and its opening -- the same channel as proof ingestion.  The
+::    agent validates the extended log against the chain through
+::    %light-client, rebuilds our pass, and answers jael's %anew with
+::    %anew-response.
+::
+::    The poke is NOT trusted: everything in the entry is re-checked
+::    against the chain (see +start-anew in app/gw-btc.hoon), and a poke
+::    that does not validate produces silence, never a refreshed pass.
+::
+::    It rides the %noun mark (`:gw-btc &noun [%gw-custody-entry ...]`)
+::    so no mark file is needed on either side; the agent dispatches on
+::    the head tag.  Companion type to $jael-poke in sur/urb.hoon.
+::
++$  ingest
+  $%  [%gw-custody-entry entry=custody-entry]
+  ==
 ::
 +$  self-attestation
   $:  who=@p

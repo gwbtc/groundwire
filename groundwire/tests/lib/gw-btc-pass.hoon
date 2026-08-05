@@ -191,4 +191,61 @@
       !>  0xca2.828c.764a.0f3e.76e3.3df0.7be9.8703.06ec.5650.af8e.cae8.8f6f.0c64.2ec8.0bee
       !>  (state-key:cc internal-key.o snapshot.o)
   ==
+::
+::  ---------------------------------------------------------------------
+::  +with-xtr -- the pass a %anew refresh emits
+::
+::  The custody log grows; the NAME does not.  xtr is excluded from the
+::  key tweak, so re-encoding a pass around a longer log must leave `fig`
+::  (and the messaging key, and dat) untouched.  The identity case is the
+::  one that keeps this in step with the kernel's own encoder: if
+::  +with-xtr and +pub:ex:cric ever disagree by one bit, a refreshed pass
+::  stops hashing to our @p and ames drops it.
+::  ---------------------------------------------------------------------
+::
+++  xtr-a  (jam ~[[0xdead 900.001 ~]])
+++  xtr-b  (jam ~[[0xdead 900.001 ~] [0xbeef 900.050 ~]])
+::
+::  re-encoding with the SAME xtr must reproduce the pass byte-for-byte
+++  test-with-xtr-is-identity-on-the-same-log
+  =/  p  (key 'anew-probe' xtr-a)
+  %+  expect-eq
+    !>  `(unit pass)`(some p)
+    !>  (with-xtr:cc p xtr-a)
+::
+::  a LONGER log leaves the name, the messaging key and dat unchanged
+++  test-with-xtr-preserves-the-identity
+  =/  p    (key 'anew-probe' xtr-a)
+  =/  p2   (need (with-xtr:cc p xtr-b))
+  =/  m    (need (parse-pass:cc p))
+  =/  m2   (need (parse-pass:cc p2))
+  ;:  weld
+    (expect-eq !>(fig:ex:(com:nu:cric:crypto p)) !>(fig:ex:(com:nu:cric:crypto p2)))
+    (expect-eq !>(d.m) !>(d.m2))
+    (expect-eq !>(dom.m) !>(dom.m2))
+    (expect-eq !>(kel.m) !>(kel.m2))
+    ::  ... and the new log really is in there
+    (expect-eq !>(xtr-b) !>(xtr.m2))
+    ::  the messaging half is untouched
+    %+  expect-eq
+      !>  `@`cry.pub.+<:(com:nu:cric:crypto p)
+      !>  `@`cry.pub.+<:(com:nu:cric:crypto p2)
+    ::  and it is not the pass we started from
+    (expect !>(!=(p p2)))
+  ==
+::
+::  an empty log round-trips to the pass minted with no xtr at all
+++  test-with-xtr-empty-matches-a-bare-pass
+  %+  expect-eq
+    !>  `(unit pass)`(some (key 'anew-probe' 0))
+    !>  (with-xtr:cc (key 'anew-probe' xtr-a) 0)
+::
+::  a pass that is not suite-%c (a vanilla ship's, or junk) is refused
+::  rather than mangled -- %anew then answers with silence.
+++  test-with-xtr-refuses-a-non-suite-c-pass
+  =/  vanilla  pub:ex:(pit:nu:cric:crypto 512 (shaz 'b-probe') %b ~)
+  ;:  weld
+    (expect-eq !>(`(unit pass)`~) !>((with-xtr:cc vanilla xtr-a)))
+    (expect-eq !>(`(unit pass)`~) !>((with-xtr:cc `pass`0x0 xtr-a)))
+  ==
 --

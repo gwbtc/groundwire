@@ -114,6 +114,43 @@ On-chain committed snapshots carry sponsorship and routing state:
   neither sponsor nor fief is not cold-reachable (reply-lane peers only) —
   legal, but clients should warn.
 
+### 2a. Unroutable snapshots: a mint-time refusal, never a validity rule
+
+A snapshot with **neither** `sponsor` nor `fief` is a **one-way identity**.
+`+urb-point-to-jael` projects an absent sponsor to *self*, so the Jael point
+names the comet as its own sponsor: nothing can route to it, and once a peer
+drops its state it can never be re-contacted. This was proved live — it
+blocked two Phase 5 tests, because a comet minted this way could speak first
+and never be spoken to.
+
+The allowance stands (it is what makes an outbound-only client possible, and
+what lets a comet exist before it has chosen a sponsor), so the response is
+deliberately split:
+
+- **Causeway refuses by default**, in all three front ends —
+  `causeway/desktop/causeway.py` (`spawn connect`, `spawn generate`,
+  `rekey`), `causeway/desktop/causeway_tui.py`, and the web SPA
+  (`causeway/src/spawn/assemble.ts`, `causeway/src/ops/_common.ts`). Pass
+  `--sponsor <@p|mnemonym>` to name one; pass `--no-route` (a checkbox in
+  the TUI and the SPA) to mint an unroutable identity **on purpose**. The
+  refusal fires *before* any faucet call, UTXO scan, or proof-of-work, so
+  an operator never burns a mine on a stranded comet. A state update
+  (rekey) that would *drop* the last sponsor is refused on the same rule.
+
+- **`%gw-btc` only warns.** It slogs when it verifies a confidential comet
+  or indexes a public spawn whose committed state has neither
+  (`+unroutable-point` / `+unroutable-points` in `app/gw-btc.hoon`,
+  `+routable` in `lib/self-attestation.hoon`). It **must never** become a
+  validity rule: a negative verdict is a Jael `%fail`, which Ames turns
+  into a *snub*, and snubbing an honest ship for an allowed-by-spec
+  snapshot would be a self-inflicted partition. The warning is how a
+  hand-rolled transaction that never touched Causeway stays visible.
+
+One live bug fell out of writing this down: the web rekey page copied
+`point.net.sponsor.who` unconditionally, which turns the Jael *self*
+projection back into a real sponsor and would have made every unrouted
+comet look routed. It now honours `.has`.
+
 ## 3. Stale attestations: demote to alien, never snub
 
 When `%gw-btc` observes a confidential comet's tip outpoint spent (conf
@@ -214,7 +251,67 @@ Owner-driven, no auto-detection in v9:
    `%anew-response`; Ames installs the refreshed pass via the existing path.
 
 Known accepted gap (unchanged): the refreshed pass is not written back to
-the boot keyfile.
+the boot keyfile, so a reboot re-derives from the feed and needs another
+`%anew` round-trip.
+
+### 5a. As implemented
+
+The poke is `[%gw-custody-entry entry=custody-entry]` (`$ingest` in
+`sur/self-attestation.hoon`), carried on the **`%noun` mark** so neither
+side needs a mark file; `%gw-btc` dispatches on the head tag before the
+`$jael-poke` mold-cast. It cannot live beside `$jael-poke` in `sur/urb.hoon`
+because `sur/self-attestation` already imports `sur/urb`, and naming
+`$custody-entry` from there would be a Clay import cycle.
+
+The poke is **evidence, not authority**. `%gw-btc` appends the entry to the
+log it already holds (idempotently — re-poking the current tip is a
+re-validation request, not a second hop: `+extend-log`) and runs the
+**whole extended log** through `+verify-lc`, the *same* light-client walk a
+peer's attestation goes through. So before a pass is rebuilt:
+
+- every entry's transaction is fetched by `[height txid]`, and the light
+  client itself is made to agree the txid is in the block at that height;
+- input 0 of each entry spends exactly the current tip outpoint
+  (`continuity`), the sat lands by ordinal arithmetic in a real output
+  (`sat-landed`, `off-range`), and every spend after the first hop is
+  key-path over a P2TR prevout (`key-path`);
+- each opening recomputes `state-key(internal-key, snapshot)` and must equal
+  the on-chain P2TR output key of the sat-carrying output that entry created
+  (`entry-N-commitment`);
+- entry 0's `blind-opening` must open the pass's hiding `dat` commitment
+  (`spawn-commit`), which is what binds the log to *our name*;
+- `life`/`rift` never regress, only entry 0 may open `dat`, heights are
+  monotone;
+- the tip is still unspent by a BIP-158 filter scan to the chain tip, failing
+  closed on any unavailable filter or block (`tip-unspent`);
+- and the candidate pass's messaging key equals the latest custody-proven
+  snapshot's `key` (`pass-key`).
+
+The pass is built **once, before validation**, from the ring Jael holds for
+our *current life* plus `(jam candidate-log)` (`+with-xtr` in
+`lib/gw-btc-pass.hoon`, which copies `ugn`/`cry`/`dat` verbatim so `fig` —
+our @p — is unchanged by construction, and is checked anyway). The
+`%anew-response` republishes that byte-identical pass, so what Ames installs
+is exactly what the light client verified. Because the base comes from
+Jael's *current* ring, a kernel `%rekey` is picked up automatically: the
+refreshed pass carries both the rotated messaging key and the extended log.
+
+Two consequences worth stating:
+
+- **A failed validation is silence**, never a verdict and never a pass. The
+  previously stored log stays in place. `%jael-anew` therefore also
+  *re-validates* rather than answering from memory — the identity sat can be
+  spent at any time, and a stale pass is worse than none.
+- **The sponsor-existence check is relaxed for our own log only.**
+  `+run-checks` fails a snapshot naming a sponsor the verifier cannot see as
+  a public point. That check belongs to the *peer*; applied to ourselves it
+  would leave a comet whose node does not index the public chain unable ever
+  to refresh its own pass. `+self-known-public` admits our own
+  owner-chosen sponsors; peers still check them.
+
+Validation is single-flight (one job at a time) with the same `~h2`
+resource-leak backstop as peer verification, which emits no verdict.
+`/x/custody` scries the validated log.
 
 ## 6. Packet bound: one fragment (resolves §9 Q3 scope)
 

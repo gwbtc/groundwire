@@ -6,11 +6,16 @@
 // snapshot. No commit/reveal pair, no attestation leaf on-chain.
 
 import { buildSpawnPsbt, extractTx, rawTxid } from "../signing/psbt.js";
-import { stateMerkleRoot, stateOutputKey, stateOutputScript, type Snapshot } from "../spawn/snapshot.js";
+import {
+  assertRoutable, stateMerkleRoot, stateOutputKey, stateOutputScript, type Snapshot,
+} from "../spawn/snapshot.js";
 import type { Mempool } from "../chain/mempool.js";
 import type { StateUpdateCtx, BuiltStateUpdate, BroadcastResult } from "./types.js";
 
 export function buildStateUpdate(newSnapshot: Snapshot, ctx: StateUpdateCtx): BuiltStateUpdate {
+  // A state update that leaves the comet with neither a sponsor nor a fief
+  // makes it unroutable from that life onward. Refuse unless opted out.
+  assertRoutable(newSnapshot, ctx.noRoute ?? false);
   const inputMerkleRoot = stateMerkleRoot(ctx.currentSnapshot);
   const outputScript = stateOutputScript(stateOutputKey(ctx.internalKey33, newSnapshot));
   const built = buildSpawnPsbt({

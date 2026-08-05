@@ -15,6 +15,7 @@ import { ops } from "../../ops/index.js";
 import type { StateUpdateCtx } from "../../ops/types.js";
 import type { Snapshot } from "../../spawn/snapshot.js";
 import { lookupPoint } from "../../oracle/point.js";
+import { patpToAtom } from "../../protocol/patp.js";
 import { findKeyForScript } from "../../keys/xpub.js";
 import { animateUR } from "../../signing/qr-render.js";
 import { encodePsbtUR } from "../../signing/qr-ur.js";
@@ -145,6 +146,12 @@ export function renderOp(root: HTMLElement, opName: string): void {
     el("input", { type: "text", name: "newKeyHex", id: "newKeyHex", placeholder: "0x…" }),
     el("label", { for: "breach", style: "display:block;margin-top:0.6rem;" }, "Breach (rift increment)"),
     el("input", { type: "checkbox", name: "breach", id: "breach" }),
+    el("label", { for: "sponsorPatp", style: "display:block;margin-top:0.6rem;" },
+      "Sponsor @p (blank = keep the current one)"),
+    el("input", { type: "text", name: "sponsorPatp", id: "sponsorPatp", placeholder: "~sampel-palnet" }),
+    el("label", { for: "noRoute", style: "display:block;margin-top:0.6rem;" },
+      "Unroutable (no-route): commit no sponsor and no fief — outbound-only"),
+    el("input", { type: "checkbox", name: "noRoute", id: "noRoute" }),
   );
   const buildBtn = el("button", { class: "btn primary", type: "submit", style: "margin-top:0.8rem;" }, "Build PSBT");
   form.appendChild(buildBtn);
@@ -191,6 +198,13 @@ export function renderOp(root: HTMLElement, opName: string): void {
       const newKeyHex = String(data.get("newKeyHex") ?? "").trim().replace(/^0x/, "");
       if (!/^[0-9a-fA-F]+$/.test(newKeyHex)) throw new Error("new key must be a hex atom");
       const breach = data.has("breach");
+      const noRoute = data.has("noRoute");
+      const sponsorText = String(data.get("sponsorPatp") ?? "").trim();
+      // `undefined` = carry the current sponsor forward; an explicit @p sets
+      // it. Clearing a sponsor is only reachable via the no-route tick.
+      let sponsor: bigint | null | undefined =
+        sponsorText ? patpToAtom(sponsorText) : undefined;
+      if (!sponsorText && noRoute) sponsor = null;
 
       const point = lookupPoint(s.snapshot, patpAtom);
       if (!point) throw new Error("point not found in the current snapshot");
@@ -212,11 +226,17 @@ export function renderOp(root: HTMLElement, opName: string): void {
       // Current committed snapshot, mapped from the oracle point. (The kelvin-9
       // state oracle is not yet wired; life/rift/sponsor carry over, and the
       // current messaging key comes from the point's pass.)
+      //
+      // NB: `point.net.sponsor` is the Jael projection, where an ABSENT
+      // on-chain sponsor is rendered as self-sponsorship (has=%.n, who=the
+      // ship itself). Copying `.who` unconditionally would silently turn "no
+      // sponsor" into "sponsored by itself" and defeat the routability guard
+      // below, so honour `.has`.
       const currentSnapshot: Snapshot = {
         life: point.net.life,
         rift: point.net.rift,
         key: point.net.pass,
-        sponsor: point.net.sponsor.who,
+        sponsor: point.net.sponsor.has ? point.net.sponsor.who : null,
         fief: null,
       };
 
@@ -237,9 +257,17 @@ export function renderOp(root: HTMLElement, opName: string): void {
         currentSnapshot,
         feeRate: 2,
         mp: s.mp,
+        noRoute,
       };
 
-      const built = ops.rekey.build({ newKey: BigInt("0x" + newKeyHex), breach }, ctx);
+      const built = ops.rekey.build(
+        {
+          newKey: BigInt("0x" + newKeyHex),
+          breach,
+          ...(sponsor === undefined ? {} : { sponsor }),
+        },
+        ctx,
+      );
 
       psbtCard.style.display = "";
       const stream = encodePsbtUR(built.psbt);

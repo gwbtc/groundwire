@@ -67,7 +67,11 @@ export class Mempool {
     return (await r.text()).trim();
   }
 
-  async utxo(address: string): Promise<Array<{ txid: string; vout: number; value: number; status: { confirmed: boolean } }>> {
+  // NB: `status.block_height` is present on confirmed entries and is the
+  // FUNDING tx's block. A confidential spawn's blind-opening start-height is
+  // exactly that height (see spawn/start-height.ts), so it must be carried
+  // through discovery rather than re-derived from the spawn tx.
+  async utxo(address: string): Promise<Array<{ txid: string; vout: number; value: number; status: { confirmed: boolean; block_height?: number } }>> {
     const r = await fetch(`${this.baseUrl}/address/${address}/utxo`);
     if (!r.ok) throw new Error(`mempool utxo ${address}: ${r.status}`);
     return r.json();

@@ -24,8 +24,9 @@ import {
 } from "../../spawn/boot-cmd.js";
 import { assembleSpawn } from "../../spawn/assemble.js";
 import { buildXtrAtom, bakeXtrIntoFeedAtom } from "../../spawn/reveal-log.js";
+import { resolveStartHeight } from "../../spawn/start-height.js";
 import type { Opening } from "../../spawn/publication.js";
-import { atomToPatp } from "../../protocol/patp.js";
+import { atomToPatp, patpToAtom } from "../../protocol/patp.js";
 import { atomToMnemonym, abridgeMnemonym } from "../../protocol/mnemonym.js";
 import type { DiscoveredUtxo } from "../../chain/discover.js";
 import { encodePsbtUR } from "../../signing/qr-ur.js";
@@ -147,6 +148,27 @@ export function renderSpawn(root: HTMLElement): void {
     " Public spawn (add an OP_RETURN publication revealing the opening on-chain)"));
   intro.appendChild(publicRow);
 
+  // Routing. A comet with neither a sponsor nor a fief cannot be
+  // cold-contacted: the verifier projects an absent sponsor to SELF, so no
+  // peer that has forgotten it can ever find it again. Causeway refuses to
+  // mint one unless the operator deliberately ticks the override.
+  intro.appendChild(el("h2", { style: "margin-top:1rem;" }, "Routing"));
+  intro.appendChild(el("p", { class: "qr-meta" },
+    "Confidential comets have no fixed address, so peers reach them through a "
+    + "sponsor committed in the on-chain snapshot. Without one, nothing can "
+    + "cold-contact your comet."));
+  intro.appendChild(el("label", { for: "sponsorPatp" }, "Sponsor @p (e.g. ~daplyd)"));
+  const sponsorInput = el("input", {
+    type: "text", id: "sponsorPatp", placeholder: "~sampel-palnet",
+  }) as HTMLInputElement;
+  intro.appendChild(sponsorInput);
+  const noRouteRow = el("label", { style: "display:block;margin-top:0.6rem;" });
+  const noRouteChk = el("input", { type: "checkbox", id: "noRoute" }) as HTMLInputElement;
+  noRouteRow.append(noRouteChk, document.createTextNode(
+    " Unroutable (no-route): mint with no sponsor and no fief. Outbound-only — "
+    + "no peer will ever be able to contact this comet first."));
+  intro.appendChild(noRouteRow);
+
   const startBtn = el("button", {
     class: "btn primary", type: "button", style: "margin-top:1rem;",
   }, "Mine & build spawn");
@@ -164,6 +186,28 @@ export function renderSpawn(root: HTMLElement): void {
 
     const txidDisplay = bytesToDisplayHex(picked.txid);
     const isPublic = publicChk.checked;
+    const noRoute = noRouteChk.checked;
+
+    // Resolve the sponsor BEFORE mining: an unroutable spawn must be refused
+    // up front, not after ~65k proof-of-work iterations.
+    let sponsor: bigint | null = null;
+    const sponsorText = sponsorInput.value.trim();
+    if (sponsorText) {
+      try {
+        sponsor = patpToAtom(sponsorText);
+      } catch (err: any) {
+        status.appendChild(banner("err", `sponsor: ${err.message ?? err}`));
+        return;
+      }
+    }
+    if (sponsor === null && !noRoute) {
+      status.appendChild(banner("err",
+        "no sponsor given. A comet with neither a sponsor nor a fief cannot be "
+        + "cold-contacted — an absent sponsor projects to self-sponsorship, so "
+        + "once a peer drops its state the identity is unreachable forever. "
+        + "Enter a sponsor @p, or tick “Unroutable (no-route)” on purpose."));
+      return;
+    }
 
     status.appendChild(banner("warn", "mining under ~daplyd — ~65k iterations…"));
     const progressLine = el("div", { class: "qr-meta", style: "margin-top:0.3rem;" }, "0 tries");
@@ -191,7 +235,16 @@ export function renderSpawn(root: HTMLElement): void {
     const cometPatp = atomToPatp(mined.comet);
     const cometMnemo = atomToMnemonym(mined.comet);
 
-    const assembled = assembleSpawn({ mined, picked, keys, feeRate: 2, publish: isPublic });
+    let assembled: ReturnType<typeof assembleSpawn>;
+    try {
+      assembled = assembleSpawn({
+        mined, picked, keys, feeRate: 2, publish: isPublic, sponsor, noRoute,
+      });
+    } catch (err: any) {
+      status.innerHTML = "";
+      status.appendChild(banner("err", `assemble error: ${err.message ?? err}`));
+      return;
+    }
 
     const opening: PersistedOpening = {
       internalKeyHex: assembled.internalKeyHex,
@@ -205,6 +258,9 @@ export function renderSpawn(root: HTMLElement): void {
       spawnVout: assembled.spawnSont.vout,
       spawnOff: Number(assembled.spawnSont.off ?? 0),
       blindHex: assembled.blindHex,
+      // The FUNDING tx's block, recorded from the UTXO scan. This — never the
+      // spawn tx's height — is the blind-opening's start-height.
+      ...(picked.blockHeight ? { fundingHeight: picked.blockHeight } : {}),
     };
     const persisted: PersistedSpawn = {
       version: 4,
@@ -344,10 +400,19 @@ export function renderSpawn(root: HTMLElement): void {
     card.appendChild(out);
 
     pollForConfirmation(opts.spawnTxidHex, meta)
-      .then((blockHeight) => {
+      .then(async (blockHeight) => {
         updatePhase("spawn-confirmed");
         meta.textContent = `spawn tx confirmed in block ${blockHeight} ✓`;
-        const opening = openingFromPersisted(opts.opening, blockHeight);
+        // The xtr ENTRY's height is the spawn tx's block (that is the tx the
+        // entry names). The blind-opening's START-HEIGHT is a different block
+        // entirely: the FUNDING tx's, i.e. the block of
+        // `opts.opening.spawnTxidHex`. Passing `blockHeight` here made every
+        // browser-minted comet unverifiable — the verifier fetches the funding
+        // tx by [height txid] and got `attestation-tx-not-found`.
+        const startHeight = await resolveStartHeight(opts.opening, s.mp);
+        meta.textContent =
+          `spawn tx confirmed in block ${blockHeight} ✓ · funding block ${startHeight}`;
+        const opening = openingFromPersisted(opts.opening, startHeight);
         const xtr = buildXtrAtom([{ txidHex: opts.spawnTxidHex, blockHeight, opening }]);
         const baseFeed = opts.getFeedAtom();
         if (baseFeed === null) {
@@ -468,7 +533,9 @@ export function renderSpawn(root: HTMLElement): void {
   }
 }
 
-// Rebuild the xtr Opening from persisted opening data + the confirmed height.
+// Rebuild the xtr Opening from persisted opening data + the resolved
+// start-height (the FUNDING tx's block — see spawn/start-height.ts, and NEVER
+// the spawn tx's own height).
 function openingFromPersisted(o: PersistedOpening, startHeight: number): Opening {
   return {
     internalKey: BigInt("0x" + o.internalKeyHex),

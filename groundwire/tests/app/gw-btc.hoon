@@ -100,6 +100,78 @@
   |=  c=card:agent:gall
   ?~  m=(fact-mark c)  %.n
   ?=(?(%verb-event %verb-event-plus) u.m)
+::  ---------------------------------------------------------------------
+::  %anew fixtures
+::  ---------------------------------------------------------------------
+::
+::  one custody entry, and the pass a refresh would publish for it
+::
+++  entry0  ^-  custody-entry:sa  [txid=0xdead.beef height=900.001 opening=~]
+++  entry1  ^-  custody-entry:sa  [txid=0xf00d.cafe height=900.050 opening=~]
+++  cand    ^-  custody-log:sa    ~[entry0 entry1]
+++  anew-pass  (kelvin-pass kelvin:cc)
+::  the Causeway -> %gw-btc ingestion poke, on the %noun mark
+::
+++  ingest-vase
+  |=  =custody-entry:sa
+  ^-  vase
+  !>(`ingest:sa`[%gw-custody-entry custody-entry])
+::  ... and the `*`-typed shape a khan thread / lens poke really produces
+::
+++  ingest-vase-untyped
+  |=  =custody-entry:sa
+  ^-  vase
+  !>(`*`[%gw-custody-entry custody-entry])
+::  the anew poke jael sends
+::
+++  anew-vase  ^-(vase !>(`jael-poke:urb`[%jael-anew %gw-btc]))
+::  A state noun with a %anew validation IN FLIGHT (job 0, candidate
+::  .cand, pass .anew-pass) and a chain tip known.  Fed through +on-load
+::  because that is the only way a test can put the agent in the middle
+::  of an asynchronous job.
+::
+++  pending-state
+  |=  [stored=custody-log:sa]
+  ^-  *
+  :*  `state:urb`[[0xdead.beef 900.100] ~ ~ ~]   :: urb-state
+      %.y                                         :: indexing
+      `[0xdead.beef 900.100]                      :: best
+      ~                                           :: inflight
+      ~                                           :: confidential
+      ~                                           :: attested
+      ~                                           :: publicizing
+      1                                           :: next-job
+      ~                                           :: sponsees
+      ~                                           :: declined
+      [stored `[0 cand anew-pass]]                :: own
+  ==
+::  the state shape BEFORE .own existed (10 fields), for the migration
+::
+++  legacy-10-state
+  ^-  *
+  :*  `state:urb`[[0xdead.beef 943.140] ~ ~ ~]
+      %.y  ~  ~  ~  ~  ~  0  ~  ~
+  ==
+::  a verifier result: .ok, naming .who, carrying a routable point
+::
+++  anew-result
+  |=  [ok=? who=ship]
+  ^-  [result:sa hexb:bitcoin]
+  :_  *hexb:bitcoin
+  :*  [who ok ~]
+      ?.  ok  ~
+      :-  ~
+      ^-  point:urb
+      :-  [[0xf00d.cafe 0 0] ~]
+      [rift=0 life=1 anew-pass [%.y ~marzod] ~ ~]
+      0
+  ==
+::  the khan sign a finished verification thread delivers
+::
+++  anew-sign
+  |=  [ok=? who=ship]
+  ^-  sign-arvo
+  [%khan %arow %.y %noun !>((anew-result ok who))]
 --
 |%
 ::  Operator declines sponsorship: the ship is recorded in `declined`,
@@ -307,5 +379,130 @@
       !>  `id:block:bitcoin`[0x0 961.054]
       !>  ;;(id:block:bitcoin (peek-noun (~(on-peek agent bowl0) /x/block-id)))
     (expect-eq !>((silt ~[~wes])) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/declined)))))
+  ==
+::
+::  ---------------------------------------------------------------------
+::  %anew -- extending our own custody log in band
+::
+::  THE safety property: %gw-btc never answers %anew with a pass it has
+::  not just proved against the chain.  Every negative path below is
+::  SILENCE, not a wrong answer.
+::  ---------------------------------------------------------------------
+::
+::  A bare %jael-anew on a fresh agent emits nothing.  ~zod is not a
+::  %pawn, so there is no confidential identity to refresh -- and the old
+::  implementation's failure mode (silence) is still the right ANSWER
+::  here; what changed is that a real comet now gets a verdict-backed
+::  pass instead.
+::
+++  test-anew-with-no-custody-log-is-silent
+  =/  agent  gw-btc
+  =^  cards  agent  (~(on-poke agent bowl0) %noun anew-vase)
+  (expect-eq !>(~) !>((app-cards cards)))
+::
+::  A Causeway ingestion poke is accepted as a POKE (it must not crash
+::  the agent, which is what the old code did -- ;;(jael-poke ...) bails
+::  on an unknown head tag), but emits nothing until it has been proved.
+::  Typed and `*`-typed vases must behave identically, exactly as for
+::  %jael-writ.
+::
+++  test-custody-entry-poke-does-not-crash-and-is-silent
+  =/  agent  gw-btc
+  =^  c-typed    agent  (~(on-poke agent bowl0) %noun (ingest-vase entry0))
+  =^  c-untyped  agent  (~(on-poke agent bowl0) %noun (ingest-vase-untyped entry0))
+  ;:  weld
+    (expect-eq !>(~) !>((app-cards c-typed)))
+    (expect-eq !>(~) !>((app-cards c-untyped)))
+    ::  and nothing was stored on the strength of the poke alone
+    (expect-eq !>(`custody-log:sa`~) !>(;;(custody-log:sa (peek-noun (~(on-peek agent bowl0) /x/custody)))))
+  ==
+::
+::  A POSITIVE verdict for OUR ship publishes exactly the pass that was
+::  verified, on /writs, and stores the candidate log.
+::
+++  test-anew-positive-verdict-publishes-the-verified-pass
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((pending-state ~)))
+  =^  cards  agent  (~(on-arvo agent bowl0) /anew/0 (anew-sign %.y ~zod))
+  =/  out  (app-cards cards)
+  ;:  weld
+    (expect-eq !>(1) !>((lent out)))
+    (expect-eq !>(`%anew-response) !>((fact-mark (snag 0 out))))
+    ::  the fact carries [dom pass], and the pass is byte-identical to
+    ::  the one the light client just walked
+    %+  expect-eq
+      !>  `[@tas pass]`[%gw-btc anew-pass]
+      !>  ^-  [@tas pass]
+          ?~  pay=(fact-payload (snag 0 out))  [%$ 0x0]
+          ;;([dom=@tas =pass] u.pay)
+    ::  ... and the validated log is now ours
+    (expect-eq !>(cand) !>(;;(custody-log:sa (peek-noun (~(on-peek agent bowl0) /x/custody)))))
+  ==
+::
+::  A NEGATIVE verdict answers with silence and leaves the previous log
+::  alone.  Emitting the candidate here is the one thing that must never
+::  happen: ames would install a pass no peer will accept.
+::
+++  test-anew-negative-verdict-is-silent-and-keeps-the-old-log
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((pending-state ~[entry0])))
+  =^  cards  agent  (~(on-arvo agent bowl0) /anew/0 (anew-sign %.n ~zod))
+  ;:  weld
+    (expect-eq !>(~) !>((app-cards cards)))
+    (expect-eq !>(`custody-log:sa`~[entry0]) !>(;;(custody-log:sa (peek-noun (~(on-peek agent bowl0) /x/custody)))))
+  ==
+::
+::  A verdict that is positive but names a DIFFERENT ship is not our
+::  refresh.  Publishing it would hand ames a pass for someone else.
+::
+++  test-anew-verdict-for-another-ship-is-silent
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((pending-state ~)))
+  =^  cards  agent  (~(on-arvo agent bowl0) /anew/0 (anew-sign %.y ~marzod))
+  ;:  weld
+    (expect-eq !>(~) !>((app-cards cards)))
+    (expect-eq !>(`custody-log:sa`~) !>(;;(custody-log:sa (peek-noun (~(on-peek agent bowl0) /x/custody)))))
+  ==
+::
+::  A verdict for a job that is not the one in flight is ignored: a
+::  stale thread must not be able to install a log.
+::
+++  test-anew-stale-job-verdict-is-ignored
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((pending-state ~)))
+  =^  cards  agent  (~(on-arvo agent bowl0) /anew/7 (anew-sign %.y ~zod))
+  ;:  weld
+    (expect-eq !>(~) !>((app-cards cards)))
+    (expect-eq !>(`custody-log:sa`~) !>(;;(custody-log:sa (peek-noun (~(on-peek agent bowl0) /x/custody)))))
+  ==
+::
+::  The leak backstop releases the slot and emits NOTHING -- a job that
+::  died silently is infrastructure failure, never evidence.
+::
+++  test-anew-guard-releases-the-slot-without-a-verdict
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((pending-state ~)))
+  =^  cards  agent
+    (~(on-arvo agent bowl0) /anew-guard/0 `sign-arvo`[%behn %wake ~])
+  ;:  weld
+    (expect-eq !>(~) !>((app-cards cards)))
+    ::  slot released: a verdict for job 0 no longer applies
+    =^  late  agent  (~(on-arvo agent bowl0) /anew/0 (anew-sign %.y ~zod))
+    (expect-eq !>(~) !>((app-cards late)))
+  ==
+::
+::  UPGRADE.  A pre-%anew state (10 fields, no .own) must load with an
+::  empty custody log rather than crashing -- an agent that will not load
+::  answers no attestation at all.
+::
+++  test-on-load-migrates-the-pre-anew-state
+  =/  agent  gw-btc
+  =^  cards  agent  (~(on-load agent bowl0) !>(legacy-10-state))
+  ;:  weld
+    %+  expect-eq
+      !>  `id:block:bitcoin`[0xdead.beef 943.140]
+      !>  ;;(id:block:bitcoin (peek-noun (~(on-peek agent bowl0) /x/block-id)))
+    (expect-eq !>(`custody-log:sa`~) !>(;;(custody-log:sa (peek-noun (~(on-peek agent bowl0) /x/custody)))))
+    (expect-eq !>(~) !>((app-cards cards)))
   ==
 --

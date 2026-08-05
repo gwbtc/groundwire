@@ -363,4 +363,39 @@
     (expect !>(!ok.verdict.res))
     (expect !>(!(got-check verdict.res 'life-monotonic')))
   ==
+::
+::  ---------------------------------------------------------------------
+::  +routable / +extend-log -- the two helpers the %anew path leans on
+::  ---------------------------------------------------------------------
+::
+::  A snapshot with neither a sponsor nor a fief cannot be cold-contacted.
+::  This is deliberately NOT a validity rule (a %fail here would become an
+::  ames snub of an honest ship); it drives an operator warning only.
+::
+++  test-routable
+  ;:  weld
+    (expect !>(!(routable:sal `snapshot:sa`[1 0 0xabc ~ ~])))
+    (expect !>((routable:sal `snapshot:sa`[1 0 0xabc `~marzod ~])))
+    (expect !>((routable:sal `snapshot:sa`[1 0 0xabc ~ `[%if .1.2.3.4 8.080]])))
+  ==
+::
+::  Appending the entry we already hold is a RE-VALIDATION request, not a
+::  second hop.  Appending it twice would put a duplicate txid in the log
+::  whose input 0 cannot spend the (identical) previous tip, so the log
+::  would fail +run-checks from then on -- silently, and forever.
+::
+++  test-extend-log-is-idempotent-on-the-tip
+  =/  e0  `custody-entry:sa`[0xdead 900.001 ~]
+  =/  e1  `custody-entry:sa`[0xbeef 900.050 ~]
+  ;:  weld
+    ::  a fresh entry appends
+    (expect-eq !>(`custody-log:sa`~[e0 e1]) !>((extend-log:sal ~[e0] e1)))
+    ::  re-poking the tip is a no-op
+    (expect-eq !>(`custody-log:sa`~[e0 e1]) !>((extend-log:sal ~[e0 e1] e1)))
+    ::  an empty base starts the log (the "finalize after boot" path)
+    (expect-eq !>(`custody-log:sa`~[e0]) !>((extend-log:sal ~ e0)))
+    ::  a REPEAT of a non-tip entry is still an append: only the tip is
+    ::  treated as a retry, because only the tip could be one.
+    (expect-eq !>(`custody-log:sa`~[e0 e1 e0]) !>((extend-log:sal ~[e0 e1] e0)))
+  ==
 --

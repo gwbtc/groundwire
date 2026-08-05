@@ -18,10 +18,20 @@
 ::  here as a %jael-writ poke.  We decode the custody log carried in the
 ::  pass, fetch its transactions asynchronously through %light-client,
 ::  and answer with a %writ-response fact; on success
-::  Jael stores the point and promotes the comet.  A %jael-anew poke
-::  (our own comet asking for a fresh attestation) is answered only when
-::  our indexed confidential tip still matches the last verified pass;
-::  extending that pass with new custody entries is not implemented yet.
+::  Jael stores the point and promotes the comet.
+::
+::  The other half of that protocol is our OWN identity.  After the owner
+::  performs a custody transaction through Causeway (a rekey, or a plain
+::  sat move), Causeway pokes us the new xtr entry and its opening
+::  ([%gw-custody-entry ...], $ingest in sur/self-attestation).  We run
+::  the EXTENDED log through the same light-client verification a peer's
+::  attestation gets, and only on a positive verdict do we store it,
+::  re-encode our pass around it, and hand jael an %anew-response.  A
+::  %jael-anew poke re-validates the stored log and answers the same way.
+::  Either path answers with SILENCE if validation fails: a stale or
+::  unproven pass is worse than none.  (Known accepted gap: the refreshed
+::  pass is not written back to the boot keyfile, so a reboot re-derives
+::  from the feed and needs another %anew round-trip.)
 ::
 ::  The domain name is this agent's name (1:1 by construction): a comet
 ::  commits the tag %gw-btc in its key tweak, and Jael derives the
@@ -52,6 +62,33 @@
 ::  accepted at; the policy re-runs on every re-attestation.
 ::
 +$  sponsee  [=life since=@da]
+::  $anew-job: the single in-flight validation of OUR OWN custody log
+::
+::    .pass is the EXACT pass being validated -- built once, at launch,
+::    from jael's current-life ring plus (jam .chain).  The %anew answer
+::    republishes that byte-identical pass, so what ames installs is
+::    precisely what the light client verified.  Rebuilding it at answer
+::    time instead would open a window where the two differ.
+::
++$  anew-job
+  $:  job=@ud
+      chain=custody-log:sa
+      =pass
+  ==
+::  $own-custody: our OWN comet's custody log, and its validation slot
+::
+::    .chain is the log this ship will serve in its self-attestation --
+::    every entry of it validated against the chain by the same
+::    +verify-lc a peer's attestation goes through.  It starts empty and
+::    is seeded from our own pass's xtr (whatever Causeway baked into the
+::    boot feed) the first time it is needed.
+::
+::    .pending is single-flight: at most one self-validation at a time.
+::
++$  own-custody
+  $:  chain=custody-log:sa
+      pending=(unit anew-job)
+  ==
 ::  $gw-state
 ::
 ::    .indexing and .best are the two INDEPENDENT readiness signals, and
@@ -76,6 +113,25 @@
 ::    would never scan a block.)
 ::
 +$  gw-state
+  $:  urb-state=state:urb
+      indexing=_|
+      best=(unit id:block:bc)
+      inflight=(map ship inflight-writ)
+      confidential=(set ship)
+      attested=(map ship sont:ord)
+      publicizing=(set ship)
+      next-job=@ud
+      sponsees=(map ship sponsee)
+      declined=(set ship)
+      own=own-custody
+  ==
+::  $gw-state-10: the state shape before .own was added
+::
+::    +on-load discriminates on it; ;; is strict about arity (it bails on
+::    both a missing and an extra tail), so trying the current mold first
+::    and falling back here is exact, not a guess.
+::
++$  gw-state-10
   $:  urb-state=state:urb
       indexing=_|
       best=(unit id:block:bc)
@@ -125,7 +181,20 @@
   ::
   =/  nou=*  q.vase
   =.  nou  ?:(?=([[@ *] *] nou) +.nou nou)
-  `this(state ;;(gw-state nou))
+  ::  .own (our own custody log) was appended later.  ;; is strict about
+  ::  arity, so the current mold succeeding IS the discriminator; a
+  ::  pre-.own state loads with an empty log and re-seeds itself from our
+  ::  pass's xtr on the next %anew.
+  ::
+  =/  cur  (mole |.(;;(gw-state nou)))
+  ?^  cur  `this(state u.cur)
+  =/  o  ;;(gw-state-10 nou)
+  =/  ext=gw-state
+    :*  urb-state.o  indexing.o  best.o  inflight.o  confidential.o
+        attested.o  publicizing.o  next-job.o  sponsees.o  declined.o
+        *own-custody
+    ==
+  `this(state ext)
 ::
 ++  on-poke
   |=  [=mark =vase]
@@ -144,6 +213,21 @@
     ::  every writ that actually came from Jael, i.e. on every real
     ::  attestation over the network.  Poking `&noun [%jael-writ ...]`
     ::  from the dojo builds a fully typed vase and hides this completely.
+    ::  Causeway's custody-log ingestion ($ingest, sur/self-attestation)
+    ::  rides the %noun mark too, so neither side needs a mark file.
+    ::  Dispatch on the head tag BEFORE the $jael-poke mold-cast, which
+    ::  would bail on a tag outside its union.
+    ::
+    ?:  ?=([%gw-custody-entry *] q.vase)
+      =/  pok  ;;(ingest:sa q.vase)
+      =/  res
+        %:  begin-anew
+            q.byk.bowl
+            our.bowl
+            now.bowl
+          (extend-log:lsa (base-chain our.bowl now.bowl) entry.pok)
+        ==
+      [-.res this(state +.res)]
     =/  poke  ;;(jael-poke:urb q.vase)
     ?-    -.poke
         %jael-writ
@@ -218,20 +302,31 @@
       (verify-cards q.byk.bowl now.bowl who.poke req num.u.best)
     ::
         %jael-anew
-      ::  Our own comet asking for a fresh self-attestation.  Return the last
-      ::  verified pass only while its recorded tip is still current; custody
-      ::  discovery/xtr extension is not implemented yet.  If we do not index
-      ::  ourselves, stay silent.
+      ::  Our own comet asking for a fresh self-attestation.
+      ::
+      ::  We answer by RE-VALIDATING our current custody log against the
+      ::  chain and emitting the pass only if it still holds -- never
+      ::  from memory.  The log may have gone stale since we last checked
+      ::  (the identity sat can be spent by anyone holding the key), and
+      ::  a stale pass is strictly worse than silence: it would be
+      ::  installed in ames and then rejected by every peer.
+      ::
+      ::  The answer therefore arrives asynchronously, on the same
+      ::  /writs path, once the light client has walked the log.  Jael
+      ::  relays any %anew-response fact to its %sybl subscribers, so
+      ::  there is no request/response pairing to keep and no deadline to
+      ::  miss (ames simply installs the pass when it lands).
       ::
       ?.  =(dom.poke domain:cc)
         `this
-      ?~  pas=(fresh-pass our.bowl)
-        `this
-      :_  this
-      :~  :*  %give  %fact  ~[/writs]
-              %anew-response  !>(`anew-response:jael`[dom.poke u.pas])
-          ==
-      ==
+      =/  res
+        %:  begin-anew
+            q.byk.bowl
+            our.bowl
+            now.bowl
+          (base-chain our.bowl now.bowl)
+        ==
+      [-.res this(state +.res)]
     ==
   ::
       ::  Operator control over sponsorship.  %gw-sponsor-decline
@@ -309,6 +404,13 @@
     ::
       [%x %declined ~]
     ``noun+!>(declined)
+    ::  /x/custody — OUR OWN validated custody log (the xtr we serve)
+    ::
+    ::  Only ever holds a log that passed a full light-client walk; an
+    ::  ingestion that failed leaves the previous one in place.
+    ::
+      [%x %custody ~]
+    ``noun+!>(chain.own)
     ::
       [%x %point ship=@ ~]
     ?~  who=(slaw %p ship.pole)  ~
@@ -424,6 +526,58 @@
     %-  (slog leaf+"%gw-btc: releasing stuck verification slot for {(scow %p who)}" ~)
     `this(inflight (~(del by inflight) who))
   ::
+      ::  Our OWN custody log finished validating.  A positive verdict
+      ::  is the ONLY thing that may store the log or publish the pass;
+      ::  anything else (crash, timeout, negative verdict) leaves the
+      ::  previous log alone and answers %anew with silence.
+      ::
+      [%anew job=@ ~]
+    =/  job  (slav %ud i.t.wire)
+    ::  NB: narrow a COPY.  ?~ on `pending.own` would retype the state
+    ::  leg itself, and the `=.` below could then no longer put ~ back.
+    =/  pend  pending.own
+    ?~  pend  `this
+    ?.  =(job job.u.pend)  `this
+    =/  req=anew-job  u.pend
+    =.  pending.own  ~
+    ?+    sign-arvo  (on-arvo:def wire sign-arvo)
+        [%khan %arow *]
+      ?.  -.p.sign-arvo
+        ?>  ?=([%khan %arow %.n *] sign-arvo)
+        %-  (slog leaf+"%gw-btc: %anew self-validation ended without a verdict" +.p.p.sign-arvo)
+        `this
+      ?>  ?=([%khan %arow %.y %noun *] sign-arvo)
+      =/  [%khan %arow %.y %noun =vase]  sign-arvo
+      =/  parsed  !<([result:sa hexb:bc] vase)
+      =/  res=result:sa  -.parsed
+      %-  (slog (report:lsa verdict.res))
+      ?.  &(ok.verdict.res =(our.bowl who.verdict.res))
+        %-  %-  slog
+            :~  leaf+"%gw-btc: our own custody log did not verify; %anew stays silent"
+                leaf+"  (the stored log is unchanged; a stale pass is worse than none)"
+            ==
+        `this
+      ::  Warn the OPERATOR (never the network) if the state we just
+      ::  proved leaves us unreachable.
+      %-  (slog (unroutable-point our.bowl point.res))
+      %-  (slog leaf+"%gw-btc: custody log verified ({<(lent chain.req)>} entries); refreshing our pass" ~)
+      :_  this(chain.own chain.req)
+      ~[(anew-card domain:cc pass.req)]
+    ==
+  ::
+      ::  Leak backstop for the %anew job, mirroring +stuck-job-guard for
+      ::  peer verification: release the slot, emit nothing.
+      ::
+      [%anew-guard job=@ ~]
+    ?.  ?=([%behn %wake *] sign-arvo)
+      (on-arvo:def wire sign-arvo)
+    =/  job  (slav %ud i.t.wire)
+    =/  pend  pending.own
+    ?~  pend  `this
+    ?.  =(job job.u.pend)  `this
+    %-  (slog leaf+"%gw-btc: releasing stuck %anew self-validation slot" ~)
+    `this(pending.own ~)
+  ::
       [%verify ship=@ job=@ ~]
     =/  who  (slav %p i.t.wire)
     =/  job  (slav %ud i.t.t.wire)
@@ -491,6 +645,9 @@
       =?  sponsees  claims-us
         (~(put by sponsees) who [life.net.u.verified now.bowl])
       =?  declined  claims-us  (~(del in declined) who)
+      ::  Operator visibility only -- an unroutable comet is legal and
+      ::  its verdict is unaffected.
+      %-  (slog (unroutable-point who verified))
       :_  this
       ~[(writ-card dom.req who `(urb-point-to-jael u.verified who))]
     ==
@@ -611,6 +768,10 @@
       =/  stale-cards=(list card)
         %+  turn  ~(tap in gone-stale)
         |=(=ship (stale-card dap.bowl ship))
+      ::  A PUBLIC comet just indexed with neither a sponsor nor a fief
+      ::  is unreachable in exactly the same way; hand-rolled spawns that
+      ::  never touched Causeway show up here.
+      %-  (slog (unroutable-points urb-state public-new))
       :_  this
       %+  welp  stale-cards
       %+  welp
@@ -916,6 +1077,197 @@
   :*  %give  %fact  ~[/writs]
       %stale-notice  !>(`stale-notice:jael`[dom who])
   ==
+::
+::  ----------------------------------------------------------------
+::  %anew: extending OUR OWN custody log, in band
+::  ----------------------------------------------------------------
+::
+::  +own-pass: our own current pass, straight from jael
+::
+::    NOT from the poke.  The poke supplies only chain evidence; the key
+::    material comes from the ring jael holds for our CURRENT life, so a
+::    kernel %rekey (which installs a new ring at a new life) is picked
+::    up automatically and the refreshed pass carries the rotated
+::    messaging key as well as the extended log.
+::
+::    Scries cannot be run inside +mole (mule's scry gate blocks
+::    everything), so every branch here has to be one jael always
+::    answers:
+::
+::      - the %pawn guard keeps us off ships with no confidential
+::        identity at all, including the fake galaxies the test harness
+::        runs on (where the door would otherwise scry a comet's deed).
+::      - %life for our own ship always answers.
+::      - %deed for our own %pawn at life 1 always answers -- and on a
+::        fake ship answers with a suite-%b pass, which +with-xtr then
+::        rejects.  Silence, not a crash.
+::
+++  own-pass
+  |=  [our=@p now=@da]
+  ^-  (unit pass)
+  ?.  ?=(%pawn (clan:title our))  ~
+  =/  lyf=life
+    .^(life %j /(scot %p our)/life/(scot %da now)/(scot %p our))
+  ?:  =(1 lyf)
+    =/  ded
+      .^  [=life =pass ded=(unit @ux)]  %j
+          /(scot %p our)/deed/(scot %da now)/(scot %p our)/(scot %ud lyf)
+      ==
+    `pass.ded
+  ::  after a kernel %rekey our life advances and the deed endpoint stops
+  ::  answering for a pawn; the vault ring is then the only source.
+  =/  rig=ring
+    .^(ring %j /(scot %p our)/vein/(scot %da now)/(scot %ud lyf))
+  `pub:ex:(nol:nu:cric:crypto rig)
+::
+::  +base-chain: the custody log a new entry extends
+::
+::    Our stored (validated) log if we have one, else the log Causeway
+::    baked into the boot feed's xtr.  ~ for a comet that booted with a
+::    plain feed -- in which case an ingested SPAWN entry starts the log
+::    from nothing, which is exactly the "finalize after boot" path.
+::
+++  base-chain
+  |=  [our=@p now=@da]
+  ^-  custody-log:sa
+  ?^  chain.own  chain.own
+  =/  base  (own-pass our now)
+  ?~  base  ~
+  =/  sat  (from-xtr:lsa our u.base)
+  ?~  sat  ~
+  chain.u.sat
+::
+::  +begin-anew: validate a candidate custody log for OUR OWN comet
+::
+::    Everything the poke claims is re-derived from the chain by the SAME
+::    +verify-lc a peer's attestation goes through -- see +anew-cards
+::    below, +verify-lc in lib/lc-attestation, and ++run-checks in
+::    lib/self-attestation for the full list.  Fetches are addressed by
+::    [height txid] through %light-client, so an entry naming a
+::    transaction that is not in the block it claims cannot even be
+::    fetched, let alone accepted.
+::
+::    Nothing is stored and nothing is emitted until the verdict lands
+::    and is positive: a failed validation leaves the previous log in
+::    place and answers with silence.
+::
+++  begin-anew
+  |=  [byk=desk our=@p now=@da cand=custody-log:sa]
+  ^-  (quip card gw-state)
+  ::  single-flight, exactly as for peer verification
+  =/  pend  pending.own
+  ?^  pend  `state
+  ?~  cand  `state
+  ?:  (gth (lent cand) 1.024)  `state
+  ::  readiness is infrastructure, never evidence
+  =/  tip  best
+  ?~  tip  `state
+  =/  base  (own-pass our now)
+  ?~  base  `state
+  =/  pas  (with-xtr:cc u.base (jam cand))
+  ?~  pas  `state
+  ::  the pass we are about to publish must still hash to our name.  the
+  ::  tweak is immutable, so this can only fail if +with-xtr or the ring
+  ::  ever drifts from the kernel's encoder -- but publishing a pass that
+  ::  is not ours would be catastrophic, so check it anyway.
+  ?.  =(our `@p`fig:ex:(com:nu:cric:crypto u.pas))  `state
+  =/  job  next-job
+  =/  sat=self-attestation:sa  [our u.pas cand]
+  :-  (anew-cards byk now job sat (self-known-public cand) num.u.tip)
+  %=  state
+    next-job     +(next-job)
+    pending.own  `[job cand u.pas]
+  ==
+::
+::  +self-known-public: the sponsor-existence set for OUR OWN log
+::
+::    ++run-checks fails a snapshot naming a sponsor the verifier cannot
+::    see as a public point.  That check belongs to the PEER: it is how a
+::    stranger refuses to believe in a sponsor that does not exist.
+::    Applied to our own log it is only a liveness hazard -- a comet
+::    whose node does not index the public chain could never refresh its
+::    own pass and would be stuck on a stale log forever.  So our own
+::    owner-chosen sponsors are admitted here; peers still check them.
+::
+++  self-known-public
+  |=  chain=custody-log:sa
+  ^-  (set ship)
+  =/  opens  (openings-of:lsa chain)
+  =/  out    ~(key by unv-ids.urb-state)
+  |-  ^-  (set ship)
+  ?~  opens  out
+  =*  snap  snapshot.opening.i.opens
+  ?~  sponsor.snap
+    $(opens t.opens)
+  $(opens t.opens, out (~(put in out) u.sponsor.snap))
+::
+::  Launch the light-client validation of OUR OWN candidate custody log.
+::
+::    Deliberately the SAME thread a peer's attestation runs through, with
+::    tracked=~ (there is no prior anchor for ourselves; monotonicity is
+::    guaranteed structurally instead, because a candidate can only be
+::    built by appending to the stored log).  Reusing +verify-lc is the
+::    point: it means we can never publish a pass that we would ourselves
+::    reject if a peer sent it.
+::
+++  anew-cards
+  |=  $:  byk=desk
+          now=@da
+          job=@ud
+          sat=self-attestation:sa
+          known-public=(set ship)
+          best-height=@ud
+      ==
+  ^-  (list card)
+  =/  wir  /(scot %ud job)
+  :~  :*  %pass  [%anew wir]  %arvo  %k
+          %lard  byk
+          %+  (set-timeout:strandio ,vase)  stuck-job-guard
+          (verify-lc:lca sat ~ known-public best-height)
+      ==
+      :*  %pass  [%anew-guard wir]
+          %arvo  %b  %wait  (add now stuck-job-guard)
+      ==
+  ==
+::
+::  Hand jael our freshly re-encoded pass.  Jael relays it to its %sybl
+::  subscribers and ames installs it (+sy-sybl %anew), which re-checks
+::  that it still hashes to our name.
+++  anew-card
+  |=  [dom=@tas =pass]
+  ^-  card
+  :*  %give  %fact  ~[/writs]
+      %anew-response  !>(`anew-response:jael`[dom pass])
+  ==
+::
+::  +unroutable-point: operator warning for a comet nothing can reach
+::
+::    Neither a sponsor nor a fief means no cold contact: +urb-point-to-jael
+::    projects an absent sponsor to SELF, so a peer that has forgotten this
+::    identity can never find it again.  This is LEGAL (decisions addendum
+::    section 2) and must never affect a verdict -- Causeway refuses to mint
+::    one, and this is how a hand-rolled transaction that never touched
+::    Causeway still becomes visible to an operator.
+::
+++  unroutable-point
+  |=  [who=ship pt=(unit point:urb)]
+  ^-  tang
+  ?~  pt  ~
+  ?:  |(has.sponsor.net.u.pt ?=(^ fief.net.u.pt))  ~
+  :~  leaf+"%gw-btc: WARNING {(scow %p who)} commits neither a sponsor nor a fief"
+      leaf+"  nothing can cold-contact it (an absent sponsor projects to self);"
+      leaf+"  it can only ever speak first, on lanes a peer already holds."
+  ==
+::
+::  The same warning for freshly indexed PUBLIC identities.
+++  unroutable-points
+  |=  [st=state:urb ships=(set ship)]
+  ^-  tang
+  %-  zing
+  %+  turn  ~(tap in ships)
+  |=  who=ship
+  ^-  tang
+  (unroutable-point who (~(get by unv-ids.st) who))
 ::
 ::  Emit an asynchronous Jael verdict on the path registered by %anex.
 ++  writ-card
@@ -1234,17 +1586,6 @@
   ^-  (unit ship)
   ?.  ?=([@ ~] path)  ~
   (slaw %p i.path)
-::
-::  +fresh-pass: our own current pass, for a %jael-anew refresh
-::
-++  fresh-pass
-  |=  who=ship
-  ^-  (unit pass)
-  ?.  (~(has in confidential) who)  ~
-  ?~  pt=(~(get by unv-ids.urb-state) who)  ~
-  ?~  tip=(~(get by attested) who)  ~
-  ?.  =(u.tip sont.own.u.pt)  ~
-  `pass.net.u.pt
 ::
 ::  +urb-point-to-jael: project a urb $point onto Jael's $point
 ::

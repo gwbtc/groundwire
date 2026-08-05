@@ -24,6 +24,44 @@
   ^-  tank
   leaf+"  [{?:(ok.check "ok" "XX")}] {(trip name.check)}"
 ::
+::  +routable: can anything COLD-CONTACT a comet in this state?
+::
+::    A snapshot with neither a sponsor nor a fief is a one-way identity.
+::    +urb-point-to-jael projects an absent sponsor to SELF, so the jael
+::    point names the comet as its own sponsor and no peer that has
+::    forgotten it can ever route to it again -- it can only ever speak
+::    first, on a lane it already holds.
+::
+::    This is NOT a validity rule and MUST NOT become one: the decisions
+::    addendum (section 2, "Fief scope") explicitly allows it, and a
+::    negative verdict here would become a jael %fail and an ames snub of
+::    a perfectly honest ship.  Causeway refuses to MINT one (the
+::    --no-route opt-out); %gw-btc only warns its operator, so a
+::    hand-rolled transaction that never touched Causeway is still
+::    visible.
+::
+++  routable
+  |=  snap=snapshot:sa
+  ^-  ?
+  |(?=(^ sponsor.snap) ?=(^ fief.snap))
+::
+::  +extend-log: append one custody entry, idempotently
+::
+::    The %anew ingestion path (app/gw-btc.hoon): Causeway hands us the
+::    entry its custody transaction produced and we append it to the log
+::    we already hold.  Re-poking the entry we ALREADY hold -- a retry, a
+::    double click, a resumed script -- is a request to re-validate, not
+::    a second hop: appending it twice would break input-0 continuity at
+::    the duplicate and the log would then fail verification, silently,
+::    forever.
+::
+++  extend-log
+  |=  [base=custody-log:sa new=custody-entry:sa]
+  ^-  custody-log:sa
+  ?:  ?&(?=(^ base) =(new (rear base)))
+    base
+  (snoc base new)
+::
 ++  nom
   |=  [idx=@ud suffix=@t]
   ^-  cord

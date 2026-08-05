@@ -97,6 +97,46 @@
   ?>  ?=(%c suite.+<.cic)
   =/  meta  (need (parse-dat dat.tw.pub.+<.cic))
   [dom.meta kel.meta d.meta xtr.tw.pub.+<.cic]
+::  +with-xtr: the same suite-%c pass carrying a different xtr tail
+::
+::    This is what a %anew refresh emits: the custody log grows, the NAME
+::    does not.  xtr is excluded from the key tweak (see +make-dat), so
+::    only `ugn`, `cry` and `dat` fix the @p -- all three are copied
+::    verbatim here and `fig` is therefore unchanged by construction.
+::
+::    The layout is exactly what +pub:ex:cric writes and +nol/+com read
+::    (sys/zuse.hoon):
+::
+::        'c' | 32^ugn | 32^cry | (mat dat) | xtr
+::
+::    with `xtr` occupying every remaining bit and OMITTED entirely when
+::    it is 0.  Pinned by tests/lib/gw-btc-pass: re-encoding a pass with
+::    its own xtr must reproduce the pass byte-for-byte, which is the
+::    check that this stays in step with the kernel's encoder.
+::
+::    ~ if .pass is not a well-formed suite-%c pass.
+::
+++  with-xtr
+  |=  [=pass xtr=@]
+  ^-  (unit ^pass)
+  %-  mole
+  |.
+  ?>  =('c' (end 3 pass))
+  ::  reject anything +com would refuse, so we never mint a pass that
+  ::  cannot be read back
+  ::
+  =/  cic  (com:nu:cric:crypto pass)
+  ?>  ?=(%c suite.+<.cic)
+  =/  bod  (rsh 3 pass)
+  =/  hed  (rub 512 bod)
+  ^-  ^pass
+  %+  can  0
+  :~  [8 'c']
+      [256 (end 8 bod)]           ::  ugn -- the untweaked signing key
+      [256 (cut 8 [1 1] bod)]     ::  cry -- the messaging key
+      (mat q.hed)                 ::  dat -- the immutable tweak data
+      [(met 0 xtr) xtr]
+  ==
 ::
 ::  Equality of the cryptographic key material while deliberately ignoring
 ::  xtr.  This is the comparison needed between an on-chain state pass and a

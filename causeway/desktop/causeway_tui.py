@@ -76,6 +76,12 @@ class FlowState:
     blind_mnemonic: Optional[str] = None  # connect-wallet: no seed to derive from
     blind_derivation: Optional[str] = None
     publish: bool = False
+    # Routing (decisions-addendum section 2): a snapshot with neither a sponsor
+    # nor a fief is a one-way identity — nothing can cold-contact the comet.
+    # Causeway refuses to mint one unless `no_route` is ticked deliberately.
+    sponsor_input: str = ""
+    sponsor_atom: Optional[int] = None
+    no_route: bool = False
     psbt_b64_unsigned: Optional[str] = None
     psbt_b64_signed: Optional[str] = None
     commit_txid: Optional[str] = None
@@ -168,10 +174,15 @@ class SpawnMethodScreen(BaseScreen):
                 "that any Bitcoin wallet can sign."
             ),
             Static(" "),
+            Static("Sponsor (@p or mnemonym) — peers route to your comet through it:", classes="hint"),
+            Input(placeholder="~sampel-palnet", id="sponsor"),
+            Checkbox("no-route: mint with NO sponsor and NO fief (outbound-only)", id="no-route"),
+            Static(" "),
             Button("Connect Wallet  (paste xpub, sign PSBT externally)", id="connect", variant="primary"),
             Button("Generate New Wallet  (fresh BIP-39 seed in memory)", id="generate"),
             Static(" "),
             Static("Connect Wallet is recommended if you already hold BTC in Sparrow, Passport, Keystone, etc.", classes="hint"),
+            Static("", id="err"),
             id="panel",
         )
         yield Footer()
@@ -181,6 +192,19 @@ class SpawnMethodScreen(BaseScreen):
         if event.button.id not in ("connect", "generate"):
             return
         state.op_name = "spawn"
+        # Routing gate, BEFORE any wallet/faucet/mining work: refuse to mint a
+        # comet nothing can ever contact (see cw.assert_routable).
+        err = self.query_one("#err", Static)
+        state.sponsor_input = self.query_one("#sponsor", Input).value.strip()
+        state.no_route = self.query_one("#no-route", Checkbox).value
+        try:
+            state.sponsor_atom = cw.resolve_sponsor(state.sponsor_input or None)
+            cw.assert_routable({"sponsor": state.sponsor_atom, "fief": None},
+                               state.no_route)
+        except Exception as e:  # noqa: BLE001
+            err.update(str(e))
+            return
+        err.update("")
         # FlowState survives a trip back to the landing screen, so clear the
         # key material a previous spawn left behind. Otherwise a stale
         # `mnemonic` would silently back the next comet's blind (and skip the
@@ -688,7 +712,8 @@ class MiningScreen(BaseScreen):
         self.app.call_from_thread(log.write_line, f"Pass atom: 0x{state.pass_atom:x}")
 
         # The initial snapshot the sat output commits to (life 1, rift 0).
-        state.snapshot = cw._initial_snapshot(state.pass_atom)
+        state.snapshot = cw._initial_snapshot(state.pass_atom, state.sponsor_atom)
+        cw.assert_routable(state.snapshot, state.no_route)
         self.app.call_from_thread(log.write_line, f"Initial snapshot: life=1 rift=0 key=0x{state.snapshot['key']:x}")
         self.app.call_from_thread(self.app.push_screen, PsbtBuildScreen())
 
@@ -1006,6 +1031,9 @@ class ManageFormScreen(BaseScreen):
             Input(placeholder="deadbeef...", id="new-pass-hex"),
             Static("Breach (bump rift as well as life)?", classes="label"),
             Checkbox("breach", id="breach"),
+            Static("Sponsor for the NEW snapshot (blank = keep the current one):", classes="label"),
+            Input(placeholder="~sampel-palnet", id="sponsor"),
+            Checkbox("no-route: commit no sponsor and no fief (outbound-only)", id="no-route"),
             Horizontal(
                 Button("Continue →", id="continue", variant="primary"),
                 Button("Back", id="back"),
@@ -1053,15 +1081,29 @@ class ManageFormScreen(BaseScreen):
             err.update(f"bad hex: {e}")
             return
         breach = self.query_one("#breach", Checkbox).value
+        state.no_route = self.query_one("#no-route", Checkbox).value
+        try:
+            state.sponsor_atom = cw.resolve_sponsor(
+                self.query_one("#sponsor", Input).value.strip() or None)
+        except Exception as e:  # noqa: BLE001
+            err.update(str(e))
+            return
         prior_snap = state.prior_proof.get("snapshot") or {}
         # Every snapshot change bumps life; a rift bump implies a life bump.
         state.snapshot = {
             "life": int(prior_snap.get("life", 0)) + 1,
             "rift": int(prior_snap.get("rift", 0)) + (1 if breach else 0),
             "key": new_key,
-            "sponsor": prior_snap.get("sponsor"),
+            "sponsor": (state.sponsor_atom if state.sponsor_atom is not None
+                        else prior_snap.get("sponsor")),
             "fief": prior_snap.get("fief"),
         }
+        # A state update that strands the comet is refused here too.
+        try:
+            cw.assert_routable(state.snapshot, state.no_route)
+        except Exception as e:  # noqa: BLE001
+            err.update(str(e))
+            return
         # No UTXO picker for a rekey: the input is fixed — the prior proof's
         # sat-carrying output (the point's current custody home).
         self.app.push_screen(PsbtBuildScreen())

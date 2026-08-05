@@ -17,6 +17,10 @@ export interface StateUpdateCtx {
   currentSnapshot: Snapshot;     // committed in `current` (gives the input merkle root)
   feeRate: number;
   mp: Mempool;
+  // Deliberately allow a state update whose new snapshot has neither a
+  // sponsor nor a fief (an outbound-only identity). Default off: Causeway
+  // refuses to build one, because nothing can cold-contact the result.
+  noRoute?: boolean;
 }
 
 export interface BuiltStateUpdate {

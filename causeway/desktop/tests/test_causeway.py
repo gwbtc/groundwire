@@ -10,6 +10,7 @@ Run with: cd causeway/desktop && python -m pytest -q
 
 import json
 import os
+import re
 import sys
 
 import pytest
@@ -301,7 +302,10 @@ def test_spawn_generate_blind_is_recoverable_from_its_wallet_seed(tmp_path, monk
     monkeypatch.setattr(cw, "generate_new_mnemonic",
                         lambda **kw: captured.setdefault("phrase", real_gen(**kw)))
 
-    cw.run_spawn_generate(None, 2, "main", str(tmp_path), "miner", "http://stub", False)
+    # no_route: this test is about blind recovery, not routing, so it mints a
+    # deliberately outbound-only comet rather than naming a sponsor.
+    cw.run_spawn_generate(None, 2, "main", str(tmp_path), "miner", "http://stub", False,
+                          no_route=True)
 
     proof = cw.load_proof_json(str(tmp_path / "zod-spawn.proof.json"))
     _assert_proof_blind_recoverable(proof, captured["phrase"], "wallet-seed+outpoint", captured)
@@ -326,7 +330,7 @@ def test_spawn_connect_blind_is_recoverable_from_the_blind_mnemonic(tmp_path, mo
     blind_phrase = "absurd amount doctor acoustic avoid letter advice cage absurd amount doctor adjust"
 
     cw.run_spawn_connect(desc, None, 2, "main", str(tmp_path), "miner", "http://stub", False,
-                         blind_mnemonic=blind_phrase)
+                         blind_mnemonic=blind_phrase, no_route=True)
 
     proof = cw.load_proof_json(str(tmp_path / "zod-spawn.proof.json"))
     _assert_proof_blind_recoverable(proof, blind_phrase, "blind-mnemonic+outpoint", captured)
@@ -932,3 +936,237 @@ def test_finalize_bakes_the_funding_height_into_the_blind_opening(tmp_path, monk
     assert out["start_height"] == FUNDING_HEIGHT
     assert out["funding"]["height"] == FUNDING_HEIGHT
     assert _xtr_start_height(int(out["xtr_hex"], 16)) == FUNDING_HEIGHT
+
+
+# ---------------------------------------------------------------------------
+# Routability: Causeway refuses to mint an unroutable comet
+#
+# A snapshot with NEITHER sponsor NOR fief is a one-way identity:
+# +urb-point-to-jael projects an absent sponsor to SELF, so nothing can route
+# to it, and once a peer drops its state it can never be re-contacted. That is
+# legal protocol (decisions-addendum section 2) — the verifier must never
+# reject it — so the refusal lives in the mint tools, with an explicit
+# --no-route opt-out for exotic outbound-only uses.
+# ---------------------------------------------------------------------------
+
+
+SPONSOR_PATP = "~marzod"
+
+
+def test_snapshot_is_routable():
+    assert not cw.snapshot_is_routable({"sponsor": None, "fief": None})
+    assert cw.snapshot_is_routable({"sponsor": 42, "fief": None})
+    assert cw.snapshot_is_routable({"sponsor": None, "fief": ("%if", 1, 2)})
+
+
+def test_assert_routable_refuses_by_default():
+    with pytest.raises(Exception) as e:
+        cw.assert_routable({"sponsor": None, "fief": None})
+    assert "neither a sponsor nor a fief" in str(e.value)
+
+
+def test_assert_routable_opt_out_is_explicit():
+    cw.assert_routable({"sponsor": None, "fief": None}, no_route=True)
+
+
+def test_resolve_sponsor_accepts_a_patp():
+    assert cw.resolve_sponsor(SPONSOR_PATP) == cw.patp_to_int(SPONSOR_PATP)
+    assert cw.resolve_sponsor(None) is None
+    assert cw.resolve_sponsor("  ") is None
+    with pytest.raises(Exception):
+        cw.resolve_sponsor("~not-a-real-ship-name-at-all")
+
+
+def test_spawn_refuses_an_unroutable_comet_before_doing_any_work(monkeypatch):
+    """The refusal must land BEFORE the faucet / UTXO scan / proof-of-work, so
+    an operator never burns a mine (or a broadcast) on a stranded identity."""
+    def boom(*a, **k):
+        raise AssertionError("must not touch the network / miner")
+
+    monkeypatch.setattr(cw, "parse_key_source", boom)
+    monkeypatch.setattr(cw, "scan_addresses", boom)
+    monkeypatch.setattr(cw, "mine_comet_from_utxo", boom)
+    monkeypatch.setattr(cw, "generate_new_mnemonic", boom)
+
+    with pytest.raises(Exception) as e:
+        cw.run_spawn_connect("xpub-does-not-matter", None, 2, "main", ".", "miner", "stub")
+    assert "neither a sponsor nor a fief" in str(e.value)
+
+    with pytest.raises(Exception) as e:
+        cw.run_spawn_generate(None, 2, "main", ".", "miner", "stub")
+    assert "neither a sponsor nor a fief" in str(e.value)
+
+
+def test_spawn_with_a_sponsor_passes_the_routability_gate(monkeypatch):
+    """With --sponsor the gate lets the flow proceed; it stops at the first
+    real step instead (proving the gate, not the network, was the blocker)."""
+    sentinel = RuntimeError("reached parse_key_source")
+
+    def stop(*a, **k):
+        raise sentinel
+
+    monkeypatch.setattr(cw, "parse_key_source", stop)
+    with pytest.raises(RuntimeError) as e:
+        cw.run_spawn_connect("xpub", None, 2, "main", ".", "miner", "stub",
+                             sponsor=SPONSOR_PATP)
+    assert e.value is sentinel
+
+
+def test_spawn_no_route_flag_passes_the_gate(monkeypatch):
+    sentinel = RuntimeError("reached parse_key_source")
+
+    def stop(*a, **k):
+        raise sentinel
+
+    monkeypatch.setattr(cw, "parse_key_source", stop)
+    with pytest.raises(RuntimeError) as e:
+        cw.run_spawn_connect("xpub", None, 2, "main", ".", "miner", "stub",
+                             no_route=True)
+    assert e.value is sentinel
+
+
+def _rekey_prior(tmp_path, sponsor=None):
+    prior = _spawn_proof()
+    prior["patp"] = "~sampel-palnet"
+    prior["snapshot"] = {"life": 1, "rift": 0, "key": 7, "sponsor": sponsor, "fief": None}
+    path = tmp_path / "prior.proof.json"
+    cw.write_proof_json(prior, str(path))
+    return str(path)
+
+
+def test_rekey_refuses_to_strand_an_unsponsored_comet(tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("must not build a PSBT for a stranded comet")
+
+    monkeypatch.setattr(cw, "build_rekey_psbt", boom)
+    with pytest.raises(Exception) as e:
+        cw._run_rekey_op("~sampel-palnet", _rekey_prior(tmp_path), 9, False, 2,
+                         "main", str(tmp_path), "stub")
+    assert "neither a sponsor nor a fief" in str(e.value)
+
+
+def test_rekey_carries_the_prior_sponsor_forward(tmp_path, monkeypatch):
+    """A sponsored comet rekeys freely: the gate sees the carried-forward
+    sponsor and the flow reaches the PSBT builder."""
+    seen = {}
+
+    def capture(prior_proof, new_snapshot, fee_rate, network):
+        seen.update(new_snapshot)
+        raise RuntimeError("stop after the snapshot")
+
+    monkeypatch.setattr(cw, "build_rekey_psbt", capture)
+    with pytest.raises(RuntimeError):
+        cw._run_rekey_op("~sampel-palnet", _rekey_prior(tmp_path, sponsor=1234), 9,
+                         False, 2, "main", str(tmp_path), "stub")
+    assert seen["sponsor"] == 1234
+    assert seen["life"] == 2
+
+
+def test_rekey_sponsor_flag_sets_a_new_sponsor(tmp_path, monkeypatch):
+    seen = {}
+
+    def capture(prior_proof, new_snapshot, fee_rate, network):
+        seen.update(new_snapshot)
+        raise RuntimeError("stop after the snapshot")
+
+    monkeypatch.setattr(cw, "build_rekey_psbt", capture)
+    with pytest.raises(RuntimeError):
+        cw._run_rekey_op("~sampel-palnet", _rekey_prior(tmp_path), 9, False, 2,
+                         "main", str(tmp_path), "stub", sponsor=SPONSOR_PATP)
+    assert seen["sponsor"] == cw.patp_to_int(SPONSOR_PATP)
+
+
+def test_rekey_no_route_allows_a_deliberate_strand(tmp_path, monkeypatch):
+    seen = {}
+
+    def capture(prior_proof, new_snapshot, fee_rate, network):
+        seen.update(new_snapshot)
+        raise RuntimeError("stop after the snapshot")
+
+    monkeypatch.setattr(cw, "build_rekey_psbt", capture)
+    with pytest.raises(RuntimeError):
+        cw._run_rekey_op("~sampel-palnet", _rekey_prior(tmp_path), 9, False, 2,
+                         "main", str(tmp_path), "stub", no_route=True)
+    assert seen["sponsor"] is None
+
+
+def test_tui_spawn_and_rekey_go_through_the_routability_gate():
+    """The TUI is a third mint path; it must not bypass the refusal."""
+    pytest.importorskip("textual")
+    import inspect
+    import causeway_tui as tui
+    assert "assert_routable" in inspect.getsource(tui.SpawnMethodScreen.on_button_pressed)
+    assert "assert_routable" in inspect.getsource(tui.MiningScreen.run_mine)
+    assert "assert_routable" in inspect.getsource(tui.ManageFormScreen)
+
+
+# ---------------------------------------------------------------------------
+# The in-band %anew hand-off: the dojo poke `causeway finalize` prints.
+#
+# decisions-addendum section 5: after a custody tx confirms, the owner hands
+# the ship's OWN %gw-btc the new xtr entry + opening; the agent re-verifies
+# the whole extended log on-chain before refreshing the pass. The poke rides
+# the %noun mark ($ingest in groundwire/sur/self-attestation.hoon), so this
+# string is the desktop half of that contract.
+# ---------------------------------------------------------------------------
+
+
+def test_custody_entry_poke_shape_for_a_spawn():
+    entry = {
+        "txid_hex": "de" * 32,
+        "height": 900_142,
+        "opening": {
+            "internal_key": int("02" + "ab" * 32, 16),
+            "snapshot": {"life": 1, "rift": 0, "key": 0xC0FFEE, "sponsor": None, "fief": None},
+            "blind_opening": {
+                "spawn": {"txid_hex": "ad" * 32, "vout": 1, "off": 0},
+                "start_height": 900_100,
+                "blind": bytes.fromhex("cc" * 32),
+            },
+        },
+    }
+    line = cw.format_custody_entry_poke(entry)
+    assert line.startswith(":gw-btc &noun [%gw-custody-entry ")
+    # entry = [txid height opening]; the opening is PRESENT (a spawn)
+    assert " 900.142 `[" in line
+    # the blind-opening carries the FUNDING tx's height, not the entry's
+    assert "900.100" in line
+    assert "900.142" != "900.100"
+    # sponsor absent, fief absent -> two bare ~ inside the snapshot
+    assert "~ ~]" in line
+    # balanced brackets — the dojo has to parse this
+    assert line.count("[") == line.count("]")
+    # Hoon REQUIRES dot grouping above 999; a bare 900142 is a syntax error
+    # and would make the printed line unpasteable.
+    assert re.search(r"(?<![.\dx])\d{4,}", line) is None
+    # exact shape, pinned: this literal has been cast against the Hoon mold
+    # ($ingest in groundwire/sur/self-attestation.hoon) with `urbit eval`.
+    assert line == (
+        ":gw-btc &noun [%gw-custody-entry ["
+        + cw.format_hoon_ux("de" * 32)
+        + " 900.142 `["
+        + cw.format_hoon_ux("02" + "ab" * 32)
+        + " [1 0 0xc0.ffee ~ ~] `[["
+        + cw.format_hoon_ux("ad" * 32)
+        + " 1 0] 900.100 "
+        + cw.format_hoon_ux("cc" * 32)
+        + "]]]]"
+    )
+
+
+def test_custody_entry_poke_renders_sponsor_and_a_bare_hop():
+    entry = {
+        "txid_hex": "de" * 32,
+        "height": 900_200,
+        "opening": {
+            "internal_key": int("02" + "ab" * 32, 16),
+            "snapshot": {"life": 2, "rift": 0, "key": 0xC0FFEE,
+                         "sponsor": cw.patp_to_int("~marzod"), "fief": None},
+            "blind_opening": None,     # a state update, not a spawn
+        },
+    }
+    line = cw.format_custody_entry_poke(entry)
+    assert "`~marzod" in line
+    # an absent blind-opening is the bare ~ that marks a non-spawn hop
+    assert line.rstrip().endswith("~]]]")
+    assert line.count("[") == line.count("]")
