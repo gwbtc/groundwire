@@ -69,6 +69,31 @@ of the safety surface lives.
 
 ## Phase 4 — sponsorship [N1][N2][N3]
 
+**Revised after Phase 3.** Phase 3 established that mainnet stars do **not**
+relay comet↔comet packets: each comet reaches its own sponsor, but an
+attestation request never arrives at the far comet, and the direct C1↔C2
+leg only worked behind a transport-only DNAT hack. That is precisely the
+problem sponsorship exists to solve — so Phase 4 is not merely a feature
+test, it is the real fix for what Phase 3 had to work around.
+
+Consequences for setup:
+- **All three comets currently carry `fief=~`**, so none is reachable by
+  a peer that doesn't already have a lane. The sponsor must commit a real
+  fief. That needs one on-chain state update on C3
+  (`fief=[%if <droplet-ip> <ames-port>]`), and C3 must then be booted on
+  that exact IP with that exact port pinned (`-p`).
+- C1 must name C3 as sponsor, which is committed on-chain — another state
+  update (`sponsor=~ligdes-…`). Both are ~111 sats; budget is ample.
+- Because life must increase on every snapshot change, each state update
+  also exercises re-verification at the new life (Phase 5.1/5.2 for free).
+
+This **subsumes the 3.1 retest**: if C1 and C2 can reach each other via C3
+with no DNAT, the unresolved C1→C2 asymmetry was an artifact of the DNAT
+routing cycle. If it persists over clean sponsor routing, the
+`+on-hear-keys` `via = sndr` / `chums`-vs-`peers` hypothesis is real and
+becomes a kernel bug to chase.
+
+
 | # | Test | Expected |
 |---|---|---|
 | 4.1 | C1 commits `sponsor=S`, attests to S | S recognizes itself named; policy runs |
