@@ -15,3 +15,6 @@ __pycache__/
 
 # regtest harness runtime state (piers, bitcoind datadir, logs) — never commit
 testnet/run/
+
+# python packaging
+*.egg-info/
