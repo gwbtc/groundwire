@@ -390,3 +390,56 @@ the real order is *spawn confirms → light client syncs → custody entry → p
 grows → peers can verify*, and the 2.5 h sync is on that path, not parallel to
 it.
 
+## Re-test of 7.1 — headless spawn (was a Phase 6/7 **FAIL**)
+
+Phase 6/7 recorded: *"four blocking `input()` calls with no flags; two
+`continue` on EOF, producing a 100 %-CPU infinite loop that wrote 57 MB of
+`  > ` in 31 s"*.
+
+Re-run against piped (non-TTY) stdin, no money at risk:
+
+| case | result |
+|---|---|
+| no `--sponsor` and no `--no-route` | **exit 2**, immediately, 599 bytes of output |
+| `--no-route`, no fundable UTXO | **exit 1**, bounded, 357 bytes |
+
+Neither hangs, neither loops, and the first names both remedies explicitly:
+
+> `Error: this snapshot has neither a sponsor nor a fief, so nothing can
+> cold-contact the comet: the verifier projects an absent sponsor to SELF
+> (+urb-point-to-jael) … Pass --sponsor <@p or mnemonym>, or pass --no-route
+> if you really do want an outbound-only identity.`
+
+**7.1: PASS.** Also note what that message proves about finding 8 — `--sponsor`
+and `--no-route` are the *only* two ways out, because the CLI has no way to set
+a fief at all.
+
+## A troubleshooting entry that fires on every healthy run
+
+At the halfway mark k1 reported:
+
+```
+[%headers 608.001]
+[%filter-headers 1]
+[%live-earth-peers 139]
+```
+
+which is verbatim §9's *"Filter-header height never leaves 1, block headers
+advance normally → your peers cannot serve compact filters… this killed an
+entire test run."*
+
+Nothing was wrong. `+continue-syncing-headers`
+(`bitcoin-client.hoon:1015-1032`) does not request a single filter header until
+`block-headers-are-synced`, so this is the expected state for the entire
+~55-minute block-header phase. Following the runbook would have meant tearing
+down a healthy 139-peer set for no reason.
+
+The discriminator, now in §9: the symptom is real only once `%headers` has
+**reached the tip**; and a healthy `[%live-earth-peers N]` already proves the
+pool is CF-capable, because `++peer-services-are-sufficient` requires
+`node-compact-filters` before a peer can be live at all.
+
+*Classification: **documentation**, and the most likely of all these findings
+to waste a new operator's time, because it fires mid-run on a healthy system
+and the remedy is destructive.*
+
