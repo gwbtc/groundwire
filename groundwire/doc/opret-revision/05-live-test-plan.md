@@ -9,15 +9,25 @@ Legend: **[N1]/[N2]/[N3]** = droplet 1/2/3, **[M]** = the Mac,
 
 ## Phase 0 — bringup (prerequisite, not a test)
 
+**The procedure is now written down: [`../OPERATIONS.md`](../OPERATIONS.md).**
+Follow that rather than this paragraph — it has the verified commands, the
+known-good timings and the traps.
+
 Deploy the cross-compiled x86_64 vere, the kelvin-408 pill, the
 groundwire desk, the node light-client desk and the tcp sidecar to all
 three droplets; boot a ship on each; sync each light client from
-genesis to mainnet tip (~8 min, ~850 MB pier). Each verifying ship
-needs its OWN light client — `%gw-btc` scries `%light-client`
-same-ship.
+genesis to mainnet tip. Each verifying ship needs its OWN light client.
 
 Exit criteria: three live ships, each reporting mainnet tip height and
 a running `%gw-btc`.
+
+*Two corrections to the original text, both measured since:* full
+light-client bring-up is **~2.5 h** (~55 min of block headers, ~95 min of
+filter headers) and a synced pier is **~2.2 GB** — not "~8 min, ~850 MB";
+and the light client is the `%bitcoin-client` agent of the `%node` desk,
+not a `%light-client` agent (`%gw-btc` reaches it through
+`++light-client-agent:lca`). Start the sync first, in parallel across all
+machines.
 
 ## Phase 1 — mint identities [chain]
 

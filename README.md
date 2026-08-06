@@ -14,6 +14,8 @@ To install these desks for development purposes, you'll need to be running a shi
 
 See the onboarding directory for elaboration on the boot process and additional tooling we use.
 
+To bring up a Groundwire confidential comet from scratch — build the runtime and the pill, mint an identity with Causeway, boot the ship, install the desks, sync a Bitcoin light client and verify a peer — follow [`groundwire/doc/OPERATIONS.md`](groundwire/doc/OPERATIONS.md). It carries the known-good timings and the failure modes that have cost the most time.
+
 This repo also contains a `vendor` directory containing shared libraries between the `%groundwire` and `%spv-wallet` desks. To install the two desks, you'll need to run `make build` to copy in `vendor`'s dependencies and generate a `dist` directory for each one, like so:
 
 1. `|new-desk %groundwire`
