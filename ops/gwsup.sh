@@ -48,7 +48,16 @@ touch "$USED" "$POOL"
 log() { echo "$(date -u +%FT%TZ) [$P] $*" >> "$SLOG"; }
 
 # --- process identification (exact, never prefix-matched) --------------------
-king_pid() { ps -eo pid=,args= | awk -v p="$PIER" '$NF==p && /gw-vere/ {print $1}'; }
+# The king is matched on the pier as a standalone argv FIELD, not as the
+# TRAILING field: `$NF==p` only holds for the restart form
+# (`gw-vere -t --loom N -p <port> <pier>`).  A ship booted with the CREATE form
+# ends `... -G <feed> -B <pill>`, so the trailing field is the pill and the old
+# matcher returned nothing.  VERE-DOWN needs king AND serf both empty, and
+# serf_pid was reliable, so this never mis-fired a relaunch -- but it made
+# king_pid silently useless on exactly the ships every campaign boots.
+# A field match is still immune to the p4c1/p4c1b prefix trap.
+king_pid() { ps -eo pid=,args= | awk -v p="$PIER" '
+  /gw-vere/ && !/--snap-dir/ { for (i=2;i<=NF;i++) if ($i==p) { print $1; break } }'; }
 serf_pid() { ps -eo pid=,args= | awk -v p="$PIER" '/snap-dir/ { for(i=1;i<=NF;i++) if($i=="--snap-dir" && $(i+1)==p) print $1 }'; }
 sc_pids()  { for x in $(pgrep -f 'bin/tcp-sidecar' 2>/dev/null); do
                [ "$(readlink /proc/$x/cwd 2>/dev/null)" = "$PIER" ] && echo "$x"
