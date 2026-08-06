@@ -106,6 +106,18 @@
               [%sponsor sponsor=(unit @p)]
               [%escape to=(unit @p)]
               [%owner =sont:ord]
+              ::  %public: this identity's state is now published on chain.
+              ::  Emitted by +index-point:urb-core for every accepted
+              ::  OP_RETURN publication, spawn or state update.  It carries
+              ::  no jael udiff (+fx-to-udiffs drops it); its only consumer
+              ::  is %gw-btc, which uses it to move a comet OUT of its
+              ::  .confidential set -- the confidential -> public transition
+              ::  of decisions addendum section 2.  Only the holder of the
+              ::  tracked identity sat can produce a transaction that
+              ::  reaches +index-point, so this effect IS the owner's
+              ::  consent to declassify.
+              ::
+              [%public ~]
               ::[%spawn-proxy =sont:ord]
               [%mang mang=(unit mang)]
               ::[%voting-proxy =sont:ord]

@@ -123,6 +123,36 @@
   ^-  tx:bitcoin
   (mk-tx move-id ~[(mk-inputw spawn-id 0)] ~[[(p2tr-spk (mk-ikey 21)) 9.400]])
 ++  move-block  ^-(block:bitcoin [0xb.10c2 0 701 ~[coinbase move-tx]])
+::  The state a verified CONFIDENTIAL attestation leaves behind
+::  (+apply-verified in app/gw-btc.hoon): the comet is in unv-ids and its
+::  identity sat is tracked in sont-map, but no spawn was ever indexed
+::  from a block.  This is the starting point for the confidential ->
+::  public transition of decisions addendum section 2.
+::
+++  tracked-point
+  ^-  point:urb
+  [[[spawn-id 0 0] ~] 0 1 (pass-of 0) [%.n who] ~ ~]
+++  confidential-state
+  ^-  state:urb
+  :*  [0xb.10c1 700]
+      (put-com:si:ol *sont-map:ord spawn-id 0 0 9.500 who)
+      *insc-ids:ord
+      (~(put by *unv-ids:urb) who tracked-point)
+  ==
+::  the same rescue publication, but carrying a blind-opening as well.
+::  A comet whose custody we already follow publishes a STATE UPDATE
+::  whatever the shape of its opening: continuity from the sat we track
+::  is the proof, and the blind-opening is only checked for consistency.
+::
+++  opening1b  ^-(opening:sa [ikey1 snap1 `[fund start-height=700 blind]])
+++  pub1b      ^-(publication:sa [(pass-of 1) opening1b])
+++  state-b-tx
+  ^-  tx:bitcoin
+  %:  mk-tx  state-id
+    ~[(mk-inputw spawn-id 0)]
+    ~[[(state-spk ikey1 snap1) 9.000] [(make-publication:cc pub1b) 0]]
+  ==
+++  state-b-block  ^-(block:bitcoin [0xb.10c2 0 701 ~[coinbase state-b-tx]])
 --
 |%
 ::  ---- find-block-reveals -------------------------------------------
@@ -173,6 +203,7 @@
     %+  expect-eq
       !>  ^-  (list effect:urb)
           :~  [%point who %owner [spawn-id 0 0]]
+              [%point who %public ~]
               [%point who %sponsor `who]
               [%point who %keys 1 (pass-of 0)]
               [%point who %rift 0]
@@ -215,6 +246,59 @@
   ;:  weld
     (expect-eq !>(1) !>(life.net.pt))
     (expect-eq !>((pass-of 0)) !>(pass.net.pt))
+  ==
+::  ---- confidential -> public (decisions addendum section 2) --------
+::
+::  A CONFIDENTIAL comet -- one we hold only because its self-attestation
+::  verified -- publishes a state update to become publicly routable.
+::  This is the "publication" self-rescue.  It cost a real mainnet
+::  transaction to discover that it did not work, in two places: the
+::  scanner has to accept the publication at all, and it has to say so
+::  loudly enough that %gw-btc can move the ship out of .confidential.
+::  Without the second half the point is updated and then immediately
+::  deleted, because the publication's own sat move looks like staleness.
+::
+++  test-apply-state-declassifies-confidential-comet
+  =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]
+    (scan confidential-state state-block)
+  =/  pt  (need (~(get by unv-ids.st) who))
+  ;:  weld
+    ::  the published snapshot is adopted
+    ::
+    (expect-eq !>(2) !>(life.net.pt))
+    (expect-eq !>((pass-of 1)) !>(pass.net.pt))
+    (expect-eq !>([state-id 0 0]) !>(sont.own.pt))
+    ::  and the declassification is announced, which is the half that
+    ::  was missing: %gw-btc keys +published-comets off this effect.
+    ::
+    (expect !>((lien (effs fx) |=(e=effect:urb =(e [%point who %public ~])))))
+  ==
+::
+++  test-apply-state-declassifies-with-a-blind-opening-too
+  ::  a comet we already track publishes a state update whose opening
+  ::  ALSO carries a blind-opening.  Continuity from the tracked sat is
+  ::  the proof, so this is a state update, not a (refused) re-spawn.
+  ::
+  =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]
+    (scan confidential-state state-b-block)
+  =/  pt  (need (~(get by unv-ids.st) who))
+  ;:  weld
+    (expect-eq !>(2) !>(life.net.pt))
+    (expect-eq !>([state-id 0 0]) !>(sont.own.pt))
+    (expect !>((lien (effs fx) |=(e=effect:urb =(e [%point who %public ~])))))
+  ==
+::
+++  test-apply-state-untracked-comet-is-refused
+  ::  a STRANGER scanner, which has never indexed or verified this comet,
+  ::  still cannot admit a bare state-update publication: nothing binds
+  ::  the name to the sat the transaction spends.  It must refuse -- but
+  ::  loudly (the ~& in +apply-state), never silently.
+  ::
+  =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]
+    (scan *state:urb state-block)
+  ;:  weld
+    (expect !>(?=(~ (~(get by unv-ids.st) who))))
+    (expect !>(?=(~ (effs fx))))
   ==
 ::  ---- update-sonts -------------------------------------------------
 ++  test-update-sonts-follows-sat

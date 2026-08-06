@@ -596,14 +596,76 @@ def make_dat_expr(
 # is revealed only to attestation verifiers (or on-chain, when published).
 
 
+# --- $fief (sur/urb.hoon) -------------------------------------------------
+#
+#     +$  fief  $%  [%turf p=(list turf) q=@udE]
+#                   [%if p=@ifF q=@udE]
+#                   [%is p=@isH q=@udE]
+#               ==
+#
+# The fief rides the snapshot (decisions-addendum 2), so it enters the
+# state commitment: state-key is taken over the JAMMED snapshot, and a
+# dropped fief silently produces a different output key.  Canonical
+# in-process form is the NOUN itself — [tag [p q]] — so it can go straight
+# into the jam.  A JSON round-trip (proof.json stores the snapshot verbatim)
+# turns those tuples into lists, so normalize on the way in.
+
+FIEF_TAGS = {n: int.from_bytes(n.encode(), "little") for n in ("turf", "if", "is")}
+_FIEF_TAG_NAMES = {v: k for k, v in FIEF_TAGS.items()}
+
+
+def _noun_from_json(n):
+    """Nested JSON lists back to noun tuples (atoms stay ints). A 2-element
+    list is unambiguously a cell, so this is lossless."""
+    if isinstance(n, (tuple, list)):
+        if len(n) != 2:
+            raise ValueError(f"not a cell: {n!r}")
+        return (_noun_from_json(n[0]), _noun_from_json(n[1]))
+    return int(n)
+
+
+def fief_noun(fief):
+    """Normalize a fief to its noun [tag [p q]], or None if absent.
+
+    Accepts the noun (nested tuples) or the same shape after a JSON
+    round-trip (nested lists). Raises on anything that is not a $fief."""
+    if fief is None:
+        return None
+    n = _noun_from_json(fief)
+    if not isinstance(n, tuple):
+        raise ValueError(f"fief is not a [tag [p q]] noun: {fief!r}")
+    tag, rest = n
+    if tag not in _FIEF_TAG_NAMES:
+        raise ValueError(f"unknown fief tag {tag!r} (want one of {sorted(FIEF_TAGS)})")
+    if not isinstance(rest, tuple):
+        raise ValueError(f"fief tail is not [p q]: {rest!r}")
+    p, q = rest
+    if not isinstance(q, int):
+        raise ValueError(f"fief port is not an atom: {q!r}")
+    if _FIEF_TAG_NAMES[tag] != "turf" and not isinstance(p, int):
+        raise ValueError(f"%{_FIEF_TAG_NAMES[tag]} address is not an atom: {p!r}")
+    return n
+
+
+def _noun_list(n) -> list:
+    """A null-terminated Hoon list noun as a python list of its elements."""
+    out = []
+    while n != 0:
+        if not isinstance(n, tuple) or len(n) != 2:
+            raise ValueError(f"improper list: {n!r}")
+        out.append(n[0])
+        n = n[1]
+    return out
+
+
 def snapshot_noun(
     life: int, rift: int, key: int, sponsor=None, fief=None
 ) -> tuple:
     """[life rift key sponsor=(unit @p) fief=(unit fief)] as a noun.
 
-    sponsor is an @p integer or None; fief is None (absent) or a prebuilt
-    fief noun."""
-    return (life, (rift, (key, (_unit(sponsor), _unit(fief)))))
+    sponsor is an @p integer or None; fief is None (absent) or a fief noun
+    (see fief_noun, which also accepts the JSON-round-tripped form)."""
+    return (life, (rift, (key, (_unit(sponsor), _unit(fief_noun(fief))))))
 
 
 def snapshot_dict_to_noun(snap: dict) -> tuple:
@@ -711,6 +773,64 @@ def _hoon_ud(n: int) -> str:
     return f"{int(n):,}".replace(",", ".")
 
 
+def _hoon_dotted(value: int, groups: int, bits: int, base: int) -> str:
+    """Hoon's dot-separated fixed-width atom rendering (+ro-co:co), used by
+    the IP auras: @if is 4 base-10 groups of 8 bits, @is 8 base-16 groups of
+    16. Most significant group first, no zero padding, leading dot."""
+    mask = (1 << bits) - 1
+    digits = "0123456789abcdef"
+    out = []
+    for i in reversed(range(groups)):
+        g = (int(value) >> (bits * i)) & mask
+        s = ""
+        while True:
+            s = digits[g % base] + s
+            g //= base
+            if g == 0:
+                break
+        out.append(s)
+    return "." + ".".join(out)
+
+
+def _hoon_cord(atom: int) -> str:
+    """A @t literal, e.g. 'com'. Restricted to hostname characters — a turf
+    label with a quote in it would produce unpasteable Hoon."""
+    a = int(atom)
+    s = a.to_bytes((a.bit_length() + 7) // 8, "little").decode("ascii", "replace")
+    if not re.fullmatch(r"[a-z0-9-]+", s):
+        raise ValueError(f"turf label {s!r} is not a plain hostname label")
+    return f"'{s}'"
+
+
+def format_hoon_fief(fief) -> str | None:
+    """A $fief (sur/urb.hoon) as a Hoon literal — or None when absent, so it
+    composes with _hoon_unit into `~` / `` `[%if .64.227.13.22 34.343] ``.
+
+    The fief is part of the snapshot and therefore part of the on-chain
+    state commitment; a printed poke that omits it recomputes a different
+    state-key and can never match the chain."""
+    n = fief_noun(fief)
+    if n is None:
+        return None
+    tag, (p, q) = n
+    name = _FIEF_TAG_NAMES[tag]
+    if name == "if":                       # @ifF — .64.227.13.22
+        p_hoon = _hoon_dotted(p, 4, 8, 10)
+    elif name == "is":                     # @isH — .0.0.0.0.0.0.0.1
+        p_hoon = _hoon_dotted(p, 8, 16, 16)
+    else:                                  # %turf — ~[~['com' 'example']]
+        turfs = _noun_list(p)
+        if not turfs:
+            p_hoon = "~"
+        else:
+            p_hoon = "~[" + " ".join(
+                ("~" if not _noun_list(t)
+                 else "~[" + " ".join(_hoon_cord(c) for c in _noun_list(t)) + "]")
+                for t in turfs
+            ) + "]"
+    return f"[%{name} {p_hoon} {_hoon_ud(q)}]"
+
+
 def format_custody_entry_poke(entry: dict) -> str:
     """The dojo line that hands ONE xtr entry to the ship's own %gw-btc.
 
@@ -730,8 +850,11 @@ def format_custody_entry_poke(entry: dict) -> str:
         f'[{_hoon_ud(snap["life"])} {_hoon_ud(snap["rift"])} '
         f'{format_hoon_ux(format(int(snap["key"]), "x"))} '
         f'{_hoon_unit(int_to_patp(int(sponsor)) if sponsor is not None else None)} '
-        # v9 snapshots carry no fief (a fief is for static-address ships).
-        f'{_hoon_unit(None)}]'
+        # The fief is snapshot state (decisions-addendum 2) and enters the
+        # state commitment. Printing `~` for a comet that committed one
+        # yields a poke whose state-key cannot match the chain, and %anew
+        # fails SILENTLY — so this field must be the entry's real fief.
+        f'{_hoon_unit(format_hoon_fief(snap.get("fief")))}]'
     )
     bo = o.get("blind_opening")
     if bo is None:

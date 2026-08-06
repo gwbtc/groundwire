@@ -235,8 +235,43 @@
       =/  cac  (com:nu:cric:crypto pass)
       ?.  ?=(%c suite.+<.cac)  cor
       =/  who  `@p`fig:ex:cac
-      ?~  blind-opening.op
+      ::  A comet we ALREADY track publishes a STATE UPDATE, whatever the
+      ::  shape of its opening.  We track its custody position, so input-0
+      ::  continuity from that position is the ownership proof and a
+      ::  blind-opening adds nothing -- but if one is present we check it
+      ::  against dat anyway, because a mismatch means this publication is
+      ::  not that comet's.
+      ::
+      ::  This is the confidential -> public transition (decisions addendum
+      ::  section 2, "Self-rescue").  A comet we know only because its
+      ::  self-attestation VERIFIED is in unv-ids exactly like a public one;
+      ::  the difference lives in %gw-btc's .confidential set, not here.  So
+      ::  the owner spending the sat we already follow, and revealing the
+      ::  state it lands in, is a complete proof to us -- and only the
+      ::  holder of that sat can build the transaction, which makes it the
+      ::  owner's own consent to declassify.  ++index-point emits %public
+      ::  so the agent can move the ship out of .confidential and start
+      ::  handing jael its udiffs.
+      ::
+      ?^  (~(get by unv-ids) who)
+        ?:  ?&  ?=(^ blind-opening.op)
+                !=(d.u.meta (spawn-commit:cc [spawn blind]:u.blind-opening.op))
+            ==
+          ~&  >>>  ['%urb-core: publication blind-opening does not open dat' who]
+          cor
         (apply-state who pass op)
+      ?~  blind-opening.op
+        ::  A state update for a comet NOBODY here has ever indexed.  We
+        ::  cannot judge it and must not guess: the opening proves what
+        ::  state this transaction commits, but nothing binds the name to
+        ::  the sat the transaction spends.  That binding lives in the
+        ::  pass's hiding dat commitment and is opened only by a
+        ::  blind-opening -- and even then, a blind-opening names the SPAWN
+        ::  satpoint, so a stranger still has to walk the custody chain
+        ::  from there to here.  See the decisions addendum section 2b.
+        ::
+        ~&  >>>  ['%urb-core: state-update publication for a comet we do not track' who]
+        cor
       (apply-spawn who pass d.u.meta op u.blind-opening.op)
     ::
     ::  Find the first OP_RETURN "urb" publication among a tx's outputs.
@@ -263,10 +298,22 @@
     ++  apply-spawn
       |=  [who=ship =pass d=@ux op=opening:sa bo=blind-opening:sa]
       ^+  cor
-      ?^  (~(get by unv-ids) who)  cor
-      ?.  =(d (spawn-commit:cc spawn.bo blind.bo))  cor
-      ?.  =([txid vout]:spawn.bo [txid pos]:i.inputs)  cor
-      ?~  landed=(index-to-sont-with-coinbase off.spawn.bo)  cor
+      ::  Defensive: ++process-publication routes an already-tracked comet
+      ::  to ++apply-state before it gets here, so reaching this means the
+      ::  two disagree.
+      ::
+      ?^  (~(get by unv-ids) who)
+        ~&  >>>  ['%urb-core: spawn publication for a comet already indexed' who]
+        cor
+      ?.  =(d (spawn-commit:cc spawn.bo blind.bo))
+        ~&  >>>  ['%urb-core: spawn blind-opening does not open dat' who]
+        cor
+      ?.  =([txid vout]:spawn.bo [txid pos]:i.inputs)
+        ~&  >>>  ['%urb-core: spawn does not spend its funding satpoint' who]
+        cor
+      ?~  landed=(index-to-sont-with-coinbase off.spawn.bo)
+        ~&  >>>  ['%urb-core: spawn sat did not land in an output' who]
+        cor
       =/  sont  u.landed
       =/  out  (snag vout.sont os.tx)
       ?.  =(`(state-key:cc internal-key.op snapshot.op) (p2tr-xonly script-pubkey.out))
@@ -283,15 +330,26 @@
     ++  apply-state
       |=  [who=ship =pass op=opening:sa]
       ^+  cor
-      ?~  pt=(~(get by unv-ids) who)  cor
+      ?~  pt=(~(get by unv-ids) who)
+        ~&  >>>  ['%urb-core: state-update publication for an unindexed comet' who]
+        cor
       =/  cur  sont.own.u.pt
-      ?.  =([txid vout]:cur [txid pos]:i.inputs)  cor
-      ?~  landed=(index-to-sont-with-coinbase off.cur)  cor
+      ?.  =([txid vout]:cur [txid pos]:i.inputs)
+        ~&  >>>  ['%urb-core: state update does not spend our tracked tip' who cur]
+        cor
+      ?~  landed=(index-to-sont-with-coinbase off.cur)
+        ~&  >>>  ['%urb-core: state-update sat did not land in an output' who]
+        cor
       =/  sont  u.landed
       =/  out  (snag vout.sont os.tx)
       ?.  =(`(state-key:cc internal-key.op snapshot.op) (p2tr-xonly script-pubkey.out))
         ~&  >>>  "%urb-core: state commitment mismatch"  cor
-      ?.  (gth life.snapshot.op life.net.u.pt)  cor
+      ?.  (gth life.snapshot.op life.net.u.pt)
+        ~&  >>>
+        :*  '%urb-core: state update does not advance life'
+            who  published=life.snapshot.op  held=life.net.u.pt
+        ==
+        cor
       (index-point who pass snapshot.op cur value.out %.n)
     ::
     ::  Write a point from a snapshot and emit the jael udiffs.  On a
@@ -322,7 +380,8 @@
         ?.  spawn  ~
         ~[[%point who %owner sont]]
       ^-  (list effect:urb)
-      :~  [%point who %sponsor ?~(sponsor.snap `who `u.sponsor.snap)]
+      :~  [%point who %public ~]
+          [%point who %sponsor ?~(sponsor.snap `who `u.sponsor.snap)]
           [%point who %keys life.snap pass]
           [%point who %rift rift.snap]
           [%point who %fief fief.snap]

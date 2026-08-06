@@ -172,6 +172,43 @@
   |=  [ok=? who=ship]
   ^-  sign-arvo
   [%khan %arow %.y %noun !>((anew-result ok who))]
+::  ---------------------------------------------------------------------
+::  peer verification fixtures (the %jael-writ side)
+::  ---------------------------------------------------------------------
+::
+++  peer  ~wes
+::  A state with ONE verification in flight for .peer as job 0, so an
+::  /verify/~wes/0 sign lands on a live slot.  Built as a raw noun and
+::  fed through +on-load, exactly like +pending-state: an inflight job is
+::  otherwise unreachable from a test.
+::
+++  verify-state
+  |=  [conf=(set ship) ats=(map ship sont:ord) ids=unv-ids:urb]
+  ^-  *
+  :*  `state:urb`[[0xdead.beef 900.100] ~ ~ ids]  :: urb-state
+      %.y                                          :: indexing
+      `[0xdead.beef 900.100]                       :: best
+      ::  inflight: one $inflight-writ [dom pass sat job]
+      ::
+      (malt ~[[peer [%gw-btc anew-pass [peer anew-pass ~[entry0]] 0]]])
+      conf                                         :: confidential
+      ats                                          :: attested
+      ~                                            :: publicizing
+      1                                            :: next-job
+      ~                                            :: sponsees
+      ~                                            :: declined
+      [`custody-log:sa`~ ~]                        :: own
+  ==
+::  a $result whose verdict FAILED on exactly the named checks
+::
+++  failed-sign
+  |=  [who=ship bad=(list cord)]
+  ^-  sign-arvo
+  :^  %khan  %arow  %.y
+  :-  %noun
+  !>  ^-  [result:sa hexb:bitcoin]
+  :_  *hexb:bitcoin
+  [[who %.n (turn bad |=(c=cord `check:sa`[c %.n]))] ~ 0]
 --
 |%
 ::  Operator declines sponsorship: the ship is recorded in `declined`,
@@ -489,6 +526,73 @@
     ::  slot released: a verdict for job 0 no longer applies
     =^  late  agent  (~(on-arvo agent bowl0) /anew/0 (anew-sign %.y ~zod))
     (expect-eq !>(~) !>((app-cards late)))
+  ==
+::
+::  ---------------------------------------------------------------------
+::  Staleness is not fraud, on the PACKET path
+::
+::  Decisions addendum section 3.  A peer's attestation whose tip our own
+::  filter scan finds SPENT is out of date, not forged.  Answering it with
+::  res=~ makes jael %fail and ames SNUB -- and the snub then blocks the
+::  refreshed attestation that would fix it, which on mainnet left a comet
+::  permanently unreachable from its own sponsor.  It must take the same
+::  %stale route the scanner path takes.
+::  ---------------------------------------------------------------------
+::
+++  test-stale-tip-verdict-emits-stale-not-fail
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  =^  cards  agent
+    (~(on-arvo agent bowl0) /verify/(scot %p peer)/0 (failed-sign peer ~['tip-unspent']))
+  =/  out  (app-cards cards)
+  ;:  weld
+    (expect-eq !>(1) !>((lent out)))
+    ::  a %stale-notice, NOT a %writ-response: no %fail, so no snub
+    ::
+    (expect-eq !>(`%stale-notice) !>((fact-mark (snag 0 out))))
+    %+  expect-eq
+      !>  `[@tas ship]`[%gw-btc peer]
+      !>  ^-  [@tas ship]
+          ?~  pay=(fact-payload (snag 0 out))  [%$ ~zod]
+          ;;([dom=@tas =ship] u.pay)
+    ::  and the slot is released either way, so the replacement
+    ::  attestation can re-enter
+    ::
+    (expect-eq !>(*(set ship)) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/inflight)))))
+  ==
+::
+++  test-fraud-verdict-still-fails
+  ::  the control: the SAME machinery, one genuinely-invalid check, still
+  ::  produces the negative verdict that snubs.
+  ::
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  =^  cards  agent
+    (~(on-arvo agent bowl0) /verify/(scot %p peer)/0 (failed-sign peer ~['spawn-commit']))
+  =/  out  (app-cards cards)
+  ;:  weld
+    (expect-eq !>(1) !>((lent out)))
+    (expect-eq !>(`%writ-response) !>((fact-mark (snag 0 out))))
+    ::  res=~ is the %fail
+    ::
+    %+  expect-eq
+      !>  `(unit *)`~
+      !>  ^-  (unit *)
+          ?~  pay=(fact-payload (snag 0 out))  `**
+          res:;;([dom=@tas =ship res=(unit *)] u.pay)
+  ==
+::
+++  test-fraud-alongside-staleness-still-fails
+  ::  a spent tip does not launder a forged commitment
+  ::
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  =/  sign  (failed-sign peer ~['tip-unspent' 'entry-0-commitment'])
+  =^  cards  agent  (~(on-arvo agent bowl0) /verify/(scot %p peer)/0 sign)
+  =/  out  (app-cards cards)
+  ;:  weld
+    (expect-eq !>(1) !>((lent out)))
+    (expect-eq !>(`%writ-response) !>((fact-mark (snag 0 out))))
   ==
 ::
 ::  UPGRADE.  A pre-%anew state (10 fields, no .own) must load with an

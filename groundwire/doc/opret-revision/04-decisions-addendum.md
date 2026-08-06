@@ -107,21 +107,118 @@ On-chain committed snapshots carry sponsorship and routing state:
   comet can always rescue itself, but only by sacrificing either scalability
   or confidentiality.*
 
-  > **⚠️ CONTRADICTED ON MAINNET, 2026-08-05 — neither path is implemented.**
-  > See `doc/live-tests/PHASE5B-RESULTS.md` findings 4 and 10.
-  > *Publication*: `+apply-state:urb-core` silently refuses any publication for
-  > a comet not already in `unv-ids`, and `+apply-spawn` — the only writer of
-  > `unv-ids` — requires input 0 to spend the comet's original **funding**
-  > satpoint, which is a one-time, unrepeatable event. A confidential comet
-  > therefore cannot become public at all. Tested live: tx `0cca2561…`, block
-  > 961 217, correctly formed and fully gated, indexed by nobody.
-  > *Pairwise*: ames has no unsolicited self-attestation push — all three
-  > `+attestation-packet` call sites are reactive, and the only broadcast one
-  > (`+sy-priv`'s rekey blast) iterates peers that are **already** `%known`.
-  > Worse, the attempt is actively harmful: moving the sat makes the ship's
-  > un-refreshed attestation fail `tip-unspent` at its peers, which is a
-  > negative verdict rather than `%stale`, so the comet gets **snubbed** —
-  > see §3, whose "MUST NOT produce `%fail`" rule the packet path violates.
+  > **⚠️ CONTRADICTED ON MAINNET, 2026-08-05 — neither path worked.**
+  > See `doc/live-tests/PHASE5B-RESULTS.md` findings 4 and 10, and §2b below
+  > for the adopted resolution.
+  > *Publication*: a correctly formed, fully gated publication (tx
+  > `0cca2561…`, block 961 217) was indexed by nobody. **Partly fixed**
+  > (§2b): a scanner that already tracks the comet now accepts it and
+  > declassifies. A scanner that has never seen the comet still cannot, and
+  > that half is specified-but-unimplemented.
+  > *Pairwise*: still unimplemented. Ames has no unsolicited self-attestation
+  > push — all three `+attestation-packet` call sites are reactive, and the
+  > only broadcast one (`+sy-priv`'s rekey blast) iterates peers that are
+  > **already** `%known`.
+  > The attempt was also actively harmful: moving the sat made the ship's
+  > un-refreshed attestation fail `tip-unspent` at its peers, which produced a
+  > negative verdict rather than `%stale`, so the comet got **snubbed** by its
+  > own sponsor. **Fixed** — see §3.
+
+### 2b. The confidential → public transition (adopted 2026-08-06)
+
+What actually failed on mainnet is narrower, and different, from what the
+Phase-5b report concluded, so the record is corrected first.
+
+`+apply-state:urb-core`'s `unv-ids` guard is a barrier only for a **stranger**
+scanner. `unv-ids` holds confidential points too — `+apply-verified` puts one
+there on every positive verdict, which is exactly how `+detect-stale` follows
+a confidential comet's sat. C1 and C3 had both verified C2, so for them
+`+apply-state` found the point, input 0 spent the tip they were tracking, the
+`state-key` commitment matched, and life advanced 1 → 2. Every *loud* failure
+in that arm slogs, and no `%urb-core:` line appears in C1's log at block
+961 217. The publication was almost certainly **accepted**.
+
+It was then lost twice over, in `app/gw-btc.hoon`:
+
+- the ship was still in `.confidential`, so `+filtered-udiffs` dropped every
+  udiff `+index-point` had just produced;
+- and the publication's own sat move then looked exactly like staleness to
+  `+detect-stale`, which dropped the point altogether and told jael.
+
+So the missing piece was never the guard. It was that **nothing could ever
+move a comet out of `.confidential`.** `+public-spawns` — the only exit — keys
+off an `%owner` effect, which only a *spawn* emits.
+
+**Adopted design, in two tiers.**
+
+**Tier 1 — continuity publication (implemented).** A publication whose subject
+the scanner already tracks is a **state update**, whatever the shape of its
+opening. Input-0 continuity from the sat we already follow is the ownership
+proof; a `blind-opening`, when present, adds nothing to it and is checked only
+for consistency against `dat`. `+index-point` now emits `[%point who %public ~]`
+for every accepted publication, and `%gw-btc`'s `+published-comets` uses it to
+move the ship out of `.confidential`. Only the holder of the tracked identity
+sat can build such a transaction, so the publication *is* the owner's consent
+to declassify — irreversible, and slogged as such.
+
+This delivers the rescue for every peer that has ever verified the comet, which
+is the population §2's self-rescue was written for: a comet becomes unreachable
+precisely because peers that *did* know it dropped its point.
+
+**Tier 2 — publication as an on-chain self-attestation (specified, NOT
+implemented).** A stranger scanner still cannot admit a state-update
+publication, and must not: the `pass`↔`dat` binding names the **spawn**
+satpoint, and nothing in a single publication connects that satpoint to the one
+this transaction spends. Walking that custody chain is the confidential
+verifier's job, not a publication's.
+
+The resolution is to stop inventing a second proof system and reuse the first:
+**a publication that must convince a stranger carries the comet's custody log
+in the published pass's own `xtr`** (`+with-xtr:gw-btc-pass` already builds
+exactly that pass; the payload type does not change), and the scanner hands it
+to the same `+verify-lc` walk a packet attestation goes through. A publication
+then *is* a self-attestation, published on chain instead of mailed.
+
+Consequences to pin when this lands:
+
+- Cost is bounded by evidence the publisher paid for on chain, and is *lower*
+  than a packet attestation's: the scanner is reading the block that contains
+  the tip transaction, so the BIP-158 tip scan — the dominant cost (§9) — is
+  ~zero blocks wide.
+- The 512-byte payload cap (§4) bounds the log: pass ≈ 108 B plus opening
+  ≈ 120 B leaves room for roughly seven `[txid height]` entries. A comet that
+  has moved its sat more often than that cannot publish, and that is a real
+  limitation, stated rather than discovered.
+- §4b needs one refinement. `blind-opening.start-height` is unfillable only
+  when the publication rides the spawn transaction itself. A **late**
+  publication can and MUST carry a true `start-height`: the funding
+  transaction is no longer the parent of the transaction in hand, so the
+  scanner cannot recover it from the block it is reading.
+- Work must be launched asynchronously (a new `effect:urb` the agent turns
+  into a `+verify-lc` job), never inline in the block thread, and must reuse
+  the single-flight `inflight` slot so one publication per ship per batch is
+  the most anyone can buy.
+
+**Rejected alternatives.**
+
+- *Scanner discovers the chain itself*, filter-scanning forward from the spawn
+  satpoint hop by hop. It needs no new payload, and that is its whole appeal.
+  But the work is O(hops × blocks-since-mint), unbounded in dormancy, and it
+  is triggered by a **broadcast**: for one ~345-sat transaction anyone can put
+  a publication with a plausible blind-opening in a block and force every
+  scanner on the network into a multi-minute walk. It also cannot live where
+  it would have to — the block scanner is a forward-only streaming thread with
+  no way to launch or await per-comet historical work.
+- *Publication as a routing hint, confirmed by a later attestation.* Does not
+  deliver "from chain alone" — it is the pairwise path with an extra
+  unconfirmed-hint state to carry, and pairwise has no push primitive anyway.
+
+**Both silent refusals now slog**, along with every other early return in
+`+apply-spawn` and `+apply-state`. Their silence is why this cost a mainnet
+transaction to find instead of a log line, and it is the direct answer to
+test 6.7: *no*, it was not diagnosable from logs alone. `%gw-btc` also gained
+`/x/inflight`, `/x/publicizing`, `/x/confidential` and `/x/attested` scries for
+the same reason.
 - **Fief scope.** A fief is for ships with STATIC addresses — sponsors and
   other infrastructure (its `%turf` form is literally DNS). A reliable
   sponsor should commit a fief on-chain. Roaming/confidential comets set
@@ -165,6 +262,40 @@ comet look routed. It now honours `.has`.
 When `%gw-btc` observes a confidential comet's tip outpoint spent (conf
 registry), the identity's attestation is stale. This is not fraud and MUST
 NOT produce `%fail` (a snub would block the replacement packet).
+
+**This applies to the PACKET path identically** (adopted 2026-08-06). The same
+physical fact reaches a verifier two ways: the scanner watches a tracked tip
+get spent, or the owner moves the sat and the ship keeps sending the pass it
+booted with, so the spent tip arrives in a packet. In the second case the
+spentness is still established by *our own* filter scan against the chain, not
+by anything the peer claimed — it is the same fact, discovered by the inbox
+instead of the scanner, and it MUST take the same route. It did not: `%gw-btc`
+emitted a negative `%writ-response`, and on mainnet 2026-08-05 that snubbed an
+honest comet permanently, from its own sponsor, for a correctly formed state
+update — with the snub then blocking the replacement packet exactly as this
+section predicts.
+
+`+stale-verdict:self-attestation` is the discriminator. A failed verdict is
+staleness, and routes to `%stale`, only when **every** failing check is one of
+
+| check | meaning |
+|---|---|
+| `tip-unspent` | our filter scan found the log's tip outpoint spent — or could not determine it, which fails closed and is likewise never fraud (§8) |
+| `tracked-tip` | our own tracker holds this comet's sat somewhere this log never reaches |
+| `life-monotonic` | the log's latest life is below one we already hold: an older copy |
+
+Everything else stays `%fail`: `spawn-commit` (the log is not bound to this
+name), `entry-N-commitment` (a snapshot never committed on chain),
+`entry-N-continuity`/`-key-path`/`-sat-landed`/`-txid` (a custody hop that did
+not happen), `entry-N-life-order` (a log that contradicts itself),
+`tracked-prefix` (a log that is not an extension of the one we verified — a
+fork, not an old copy), `pass-key`, `sponsor-known`, and every structural
+check. One fraud check failing alongside a stale one is fraud: a peer does not
+get to launder bad evidence by also being out of date.
+
+Emitting `%stale` for a ship jael never verified under this domain is a no-op
+there (it checks `hep` first), so this is also the "stay silent" case without a
+second code path.
 
 - `writ-result` gains a variant: `[%stale dom=@tas =ship]`.
 - On `%stale`, Jael drops the stored point (the `%lyfe` scry reports the

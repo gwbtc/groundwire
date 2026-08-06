@@ -411,6 +411,26 @@
     ::
       [%x %custody ~]
     ``noun+!>(chain.own)
+    ::  The single-flight bookkeeping, exposed because it is otherwise
+    ::  invisible and a stuck slot silences a ship forever.  %jael-writ
+    ::  has nine distinct silent-drop returns; .inflight and .publicizing
+    ::  are two of them and could not be told apart from outside at all
+    ::  (Phase 5b, finding 9).
+    ::
+      [%x %inflight ~]
+    ``noun+!>(~(key by inflight))
+    ::
+      [%x %publicizing ~]
+    ``noun+!>(publicizing)
+    ::  Which identities this ship holds CONFIDENTIALLY (so their points
+    ::  are withheld from /x/points and from jael's udiffs), and the tip
+    ::  each one last attested to.
+    ::
+      [%x %confidential ~]
+    ``noun+!>(confidential)
+    ::
+      [%x %attested ~]
+    ``noun+!>(attested)
     ::
       [%x %point ship=@ ~]
     ?~  who=(slaw %p ship.pole)  ~
@@ -613,6 +633,40 @@
         ?.  (tip-owner-ok urb-state who sont.own.u.point.res)  ~
         `u.point.res(pass.net pass.req)
       ?~  verified
+        ::  Decisions addendum section 3, on the PACKET path.  A verdict
+        ::  that failed ONLY because the evidence is out of date is not
+        ::  fraud, and emitting res=~ here would make jael %fail and ames
+        ::  SNUB -- which then blocks the very packet that would fix it.
+        ::  Observed on mainnet: a comet performed an honest, correctly
+        ::  formed state update; its ship kept sending the attestation it
+        ::  booted with; its own SPONSOR verified that packet, found the
+        ::  tip spent, and snubbed it forever.
+        ::
+        ::  So route staleness to the same %stale outcome the scanner
+        ::  path already produces (+detect-stale -> +stale-card): jael
+        ::  drops the point if it holds one and ames demotes the peer to
+        ::  a fresh alien, never a snub, so the refreshed attestation can
+        ::  arrive.  The same physical fact must take the same path
+        ::  whether the scanner or the inbox saw it first.
+        ::
+        ::  Emitting %stale for a ship jael never verified under this
+        ::  domain is a no-op there (it checks .hep first), so this is
+        ::  also the "stay silent" case, without a second code path.
+        ::
+        ::  We deliberately do NOT drop our own indexes here.  The peer
+        ::  is the only thing that can fix this, by re-attesting, and
+        ::  keeping .attested/.unv-ids means +tracked-anchor still
+        ::  supplies the anchor that proves the REPLACEMENT log extends
+        ::  the one we already verified.  Our scanner drops them itself
+        ::  when it reaches the block that spent the sat.
+        ::
+        ?:  (stale-verdict:lsa verdict.res)
+          %-  %-  slog
+              :~  leaf+"%gw-btc: attestation for {(scow %p who)} is STALE, not invalid"
+                  leaf+"  (its identity sat has moved; demoting to alien, never snubbing)"
+              ==
+          :_  this
+          ~[(stale-card dom.req who)]
         :_  this
         ~[(writ-card dom.req who ~)]
       ::  Sponsorship decision point.  A valid attestation whose snapshot
@@ -702,8 +756,23 @@
       ::  effects lack the input provenance required to make that inference.
       =/  public-new
         (public-spawns base-state +.fx-and-state -.fx-and-state)
-      =/  new-confidential  (~(dif in confidential) public-new)
-      =/  new-attested  (drop-attested attested public-new)
+      ::  A confidential comet that PUBLISHED itself in this batch has
+      ::  declassified, on purpose and irreversibly: +index-point:urb-core
+      ::  emits %public only for an OP_RETURN publication that spent the
+      ::  identity sat we already track, which nobody but the owner can
+      ::  build.  This is the second, deliberate way out of .confidential
+      ::  (the first, +public-spawns, is a race resolution) and it is what
+      ::  makes decisions-addendum section 2's "publication" self-rescue
+      ::  actually happen: while the ship stays confidential its udiffs are
+      ::  suppressed by +filtered-udiffs and +detect-stale deletes its point
+      ::  the instant the publication's own sat move is seen, so the rescue
+      ::  leaves it strictly worse off than before.
+      ::
+      =/  declassified  (published-comets confidential -.fx-and-state)
+      =/  gone-public  (~(uni in public-new) declassified)
+      =/  new-confidential  (~(dif in confidential) gone-public)
+      =/  new-attested  (drop-attested attested gone-public)
+      %-  (slog (declassify-report declassified))
       ::
       ::  Three-way merge block-derived custody with any verifier result that
       ::  landed since `base-state`.  A divergent double move is ambiguous;
@@ -771,7 +840,7 @@
       ::  A PUBLIC comet just indexed with neither a sponsor nor a fief
       ::  is unreachable in exactly the same way; hand-rolled spawns that
       ::  never touched Causeway show up here.
-      %-  (slog (unroutable-points urb-state public-new))
+      %-  (slog (unroutable-points urb-state gone-public))
       :_  this
       %+  welp  stale-cards
       %+  welp
@@ -1503,6 +1572,44 @@
       ==
     $(fx t.fx)
   $(fx t.fx, out (~(put in out) who))
+::
+::  +published-comets: confidential comets that declassified in this batch
+::
+::    %public is emitted by +index-point:urb-core for every accepted
+::    OP_RETURN publication.  Reaching +index-point at all requires either
+::    spending the comet's funding satpoint (a spawn) or spending the
+::    identity sat we are already tracking (a state update) -- neither of
+::    which anyone but the owner can do.  So a %public effect naming a ship
+::    we hold as CONFIDENTIAL is that owner's own, on-chain, permanent
+::    decision to become public.
+::
+::    We only report ships that were confidential: %public for a comet that
+::    was already public is a no-op, and %gw-btc must never infer
+::    declassification from anything weaker than this.
+::
+++  published-comets
+  |=  [conf=(set ship) fx=(list [id:block:bitcoin effect:urb])]
+  ^-  (set ship)
+  =|  out=(set ship)
+  |-
+  ?~  fx  out
+  =/  eu=effect:urb  +.i.fx
+  ?.  ?=([%point * %public ~] eu)
+    $(fx t.fx)
+  =/  [%point who=ship %public ~]  eu
+  ?.  (~(has in conf) who)
+    $(fx t.fx)
+  $(fx t.fx, out (~(put in out) who))
+::
+::  Operator record of an irreversible privacy change.
+++  declassify-report
+  |=  ships=(set ship)
+  ^-  tang
+  %+  turn  ~(tap in ships)
+  |=  who=ship
+  ^-  tank
+  :-  %leaf
+  "%gw-btc: {(scow %p who)} published itself on chain; now PUBLIC, permanently"
 ::
 ++  drop-attested
   |=  [ats=(map ship sont:ord) ships=(set ship)]

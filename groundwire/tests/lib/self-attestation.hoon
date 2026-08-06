@@ -365,6 +365,131 @@
   ==
 ::
 ::  ---------------------------------------------------------------------
+::  +stale-verdict -- "out of date" is not "wrong"
+::  ---------------------------------------------------------------------
+::
+::  Decisions addendum section 3: a spent tip makes an attestation STALE,
+::  and staleness "is not fraud and MUST NOT produce %fail (a snub would
+::  block the replacement packet)".  The packet path used to emit a
+::  negative verdict here, which becomes a jael %fail and an ames snub;
+::  live on mainnet that snubbed an honest comet permanently, because the
+::  snub then blocked the refreshed attestation that would have fixed it.
+::  ++stale-verdict is the discriminator that routes the packet path to
+::  %stale instead, so it is pinned against BOTH kinds of failure using
+::  the same fixtures.
+::
+++  test-stale-verdict-spent-tip-is-not-fraud
+  =/  spent  (run-checks:sal good-sat start-tx ~[c0-tx c1-tx] `%.n ~ no-points)
+  ;:  weld
+    (expect !>(!ok.verdict.spent))
+    (expect !>(!(got-check verdict.spent 'tip-unspent')))
+    ::  the whole point: this must NOT become a negative %writ-response
+    ::
+    (expect !>((stale-verdict:sal verdict.spent)))
+  ==
+::
+++  test-stale-verdict-undeterminable-tip-is-not-fraud
+  ::  an unavailable filter or block fails closed (section 8: "never a
+  ::  negative verdict"), so it is staleness too, never fraud.
+  ::
+  =/  unk  (run-checks:sal good-sat start-tx ~[c0-tx c1-tx] ~ ~ no-points)
+  ;:  weld
+    (expect !>(!ok.verdict.unk))
+    (expect !>((stale-verdict:sal verdict.unk)))
+  ==
+::
+++  test-stale-verdict-fraud-is-still-fraud
+  ::  every genuine-fraud fixture in this file must stay a %fail.  A
+  ::  forged state commitment, a log bound to another name, a log that
+  ::  contradicts itself, a hop that never happened -- none of these are
+  ::  "out of date", and a peer must not be able to launder them.
+  ::
+  =/  bad-open  ^-(opening:sa [(mk-ikey 99) snap0 `spawn-open])
+  =/  bad-chain=custody-log:sa  ~[[c0-id 100 `bad-open] [c1-id 101 ~]]
+  =/  bad-pass
+    pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam bad-chain))
+  =/  forged-commitment  (run [who bad-pass bad-chain] ~[c0-tx c1-tx] ~)
+  ::
+  =/  wrong-dat  (make-dat:cc [start-id 7 0] blind)
+  =/  wrong-pass
+    pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c wrong-dat (jam chain))
+  =/  wrong-name  (run [who wrong-pass chain] ~[c0-tx c1-tx] ~)
+  ::
+  =/  broken  (mk-tx c1-id ~[(mk-input c0-id 1 keypath-wit)] ~[tip-out])
+  =/  broken-hop  (run good-sat ~[c0-tx broken] ~)
+  ::
+  =/  empty  (run-checks:sal [who carried-pass ~] start-tx ~ `%.y ~ no-points)
+  ::  and a PASSING verdict is never stale
+  ::
+  =/  good  (run good-sat ~[c0-tx c1-tx] ~)
+  ;:  weld
+    (expect !>(!(stale-verdict:sal verdict.forged-commitment)))
+    (expect !>(!(stale-verdict:sal verdict.wrong-name)))
+    (expect !>(!(stale-verdict:sal verdict.broken-hop)))
+    (expect !>(!(stale-verdict:sal verdict.empty)))
+    (expect !>(!(stale-verdict:sal verdict.good)))
+  ==
+::
+++  test-stale-verdict-fraud-alongside-staleness-is-fraud
+  ::  a spent tip does not launder a forged commitment: one non-stale
+  ::  failing check is enough to keep the verdict a %fail.
+  ::
+  =/  bad-open  ^-(opening:sa [(mk-ikey 99) snap0 `spawn-open])
+  =/  bad-chain=custody-log:sa  ~[[c0-id 100 `bad-open] [c1-id 101 ~]]
+  =/  bad-pass
+    pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam bad-chain))
+  =/  res
+    (run-checks:sal [who bad-pass bad-chain] start-tx ~[c0-tx c1-tx] `%.n ~ no-points)
+  ;:  weld
+    (expect !>(!ok.verdict.res))
+    (expect !>(!(got-check verdict.res 'tip-unspent')))
+    (expect !>(!(got-check verdict.res 'entry-0-commitment')))
+    (expect !>(!(stale-verdict:sal verdict.res)))
+  ==
+::
+++  test-stale-verdict-tracked-tip-and-life-are-staleness
+  ::  an OLD copy of a log we already hold is out of date, not wrong: our
+  ::  own tracker has moved past it (tracked-tip) or holds a higher life
+  ::  (life-monotonic).  Snubbing for either would blacklist an honest
+  ::  ship for a packet that was true when it was sent.
+  ::
+  ::  the anchor: the 1-entry log we already verified, at its own tip.
+  ::
+  =/  old-chain=custody-log:sa  (scag 1 chain)
+  =/  old-pass
+    pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam old-chain))
+  ::  we hold a HIGHER life than the packet proves -- an old copy.
+  ::
+  =/  higher-life=point:urb
+    [[[c0-id 0 0] ~] 0 5 old-pass [%.n who] ~ ~]
+  =/  older  (run good-sat ~[c0-tx c1-tx] `[higher-life [c0-id 0 0]])
+  ::  our tracker has the sat somewhere this log never reaches.
+  ::
+  =/  ahead=point:urb
+    [[[0xfeed 0 0] ~] 0 1 old-pass [%.n who] ~ ~]
+  =/  moved  (run good-sat ~[c0-tx c1-tx] `[ahead [c0-id 0 0]])
+  ::  but a log that is not an EXTENSION of the one we verified is a
+  ::  fork, not an old copy -- that stays fraud.
+  ::
+  =/  rewritten=custody-log:sa  ~[[c0-id 99 `open0] [c1-id 101 ~]]
+  =/  fork-pass
+    pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam rewritten))
+  =/  forked=point:urb
+    [[[c1-id 0 0] ~] 0 1 carried-pass [%.n who] ~ ~]
+  =/  fork
+    (run [who fork-pass rewritten] ~[c0-tx c1-tx] `[forked [c1-id 0 0]])
+  ;:  weld
+    (expect !>(!ok.verdict.older))
+    (expect !>(!(got-check verdict.older 'life-monotonic')))
+    (expect !>((stale-verdict:sal verdict.older)))
+    (expect !>(!ok.verdict.moved))
+    (expect !>(!(got-check verdict.moved 'tracked-tip')))
+    (expect !>((stale-verdict:sal verdict.moved)))
+    (expect !>(!(got-check verdict.fork 'tracked-prefix')))
+    (expect !>(!(stale-verdict:sal verdict.fork)))
+  ==
+::
+::  ---------------------------------------------------------------------
 ::  +routable / +extend-log -- the two helpers the %anew path leans on
 ::  ---------------------------------------------------------------------
 ::

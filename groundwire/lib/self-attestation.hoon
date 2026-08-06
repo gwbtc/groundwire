@@ -24,6 +24,64 @@
   ^-  tank
   leaf+"  [{?:(ok.check "ok" "XX")}] {(trip name.check)}"
 ::
+::  +stale-checks: the named checks that mean OUT OF DATE, not WRONG
+::
+::    Decisions addendum section 3: when a comet's identity sat has been
+::    spent, its old attestation is stale -- "this is not fraud and MUST
+::    NOT produce %fail (a snub would block the replacement packet)".
+::    That rule was written for the SCANNER path, where %gw-btc watches a
+::    tracked tip get spent and emits a %stale-notice.  But the very same
+::    physical fact arrives the other way round at least as often: the
+::    owner moves the sat, its ship keeps sending the pass it booted with,
+::    and the spent tip turns up in a PACKET -- where it is proven spent
+::    by OUR OWN filter scan against the chain, not by anything the peer
+::    said.  Discovered by the inbox rather than by the scanner, it is
+::    still the same fact, and it must take the same path.  (Live
+::    mainnet, 2026-08-05: it did not, and a comet was snubbed by its own
+::    sponsor for an honest state update -- permanently, because the snub
+::    then blocked the refreshed attestation that would have fixed it.)
+::
+::    So these three names, and only these, classify a FAILED verdict as
+::    staleness:
+::
+::      tip-unspent     our filter scan found the log's tip outpoint spent
+::      tracked-tip     our own tracker holds this comet's sat at a place
+::                      this log never reaches, i.e. we are ahead of it
+::      life-monotonic  the log's latest life is below one we already hold,
+::                      i.e. this is an older copy of a log we know
+::
+::    Everything else stays a %fail, because it is evidence that was never
+::    true rather than evidence that has expired: spawn-commit (the log is
+::    not bound to this name), entry-N-commitment (a snapshot never
+::    committed on chain), entry-N-continuity / -key-path / -sat-landed /
+::    -txid (a custody hop that did not happen), entry-N-life-order (a log
+::    that contradicts itself), tracked-prefix (a log that is not an
+::    extension of the one we already verified -- a fork, not an old
+::    copy), pass-key, sponsor-known, and every structural check.
+::
+++  stale-checks
+  ^-  (set cord)
+  (silt ~['tip-unspent' 'tracked-tip' 'life-monotonic'])
+::
+::  +stale-verdict: did this verdict fail ONLY because it is out of date?
+::
+::    %.y exactly when the verdict failed and EVERY failing check is in
+::    +stale-checks.  One genuine-fraud check failing alongside a stale
+::    one still reads as fraud: a peer does not get to launder bad
+::    evidence by also being out of date.
+::
+++  stale-verdict
+  |=  =verdict:sa
+  ^-  ?
+  ?:  ok.verdict  %.n
+  =/  bad=(list check:sa)  (skip checks.verdict |=(c=check:sa ok.c))
+  ::  NB: =(~ bad) rather than ?~, which would fish-narrow .bad and leave
+  ::  +levy mulling its sample against the bare ~ branch (mull-grow).
+  ::
+  ?:  =(~ bad)  %.n
+  %+  levy  bad
+  |=(c=check:sa (~(has in stale-checks) name.c))
+::
 ::  +routable: can anything COLD-CONTACT a comet in this state?
 ::
 ::    A snapshot with neither a sponsor nor a fief is a one-way identity.

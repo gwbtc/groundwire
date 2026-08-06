@@ -1170,3 +1170,106 @@ def test_custody_entry_poke_renders_sponsor_and_a_bare_hop():
     # an absent blind-opening is the bare ~ that marks a non-spawn hop
     assert line.rstrip().endswith("~]]]")
     assert line.count("[") == line.count("]")
+
+
+# ---------------------------------------------------------------------------
+# The fief is snapshot state (decisions-addendum §2), so it is inside the
+# state commitment.  Mainnet vector: C3
+# ~ligdes-risbur-folmus-mattyp--firpec-lispec-noddyl-daplyd committed
+# fief=[%if .64.227.13.22 34.343] in its life-2 state update, tx
+# 8e713009f0c067374deca6069a99076efb2bff3fb1da7f4164f597df1401a4fb, block
+# 961.129.  Causeway used to print `~` for this field, producing an %anew
+# poke whose state-key could never match the chain — and %anew fails SILENTLY
+# (PHASE5B-RESULTS.md finding 6).
+# ---------------------------------------------------------------------------
+
+C3_INTERNAL_X = "e129efeba5ace29c3e118634f568ca73ec84d0283695e0d497e9ad9cf9e87703"
+C3_TXID = "8e713009f0c067374deca6069a99076efb2bff3fb1da7f4164f597df1401a4fb"
+C3_HEIGHT = 961_129
+C3_KEY = 0xDF309632F565FDDF5E0CC5A6EA6CC78091056F94E15F12D0E75F70BC7CA43857
+# [%if .64.227.13.22 34.343] as a noun: 0x40e30d16 = 64.227.13.22
+C3_FIEF = (cw.FIEF_TAGS["if"], (0x40E30D16, 34_343))
+C3_STATE_COMMIT = "6f5beb6853dff709fdd333071c2dc002deff8d2f5083893bd811b81a846d2302"
+C3_OUTPUT_KEY_Q = "3aea31567982f409f9a3e43b98610c2360c1e135427db948c4e0c56a184ee110"
+
+
+def _c3_snapshot(fief=C3_FIEF) -> dict:
+    return {"life": 2, "rift": 0, "key": C3_KEY, "sponsor": None, "fief": fief}
+
+
+def _c3_entry(snapshot) -> dict:
+    return {
+        "txid_hex": C3_TXID,
+        "height": C3_HEIGHT,
+        "opening": {
+            "internal_key": int("02" + C3_INTERNAL_X, 16),
+            "snapshot": snapshot,
+            "blind_opening": None,     # a state update, not the spawn
+        },
+    }
+
+
+def test_fief_is_inside_the_state_commitment_mainnet_c3():
+    """Why the poke must carry it: the commitment is over the JAMMED snapshot,
+    so a dropped fief silently yields a different on-chain output key."""
+    internal = bytes.fromhex(C3_INTERNAL_X)
+    assert cw.state_commit(_c3_snapshot()).hex() == C3_STATE_COMMIT
+    assert cw.state_output_key(internal, _c3_snapshot()).hex() == C3_OUTPUT_KEY_Q
+    # …and without it, nothing matches the chain.
+    assert cw.state_output_key(internal, _c3_snapshot(None)).hex() != C3_OUTPUT_KEY_Q
+
+
+def test_custody_entry_poke_carries_the_snapshots_fief():
+    line = cw.format_custody_entry_poke(_c3_entry(_c3_snapshot()))
+    assert "`[%if .64.227.13.22 34.343]" in line
+    # exact line — the one a C3 operator must paste into the dojo
+    assert line == (
+        ":gw-btc &noun [%gw-custody-entry ["
+        + cw.format_hoon_ux(C3_TXID)
+        + " 961.129 `["
+        + cw.format_hoon_ux("02" + C3_INTERNAL_X)
+        + " [2 0 "
+        + cw.format_hoon_ux(format(C3_KEY, "x"))
+        + " ~ `[%if .64.227.13.22 34.343]] ~]]]"
+    )
+    assert line.count("[") == line.count("]")
+    # Hoon needs dot grouping above 999 — 34343 would be a syntax error
+    assert re.search(r"(?<![.\dx])\d{4,}", line) is None
+
+
+def test_custody_entry_poke_still_prints_a_bare_tilde_without_a_fief():
+    line = cw.format_custody_entry_poke(_c3_entry(_c3_snapshot(None)))
+    assert "~ ~]" in line and "%if" not in line
+    assert line != cw.format_custody_entry_poke(_c3_entry(_c3_snapshot()))
+
+
+def test_fief_survives_the_proof_json_round_trip():
+    """`causeway finalize` reads the snapshot straight out of proof.json, where
+    the fief noun's tuples have become lists. Both must encode identically."""
+    from_json = json.loads(json.dumps(_c3_snapshot(), default=list))
+    assert from_json["fief"] == [26217, [1088621846, 34343]]   # not tuples
+    assert (cw.format_custody_entry_poke(_c3_entry(from_json))
+            == cw.format_custody_entry_poke(_c3_entry(_c3_snapshot())))
+    assert cw.state_output_key(
+        bytes.fromhex(C3_INTERNAL_X), from_json).hex() == C3_OUTPUT_KEY_Q
+
+
+def test_format_hoon_fief_renders_every_arm():
+    assert cw.format_hoon_fief(None) is None
+    assert cw.format_hoon_fief(C3_FIEF) == "[%if .64.227.13.22 34.343]"
+    # @is is 8 base-16 groups of 16 bits (+ro-co:co), @if 4 base-10 of 8
+    assert cw.format_hoon_fief((cw.FIEF_TAGS["is"], (1, 8_080))) == (
+        "[%is .0.0.0.0.0.0.0.1 8.080]"
+    )
+    turf = (("com", "example"),)   # tld first
+    p = 0
+    for t in reversed(turf):
+        labels = 0
+        for lab in reversed(t):
+            labels = (int.from_bytes(lab.encode(), "little"), labels)
+        p = (labels, p)
+    assert cw.format_hoon_fief((cw.FIEF_TAGS["turf"], (p, 80))) == (
+        "[%turf ~[~['com' 'example']] 80]"
+    )
+    with pytest.raises(ValueError):
+        cw.format_hoon_fief((0xDEAD, (1, 2)))
