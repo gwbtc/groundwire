@@ -30,7 +30,7 @@ needs four checkouts:
 | `gwbtc/urbit` | the kernel, and the CI job that builds the pill | branch `gw/next/kelvin/408` |
 | `gwbtc/urcrypt` | crypto, built into vere | branch `gw/cmp-pub`; must sit **next to** the vere checkout as `../urcrypt` |
 | `gwbtc/node` | the `%node` desk: agent `%bitcoin-client`, the BIP-157/158 light client | `desk.bill` is `:~ %bitcoin-client ==` |
-| `gwbtc/tcp-sidecar` | the `%tcp-sidecar` desk (agent `%tcp`) and the C `tcp-sidecar` binary | the light client's only transport |
+| `gwbtc/tcp-sidecar` | the `%tcp-sidecar` desk (agent `%tcp`) and the C `tcp-sidecar` binary | the light client's only transport. Public. The binary now ships prebuilt in the release tarball (§3.3); clone this only for the desk |
 
 `%gw-btc` never names a light client directly. It reads
 `++light-client-agent` from `lib/lc-attestation.hoon:50`, which is
@@ -67,11 +67,13 @@ dependency from `ext/`. What you do need:
 #   zig 0.15.2  — see below, the version is pinned
 # droplet
 sudo apt-get update
-sudo apt-get install -y tmux rsync build-essential pkg-config libssl-dev
+sudo apt-get install -y tmux rsync build-essential
 ```
 
-`libssl-dev` and `pkg-config` are for the `tcp-sidecar` build only; if you
-cross-compile the sidecar elsewhere you can drop them.
+`pkg-config` and `libssl-dev` used to be on that line, for the
+`tcp-sidecar` build only. CI now ships a **statically linked** sidecar
+(§3.3), so the droplet no longer needs OpenSSL headers. Add them back only
+if you are building the sidecar on the droplet by hand.
 
 Swap, on a 4 GB droplet:
 
@@ -182,16 +184,53 @@ truncated pill fails late and confusingly.
 
 ### 3.3 the tcp-sidecar
 
+**Do not build this by hand any more.** `tcp-sidecar` ships in the same
+release tarball as `gw-vere`, `gw-base.pill`, `comet_miner` and
+`gw-onboard`, for all three targets:
+
+```sh
+tar xzf groundwire-linux-x86_64.tar.gz    # or -linux-aarch64, -macos-aarch64
+# -> tcp-sidecar, alongside gw-vere / gw-base.pill / comet_miner / gw-onboard
+```
+
+Both release lanes build it: `groundwire-build.yml` (bleeding-edge,
+`groundwire-alpha-*` tags) and `daily-release.yml` (onboarding,
+`groundwire-daily-*`), from the SHA pinned in each workflow's
+`TCP_SIDECAR_REF`. The Linux binaries are **static musl**, like `gw-vere`,
+so a droplet needs no compiler, no `libssl-dev` and no matching glibc.
+
+> **The artifact only exists in releases published after this job first
+> ran** — it was added on 2026-08-06 (`gwbtc/urbit` PR #67). Any tarball
+> older than that has no `tcp-sidecar` in it; use the manual build below,
+> or take a newer release.
+
+CI builds OpenSSL from source with `--openssldir=/etc/ssl` so the
+sidecar's `SSL_VERIFY_PEER` finds the host's real CA roots
+(`/etc/ssl/certs` on Linux, `/etc/ssl/cert.pem` on macOS). If a host keeps
+its roots somewhere else, `SSL_CERT_FILE` / `SSL_CERT_DIR` still override
+at runtime. One deliberate loss on Linux: musl has no `backtrace()`, so a
+sidecar SIGSEGV still prints its `--- CRASH: signal 11 ---` line — which is
+what `ops/gwsup.sh` detects on (§5.9) — but no stack trace after it. The
+hand-built binary below keeps the trace.
+
+Building it by hand is still supported, and is what you want if you are
+changing the sidecar:
+
 ```sh
 git clone git@github.com:gwbtc/tcp-sidecar.git
 cd tcp-sidecar/sidecar && make          # needs pkg-config + libssl-dev
 ```
 
-Produces `sidecar/tcp-sidecar`. Copy to `/opt/gw/bin/tcp-sidecar`. It takes
-exactly one argument, the pier path, and opens **no listening port** — it
-is a Unix-domain client onto the pier's Lick socket at
-`<PIER>/.urb/dev/tcp/tcp`. Outbound connections use whatever port the
-caller asks for (8333, for Bitcoin).
+Either way you end up with one binary. Copy it to
+`/opt/gw/bin/tcp-sidecar` — **keep that exact name**, because
+`ops/gwsup.sh` and `ops/stopship.sh` find the process with
+`pgrep -f 'bin/tcp-sidecar'`. It takes exactly one argument, the pier
+path, and opens **no listening port** — it is a Unix-domain client onto
+the pier's Lick socket at `<PIER>/.urb/dev/tcp/tcp`. Outbound connections
+use whatever port the caller asks for (8333, for Bitcoin).
+
+You still need a `gwbtc/tcp-sidecar` checkout for the **desk** (§3.4);
+only the binary is in the release.
 
 ### 3.4 the desks
 
@@ -229,7 +268,8 @@ The other two desks ship as-is: `gwbtc/node/desk/` and
 Light-client sync from genesis is **~2.5 hours** and it is the critical
 path. Everything else fits inside it.
 
-1. Build vere, the pill, the sidecar, the desks. *(once, on your laptop)*
+1. Build vere, the pill, the desks; unpack the sidecar from the release
+   tarball (§3.3). *(once, on your laptop)*
 2. Provision all hosts and push the artifacts. *(parallel)*
 3. Mint each comet with Causeway; wait for confirmations. *(parallel)*
 4. Boot each ship. *(parallel)*
@@ -1158,10 +1198,23 @@ Stated plainly so nobody hunts for a script that does not exist:
   offers no way to set one. Since the sponsorship topology of Phase 4 requires
   the sponsor to commit a real fief, that transaction has to come from
   `ops/gwmint.py`.
+- **No CI build of the `%tcp-sidecar` and `%node` desks.** Only the sidecar
+  *binary* is released (§3.3). Both desks are checked-in Hoon needing no
+  build step, but you still clone `gwbtc/tcp-sidecar` and `gwbtc/node` to get
+  them, and `gwbtc/node` is **private**, so an outsider cannot complete an
+  install from public artifacts alone. Making it public is in progress and is
+  not gated on anything here.
 
 **No longer true — these are now in `ops/`** (see `ops/README.md`): the
 supervisor `gwsup.sh`, the peer-pool tool `poolfill.py`, the minting path
 `gwmint.py`, the operator surface `gwctl.py`, and a local pill build (§3.2).
+
+**No longer true — the sidecar binary is now a release artifact.** §3.3 used
+to be a mandatory hand-compile on every host, which is why `libssl-dev` and
+`pkg-config` were droplet prerequisites in §2. `gwbtc/urbit` PR #67 added a
+`build-sidecar` job to both `groundwire-build.yml` and `daily-release.yml`,
+so `tcp-sidecar` now ships statically linked in every
+`groundwire-<platform>.tar.gz` — for releases cut after 2026-08-06.
 
 **Fixed since this runbook was written:** `causeway.py` and `gw-onboard.py`
 used to compute `f"{arch}-{os_name}-none"` for the zig output directory,
