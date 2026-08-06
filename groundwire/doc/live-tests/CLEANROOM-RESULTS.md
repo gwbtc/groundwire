@@ -443,3 +443,290 @@ pool is CF-capable, because `++peer-services-are-sufficient` requires
 to waste a new operator's time, because it fires mid-run on a healthy system
 and the remedy is destructive.*
 
+---
+
+# THE HEADLINE — three fresh comets, mutually verified
+
+All six ordered pairs, driven by the documented `%jael-writ` path, each against
+the verifier's own from-genesis light client:
+
+| verifier → subject | verdict | time | fief installed |
+|---|---|---|---|
+| k1 → k2 | **VALID** | 81 s | ✓ `.159.223.141.63:35354` |
+| k1 → k3 | **VALID** | 148 s | ✓ `.206.189.188.16:35355` |
+| k2 → k1 | **VALID** | 70 s | ✓ `.64.227.13.22:35353` |
+| k2 → k3 | **VALID** | 81 s | ✓ |
+| k3 → k1 | **VALID** | 69 s | ✓ |
+| k3 → k2 | **VALID** | 81 s | ✓ |
+
+Every one produced `[%gw-btc-lc-scan-clean …]` then
+`%gw-btc: attestation for ~… is VALID`, followed by
+`ames: lamp ~… static ip … port …` — the on-chain `fief` becoming a runtime
+lamp. Point state on every verifier, for every subject:
+
+```
+lyfe = [~ 1]            point installed at life 1
+dome = [~ %gw-btc]      via the Groundwire path, NOT vanilla comet PKI
+snub = [%deny ~]        empty
+```
+
+`dome` is the clean discriminator (§6) and it reads `%gw-btc` in all six.
+
+**Final tally across the three ships: 13 VALID, 0 INVALID, 0 snubs, 0 vere
+SIGSEGVs, 0 sidecar SIGSEGVs, 0 supervisor interventions.** Verifications ran
+69–148 s against a documented 100–110 s.
+
+Timings, measured, against §8's table:
+
+| stage | §8 says | measured |
+|---|---|---|
+| block headers 0 → tip | ~55 min | ~65 min |
+| filter headers 0 → tip | ~95 min | **~12 min** |
+| full light-client bring-up | ~2.5 h | **~1 h 20 m** |
+| synced pier on disk | ~2.2 GB | **~0.96 GB** |
+| one confidential verification | 100–110 s | 69–148 s |
+
+§8's filter-header figure is off by ~8× and the pier size by ~2.3×. Both are
+better than documented, but "anything materially slower than the table is a
+symptom" cuts both ways — an operator using §8 to judge progress would have
+concluded something was wrong.
+
+---
+
+# Gap 1 — confidential → public (Tier 1): **BLOCKED BY A NEW BUG**
+
+The precondition was in place: k2 and k3 both track k1, which is what Tier 1
+requires. Building the state-update-with-publication transaction for k1 fails
+before it can be signed:
+
+```
+File "causeway.py", line 887, in make_publication_script
+    push = b"\x4c" + bytes([len(payload)])
+ValueError: bytes must be in range(0, 256)
+```
+
+**`OP_PUSHDATA1` carries a single length byte, so it cannot express a payload
+longer than 255 — but the protocol's own `max-publication` is 512.** Measured
+payloads for these comets:
+
+| shape | payload |
+|---|---|
+| spawn publication, `start_height=0` | **265 B** |
+| spawn-shaped at life 1 | **268 B** |
+| late publication at life 2 (Tier 1) | **269 B** |
+
+All three are legal by the spec and none can be encoded.
+
+This is not just Causeway. The **Hoon encoder has the identical defect**, and
+the **Hoon parser cannot read a `PUSHDATA2` script either**:
+
+```hoon
+++  publication-script                          :: lib/gw-btc-pass.hoon:201
+  ?>  (lte wid.payload max-publication)         :: guards at 512 …
+  =/  psh=hexb:btc
+    ?:  (lte wid.payload 75)  [1 wid.payload]
+    (cat:byt:bcu ~[[1 0x4c] [1 wid.payload]])   :: … but only ever emits PUSHDATA1
+
+++  parse-publication                           :: :238
+  =?  rst  =(0x4c dat:(take:byt:bcu 1 rst))     :: only 0x4c
+    (drop:byt:bcu 1 rst)
+  =/  len=@ud  dat:(take:byt:bcu 1 rst)         :: one length byte
+```
+
+Python raises; **Hoon does not** — `[1 wid.payload]` with `wid.payload > 255`
+is a one-byte field holding a value that does not fit, so the Hoon encoder
+silently emits a corrupt script. The `(lte … max-publication)` guard at 512 is
+a lie in all three implementations; the real ceiling is 255.
+
+**Why this was never hit before:** the previously published comets (C2, C3)
+were published *at spawn*, when their snapshots carried **no fief**. Every
+comet in this run commits a fief at spawn, which pushes the payload past 255.
+So the bug is invisible to a comet with no fief and fatal to one with — and the
+Phase 4 topology *requires* the sponsor to commit a fief.
+
+**Consequences:** `causeway spawn connect --publish` is broken for any comet
+that commits a fief, and Tier 1 declassification is unreachable for all of
+them. This closes out "shipped but never broadcast": it could not have been.
+
+**The fix** (three sites, same shape) — accept `OP_PUSHDATA2`:
+
+```
+len <= 75    -> [len]
+len <= 255   -> 0x4c, len
+otherwise    -> 0x4d, len as 2 bytes LITTLE-ENDIAN
+```
+
+and teach `+parse-publication` the `0x4d` case. This is consensus-relevant —
+it changes bytes that enter `+read-publication` — so it wants review and a
+shared vector in `vectors/`, not a hurried patch at the end of a test run. Not
+attempted here.
+
+*Classification: **real bug**, high severity, previously unfound. Found only
+because these comets commit a fief at spawn.*
+
+---
+
+# Gap 2 — the residual single-flight wedge: **INDUCED, NOT TRIGGERED**
+
+The residual window is the transport dying *after* a job starts and *before*
+its fetches are served. Two methods, both instructive:
+
+**Method 1 — kill the tcp-sidecar. Does not reproduce it.** `%bitcoin-client`
+loses its peers, emits an `/is-synced` transition, and `%gw-btc`'s readiness
+gate then *holds* the writ, so no job ever starts:
+
+```
+%gw-btc: light client is NOT synced; holding all attestations (no verdicts)
+%gw-btc: writ from ~talryg-… held: light client NOT synced
+```
+
+Fail-closed and correct — and it is *why* the wedge is hard to construct. Note
+this contradicts §9's "the sidecar died and the agent does not know": for the
+`synced` computation the agent notices promptly.
+
+**Method 2 — leave the sidecar alive and DROP outbound tcp/8333.** This does
+strand a job. With the sidecar processes alive, the serf alive and **zero**
+`newt: write failed`, `/x/inflight` held the peer continuously:
+
+```
+[26s]  inflight = (~talryg-…, 0)
+[126s] inflight = (~talryg-…, 0)
+```
+
+So the wedge state was genuinely induced — no runtime death, no `%kick`.
+
+**But `+lc-fetch-timeout` never fired, because the job did not need the
+network.** At ~200 s the verification simply *completed*:
+
+```
+%gw-btc: attestation for ~talryg-… is VALID
+```
+
+**This is the finding.** A comet spawned ~5 blocks ago has a liveness-scan
+range of ~5 blocks, and the light client already holds those filters and
+headers locally — block headers are served from local state by design
+(`lib/lc-attestation.hoon`, the `/block-header/height` path needs no peer). So
+for a *recently active* comet the whole verification is servable offline, and
+cutting the transport changes nothing. The previous campaign could not
+construct this either; now there is a reason why.
+
+To exercise `+lc-fetch-timeout` you must force a fetch the light client cannot
+answer locally — verify a comet **dormant for a long span** (a large BIP-158
+scan), or evict the filter cache first. That is a cheap follow-up and it is the
+one thing here still pinned only by
+`test-every-request-is-timeout-bounded`, which asserts merely that the timer is
+*armed* on the strand's first move — never that it fires, never that the strand
+fails, never that the slot is released. No test anywhere injects
+`[%khan %arow %.n …]` on a `/verify/<ship>/<job>` wire, so
+`app/gw-btc.hoon:895-899` remains untested.
+
+Positive results from the attempt: `/x/inflight` is accurate and useful; the
+`~h2` `+stuck-job-guard` never had to fire (`releasing stuck` count: **0**
+across all three ships); and a re-poked writ was **held**, not
+`dropped: a verification is already in flight`, so no slot was ever stranded.
+
+*Classification: **not reproduced**, with a concrete reason and a concrete
+recipe for next time. No defect observed.*
+
+---
+
+# Gap 3 — the missing campaign tooling: **DONE**
+
+Recovered from droplet N1 (it was never lost, just unbacked-up) and committed
+under `ops/` — see `ops/README.md`. `gwsup.sh`, `poolfill.py`, `addpeers.py`,
+plus `gwctl.py` (replacing a dozen one-off scripts), `gwmint.py`,
+`bootcomet.sh` and a new `stopship.sh`. `testnet/gwharness/`'s Python sources
+had *already* been lost from this checkout — only `__pycache__` survived — and
+were recovered in the same sweep.
+
+Corrections made rather than carrying the tools forward as found:
+
+- `gwsup.sh` is now an `flock` singleton (all three boxes were running two).
+- `p4setup.py`'s `sync`/`info` and `peercount.py` were **dead code against a
+  real node** — they scry `%bitcoin-client`, whose `++peek` is literally `~`.
+  Not carried forward; `gwctl.py ready` reads `%gw-btc`'s `/x/ready` instead.
+- `gwmint.py`'s `start_height` bug (below) fixed at source.
+
+## Two bugs that had been fixed out-of-tree and came back
+
+Both were previously corrected by throwaway scripts in an operator scratchpad
+and never folded into the tool, so both **reproduced exactly**:
+
+1. **`start_height` pointed at the spawn block, not the funding block.** The
+   verifier fetches the block at `start_height` and looks for the funding
+   transaction there, so it fetched a block the transaction is not in and the
+   whole custody log failed to validate. The only symptom is one reasonless
+   line: `%anew self-validation ended without a verdict`. Previously patched by
+   a `fix_artifacts.py` that hardcoded three funding heights.
+2. **`pass_with_xtr_hex` was not computed at all.** This is the ~305–405 B
+   object a peer must be handed; the artifact carried only the bare 108 B
+   `pass_atom_hex`, and a `%jael-writ` built from that is dropped silently.
+
+Both now produced by `ops/gwmint.py artifact`, with `funding_height` recorded.
+
+## An ad-hoc diagnostic scry can abort unrelated in-flight work
+
+Worth stating on its own. A `.^` on jael's `/deed` that jael declines returns
+`arvo: scry-lost` → `bail: 4` → `spider crashed, killing all strands`. That
+killed the `%anew` job it was trying to measure, on two ships, and the only
+trace was the same reasonless `%anew self-validation ended without a verdict`.
+An operator debugging a stuck verification with an improvised scry can destroy
+the thing they are measuring and mistake it for a product bug. It cost about an
+hour here.
+
+
+---
+
+# Matrix versus the recorded Phase 6/7 results
+
+| # | test | Phase 6/7 | this run |
+|---|---|---|---|
+| 0 | bring-up | done | **PASS**, on a pill built from the kernel tip |
+| 1.1–1.4 | mint + confirm + `5120\|\|Q` | done | **PASS** ×3, Q recomputed from scratch |
+| 2.1 | genuine attestation | PASS | **PASS** ×6 (all ordered pairs) |
+| 3.4 | prove the Groundwire path was used | PASS | **PASS** — `dome=[~ %gw-btc]` ×6 |
+| 4.7 | on-chain fief used to reach the holder | partial | **PASS** — `ames: lamp` ×6 from the committed fief |
+| 5.6 | `%anew` refresh via Causeway → `%gw-btc` → jael | PASS | **PASS** ×3 (`custody log verified (1 entries)`) |
+| 5.7 / 5b.2 | confidential → public | FAIL (pre-fix) | **BLOCKED** — new `PUSHDATA1` bug, see Gap 1 |
+| 6.1 | attestation while light client unsynced | **FAIL** (false INVALID + snub) | **PASS** — held with a named reason, 0 snubs |
+| 6.2 | kill the transport mid-verification | PARTIAL | **not reproduced**, see Gap 2 |
+| 6.7 | diagnosable from logs alone? | "much better, still no" | **still no** — four `%jael-writ` drops silent, `%anew` failures reasonless |
+| 7.1 | headless spawn | **FAIL** (100 % CPU, 57 MB) | **PASS** — bounded non-zero exits |
+| 7.2 | Causeway pokes an attestation into `%gw-btc` | PASS | **PASS** ×3 |
+| 7.3 | Causeway ↔ ship state sync | PASS | **PASS** — `verify_proof_self` + `_onchain` OK ×3 |
+| — | `+groundwire!aqua-fixtures` | never executed | **PASS**, first execution, matches the kernel |
+
+**Divergences from Phase 6/7:** 6.1 and 7.1 both moved FAIL → PASS, confirming
+those fixes on fresh identities. 5.7 moved from "impossible by design" (the old
+§10 claim) to "possible in principle, blocked by an encoder bug" — a different
+and much more actionable answer. Everything else held.
+
+**Not attempted** (time, and each needs its own on-chain spend): 2.2–2.16 (the
+adversarial matrix — unchanged code, already pinned by unit tests), 3.1–3.6
+(`|hi` and kernel gating over real packets), 4.1–4.8 (sponsorship — needs a
+*public* sponsor, which needs Gap 1 fixed first), 5.1–5.5, 5b, 6.3–6.6, 7.4.
+
+# Classification of every finding
+
+**Real bugs (product):**
+1. `PUSHDATA1`-only publication encoding in Causeway *and* Hoon, plus a parser
+   that cannot read `PUSHDATA2`, against a spec that permits 512 bytes. Blocks
+   all publication for any comet committing a fief. Hoon fails *silently*.
+2. Four `%jael-writ` drops emit no log line while the code comment claims
+   "EVERY drop below is announced".
+3. `%anew` failures report no reason at all — one line, no tang.
+
+**Harness / tooling (all fixed here):** duplicate supervisors; `gwmint`
+`start_height`; missing `pass_with_xtr_hex`; `p4setup`/`peercount` scrying an
+agent whose `++peek` is `~`; no shutdown procedure or script.
+
+**Infrastructure:** none. Zero crashes, zero interventions, zero OOM across
+~4 h on three 3.9 GB boxes.
+
+**Documentation:** nine findings, all fixed in `cadc9ef`, `0962873`, `570342a`
+and `f5baf3d`. The three that would cost a first-time operator the most are the
+pill (§3.2 sends you to the wrong branch on CI for a job you can do locally in
+six minutes), the filter-header troubleshooting entry (§9 fires on every
+healthy run and its remedy is destructive), and the missing shutdown procedure
+(§5.10 — which is why this run was handed three "stopped" ships that were
+running).
