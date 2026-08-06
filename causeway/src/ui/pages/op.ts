@@ -150,7 +150,8 @@ export function renderOp(root: HTMLElement, opName: string): void {
       "Sponsor @p (blank = keep the current one)"),
     el("input", { type: "text", name: "sponsorPatp", id: "sponsorPatp", placeholder: "~sampel-palnet" }),
     el("label", { for: "noRoute", style: "display:block;margin-top:0.6rem;" },
-      "Unroutable (no-route): commit no sponsor and no fief — outbound-only"),
+      "No-route: clear the sponsor and permit an unroutable result — outbound-only. "
+      + "(The comet's fief, if it has one, always carries forward.)"),
     el("input", { type: "checkbox", name: "noRoute", id: "noRoute" }),
   );
   const buildBtn = el("button", { class: "btn primary", type: "submit", style: "margin-top:0.8rem;" }, "Build PSBT");
@@ -232,12 +233,20 @@ export function renderOp(root: HTMLElement, opName: string): void {
       // ship itself). Copying `.who` unconditionally would silently turn "no
       // sponsor" into "sponsored by itself" and defeat the routability guard
       // below, so honour `.has`.
+      //
+      // NB2: the fief must come from the point too, NOT be hardcoded to null.
+      // It rides the snapshot into the state commitment, so dropping it makes
+      // the INPUT merkle root (over currentSnapshot) wrong — the PSBT's
+      // PSBT_IN_TAP_MERKLE_ROOT no longer matches the UTXO being spent and the
+      // signer cannot produce a valid key-path signature — and re-commits a
+      // state-key with the comet's fief silently erased. `ops.rekey` carries
+      // `currentSnapshot.fief` forward verbatim.
       const currentSnapshot: Snapshot = {
         life: point.net.life,
         rift: point.net.rift,
         key: point.net.pass,
         sponsor: point.net.sponsor.has ? point.net.sponsor.who : null,
-        fief: null,
+        fief: point.net.fief,
       };
 
       const txidBytes = new Uint8Array(32);

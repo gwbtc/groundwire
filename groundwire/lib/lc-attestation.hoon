@@ -49,6 +49,29 @@
 ::
 ++  light-client-agent  %bitcoin-client
 ::
+::  +lc-fetch-timeout: how long ONE light-client request may take
+::
+::    The node's request endpoints answer when they have the data and
+::    otherwise register a pending request and wait for a peer -- they never
+::    nack and never answer with a placeholder.  So a +watch-one against a
+::    light client whose peers have died waits FOREVER, and with it the whole
+::    verification strand, and with that the ship's single-flight `inflight`
+::    slot: until +stuck-job-guard (~h2) fires, every further attestation from
+::    that peer is dropped.  Live mainnet 2026-08-06 (Phase 6.2): a runtime
+::    fault during verification stranded the slot and two retries were
+::    swallowed in silence.
+::
+::    Bounding each individual REQUEST -- not the whole verification, which is
+::    legitimately O(blocks since the comet last moved its sat) -- turns that
+::    into a strand failure inside a few minutes.  %gw-btc's %verify handler
+::    deletes the inflight entry BEFORE it dispatches on the sign, so a failed
+::    strand releases the slot and emits no verdict: infrastructure failure,
+::    never evidence.  This is the confidential verifier's exact analogue of
+::    +block-fetch-timeout in the public scanner, and the same reasoning
+::    applies (see app/gw-btc.hoon).
+::
+++  lc-fetch-timeout  ~m5
+::
 ++  verify-lc
   |=  $:  sat=self-attestation:sa
           tracked=(unit anchor:sa)
@@ -70,6 +93,7 @@
   ::  the canonical block hash from the height, requests the verified tx in
   ::  that block, and strand-fails on any height/txid disagreement.
   ;<  start=tx:bc  bind:m
+    %+  (set-timeout:strandio ,tx:bc)  lc-fetch-timeout
     (fetch-tx-at our start-height.u.spawn-open txid.spawn)
   ::  Every custody entry supplies a height; resolve each entry's tx the
   ::  same way, in custody order.
@@ -130,6 +154,7 @@
   |-
   ?~  entries  (pure:m (flop acc))
   ;<  =tx:bc  bind:m
+    %+  (set-timeout:strandio ,tx:bc)  lc-fetch-timeout
     (fetch-tx-at our height.i.entries txid.i.entries)
   $(entries t.entries, acc [tx acc])
 ::
@@ -148,6 +173,16 @@
 ::    A confirmed spend => `%.n; scanning to the tip with none => `%.y; any
 ::    failed/unavailable fetch or inconsistency => ~ (undeterminable).
 ::
+::    A DEGENERATE RANGE IS UNDETERMINABLE, NOT CLEAN.  If .best-height is
+::    below .tip-height there is no block to look at: the loop's exit test
+::    (`h > best-height`) is true on the FIRST iteration and the old code
+::    returned `%.y -- "unspent" -- having examined zero blocks.  That is a
+::    fail-OPEN on the one check the design most wants to fail closed, and it
+::    is exactly what happened on mainnet 2026-08-06: an unsynced light client
+::    reported the chain tip as genesis, and
+::    `[%gw-btc-lc-scan-clean ... from=961.196 to=0]` passed `tip-unspent`
+::    on no evidence at all.  A spent tip would have read identically.
+::
 ++  scan-liveness
   |=  $:  our=@p
           tip=sont:ord
@@ -157,6 +192,9 @@
       ==
   =/  m  (strand:strandio ,(unit ?))
   ^-  form:m
+  ?:  (gth tip-height best-height)
+    ~&  [%gw-btc-lc-scan-degenerate tip=tip from=tip-height to=best-height]
+    (pure:m ~)
   ::  Back into the NODE's byte order for the GCS matcher.  +match:b-fil is
   ::  the node's own matcher and consumes its targets LSB-first, exactly as
   ::  the node encoded them into the filter; .tip-spk arrives here in the
@@ -171,6 +209,8 @@
     ~&  [%gw-btc-lc-scan-clean tip=tip from=tip-height to=best-height]
     (pure:m `%.y)
   ;<  res=?(%error %no-match %spent %unspent)  bind:m
+    %+  (set-timeout:strandio ,?(%error %no-match %spent %unspent))
+      lc-fetch-timeout
     (scan-height our h spk txid.tip vout.tip)
   ?-  res
       %error
@@ -194,6 +234,12 @@
   ;<  f-cage=cage  bind:m  (watch-filter-height our h)
   =/  fres  !<(block-filter-by-height:update:lc q.f-cage)
   ?.  =(h block-height.fres)
+    (pure:m %error)
+  ::  A zero-width filter cannot match anything, so accepting one would read
+  ::  as "no spend here" for every height -- a silent fail-open.  Real BIP-158
+  ::  filters are never empty (every block has a coinbase output), so this is
+  ::  a protocol violation and must be undeterminable, not clean.
+  ?:  =(0 wid.filter.fres)
     (pure:m %error)
   ?.  (match:b-fil block-hash.fres filter.fres ~[spk])
     (pure:m %no-match)

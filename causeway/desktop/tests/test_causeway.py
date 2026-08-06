@@ -321,7 +321,7 @@ def test_spawn_connect_blind_is_recoverable_from_the_blind_mnemonic(tmp_path, mo
     acct = root.derive("m/86h/0h/0h").to_public()
     desc = f"tr([{cw.hdkey_fingerprint(root).hex()}/86h/0h/0h]{acct.to_base58()}/0/*)"
 
-    def sign(unsigned_b64):
+    def sign(unsigned_b64, signed_psbt=None):
         p = _psbt.PSBT.from_base64(unsigned_b64)
         p.sign_with(root)
         return p.to_base64()

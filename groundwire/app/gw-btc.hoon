@@ -89,18 +89,58 @@
   $:  chain=custody-log:sa
       pending=(unit anew-job)
   ==
+::  $reorg-stop: the block scanner, halted by a chain reorganisation
+::
+::    %bitcoin-client reports a reorg as a %reorg-rollback on /best-block.
+::    Until 2026-08-06 this agent handled it IDENTICALLY to %new: only .best
+::    moved, while .block-id.urb-state (the scan cursor) and .unv-ids (every
+::    fact derived from the orphaned blocks) were untouched.  Three
+::    consequences, all silent: the cursor sat ABOVE the new tip so nothing
+::    was rescanned, facts indexed out of orphaned blocks stayed forever,
+::    and facts unique to the winning chain were never seen.
+::
+::    Undoing the orphaned facts is not possible with what we store: a point
+::    in .unv-ids does not record the height it was indexed at, so there is
+::    no way to tell which entries came from the losing chain.  Rewinding
+::    the cursor and rescanning would therefore replay the winning chain ON
+::    TOP of a corrupted index, not instead of it.
+::
+::    So the scanner STOPS, loudly, and waits for an operator.  A halted
+::    index is a liveness failure that announces itself; a silently forked
+::    one is a correctness failure that does not.  %gw-reorg-resume decides
+::    what to do about it (see +on-poke).
+::
+::    Confidential verification deliberately keeps running: it reads the
+::    chain through the light client, which does its own reorg handling, and
+::    its answers do not come from this index.
+::
++$  reorg-stop
+  $:  at=@ud        ::  height the chain rolled back to
+      cursor=@ud    ::  our scan cursor when that happened
+      since=@da
+  ==
 ::  $gw-state
 ::
-::    .indexing and .best are the two INDEPENDENT readiness signals, and
-::    keeping them apart is load-bearing:
+::    .indexing, .best and .synced are the INDEPENDENT readiness signals,
+::    and keeping them apart is load-bearing:
 ::
 ::      .indexing -- the PUBLIC index has been bootstrapped (an operator
 ::      chose a start height with %urb-start-indexing / %gw-index-from).
 ::      It gates only the block scanner's timer.
 ::
-::      .best -- the light client is usable: our persistent /best-block
-::      subscription has reported a chain tip.  It gates only the
-::      confidential verifier, which needs a tip to scan up to.
+::      .best -- the chain tip our persistent /best-block subscription last
+::      reported.  It is what the verifier scans UP TO, and what the scanner
+::      measures its own cursor against.
+::
+::      .synced -- the light client says it is CAUGHT UP: block headers and
+::      filter headers both at the tip, with live peers.  This is the real
+::      readiness signal for the confidential verifier, and it is not
+::      derivable from .best: %bitcoin-client answers a fresh /best-block
+::      subscription with the GENESIS block, so `?~ best` opened the gate on
+::      a ship 961,000 blocks behind and it judged an attestation against a
+::      chain it had never seen (live mainnet, 2026-08-06 -- a false INVALID
+::      and a snub of an honest peer by its own sponsor).  A ~-check is not
+::      a sync check.
 ::
 ::    A light-client-only deployment that never bootstraps a public index
 ::    still verifies confidential comets, and a node with no confidential
@@ -108,13 +148,55 @@
 ::    earlier revision did) forced operators to poke the public-indexer
 ::    bootstrap just to turn confidential verification on.
 ::
-::    (.indexing bunts to %.n on purpose -- the bunt of ? is %.y, and an
-::    agent that came up believing its index was already bootstrapped
-::    would never scan a block.)
+::    .indexing WAS declared `_|`, to force its bunt to %.n (the bunt of ?
+::    is %.y, and an agent that came up believing its index was already
+::    bootstrapped would never scan a block).  That was a silent
+::    state-corrupter: `_` is $_, the mold that IGNORES its input and
+::    always returns the pinned value, so `;;(gw-state ...)` in +on-load
+::    rewrote .indexing to %.n on EVERY upgrade -- verified on a live
+::    mainnet ship, 2026-08-06: C3 held %.y before a desk redeploy and
+::    %.n after, with nothing else changed.  It reopened the one-shot
+::    bootstrap guard on every upgrade, so a later %gw-index-from would
+::    silently wipe .unv-ids -- and .unv-ids is what `sponsor-known`
+::    reads.  So: an honest ? here, +on-init pinning %.n explicitly, and
+::    a bootstrap guard that looks at the INDEX rather than at a flag.
 ::
 +$  gw-state
   $:  urb-state=state:urb
-      indexing=_|
+      indexing=?
+      best=(unit id:block:bc)
+      inflight=(map ship inflight-writ)
+      confidential=(set ship)
+      attested=(map ship sont:ord)
+      publicizing=(set ship)
+      next-job=@ud
+      sponsees=(map ship sponsee)
+      declined=(set ship)
+      own=own-custody
+      ::  ? and NOT `_|`, for the reason above and with a sharper
+      ::  consequence: /is-synced gives a fact on the initial watch and
+      ::  then only on TRANSITIONS, so a value silently reset by +on-load
+      ::  is not repaired by the next fact -- it is repaired by the next
+      ::  time the light client changes its mind, which on a healthy node
+      ::  is "when a block arrives".  An upgrade would therefore hold
+      ::  every attestation until then.  Fail-closed, but dead.
+      ::
+      synced=?
+      reorg-halt=(unit reorg-stop)
+  ==
+::  $gw-state-11 / $gw-state-10: the two earlier shapes
+::
+::    -11 is the state before .synced and .reorg-halt; -10 is the state
+::    before .own as well.  +on-load discriminates on them; ;; is strict
+::    about arity (it bails on both a missing and an extra tail), so trying
+::    the current mold first and falling back is exact, not a guess.
+::
+::    Nothing inside these molds changed, only the tail they are missing,
+::    which is why they can keep naming the current $inflight-writ.
+::
++$  gw-state-11
+  $:  urb-state=state:urb
+      indexing=?
       best=(unit id:block:bc)
       inflight=(map ship inflight-writ)
       confidential=(set ship)
@@ -125,15 +207,10 @@
       declined=(set ship)
       own=own-custody
   ==
-::  $gw-state-10: the state shape before .own was added
-::
-::    +on-load discriminates on it; ;; is strict about arity (it bails on
-::    both a missing and an extra tail), so trying the current mold first
-::    and falling back here is exact, not a guess.
 ::
 +$  gw-state-10
   $:  urb-state=state:urb
-      indexing=_|
+      indexing=?
       best=(unit id:block:bc)
       inflight=(map ship inflight-writ)
       confidential=(set ship)
@@ -161,9 +238,16 @@
   ::  agent name).  Jael watches /writs for %writ-response /
   ::  %anew-response / %azimuth-udiffs facts.
   ::
-  :_  this
+  ::  .indexing and .synced are pinned here rather than left to the mold's
+  ::  bunt (which is %.y for ?): a fresh agent has NOT bootstrapped its
+  ::  public index and has NOT heard from its light client.  Both must
+  ::  start false or the agent comes up believing things it has no
+  ::  evidence for.  See $gw-state for why neither is declared `_|`.
+  ::
+  :_  this(indexing %.n, synced %.n)
   :~  [%pass /anex %arvo %j %anex /writs]
       [%pass /best-block %agent [our.bowl light-client-agent:lca] %watch /best-block]
+      (watch-synced our.bowl)
   ==
 ::
 ++  on-save
@@ -181,20 +265,39 @@
   ::
   =/  nou=*  q.vase
   =.  nou  ?:(?=([[@ *] *] nou) +.nou nou)
-  ::  .own (our own custody log) was appended later.  ;; is strict about
-  ::  arity, so the current mold succeeding IS the discriminator; a
-  ::  pre-.own state loads with an empty log and re-seeds itself from our
-  ::  pass's xtr on the next %anew.
+  ::  .own (our own custody log), then .synced and .reorg-halt, were
+  ::  appended later.  ;; is strict about arity, so the current mold
+  ::  succeeding IS the discriminator; a pre-.own state loads with an empty
+  ::  log and re-seeds itself from our pass's xtr on the next %anew.
+  ::
+  ::  An upgrade from either older shape must also SUBSCRIBE to /is-synced.
+  ::  Gall keeps outgoing subscriptions across +on-load, so the existing
+  ::  /best-block one survives and must not be re-issued -- but nothing has
+  ::  ever asked for /is-synced, and +on-init (which would) does not run on
+  ::  an upgrade.  Emitting it exactly on the migration branches is what
+  ::  makes the new readiness gate work on a ship that is upgraded in place
+  ::  rather than reinstalled.
   ::
   =/  cur  (mole |.(;;(gw-state nou)))
   ?^  cur  `this(state u.cur)
+  =/  o11  (mole |.(;;(gw-state-11 nou)))
+  ?^  o11
+    =/  ext=gw-state
+      :*  urb-state.u.o11  indexing.u.o11  best.u.o11  inflight.u.o11
+          confidential.u.o11  attested.u.o11  publicizing.u.o11
+          next-job.u.o11  sponsees.u.o11  declined.u.o11  own.u.o11
+          %.n  ~
+      ==
+    :_  this(state ext)
+    ~[(watch-synced our.bowl)]
   =/  o  ;;(gw-state-10 nou)
   =/  ext=gw-state
     :*  urb-state.o  indexing.o  best.o  inflight.o  confidential.o
         attested.o  publicizing.o  next-job.o  sponsees.o  declined.o
-        *own-custody
+        *own-custody  %.n  ~
     ==
-  `this(state ext)
+  :_  this(state ext)
+  ~[(watch-synced our.bowl)]
 ::
 ++  on-poke
   |=  [=mark =vase]
@@ -234,14 +337,26 @@
       ::  A prior block result has already proved this is a public spawn and
       ::  an exact sanitized replay is in progress.  Ignore reinsertion until
       ::  that block job resolves.
+      ::  EVERY drop below is announced.  They used to be silent, and
+      ::  Phase 5b's finding 9 was that %jael-writ has nine distinct
+      ::  silent-drop returns which from outside look identical to "nobody
+      ::  is talking to this ship".  Phase 6.2 then paid for it for real: a
+      ::  runtime fault stranded the single-flight slot and the two retries
+      ::  that would have diagnosed it were swallowed without a word.
+      ::  These lines are one-per-dropped-writ, so they are also the rate
+      ::  at which a peer is retrying, which is itself the thing you want
+      ::  to know.
+      ::
       ?:  (~(has in publicizing) who.poke)
+        %-  (slog leaf+"%gw-btc: writ from {(scow %p who.poke)} dropped: public-spawn replay in progress" ~)
         `this
       ::  Single-flight per ship: at most one verification job.  A
       ::  duplicate or replacement writ while one is in flight is
-      ::  dropped silently -- the peer's retries re-enter after the
-      ::  verdict, and the on-chain cost of minting states is the rate
-      ::  limit.  No queue, no slot economy.
+      ::  dropped -- the peer's retries re-enter after the verdict, and
+      ::  the on-chain cost of minting states is the rate limit.  No
+      ::  queue, no slot economy.
       ?:  (~(has by inflight) who.poke)
+        %-  (slog leaf+"%gw-btc: writ from {(scow %p who.poke)} dropped: a verification is already in flight" ~)
         `this
       ::  A ship whose sponsorship we declined re-attests on every
       ::  retry; short-circuit before spending a full verification on
@@ -249,6 +364,7 @@
       ::  handling immediately -- the refusal is never sticky in the
       ::  kernel, only here.
       ?:  (~(has in declined) who.poke)
+        %-  (slog leaf+"%gw-btc: writ from {(scow %p who.poke)} dropped: sponsorship declined by operator" ~)
         `this
       ?~  sat=(pass-attestation [dom who pass]:poke)
         ::  Two shapes we decline to JUDGE rather than judge negatively,
@@ -280,19 +396,57 @@
         :_  this
         ~[(writ-card dom.poke who.poke ~)]
       ?:  (known-public who.poke)
+        %-  (slog leaf+"%gw-btc: writ from {(scow %p who.poke)} dropped: already a public point" ~)
         `this
-      ::  Drop silently until the LIGHT CLIENT is usable; readiness is
-      ::  infrastructure, never evidence.  `best` doubles as the chain tip
-      ::  the verification strand scans up to: we hold a live /best-block
-      ::  subscription, and the strand must NOT re-read that persistent
-      ::  endpoint itself (it never kicks).
+      ::  ------------------------------------------------------------
+      ::  READINESS.  Drop until the LIGHT CLIENT can actually answer;
+      ::  readiness is infrastructure, never evidence.
+      ::  ------------------------------------------------------------
+      ::
+      ::  This gate was `?~ best` and that was NOT a readiness check.
+      ::  %bitcoin-client answers a fresh /best-block subscription with the
+      ::  GENESIS block, so `best` is set within milliseconds of boot and a
+      ::  ship 961,000 blocks behind sailed straight through.  It then
+      ::  judged a real attestation against a chain it had never seen and
+      ::  snubbed the honest comet it sponsors (live mainnet 2026-08-06,
+      ::  Phase 6.1).  Three things must hold now:
+      ::
+      ::    1. `best` exists -- it is the tip the strand scans up to, and
+      ::       the strand must NOT re-read /best-block itself (persistent
+      ::       subscription, never kicks).
+      ::    2. the light client says it is SYNCED: block headers AND filter
+      ::       headers at the tip, with live peers.  The BIP-158 liveness
+      ::       scan is a filter-header consumer, so nothing less will do.
+      ::    3. the tip we believe in actually COVERS this log's evidence.
+      ::       Belt and braces for (2): it is the property the verification
+      ::       mathematically needs, it is checkable from the writ itself,
+      ::       and it is what stops +scan-liveness being handed a range
+      ::       that runs backwards.
+      ::
+      ::  A writ that fails any of these gets NO verdict.  Dropping is
+      ::  already safe -- the peer retransmits, and the log line above says
+      ::  how often -- whereas judging is not.
       ::
       ::  Deliberately NOT gated on .indexing.  Confidential verification
       ::  needs nothing from the public index except the sponsor-existence
-      ::  set, which is allowed to be empty; requiring a public-indexer
-      ::  bootstrap here would make a light-client-only deployment unable
-      ::  to verify anything at all.
+      ::  set, which is now unevaluable-when-empty rather than false, so a
+      ::  light-client-only deployment still verifies unsponsored comets.
+      ::
       ?~  best
+        %-  (slog leaf+"%gw-btc: writ from {(scow %p who.poke)} held: no chain tip yet" ~)
+        `this
+      ?.  synced
+        %-  %-  slog
+            :~  leaf+"%gw-btc: writ from {(scow %p who.poke)} held: light client NOT synced"
+                leaf+"  (tip {<num.u.best>}; no verdict will be emitted until it catches up)"
+            ==
+        `this
+      =/  need=@ud  (log-top-height u.sat)
+      ?.  (gte num.u.best need)
+        %-  %-  slog
+            :~  leaf+"%gw-btc: writ from {(scow %p who.poke)} held: tip {<num.u.best>} below evidence height {<need>}"
+                leaf+"  (our chain view does not reach this log; that is ignorance, not fraud)"
+            ==
         `this
       =/  job  next-job
       =.  next-job  +(next-job)
@@ -345,12 +499,71 @@
     =/  who  !<(ship vase)
     `this(declined (~(del in declined) who))
   ::
+      ::  Restart a block scanner halted by a reorg (see $reorg-stop).
+      ::
+      ::    ~          resume from the current cursor.  The operator is
+      ::               accepting that facts indexed out of orphaned blocks
+      ::               may still be in .unv-ids and that the winning
+      ::               chain's replacements in the skipped range were
+      ::               never seen.
+      ::    [~ height] rewind the cursor to `height` first, so the winning
+      ::               chain from there is scanned.  This ADDS the correct
+      ::               facts; it cannot remove wrong ones.
+      ::
+      ::  Neither is a repair.  The repair is to rebootstrap the public
+      ::  index, which needs a nuke (see %urb-start-indexing).  This poke
+      ::  exists so an operator can choose, deliberately and on the record,
+      ::  rather than have the agent guess for them.
+      ::
+      %gw-reorg-resume
+    ?>  =(our src):bowl
+    ?~  reorg-halt
+      %-  (slog leaf+"%gw-btc: no reorg halt in force" ~)
+      `this
+    ::  MOLD-CAST the raw noun, never +!<: an operator poking `&noun ~`
+    ::  builds a vase whose type is bare %~, which does not nest under a
+    ::  head-tagged union, and +!< would bail on exactly the invocation the
+    ::  docs above tell them to use.
+    ::
+    =/  to=(unit @ud)  ;;((unit @ud) q.vase)
+    =/  msg=tape
+      ?~  to  "resuming from cursor {<num.block-id.urb-state>}"
+      "rewinding cursor to {<u.to>} and resuming"
+    %-  %-  slog
+        :~  leaf+"%gw-btc: reorg halt cleared by operator; {msg}"
+            leaf+"  (halted at {<since.u.reorg-halt>} by a rollback to {<at.u.reorg-halt>})"
+        ==
+    ::  .block-id is the LAST block scanned, so rewinding to first-scan
+    ::  height h means storing h-1 (the %gw-index-from convention).
+    =?  urb-state  ?=(^ to)
+      urb-state(block-id [0x0 (dec (max 1 u.to))])
+    :_  this(reorg-halt ~)
+    ~[[%pass /timer %arvo %b %wait now.bowl]]
+  ::
       %urb-start-indexing
     ?>  =(our src):bowl
     ::  Bootstrap is one-shot. Replacing the public snapshot while private
     ::  points or verifier jobs exist would mix incompatible index epochs;
     ::  an operator who deliberately needs to rebootstrap must nuke first.
-    ?:  indexing
+    ::  Guarded on the INDEX, not just the flag -- see %gw-index-from.
+    ::  NB: `!=(~ ...)` rather than `?=(^ ...)`.  A ?= on a state leg
+    ::  narrows that leg's TYPE in the false branch, and the branches
+    ::  below assign a whole fresh $state:urb into it -- which then
+    ::  nest-fails against the narrowed `unv-ids=~`.
+    ::
+    ::  Deliberately NOT `?| indexing ...`.  The bunt of ? is %.y, so a
+    ::  flag-based guard refuses the FIRST bootstrap on a fresh agent
+    ::  unless +on-init has run -- and it is exactly the kind of thing
+    ::  that is true in production and false under test.  The index
+    ::  itself is the evidence: a cursor that has moved, or a single
+    ::  indexed point, means there is something here to lose.
+    ::
+    =/  have-index=?
+      ?|  !=(0 num.block-id.urb-state)
+          !=(~ unv-ids.urb-state)
+      ==
+    ?:  have-index
+      %-  (slog leaf+"%gw-btc: refusing %urb-start-indexing: an index already exists" ~)
       `this
     =/  start-urb  ;;((unit state:urb) !<((unit noun) vase))
     ?~  start-urb
@@ -375,7 +588,36 @@
       ::
       %gw-index-from
     ?>  =(our src):bowl
-    ?:  indexing
+    ::  Bootstrap is one-shot, and the guard must not rest on a FLAG.
+    ::  This poke replaces urb-state wholesale -- cursor, sat index and
+    ::  .unv-ids -- so getting the guard wrong destroys the public index
+    ::  that `sponsor-known` reads.  .indexing was silently reset to %.n
+    ::  by every +on-load for as long as it was declared `_|` (see
+    ::  $gw-state), which left this open on every upgrade.  Refuse
+    ::  whenever there is an index to lose, whatever the flag says.
+    ::
+    ::  NB: `!=(~ ...)` rather than `?=(^ ...)`.  A ?= on a state leg
+    ::  narrows that leg's TYPE in the false branch, and the branches
+    ::  below assign a whole fresh $state:urb into it -- which then
+    ::  nest-fails against the narrowed `unv-ids=~`.
+    ::
+    ::  Deliberately NOT `?| indexing ...`.  The bunt of ? is %.y, so a
+    ::  flag-based guard refuses the FIRST bootstrap on a fresh agent
+    ::  unless +on-init has run -- and it is exactly the kind of thing
+    ::  that is true in production and false under test.  The index
+    ::  itself is the evidence: a cursor that has moved, or a single
+    ::  indexed point, means there is something here to lose.
+    ::
+    =/  have-index=?
+      ?|  !=(0 num.block-id.urb-state)
+          !=(~ unv-ids.urb-state)
+      ==
+    ?:  have-index
+      %-  %-  slog
+          :~  leaf+"%gw-btc: refusing %gw-index-from: an index already exists"
+              leaf+"  (cursor {<num.block-id.urb-state>}, {<~(wyt by unv-ids.urb-state)>} points;"
+              leaf+"   rebootstrapping means nuking the agent, deliberately)"
+          ==
       `this
     =/  start=@ud  !<(@ud vase)
     ?:  =(0 start)  `this
@@ -422,6 +664,25 @@
     ::
       [%x %publicizing ~]
     ``noun+!>(publicizing)
+    ::  The %anew single-flight slot.  Same argument as /x/inflight: a
+    ::  stranded one silences our OWN pass refresh forever and had no
+    ::  witness at all (Phase 7.2 spent an hour eliminating the other six
+    ::  causes before reaching it).
+    ::
+      [%x %pending-own ~]
+    ``noun+!>(?~(pending.own ~ `job.u.pending.own))
+    ::  READINESS, exposed.  `?~ best` used to drop writs with no log line
+    ::  and nothing exposed `best`, so a ship quietly refusing every
+    ::  attestation looked exactly like a ship nobody was talking to
+    ::  (Phase 6.7).  [synced best-height indexing halted].
+    ::
+      [%x %ready ~]
+    :^  ~  ~  %noun
+    !>  :*  synced=synced
+            tip=?~(best ~ `num.u.best)
+            indexing=indexing
+            reorg-halt=reorg-halt
+        ==
     ::  Which identities this ship holds CONFIDENTIALLY (so their points
     ::  are withheld from /x/points and from jael's udiffs), and the tip
     ::  each one last attested to.
@@ -513,6 +774,16 @@
     ?~  best
       :_  this
       ~[[%pass /timer %arvo %b %wait (add ~s30 now.bowl)]]
+    ::  Halted by a reorg (see the /best-block %reorg-rollback arm).  Keep
+    ::  the timer alive and keep saying so -- a stopped scanner that stops
+    ::  mentioning it is indistinguishable from a working one.
+    ?^  reorg-halt
+      %-  %-  slog
+          :~  leaf+"%gw-btc: block scanner HALTED since {<since.u.reorg-halt>} by a reorg to {<at.u.reorg-halt>}"
+              leaf+"  (cursor {<cursor.u.reorg-halt>}; clear with %gw-reorg-resume)"
+          ==
+      :_  this
+      ~[[%pass /timer %arvo %b %wait (add ~m5 now.bowl)]]
     :_  this
     :~  :*  %pass  /blocks  %arvo  %k
             %lard  q.byk.bowl
@@ -525,6 +796,13 @@
     :_  this
     :~  [%pass /best-block %agent [our.bowl light-client-agent:lca] %watch /best-block]
     ==
+  ::
+  ::  Re-arm the /is-synced subscription after a rejected watch.  While it
+  ::  is down .synced stays %.n, i.e. we hold every writ rather than judge
+  ::  it -- the fail-closed direction.
+      [%synced-retry ~]
+    :_  this
+    ~[(watch-synced our.bowl)]
   ::
       ::  (%verify-timeout is the pre-rename wire; accepted so a timer set
       ::  by an older revision cannot crash the agent on upgrade.)
@@ -660,6 +938,21 @@
         ::  the one we already verified.  Our scanner drops them itself
         ::  when it reaches the block that spent the sat.
         ::
+        ::  The THIRD outcome, and the one Phase 6.1 proved was missing.
+        ::  A verdict whose only failures are checks we could not EVALUATE
+        ::  says nothing about the peer, so we say nothing about the peer.
+        ::  Not %fail (a snub), not even %stale (a demotion): silence, and
+        ::  the peer's next retransmission gets a fresh look once whatever
+        ::  we were missing has arrived.  See +unknown-checks in
+        ::  lib/self-attestation for what qualifies and why.
+        ::
+        ?:  (unknown-verdict:lsa verdict.res)
+          %-  %-  slog
+              :~  leaf+"%gw-btc: attestation for {(scow %p who)} is UNDETERMINED; emitting no verdict"
+                  leaf+"  (the [??] checks above could not be evaluated from what we can see;"
+                  leaf+"   that is our ignorance, not the peer's fraud -- it will be retried)"
+              ==
+          `this
         ?:  (stale-verdict:lsa verdict.res)
           %-  %-  slog
               :~  leaf+"%gw-btc: attestation for {(scow %p who)} is STALE, not invalid"
@@ -667,6 +960,23 @@
               ==
           :_  this
           ~[(stale-card dom.req who)]
+        ::  Everything else IS a negative verdict, and a negative verdict is
+        ::  destructive: jael %fails and ames snubs, stickily, which then
+        ::  blocks the packet that could correct it.  It has never announced
+        ::  itself -- Phase 6.7 found the snub itself to be invisible in the
+        ::  logs, discoverable only through .^(/snubbed) -- so say it here,
+        ::  at the one place that causes it.
+        ::
+        =/  why=tape
+          ?:  ok.verdict.res
+            "its checks passed but the result was refused locally (the rebuilt pass's key disagrees with the forwarded pass, or its tip sat belongs to another comet)"
+          "the [XX] checks above are fraud-class: evidence that was never true, not evidence that expired"
+        %-  %-  slog
+            :~  leaf+"%gw-btc: SNUBBING {(scow %p who)} on a negative %gw-btc verdict"
+                leaf+"  {why}"
+                leaf+"  (a snub is sticky and blocks the packet that would correct it;"
+                leaf+"   inspect with .^(/snubbed) and undo with %snub %deny %del)"
+            ==
         :_  this
         ~[(writ-card dom.req who ~)]
       ::  Sponsorship decision point.  A valid attestation whose snapshot
@@ -870,6 +1180,42 @@
   |=  [=wire =sign:agent:gall]
   ^-  (quip card _this)
   ?+    wire  (on-agent:def wire sign)
+  ::  THE readiness signal for the confidential verifier: %bitcoin-client's
+  ::  own answer to "am I caught up".  /is-synced is a PERSISTENT
+  ::  subscription like /best-block -- it answers the watch immediately with
+  ::  the current value and then gives a fact on every transition, and it
+  ::  never kicks.  It must therefore never be read with +watch-one.
+  ::
+  ::  Any failure of this subscription leaves .synced %.n, which holds writs
+  ::  instead of judging them.  That is the safe direction: a ship that
+  ::  cannot tell whether it is synced has no business condemning anyone.
+  ::
+      [%is-synced ~]
+    ?+    -.sign  (on-agent:def wire sign)
+        %watch-ack
+      ?~  p.sign  `this
+      %-  (slog leaf+"%gw-btc: {<light-client-agent:lca>} /is-synced watch rejected" u.p.sign)
+      :_  this(synced %.n)
+      ~[[%pass /synced-retry %arvo %b %wait (add ~s30 now.bowl)]]
+    ::
+        %kick
+      :_  this(synced %.n)
+      ~[(watch-synced our.bowl)]
+    ::
+        %fact
+      ?.  ?=(%is-synced p.cage.sign)
+        (on-agent:def wire sign)
+      =/  syn  !<(is-synced:update:lc q.cage.sign)
+      ?:  =(syn synced)  `this
+      %-  %-  slog
+          :_  ~
+          :-  %leaf
+          ?:  syn
+            "%gw-btc: light client is SYNCED; confidential verification enabled"
+          "%gw-btc: light client is NOT synced; holding all attestations (no verdicts)"
+      `this(synced syn)
+    ==
+  ::
       [%best-block ~]
     ?+    -.sign  (on-agent:def wire sign)
         %watch-ack
@@ -891,12 +1237,54 @@
       ?.  ?=(%best-block p.cage.sign)
         (on-agent:def wire sign)
       =/  upd  !<(best-block:update:lc q.cage.sign)
-      =/  new-best=id:block:bc
-        ?-  -.upd
-          %new             [block-hash.upd block-height.upd]
-          %reorg-rollback  [block-hash.upd block-height.upd]
-        ==
-      `this(best `new-best)
+      ?:  ?=(%new -.upd)
+        `this(best ``id:block:bc`[block-hash.upd block-height.upd])
+      ?>  ?=(%reorg-rollback -.upd)
+      =/  new-best=id:block:bc  [block-hash.upd block-height.upd]
+      ::  A REORG.  Until 2026-08-06 this arm was byte-identical to %new:
+      ::  only .best moved, the scan cursor never rewound, and every fact
+      ::  indexed out of an orphaned block stayed in .unv-ids forever while
+      ::  the winning chain's replacements were skipped -- all silently.
+      ::  With block-confirmations = 1 a single-block reorg, several a month
+      ::  on mainnet, is enough to reach it.
+      ::
+      ::  Two cases, and only one of them is a problem:
+      ::
+      ::    rollback ABOVE our cursor -- the orphaned blocks are ones we had
+      ::    not scanned.  Nothing we hold came from them.  Note it and carry
+      ::    on; the scanner will walk the winning chain normally.
+      ::
+      ::    rollback AT OR BELOW our cursor -- our index contains facts
+      ::    derived from blocks that no longer exist, and we cannot tell
+      ::    WHICH: a $point does not record the height it was indexed at.
+      ::    Rewinding and rescanning would replay the winning chain on top
+      ::    of the corrupted index rather than instead of it, so it is not a
+      ::    fix, it is a second bug.  Stop the scanner and say so.  See
+      ::    $reorg-stop and %gw-reorg-resume.
+      ::
+      ?:  (gth block-height.upd num.block-id.urb-state)
+        %-  %-  slog
+            :~  leaf+"%gw-btc: chain reorg to {<block-height.upd>}, above our cursor {<num.block-id.urb-state>}"
+                leaf+"  (nothing we have indexed came from the orphaned blocks; continuing)"
+            ==
+        `this(best `new-best)
+      ?^  reorg-halt
+        `this(best `new-best)
+      %-  %-  slog
+          :~  leaf+"%gw-btc: CHAIN REORG TO {<block-height.upd>} -- BLOCK SCANNER HALTED"
+              leaf+"  our scan cursor was {<num.block-id.urb-state>}, so this index may contain facts"
+              leaf+"  derived from orphaned blocks, and we cannot tell which: a $point does not"
+              leaf+"  record the height it was indexed at.  The scanner will not advance."
+              leaf+"  Confidential verification is UNAFFECTED (it reads the light client directly)."
+              leaf+"  Operator: `:gw-btc &gw-reorg-resume ~` resumes from the current cursor and"
+              leaf+"  accepts the risk; `:gw-btc &gw-reorg-resume [~ height]` rewinds the cursor"
+              leaf+"  first.  A correct repair is to rebootstrap the public index."
+          ==
+      :-  ~
+      %=  this
+        best        `new-best
+        reorg-halt  `[block-height.upd num.block-id.urb-state now.bowl]
+      ==
     ==
   ==
 ++  on-leave  on-leave:def
@@ -925,6 +1313,43 @@
 ::    evidence about the peer.  Hence: absurdly generous.
 ::
 ++  stuck-job-guard  ~h2
+::
+::  +watch-synced: subscribe to the light client's own readiness signal
+::
+::    Issued by +on-init and by the two migration branches of +on-load.  It
+::    must be exactly one card in exactly those places: gall keeps outgoing
+::    subscriptions across an upgrade, so re-issuing it on every load would
+::    stack duplicates, and never issuing it on an upgrade would leave
+::    .synced permanently %.n on a ship that was reinstalled rather than
+::    rebooted (which holds every attestation forever -- safe, but dead).
+::
+++  watch-synced
+  |=  our=@p
+  ^-  card
+  [%pass /is-synced %agent [our light-client-agent:lca] %watch /is-synced]
+::
+::  +log-top-height: the highest chain height a custody log's evidence needs
+::
+::    The spawn transaction's block, plus every entry's block.  Below this
+::    our view of the chain simply does not reach the evidence, so no check
+::    over it can mean anything -- +fetch-tx-at would be asking the node for
+::    a block it does not have, and +scan-liveness would be handed a range
+::    that runs backwards and (before this commit) called it clean.
+::
+::    Cheap, and derived from the writ itself rather than from a global
+::    notion of readiness, which is why it is worth having ALONGSIDE
+::    .synced rather than instead of it.
+::
+++  log-top-height
+  |=  sat=self-attestation:sa
+  ^-  @ud
+  =/  entries  chain.sat
+  =/  top=@ud
+    ?~  open=(spawn-of:lsa chain.sat)  0
+    start-height.u.open
+  |-  ^-  @ud
+  ?~  entries  top
+  $(entries t.entries, top (max top height.i.entries))
 ::
 ::
 ::  Hard-coded initial sync state used if
@@ -1223,23 +1648,54 @@
 ++  begin-anew
   |=  [byk=desk our=@p now=@da cand=custody-log:sa]
   ^-  (quip card gw-state)
+  ::  SEVEN silent refusals used to live here, and Phase 7.2 had to
+  ::  eliminate six of them from outside, by re-deriving each precondition
+  ::  against the ship's own libraries, before it could conclude the
+  ::  seventh (a stranded .pending slot) was the real one.  Every one of
+  ::  them now says which it was.  See also /x/pending-own.
+  ::
   ::  single-flight, exactly as for peer verification
   =/  pend  pending.own
-  ?^  pend  `state
-  ?~  cand  `state
-  ?:  (gth (lent cand) 1.024)  `state
-  ::  readiness is infrastructure, never evidence
+  ?^  pend
+    %-  (slog leaf+"%gw-btc: %anew refused: a self-validation is already in flight (job {<job.u.pend>})" ~)
+    `state
+  ?~  cand
+    %-  (slog leaf+"%gw-btc: %anew refused: no custody log to validate" ~)
+    `state
+  ?:  (gth (lent cand) 1.024)
+    %-  (slog leaf+"%gw-btc: %anew refused: custody log too long ({<(lent cand)>} entries)" ~)
+    `state
+  ::  readiness is infrastructure, never evidence -- and the same
+  ::  correction as the %jael-writ gate applies here: `?~ best` passes on
+  ::  the genesis block %bitcoin-client answers a fresh subscription with.
+  ::  Publishing a pass validated against a chain we have not seen would
+  ::  install it in ames for every peer to reject.
   =/  tip  best
-  ?~  tip  `state
+  ?~  tip
+    %-  (slog leaf+"%gw-btc: %anew refused: no chain tip yet" ~)
+    `state
+  ?.  synced
+    %-  (slog leaf+"%gw-btc: %anew refused: light client not synced (tip {<num.u.tip>})" ~)
+    `state
+  =/  need=@ud  (log-top-height [our *pass cand])
+  ?.  (gte num.u.tip need)
+    %-  (slog leaf+"%gw-btc: %anew refused: tip {<num.u.tip>} below evidence height {<need>}" ~)
+    `state
   =/  base  (own-pass our now)
-  ?~  base  `state
+  ?~  base
+    %-  (slog leaf+"%gw-btc: %anew refused: jael has no suite-C pass for us" ~)
+    `state
   =/  pas  (with-xtr:cc u.base (jam cand))
-  ?~  pas  `state
+  ?~  pas
+    %-  (slog leaf+"%gw-btc: %anew refused: +with-xtr could not re-encode our pass" ~)
+    `state
   ::  the pass we are about to publish must still hash to our name.  the
   ::  tweak is immutable, so this can only fail if +with-xtr or the ring
   ::  ever drifts from the kernel's encoder -- but publishing a pass that
   ::  is not ours would be catastrophic, so check it anyway.
-  ?.  =(our `@p`fig:ex:(com:nu:cric:crypto u.pas))  `state
+  ?.  =(our `@p`fig:ex:(com:nu:cric:crypto u.pas))
+    %-  (slog leaf+"%gw-btc: %anew refused: re-encoded pass does not hash to our own name" ~)
+    `state
   =/  job  next-job
   =/  sat=self-attestation:sa  [our u.pas cand]
   :-  (anew-cards byk now job sat (self-known-public cand) num.u.tip)

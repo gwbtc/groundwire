@@ -246,6 +246,22 @@ export function renderSpawn(root: HTMLElement): void {
       return;
     }
 
+    // PersistedSnapshot has no `fief` field, and openingFromPersisted rebuilds
+    // the snapshot from this record — a dropped fief would silently change the
+    // state-key and make the xtr opening unverifiable. assembleSpawn cannot
+    // currently mint a fief-bearing spawn (there is no fief input at spawn, in
+    // the web app or in the desktop tool), so this is unreachable; if that ever
+    // changes, persist the fief (and bump SCHEMA_VERSION) rather than deleting
+    // this guard.
+    if (assembled.snapshot.fief !== null) {
+      status.innerHTML = "";
+      status.appendChild(banner("err",
+        "internal error: this spawn's snapshot carries a fief, which the saved "
+        + "spawn record cannot store. Refusing to persist a record that would "
+        + "rebuild a DIFFERENT state-key on resume."));
+      return;
+    }
+
     const opening: PersistedOpening = {
       internalKeyHex: assembled.internalKeyHex,
       snapshot: {
@@ -544,6 +560,9 @@ function openingFromPersisted(o: PersistedOpening, startHeight: number): Opening
       rift: o.snapshot.rift,
       key: BigInt("0x" + o.snapshot.keyHex),
       sponsor: o.snapshot.sponsor === null ? null : BigInt(o.snapshot.sponsor),
+      // Always null, and provably so: the persist site above refuses to write a
+      // record whose snapshot carries a fief, precisely because this rebuild
+      // could not restore it.
       fief: null,
     },
     blindOpening: {

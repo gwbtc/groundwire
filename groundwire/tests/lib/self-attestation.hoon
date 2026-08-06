@@ -388,14 +388,89 @@
     (expect !>((stale-verdict:sal verdict.spent)))
   ==
 ::
-++  test-stale-verdict-undeterminable-tip-is-not-fraud
-  ::  an unavailable filter or block fails closed (section 8: "never a
-  ::  negative verdict"), so it is staleness too, never fraud.
+++  test-undeterminable-tip-is-neither-fraud-nor-staleness
+  ::  An unavailable filter or block, or a degenerate scan range, means we
+  ::  could not LOOK.  That is not fraud (it would snub) and it is not
+  ::  staleness either (that demotes the peer on a finding we did not
+  ::  make): it is the third class, +unknown-verdict, and it produces no
+  ::  verdict at all.
+  ::
+  ::  It must show up as `tip-scanned` failing and `tip-unspent` NOT
+  ::  failing.  Collapsing the two was how "we could not look" became "we
+  ::  looked and it is gone".
   ::
   =/  unk  (run-checks:sal good-sat start-tx ~[c0-tx c1-tx] ~ ~ no-points)
   ;:  weld
     (expect !>(!ok.verdict.unk))
-    (expect !>((stale-verdict:sal verdict.unk)))
+    (expect !>(!(got-check verdict.unk 'tip-scanned')))
+    (expect !>((got-check verdict.unk 'tip-unspent')))
+    (expect !>((unknown-verdict:sal verdict.unk)))
+    (expect !>(!(stale-verdict:sal verdict.unk)))
+  ==
+::
+::  ---------------------------------------------------------------------
+::  +unknown-verdict -- "we cannot tell" is not "you are lying"
+::  ---------------------------------------------------------------------
+::
+::  Live mainnet 2026-08-06 (Phase 6.1): C3 judged C1's attestation while
+::  its own block scanner sat 20 blocks below C3's OWN publication.  43 of
+::  44 checks passed; `sponsor-known` failed because C3 did not yet know
+::  that C3 existed -- and C3 snubbed the honest comet it sponsors.  The
+::  same attestation verified VALID two hours later with nothing changed
+::  but the scan position.  A verifier's public index is a WINDOW on the
+::  chain, so "not in it" can never mean "does not exist".
+::
+++  test-unknown-verdict-sponsor-not-known-is-not-fraud
+  =/  snap-sp  ^-(snapshot:sa [life=1 rift=0 key=cry sponsor=`~zod fief=~])
+  =/  sp-open  ^-(opening:sa [ikey0 snap-sp `spawn-open])
+  =/  sp-out   (state-out ikey0 snap-sp 9.500)
+  =/  sp-c0    (mk-tx c0-id ~[(mk-input start-id 0 ~)] ~[sp-out])
+  =/  sp-chain=custody-log:sa  ~[[c0-id 100 `sp-open] [c1-id 101 ~]]
+  =/  sp-pass
+    pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam sp-chain))
+  =/  sat  ^-(self-attestation:sa [who sp-pass sp-chain])
+  ::  the sponsor is invisible to us, and everything else is perfect
+  =/  res  (run-checks:sal sat start-tx ~[sp-c0 c1-tx] `%.y ~ no-points)
+  ::  ... and unknowable-AND-stale is still merely unknowable
+  =/  both  (run-checks:sal sat start-tx ~[sp-c0 c1-tx] `%.n ~ no-points)
+  ;:  weld
+    (expect !>(!ok.verdict.res))
+    (expect !>(!(got-check verdict.res 'sponsor-known')))
+    ::  THE regression guard: this must never become a %fail, i.e. a snub
+    (expect !>((unknown-verdict:sal verdict.res)))
+    (expect !>(!(stale-verdict:sal verdict.res)))
+    (expect !>((unknown-verdict:sal verdict.both)))
+    (expect !>(!(stale-verdict:sal verdict.both)))
+  ==
+::
+::  Fraud beats ignorance: a peer does not get to launder bad evidence by
+::  also naming a sponsor we cannot see.
+::
+++  test-unknown-verdict-fraud-alongside-ignorance-is-fraud
+  =/  snap-sp  ^-(snapshot:sa [life=1 rift=0 key=cry sponsor=`~zod fief=~])
+  ::  the opening commits snap-sp but the OUTPUT commits snap0: forged
+  =/  sp-open  ^-(opening:sa [ikey0 snap-sp `spawn-open])
+  =/  sp-chain=custody-log:sa  ~[[c0-id 100 `sp-open] [c1-id 101 ~]]
+  =/  sp-pass
+    pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam sp-chain))
+  =/  sat  ^-(self-attestation:sa [who sp-pass sp-chain])
+  =/  res  (run-checks:sal sat start-tx ~[c0-tx c1-tx] `%.y ~ no-points)
+  ;:  weld
+    (expect !>(!ok.verdict.res))
+    (expect !>(!(got-check verdict.res 'entry-0-commitment')))
+    (expect !>(!(unknown-verdict:sal verdict.res)))
+    (expect !>(!(stale-verdict:sal verdict.res)))
+  ==
+::
+::  A verdict that PASSED is none of the three negative classes.
+::
+++  test-good-verdict-is-not-unknown
+  =/  good  (run good-sat ~[c0-tx c1-tx] ~)
+  ;:  weld
+    (expect !>(ok.verdict.good))
+    (expect !>((got-check verdict.good 'tip-scanned')))
+    (expect !>(!(unknown-verdict:sal verdict.good)))
+    (expect !>(!(stale-verdict:sal verdict.good)))
   ==
 ::
 ++  test-stale-verdict-fraud-is-still-fraud

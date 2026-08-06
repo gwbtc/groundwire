@@ -15,14 +15,38 @@
 /+  bc=bitcoin, cc=gw-btc-pass, uc=urb-core
 |%
 ::
+::  +report: the operator-readable verdict, with each check CLASSIFIED
+::
+::    The headline names the OUTCOME, not just ok/not-ok, because the three
+::    negative outcomes could not be more different: INVALID snubs the peer,
+::    STALE demotes it to an alien, UNDETERMINED does nothing at all.
+::    Phase 6.1 was diagnosable only because the per-check list was printed;
+::    it was mis-read as fraud because nothing said which class the failing
+::    check belonged to.
+::
+::      [ok]  passed
+::      [XX]  failed, and it is FRAUD -- this is what causes a snub
+::      [..]  failed, and it only means OUT OF DATE
+::      [??]  failed because we could not evaluate it -- not evidence
+::
 ++  report
   |=  =verdict:sa
   ^-  tang
-  :-  leaf+"%gw-btc: attestation for {<who.verdict>} is {?:(ok.verdict "VALID" "INVALID")}"
+  =/  outcome=tape
+    ?:  ok.verdict                  "VALID"
+    ?:  (unknown-verdict verdict)   "UNDETERMINED (no verdict emitted)"
+    ?:  (stale-verdict verdict)     "STALE (out of date, not fraud)"
+    "INVALID"
+  :-  leaf+"%gw-btc: attestation for {<who.verdict>} is {outcome}"
   %+  turn  checks.verdict
   |=  =check:sa
   ^-  tank
-  leaf+"  [{?:(ok.check "ok" "XX")}] {(trip name.check)}"
+  =/  mark=tape
+    ?:  ok.check                                  "ok"
+    ?:  (~(has in unknown-checks) name.check)     "??"
+    ?:  (~(has in stale-checks) name.check)       ".."
+    "XX"
+  leaf+"  [{mark}] {(trip name.check)}"
 ::
 ::  +stale-checks: the named checks that mean OUT OF DATE, not WRONG
 ::
@@ -57,11 +81,74 @@
 ::    -txid (a custody hop that did not happen), entry-N-life-order (a log
 ::    that contradicts itself), tracked-prefix (a log that is not an
 ::    extension of the one we already verified -- a fork, not an old
-::    copy), pass-key, sponsor-known, and every structural check.
+::    copy), pass-key, and every structural check.
+::
+::    sponsor-known used to be in that list and is NOT any more; see
+::    +unknown-checks below.  It failed for exactly the reason this comment
+::    disqualifies -- our own view of the chain is behind -- and produced
+::    the maximally destructive outcome anyway.
 ::
 ++  stale-checks
   ^-  (set cord)
   (silt ~['tip-unspent' 'tracked-tip' 'life-monotonic'])
+::
+::  +unknown-checks: the named checks that mean WE CANNOT TELL
+::
+::    The third class, and the one Phase 6.1 proved was missing.  A check
+::    that the verifier was unable to EVALUATE is not evidence of anything:
+::    not of fraud, and not even of staleness.  It must produce no verdict
+::    at all -- silence -- because a negative verdict is a Jael %fail and an
+::    Ames snub, and a snub then blocks the very packet that would resolve
+::    the ignorance.
+::
+::    Live mainnet 2026-08-06: C3 verified C1's attestation while its own
+::    block scanner sat 20 blocks below C3's OWN publication.  43 of 44
+::    checks passed; `sponsor-known` failed because C3 did not yet know that
+::    C3 existed -- and C3 snubbed the honest comet it sponsors.  The same
+::    attestation from the same peer verified VALID two hours later with
+::    nothing changed but the scan position.
+::
+::      sponsor-known  the snapshot names a sponsor we cannot see as a
+::                     public point.  Our public index is a WINDOW on the
+::                     chain -- it starts at an operator-chosen height and
+::                     ends at whatever block the scanner has reached -- so
+::                     "not in it" never distinguishes `no such comet' from
+::                     `we have not looked there yet'.  A verifier that
+::                     cannot see the sponsor has no evidence of fraud, only
+::                     ignorance.
+::      tip-scanned    the BIP-158 liveness scan could not be evaluated: an
+::                     unavailable filter or block, an inconsistent answer,
+::                     or a degenerate (empty) scan range.  Distinguished
+::                     from `tip-unspent', which fails ONLY when the scan
+::                     positively PROVED the outpoint spent.
+::
+++  unknown-checks
+  ^-  (set cord)
+  (silt ~['sponsor-known' 'tip-scanned'])
+::
+::  +unknown-verdict: did this verdict fail because we could not tell?
+::
+::    %.y when the verdict failed, at least one failing check is
+::    unevaluable, and NO failing check is fraud.  A stale check failing
+::    alongside an unevaluable one still reads as unknown: %stale is a real
+::    finding about the peer's evidence, and we are not entitled to make it
+::    while some of our own machinery came back blank.
+::
+::    Fraud beats both, exactly as in +stale-verdict: a peer does not get to
+::    launder bad evidence by also being unknowable.
+::
+++  unknown-verdict
+  |=  =verdict:sa
+  ^-  ?
+  ?:  ok.verdict  %.n
+  =/  bad=(list check:sa)  (skip checks.verdict |=(c=check:sa ok.c))
+  ?:  =(~ bad)  %.n
+  ?.  (lien bad |=(c=check:sa (~(has in unknown-checks) name.c)))  %.n
+  %+  levy  bad
+  |=  c=check:sa
+  ?|  (~(has in unknown-checks) name.c)
+      (~(has in stale-checks) name.c)
+  ==
 ::
 ::  +stale-verdict: did this verdict fail ONLY because it is out of date?
 ::
@@ -261,10 +348,19 @@
   [[who %.n checks] ~ 0]
 ::
 ::  Pure verification boundary.  `txl` has exactly one transaction per
-::  xtr entry, in custody order.  `tip-unspent=~` is unknown and fails
-::  closed.  `known-public` is the set of ships the caller can vouch
-::  exist as public points; a snapshot naming a sponsor outside it
-::  fails the sponsor-known check (an absent sponsor projects to self).
+::  xtr entry, in custody order.  `tip-unspent=~` is unknown: it fails
+::  `tip-scanned` (never `tip-unspent`), so the verdict is not ok and no
+::  point is built, but the failure is classed unevaluable rather than
+::  stale or fraudulent.  `known-public` is the set of ships the caller can
+::  vouch exist as public points; a snapshot naming a sponsor outside it
+::  fails the sponsor-known check, which is likewise unevaluable -- the set
+::  is a window on the chain, not the whole of it (an absent sponsor
+::  projects to self and is always fine).
+::
+::  EVERY check in here must be evaluable from the arguments alone.  A
+::  check that silently degrades when an input is empty or degenerate is
+::  the bug class this file exists to prevent: it produces a verdict, and
+::  a negative verdict is a snub.
 ++  run-checks
   |=  $:  sat=self-attestation:sa
           start=tx:bc
@@ -317,7 +413,27 @@
     ::  end of the walk: resolve the latest snapshot and the tip
     ::
     =.  checks  (snoc checks ['state-resolve' ?=(^ latest)])
-    =.  checks  (snoc checks ['tip-unspent' =([~ %.y] tip-unspent)])
+    ::  THE LIVENESS SCAN IS THREE-VALUED AND MUST STAY THAT WAY.
+    ::
+    ::    tip-unspent=~       the scan could not be evaluated
+    ::    tip-unspent=[~ %.n] the scan PROVED the outpoint spent
+    ::    tip-unspent=[~ %.y] the scan proved it unspent
+    ::
+    ::  Collapsing the first two into one failing check (the old
+    ::  `=([~ %.y] tip-unspent)`) made "we could not look" indistinguishable
+    ::  from "we looked and it is gone", which routed an infrastructure
+    ::  failure to the %stale demotion path.  Split them:
+    ::
+    ::    tip-scanned fails on ~ only          -> +unknown-checks -> silence
+    ::    tip-unspent fails on [~ %.n] only    -> +stale-checks   -> %stale
+    ::
+    ::  tip-unspent passing VACUOUSLY on ~ is not a fail-open: tip-scanned
+    ::  has already failed, so the verdict is not ok, no point is built, and
+    ::  nothing is installed.  The only thing it changes is which of the two
+    ::  non-fraud outcomes we take, which is the whole point.
+    ::
+    =.  checks  (snoc checks ['tip-scanned' ?=(^ tip-unspent)])
+    =.  checks  (snoc checks ['tip-unspent' ?~(tip-unspent %.y u.tip-unspent)])
     =/  tip-out=output:tx:bitcoin  (snag vout.current os.prev)
     =.  checks
       (snoc checks ['tip-p2tr' ?=(^ (p2tr-xonly script-pubkey.tip-out))])
@@ -334,7 +450,8 @@
       ?~  got  %.n
       =(u.got key.snap.u.latest)
     =.  checks  (snoc checks ['pass-key' key-ok])
-    ::  a named sponsor must exist as a public point; absent is self
+    ::  A named sponsor must exist as a public point; absent is self.
+    ::  Failing this is IGNORANCE, not fraud -- see +unknown-checks.
     ::
     =/  sponsor-ok=?
       ?~  latest  %.n

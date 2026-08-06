@@ -1,6 +1,7 @@
 import type { Fief, Mang, Sont } from "../protocol/types.js";
 import {
   asAtom,
+  asList,
   asMap,
   asT2,
   asT3,
@@ -54,6 +55,10 @@ function atomToBytesLE(a: bigint, len: number): Uint8Array {
   return out;
 }
 
+// Decode a $fief. This MUST be lossless: the fief rides the snapshot into the
+// on-chain state commitment, so a rekey re-encodes whatever we decoded here and
+// any dropped field silently changes the taproot output key (and the PSBT it
+// produces is unsignable). See spawn/snapshot.ts +fiefToNoun for the inverse.
 function decodeFief(n: Noun): Fief {
   // Hoon fief: head = tag atom (%turf | %if | %is), tail depends.
   // As a tagged union noun: [tag p q]
@@ -67,8 +72,13 @@ function decodeFief(n: Noun): Fief {
     return { type: "is", ip: asAtom(p), port: Number(asAtom(q)) };
   }
   if (tagA === 0x66727574n) {
-    // %turf: p = (list turf), q = port. Leave domains unparsed for now.
-    return { type: "turf", domains: [], port: Number(asAtom(q)) };
+    // %turf: p = (list turf) where turf = (list @t) (tld first), q = port.
+    // Kept as raw @t atoms so the re-encode is byte-identical.
+    return {
+      type: "turf",
+      domains: asList(p, (t) => asList(t, asAtom)),
+      port: Number(asAtom(q)),
+    };
   }
   throw new Error(`decodeFief: unknown tag 0x${tagA.toString(16)}`);
 }

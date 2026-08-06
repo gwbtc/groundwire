@@ -92,12 +92,35 @@
   ^-  card:agent:gall
   [%pass watch+wire %agent [~zod light-client-agent:lca] %watch path]
 ::
+::  +no-timers: a strand's LIGHT-CLIENT cards, with timeout bookkeeping cut
+::
+::    Every one-shot request is wrapped in +set-timeout (see
+::    +lc-fetch-timeout in lib/lc-attestation): the node's endpoints answer
+::    when they have the data and otherwise wait for a peer forever, so a
+::    light client whose peers have died wedges the whole verification --
+::    and with it the ship's single-flight `inflight` slot, for the two
+::    hours of +stuck-job-guard (live mainnet, Phase 6.2).  Bounding each
+::    request turns that into a strand failure in minutes, which %gw-btc
+::    already handles by releasing the slot and emitting no verdict.
+::
+::    That adds a %wait before each request and a %rest after it.  It is
+::    bookkeeping rather than protocol, so the card-sequence assertions
+::    look past it; +test-every-request-is-timeout-bounded pins it
+::    directly instead.
+::
+++  no-timers
+  |=  cards=(list card:agent:gall)
+  ^-  (list card:agent:gall)
+  %+  skip  cards
+  |=  c=card:agent:gall
+  ?=([%pass [%timeout *] %arvo %b *] c)
+::
 ++  expect-watch
   |=  [st=pace =wire =path]
   ^-  tang
   ;:  weld
     (expect !>(?=(%wait -.halt.st)))
-    (expect-eq !>(~[(watch-card wire path)]) !>(cards.st))
+    (expect-eq !>(~[(watch-card wire path)]) !>((no-timers cards.st)))
   ==
 ::  --------------------------------------------------------------------
 ::  Node-shape (bitcoin-common) fact builders.
@@ -344,7 +367,7 @@
 ++  all-cards
   |=  states=(list pace)
   ^-  (list card:agent:gall)
-  (zing (turn states |=(st=pace cards.st)))
+  (no-timers (zing (turn states |=(st=pace cards.st))))
 ::
 ++  done-result
   |=  st=pace
@@ -568,7 +591,7 @@
   =/  [res=result:sa tip=hexb:bitcoin]  (done-result s8)
   ;:  weld
     c0c  c1c  c2c  c3c  c4c  c5c  c6c  c7c
-    (expect !>(=(~ cards.s8)))
+    (expect !>(=(~ (no-timers cards.s8))))
     (expect !>(ok.verdict.res))
     (expect !>(?=(^ point.res)))
     ::  the tip scriptPubKey came back through the node's byte order and
@@ -669,6 +692,58 @@
   ;:  weld
     (expect !>(!ok.verdict.res))
     (expect !>(?=(~ point.res)))
+  ==
+::  ---- a DEGENERATE scan range is undeterminable, not clean ----------
+::
+::    THE Phase 6.1 fail-open.  +scan-liveness's loop exits when
+::    `h > best-height`; with a chain tip BELOW the tip block that test is
+::    true on the first iteration, and the old code returned `%.y --
+::    "unspent" -- having looked at nothing.  Live mainnet 2026-08-06:
+::    `[%gw-btc-lc-scan-clean ... from=961.196 to=0]`, on an unsynced
+::    light client that believed the chain tip was genesis.  A SPENT tip
+::    would have read identically, so this is a fail-open on the one check
+::    the design most wants to fail closed.
+::
+::    The tip block here is 101 and the caller's tip is 100.  Nothing may
+::    be scanned, the result must be undeterminable, and the verdict must
+::    name `tip-scanned` (unevaluable) rather than `tip-unspent` (proven
+::    spent) -- the difference between silence and a peer demotion.
+::
+++  test-degenerate-scan-range-is-undeterminable
+  =/  s6  (drive-fetches 100)
+  =/  [res=result:sa tip=hexb:bitcoin]  (done-result s6)
+  ;:  weld
+    ::  the strand finished WITHOUT asking for a single filter or block
+    (expect !>(?=(%done -.halt.s6)))
+    (expect-eq !>(~) !>((no-timers cards.s6)))
+    (expect !>(!ok.verdict.res))
+    (expect !>(?=(~ point.res)))
+    ::  unevaluable, not spent
+    (expect !>((lien checks.verdict.res |=(c=check:sa &(=(%tip-scanned name.c) !ok.c)))))
+    (expect !>((lien checks.verdict.res |=(c=check:sa &(=(%tip-unspent name.c) ok.c)))))
+    ::  ... so it produces NO verdict at all rather than a demotion
+    (expect !>((unknown-verdict:lsa verdict.res)))
+    (expect !>(!(stale-verdict:lsa verdict.res)))
+  ==
+::  ---- every light-client request is timeout-bounded -----------------
+::
+::    Phase 6.2: a runtime fault during verification left the strand
+::    wedged on a light-client watch that would never answer, holding the
+::    peer's single-flight slot for the full +stuck-job-guard of two
+::    hours, during which two retries were dropped in silence.  The node
+::    never nacks -- an endpoint it cannot serve registers a pending
+::    request and waits -- so the bound has to be here.
+::
+++  test-every-request-is-timeout-bounded
+  =/  s0  (start-verify 101)
+  =/  timers
+    %+  skim  cards.s0
+    |=(c=card:agent:gall ?=([%pass [%timeout *] %arvo %b %wait *] c))
+  ;:  weld
+    ::  the very first request is preceded by exactly one behn timer ...
+    (expect-eq !>(1) !>((lent timers)))
+    ::  ... and nothing else rides along with it
+    (expect-eq !>(2) !>((lent cards.s0)))
   ==
 ::  ---- height mismatch on a tx fetch -> strand fail ------------------
 ++  test-header-height-mismatch-fails-strand

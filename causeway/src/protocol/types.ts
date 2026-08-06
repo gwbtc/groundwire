@@ -1,9 +1,23 @@
 export type Ship = bigint;
 
+// $fief (sur/urb.hoon):
+//
+//     +$  turf  (list @t)                  ::  domain, tld first
+//     +$  fief  $%  [%turf p=(list turf) q=@udE]
+//                   [%if   p=@ifF         q=@udE]
+//                   [%is   p=@isH         q=@udE]
+//               ==
+//
+// The fief rides the $snapshot, so it is part of the on-chain state
+// commitment (state-key is taken over the JAMMED snapshot): this
+// representation MUST be lossless, or re-committing a carried-forward fief
+// silently produces a different taproot output key. `domains` is therefore the
+// (list turf) verbatim — an array of turfs, each an array of its @t segments
+// as atoms, tld first — and NOT a flattened/decoded string form.
 export type Fief =
   | { type: "if"; ip: number; port: number }
   | { type: "is"; ip: bigint; port: number }
-  | { type: "turf"; domains: Uint8Array[]; port: number };
+  | { type: "turf"; domains: bigint[][]; port: number };
 
 export type Sont = { txid: Uint8Array; vout: bigint; off: bigint };
 

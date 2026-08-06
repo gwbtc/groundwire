@@ -107,6 +107,67 @@ def tx_link(txid: str) -> str:
     return f"\033]8;;{url}\033\\\033[4;36m{url}\033[0m\033]8;;\033\\"
 
 
+# --- prompting ------------------------------------------------------------
+#
+# EVERY interactive read in Causeway goes through prompt().  Causeway is
+# routinely driven over SSH and from scripts, and a prompt that cannot be
+# answered is a FATAL condition, never something to retry: the old
+# `except EOFError: ... continue` loops turned a headless run into a pinned
+# core writing ~110 MB/min of prompt spam until the disk filled
+# (doc/live-tests/PHASE67-RESULTS.md 7.1).  So:
+#
+#   * no TTY on stdin              -> abort, naming the flag that supplies it
+#   * EOF (stdin closed / at end)  -> abort, naming the flag
+#   * Ctrl-C                       -> abort 130
+#
+# Anything reachable from a prompt therefore also has a CLI flag; `flag` is
+# the string we tell the operator to pass instead.
+
+
+PROMPT_EXIT_CODE = 2       # a prompt could not be answered
+INTERRUPT_EXIT_CODE = 130  # conventional 128 + SIGINT
+
+
+def _stdin_is_tty() -> bool:
+    """True iff stdin is an interactive terminal we can prompt on."""
+    try:
+        return bool(sys.stdin is not None and sys.stdin.isatty())
+    except (AttributeError, ValueError):  # detached / closed stdin
+        return False
+
+
+def _abort_prompt(what: str, flag: str | None) -> None:
+    """Fail fast on an unanswerable prompt. Never returns."""
+    print(f"causeway: cannot read {what}: no interactive terminal on stdin",
+          file=sys.stderr)
+    if flag:
+        print(f"causeway: pass {flag} to supply it non-interactively",
+              file=sys.stderr)
+    else:
+        print("causeway: this prompt has no non-interactive equivalent — "
+              "run the command on a terminal", file=sys.stderr)
+    raise SystemExit(PROMPT_EXIT_CODE)
+
+
+def prompt(message: str, *, what: str, flag: str | None = None) -> str:
+    """Read one line from the operator, or abort with a non-zero exit.
+
+    `what` names the thing being asked for (used in the error), `flag` is the
+    CLI option that supplies the same answer headlessly."""
+    if not _stdin_is_tty():
+        _abort_prompt(what, flag)
+    try:
+        return input(message)
+    except EOFError:
+        print(file=sys.stderr)
+        _abort_prompt(what, flag)
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        print(f"causeway: interrupted while reading {what}", file=sys.stderr)
+        raise SystemExit(INTERRUPT_EXIT_CODE)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 def normalize_ticket(raw: str) -> str:
     """Normalize user input for ticket comparison: strip whitespace, ensure leading ~."""
     t = raw.strip()
@@ -115,15 +176,19 @@ def normalize_ticket(raw: str) -> str:
     return t
 
 
-def confirm_master_ticket(ticket: str) -> None:
-    """Require the user to re-enter their master ticket before proceeding."""
+def confirm_master_ticket(ticket: str, *, assume_saved: bool = False) -> None:
+    """Require the user to re-enter their master ticket before proceeding.
+
+    `assume_saved` (the --assume-saved flag) skips the read-back for scripted
+    runs; the ticket is still printed, so the caller has to capture it."""
+    if assume_saved:
+        print("  --assume-saved: skipping the master-ticket read-back.")
+        print("  You are responsible for having captured it from this output.")
+        return
     print("  Please re-enter your master ticket to confirm you saved it:")
     while True:
-        try:
-            entry = input("  > ")
-        except EOFError:
-            print()
-            continue
+        entry = prompt("  > ", what="the master-ticket confirmation",
+                       flag="--assume-saved")
         if normalize_ticket(entry) == ticket:
             print("  Confirmed!")
             print()
@@ -2192,10 +2257,60 @@ def scan_addresses(
     return found
 
 
-def pick_utxo_interactive(utxos: list[dict], *, min_value: int = 630) -> dict:
-    """Render a numbered UTXO list and prompt the user to pick one."""
+def parse_outpoint(text: str) -> tuple[str, int]:
+    """`<txid>:<vout>` -> (lowercase display-hex txid, vout). Raises ValueError."""
+    raw = text.strip()
+    txid, sep, vout_s = raw.rpartition(":")
+    if not sep:
+        raise ValueError("expected <txid>:<vout>")
+    txid = txid.strip().lower()
+    if len(txid) != 64 or any(c not in "0123456789abcdef" for c in txid):
+        raise ValueError(f"{txid!r} is not a 64-hex-character txid")
+    try:
+        vout = int(vout_s.strip(), 10)
+    except ValueError:
+        raise ValueError(f"{vout_s.strip()!r} is not a vout index") from None
+    if vout < 0:
+        raise ValueError("vout must be >= 0")
+    return txid, vout
+
+
+def _describe_utxos(utxos: list[dict]) -> str:
+    return "\n".join(
+        f"    {u['txid']}:{u['vout']}  {u['value']} sat"
+        f"  m/.../{u['change']}/{u['index']}"
+        f"{'' if u['confirmed'] else '  (unconfirmed)'}"
+        for u in utxos
+    )
+
+
+def pick_utxo_interactive(utxos: list[dict], *, min_value: int = 630,
+                          select: str | None = None) -> dict:
+    """Render a numbered UTXO list and prompt the user to pick one.
+
+    `select` is the --utxo flag: an explicit `<txid>:<vout>` outpoint, which
+    makes the choice headlessly. It must name one of the scanned candidates."""
     if not utxos:
         raise SystemExit("No UTXOs found. Fund one of your xpub's addresses and try again.")
+    if select is not None:
+        try:
+            want_txid, want_vout = parse_outpoint(select)
+        except ValueError as e:
+            raise SystemExit(f"--utxo {select!r}: {e}")
+        for u in utxos:
+            if u["txid"].lower() == want_txid and int(u["vout"]) == want_vout:
+                if u["value"] < min_value:
+                    raise SystemExit(
+                        f"--utxo {want_txid}:{want_vout} holds {u['value']} sat; "
+                        f"need >= {min_value} for commit + fee."
+                    )
+                print(f"\n  Using --utxo {want_txid}:{want_vout} "
+                      f"({u['value']} sat, m/.../{u['change']}/{u['index']})")
+                return u
+        raise SystemExit(
+            f"--utxo {want_txid}:{want_vout} is not among this wallet's "
+            f"{len(utxos)} scanned UTXO(s). Candidates:\n{_describe_utxos(utxos)}"
+        )
     print()
     print("  Available UTXOs:")
     print("  ---------------")
@@ -2208,7 +2323,8 @@ def pick_utxo_interactive(utxos: list[dict], *, min_value: int = 630) -> dict:
         print(f"\n  (*) UTXO is too small — need >= {min_value} sats for commit + fee.")
     print()
     while True:
-        choice = input("  Pick a UTXO number: ").strip()
+        choice = prompt("  Pick a UTXO number: ", what="a UTXO choice",
+                        flag="--utxo <txid>:<vout>").strip()
         try:
             idx = int(choice) - 1
             if 0 <= idx < len(utxos):
@@ -2295,16 +2411,25 @@ def print_seed_box(mnemonic: str, *, header: tuple[str, ...] = WALLET_SEED_BOX_H
     print("  └" + "─" * 68 + "┘")
 
 
-def confirm_seed_saved(mnemonic: str, *, label: str = "seed phrase") -> None:
+def confirm_seed_saved(mnemonic: str, *, label: str = "seed phrase",
+                       assume_saved: bool = False) -> None:
+    """Make the operator read the phrase back before continuing.
+
+    `assume_saved` (the --assume-saved flag) skips the read-back so a scripted
+    spawn can run at all. The phrase is still printed above; a caller that does
+    not capture it has lost the identity, hence the shouty note."""
+    if assume_saved:
+        print()
+        print(f"  --assume-saved: skipping the {label} read-back.")
+        print("  The phrase is printed above and NOWHERE ELSE. If this run's")
+        print("  output is not captured and stored, the comet is unrecoverable.")
+        return
     print()
     print(f"  Please re-enter your {label} to confirm you wrote it down")
     print("  (space-separated — spelling must match exactly):")
     while True:
-        try:
-            entry = input("  > ").strip()
-        except EOFError:
-            print()
-            continue
+        entry = prompt("  > ", what=f"the {label} confirmation",
+                       flag="--assume-saved").strip()
         if entry.lower() == mnemonic.lower():
             print("  Confirmed!")
             return
@@ -2321,7 +2446,8 @@ def normalize_blind_mnemonic(supplied: str) -> str:
     return m
 
 
-def obtain_blind_mnemonic(supplied: str | None = None) -> str:
+def obtain_blind_mnemonic(supplied: str | None = None, *,
+                          assume_saved: bool = False) -> str:
     """The BIP-39 phrase that a `spawn connect` blind is derived from.
 
     `spawn connect` only ever sees an account xpub — a watch-only wallet or a
@@ -2340,7 +2466,7 @@ def obtain_blind_mnemonic(supplied: str | None = None) -> str:
     print("  separate BIP-39 recovery phrase for the blind instead.")
     m = generate_new_mnemonic(strength_bits=128)
     print_seed_box(m, header=BLIND_SEED_BOX_HEADER)
-    confirm_seed_saved(m, label="blind recovery phrase")
+    confirm_seed_saved(m, label="blind recovery phrase", assume_saved=assume_saved)
     return m
 
 
@@ -2413,8 +2539,12 @@ _MGMT_PRIOR_PROOF_HELP = (
 @click.option("--no-route", is_flag=True, default=False,
               help="Allow a new snapshot with no sponsor and no fief (outbound-only). "
                    "Without this, a state update that would strand the comet is refused.")
+@click.option("--signed-psbt", default=None, metavar="PATH|-",
+              help="Read the signed PSBT from a file (or `-` for stdin) instead of "
+                   "prompting. A named pipe works: the unsigned PSBT is written to "
+                   "<patp>-rekey.psbt first.")
 def cmd_rekey(point, prior_proof, new_pass_hex, breach, fee_rate, network, output_dir, mempool_base,
-              sponsor, no_route):
+              sponsor, no_route, signed_psbt):
     """Rotate a comet's messaging key — a state update committed in the sat
     output's taproot tweak. Spends the current sat-carrying UTXO key-path;
     chains off --prior-proof."""
@@ -2422,11 +2552,12 @@ def cmd_rekey(point, prior_proof, new_pass_hex, breach, fee_rate, network, outpu
     new_pass = int.from_bytes(bytes.fromhex(new_pass_hex), "little")
     new_key = messaging_key_from_pass(new_pass)
     _run_rekey_op(point, prior_proof, new_key, breach, fee_rate, network, output_dir, mempool_base,
-                  sponsor=sponsor, no_route=no_route)
+                  sponsor=sponsor, no_route=no_route, signed_psbt=signed_psbt)
 
 
 def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool, fee_rate: int, network: str, output_dir: str, mempool_base: str,
-                  sponsor: str | None = None, no_route: bool = False) -> None:
+                  sponsor: str | None = None, no_route: bool = False,
+                  signed_psbt: str | None = None) -> None:
     """Spend the point's current sat-carrying output key-path, commit a new
     snapshot (life+1, rift+1 on breach, rotated key), await signed PSBT,
     broadcast, and emit `<patp>-rekey-<txid>.proof.json`.
@@ -2494,7 +2625,7 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
         fg="yellow",
     ))
 
-    signed_b64 = _await_signed_psbt(unsigned_b64)
+    signed_b64 = _await_signed_psbt(unsigned_b64, signed_psbt)
     try:
         commit_txid, tx_hex = _extract_tx_from_psbt(signed_b64)
     except Exception as e:
@@ -2548,8 +2679,19 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
 @click.option("--no-route", is_flag=True, default=False,
               help="Deliberately mint an UNROUTABLE comet (no sponsor, no fief). "
                    "Outbound-only: no peer will ever be able to contact it first.")
+@click.option("--utxo", "utxo_outpoint", default=None, metavar="TXID:VOUT",
+              help="Spend this outpoint instead of prompting for one. It must be "
+                   "among the UTXOs the xpub scan finds.")
+@click.option("--signed-psbt", default=None, metavar="PATH|-",
+              help="Read the signed PSBT from a file (or `-` for stdin) instead of "
+                   "prompting. A named pipe works: the unsigned PSBT is written to "
+                   "<patp>-spawn.psbt first.")
+@click.option("--assume-saved", is_flag=True, default=False,
+              help="Skip the blind-recovery-phrase read-back prompts. Scripted runs "
+                   "MUST capture this command's output — the phrase is printed "
+                   "nowhere else and without it the comet is unrecoverable.")
 def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish, blind_mnemonic,
-                  sponsor, no_route):
+                  sponsor, no_route, utxo_outpoint, signed_psbt, assume_saved):
     """Spawn using a user-provided wallet (xpub / descriptor). You sign the PSBT externally.
 
     Your wallet's seed never reaches Causeway, so the comet's blind — the
@@ -2557,7 +2699,9 @@ def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_ba
     phrase that this command prints and makes you write down (or that you pass
     in with --blind-mnemonic). Losing it loses the identity."""
     run_spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish,
-                      blind_mnemonic=blind_mnemonic, sponsor=sponsor, no_route=no_route)
+                      blind_mnemonic=blind_mnemonic, sponsor=sponsor, no_route=no_route,
+                      utxo_outpoint=utxo_outpoint, signed_psbt=signed_psbt,
+                      assume_saved=assume_saved)
 
 
 @spawn.command("generate")
@@ -2575,13 +2719,18 @@ def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_ba
 @click.option("--no-route", is_flag=True, default=False,
               help="Deliberately mint an UNROUTABLE comet (no sponsor, no fief). "
                    "Outbound-only: no peer will ever be able to contact it first.")
-def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish, sponsor, no_route):
+@click.option("--assume-saved", is_flag=True, default=False,
+              help="Skip the seed-phrase read-back prompts. Scripted runs MUST "
+                   "capture this command's output — the generated BIP-39 phrase is "
+                   "printed nowhere else, and it backs both the coins and the blind.")
+def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish, sponsor, no_route,
+                   assume_saved):
     """Generate a fresh BIP-39 wallet, fund it, spawn, and emit a boot one-liner.
 
     The comet's blind is derived from the generated seed phrase + the funding
     outpoint, so that one phrase recovers both the coins and the `dat` opening."""
     run_spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish,
-                       sponsor=sponsor, no_route=no_route)
+                       sponsor=sponsor, no_route=no_route, assume_saved=assume_saved)
 
 
 @proof.command("show")
@@ -2768,8 +2917,39 @@ def _build_spawn_psbt_and_proof(
     return psbt_obj, proof
 
 
-def _await_signed_psbt(unsigned_b64: str) -> str:
-    """Prompt the user to paste the signed PSBT back. Returns signed-psbt base64."""
+def _load_signed_psbt(spec: str) -> str:
+    """--signed-psbt <path|-> -> validated signed-PSBT base64.
+
+    `-` reads stdin to EOF. A path may be a named pipe, which is how a scripted
+    run bridges the gap: Causeway writes the unsigned PSBT to disk, an external
+    signer picks it up and writes the signed one back into the FIFO."""
+    try:
+        if spec == "-":
+            data = sys.stdin.read()
+        else:
+            with open(spec, "r") as f:
+                data = f.read()
+    except OSError as e:
+        raise SystemExit(f"--signed-psbt {spec!r}: {e}")
+    entry = "".join(data.split())  # tolerate line-wrapped base64
+    if not entry:
+        raise SystemExit(
+            f"--signed-psbt {spec!r}: empty "
+            f"({'stdin' if spec == '-' else 'file'} contained no base64)"
+        )
+    try:
+        psbt.PSBT.from_base64(entry)
+    except Exception as e:
+        raise SystemExit(f"--signed-psbt {spec!r}: not a valid PSBT ({e})")
+    print(f"\n  Read signed PSBT from {'stdin' if spec == '-' else spec}.")
+    return entry
+
+
+def _await_signed_psbt(unsigned_b64: str, signed_psbt: str | None = None) -> str:
+    """Prompt the user to paste the signed PSBT back. Returns signed-psbt base64.
+
+    `signed_psbt` is the --signed-psbt flag (path, or `-` for stdin); when it is
+    given nothing is read from the terminal."""
     print()
     print("  Next steps:")
     print("    1. Load the unsigned PSBT below into your Bitcoin wallet (Sparrow, BlueWallet,")
@@ -2781,11 +2961,11 @@ def _await_signed_psbt(unsigned_b64: str) -> str:
     print()
     print(f"    {unsigned_b64}")
     print()
+    if signed_psbt is not None:
+        return _load_signed_psbt(signed_psbt)
     while True:
-        try:
-            entry = input("  Signed PSBT (base64) > ").strip()
-        except EOFError:
-            sys.exit(1)
+        entry = prompt("  Signed PSBT (base64) > ", what="the signed PSBT",
+                       flag="--signed-psbt <path|->").strip()
         if not entry:
             continue
         try:
@@ -2989,7 +3169,9 @@ def _finish_spawn_proof(
 
 
 def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False, blind_mnemonic: str | None = None,
-                      sponsor: str | None = None, no_route: bool = False) -> None:
+                      sponsor: str | None = None, no_route: bool = False,
+                      utxo_outpoint: str | None = None, signed_psbt: str | None = None,
+                      assume_saved: bool = False) -> None:
     print()
     print("=" * 60)
     print(f"  CAUSEWAY — {'Public' if publish else 'Confidential'} Comet Spawn (Connect Wallet)")
@@ -3031,12 +3213,12 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
 
     print("\n  Scanning for UTXOs...")
     utxos = scan_addresses(source, mempool_base=mempool_base)
-    utxo = pick_utxo_interactive(utxos)
+    utxo = pick_utxo_interactive(utxos, select=utxo_outpoint)
 
     # Seed-derived blind so the dat opening is recoverable.  We hold only an
     # xpub here, so the blind comes from a dedicated recovery phrase the user
     # records (or supplies) — never from ephemeral randomness.
-    blind_mnemonic = obtain_blind_mnemonic(blind_mnemonic)
+    blind_mnemonic = obtain_blind_mnemonic(blind_mnemonic, assume_saved=assume_saved)
     blind_seed, blind = blind_from_mnemonic(blind_mnemonic, utxo["txid"], utxo["vout"])
     print(f"\n  Mining comet (kelvin-9 dat) from ({utxo['txid']}:{utxo['vout']},0)...")
     miner_result = mine_comet_from_utxo(utxo["txid"], utxo["vout"], 0, blind_seed, miner)
@@ -3081,7 +3263,7 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
         f.write("\n")
     print(f"\n  Wrote unsigned PSBT: {psbt_path}")
 
-    signed_b64 = _await_signed_psbt(unsigned_b64)
+    signed_b64 = _await_signed_psbt(unsigned_b64, signed_psbt)
     try:
         commit_txid, tx_hex = _extract_tx_from_psbt(signed_b64)
     except Exception as e:
@@ -3103,13 +3285,14 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     print("\n  Your blind recovery phrase is the ONLY way to reopen this comet's")
     print(f"  dat commitment if {proof_path} is lost. Check you have it — last chance:")
     print_seed_box(blind_mnemonic, header=BLIND_SEED_BOX_HEADER)
-    confirm_seed_saved(blind_mnemonic, label="blind recovery phrase")
+    confirm_seed_saved(blind_mnemonic, label="blind recovery phrase", assume_saved=assume_saved)
 
     _print_boot_oneliner(comet, feed, proof_path)
 
 
 def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False,
-                       sponsor: str | None = None, no_route: bool = False) -> None:
+                       sponsor: str | None = None, no_route: bool = False,
+                       assume_saved: bool = False) -> None:
     print()
     print("=" * 60)
     print(f"  CAUSEWAY — {'Public' if publish else 'Confidential'} Comet Spawn (Generate New Wallet)")
@@ -3121,7 +3304,7 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
 
     mnemonic = generate_new_mnemonic(strength_bits=128)
     print_seed_box(mnemonic)
-    confirm_seed_saved(mnemonic)
+    confirm_seed_saved(mnemonic, assume_saved=assume_saved)
 
     root = mnemonic_to_hdkey(mnemonic, network=network)
     account_path = [_hardened(86), _hardened(0 if network == "main" else 1), _hardened(0)]
@@ -3213,7 +3396,7 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
     print("  It backs both the funds and this comet's blind (the dat opening),")
     print("  so it alone can recover the identity if the proof file is lost:")
     print_seed_box(mnemonic)
-    confirm_seed_saved(mnemonic)
+    confirm_seed_saved(mnemonic, assume_saved=assume_saved)
 
     _print_boot_oneliner(comet, feed, proof_path)
 

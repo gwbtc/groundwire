@@ -6,7 +6,7 @@
 ::  a negative Jael verdict -- a valid ship whose sponsorship we refuse
 ::  must not be snubbed.
 ::
-/-  urb, sa=self-attestation, ord, bitcoin
+/-  urb, sa=self-attestation, ord, bitcoin, lc=light-client
 /+  *test, cc=gw-btc-pass
 /=  gw-btc  /app/gw-btc
 =>
@@ -92,6 +92,13 @@
   `q.q.cage.p.card
 ::  drop the %verb-event/%verb-event-plus tracking cards the agent:dbug
 ::  wrapper emits on every poke, leaving only the agent's own output.
+::
+::  the /is-synced subscription card +on-init and every +on-load migration
+::  branch must emit (see $gw-state's .synced)
+::
+++  synced-watch
+  ^-  card:agent:gall
+  [%pass /is-synced %agent [~zod %bitcoin-client] %watch /is-synced]
 ::
 ++  app-cards
   |=  cards=(list card:agent:gall)
@@ -402,7 +409,11 @@
     %+  expect-eq
       !>  `id:block:bitcoin`[0xdead.beef 943.140]
       !>  ;;(id:block:bitcoin (peek-noun (~(on-peek agent bowl0) /x/block-id)))
-    (expect-eq !>(~) !>((app-cards cards)))
+    ::  ... and the ONLY card is the /is-synced subscription the readiness
+    ::  gate needs.  +on-init issues it for a fresh install; an upgraded
+    ::  ship would otherwise never have one, .synced would stay %.n, and
+    ::  the ship would hold every attestation forever -- safe, but dead.
+    (expect-eq !>(~[synced-watch]) !>((app-cards cards)))
   ==
 ::  ... and the current shape still loads, unchanged.
 ::
@@ -607,6 +618,218 @@
       !>  `id:block:bitcoin`[0xdead.beef 943.140]
       !>  ;;(id:block:bitcoin (peek-noun (~(on-peek agent bowl0) /x/block-id)))
     (expect-eq !>(`custody-log:sa`~) !>(;;(custody-log:sa (peek-noun (~(on-peek agent bowl0) /x/custody)))))
+    (expect-eq !>(~[synced-watch]) !>((app-cards cards)))
+  ==
+::  ---------------------------------------------------------------------
+::  READINESS AND THE THIRD VERDICT CLASS  (Phase 6.1, live mainnet)
+::  ---------------------------------------------------------------------
+::
+::  C3 judged C1's attestation with its light client at GENESIS and its
+::  block scanner 20 blocks below C3's own publication.  43 of 44 checks
+::  passed; `sponsor-known` failed because C3 did not yet know that C3
+::  existed.  The verdict became a jael %fail and ames snubbed -- a comet
+::  snubbed by its own sponsor, for naming that sponsor.  Two hours later
+::  the identical attestation from the identical peer verified VALID with
+::  nothing changed but the scan position.
+::
+::  So: a verdict whose failures are all UNEVALUABLE must produce no
+::  cards at all.  Not %writ-response (a snub), not %stale-notice (a
+::  demotion on a finding we did not make).  Nothing.
+::
+::  +on-load must PRESERVE the bootstrap flag.  It did not: .indexing was
+::  declared `_|` to force its bunt, and `_` is $_ -- the mold that IGNORES
+::  its input and returns the pinned value -- so `;;(gw-state ...)` rewrote
+::  it to %.n on EVERY upgrade.  That reopened the one-shot guard below,
+::  after which a %gw-index-from would silently replace urb-state wholesale,
+::  including .unv-ids, which is the set `sponsor-known` reads.  Observed on
+::  a live mainnet ship 2026-08-06: %.y before a desk redeploy, %.n after,
+::  nothing else changed.
+::
+++  test-on-load-preserves-the-bootstrap-guard
+  =/  agent  gw-btc
+  =^  *  agent  (~(on-poke agent bowl0) %gw-index-from !>(`@ud`961.055))
+  =^  *  agent  (~(on-load agent bowl0) ~(on-save agent bowl0))
+  ::  a second bootstrap, at a DIFFERENT height, must still be refused
+  =^  *  agent  (~(on-poke agent bowl0) %gw-index-from !>(`@ud`700.000))
+  %+  expect-eq
+    !>  `id:block:bitcoin`[0x0 961.054]
+    !>  ;;(id:block:bitcoin (peek-noun (~(on-peek agent bowl0) /x/block-id)))
+::
+::  ... and the guard holds even for an agent whose flag says otherwise:
+::  a populated index is refused on its own evidence.
+::
+++  test-bootstrap-refused-when-an-index-exists
+  =/  agent  gw-btc
+  ::  a state that HAS an index but whose .indexing flag is %.n -- exactly
+  ::  what every pre-fix upgrade produced
+  =^  *  agent  (~(on-load agent bowl0) !>(legacy-10-state))
+  =^  *  agent  (~(on-poke agent bowl0) %gw-index-from !>(`@ud`700.000))
+  %+  expect-eq
+    !>  `id:block:bitcoin`[0xdead.beef 943.140]
+    !>  ;;(id:block:bitcoin (peek-noun (~(on-peek agent bowl0) /x/block-id)))
+::
+::  ---------------------------------------------------------------------
+::  CHAIN REORGS  (Phase 6.5)
+::  ---------------------------------------------------------------------
+::
+::  %bitcoin-client reports a reorg as %reorg-rollback on /best-block, and
+::  this agent handled it byte-identically to %new: only .best moved.  The
+::  scan cursor never rewound, so the orphaned range was never rescanned;
+::  facts indexed out of orphaned blocks stayed in .unv-ids forever; and
+::  facts unique to the winning chain fell in the skipped range.  All
+::  silently.  With block-confirmations = 1 a single-block reorg reaches
+::  it, and those happen several times a month on mainnet.
+::
+::  Undoing the orphaned facts is not possible with what is stored (a
+::  $point does not record the height it was indexed at), so the scanner
+::  STOPS and says so.  A halted index announces itself; a silently forked
+::  one does not.
+::
+++  best-block-sign
+  |=  [rollback=? height=@ud]
+  ^-  sign:agent:gall
+  :+  %fact  %best-block
+  ?:  rollback
+    !>(`[%reorg-rollback block-height=@ud block-hash=@ux]`[%reorg-rollback height 0xbeef])
+  !>(`[%new block-height=@ud block-hash=@ux]`[%new height 0xbeef])
+::
+++  test-reorg-below-the-cursor-halts-the-scanner
+  =/  agent  gw-btc
+  ::  +verify-state's cursor is 900.100
+  =^  *  agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  =^  cards  agent
+    (~(on-agent agent bowl0) /best-block (best-block-sign & 900.050))
+  =/  ready  (peek-noun (~(on-peek agent bowl0) /x/ready))
+  ::  [synced tip indexing reorg-halt]; the halt records [at cursor since]
+  =/  halt  +:+:+:ready
+  ;:  weld
+    ::  the rollback is recorded, with the height and the cursor it caught
+    (expect-eq !>(`*`[~ 900.050 900.100 `@da`~2000.1.1]) !>(`*`halt))
+    ::  and nothing was emitted -- a reorg is not a verdict about anyone
     (expect-eq !>(~) !>((app-cards cards)))
+  ==
+::
+::  ... and while halted the block timer refuses to dispatch a scan.  It
+::  keeps re-arming and keeps complaining, because a stopped scanner that
+::  stops mentioning it is indistinguishable from a working one.
+::
+++  test-halted-scanner-does-not-advance
+  =/  agent  gw-btc
+  =^  *  agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  =^  *  agent
+    (~(on-agent agent bowl0) /best-block (best-block-sign & 900.050))
+  =^  cards  agent  (~(on-arvo agent bowl0) /timer [%behn %wake ~])
+  =/  cs  (app-cards cards)
+  ;:  weld
+    ::  exactly one card, and it is the timer re-arming -- NOT a %lard
+    ::  block thread
+    (expect-eq !>(1) !>((lent cs)))
+    (expect !>(?=([[%pass [%timer ~] %arvo %b %wait *] ~] cs)))
+  ==
+::
+::  A rollback ABOVE the cursor is harmless: nothing we hold came out of
+::  the orphaned blocks.  Note it, move .best, carry on.
+::
+++  test-reorg-above-the-cursor-does-not-halt
+  =/  agent  gw-btc
+  =^  *  agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  =^  *  agent
+    (~(on-agent agent bowl0) /best-block (best-block-sign & 900.200))
+  =/  ready  (peek-noun (~(on-peek agent bowl0) /x/ready))
+  ;:  weld
+    ::  not halted ...
+    (expect-eq !>(`*`~) !>(`*`+:+:+:ready))
+    ::  ... and .best did move to the rollback height
+    (expect-eq !>(`*`[~ 900.200]) !>(`*`-:+:ready))
+  ==
+::
+::  and a plain %new still just moves the tip.
+::
+++  test-new-block-moves-the-tip
+  =/  agent  gw-btc
+  =^  *  agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  =^  *  agent
+    (~(on-agent agent bowl0) /best-block (best-block-sign | 900.101))
+  =/  ready  (peek-noun (~(on-peek agent bowl0) /x/ready))
+  ;:  weld
+    (expect-eq !>(`*`[~ 900.101]) !>(`*`-:+:ready))
+    (expect-eq !>(`*`~) !>(`*`+:+:+:ready))
+  ==
+::
+++  test-unknown-verdict-emits-nothing
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  =^  cards  agent
+    (~(on-arvo agent bowl0) /verify/(scot %p peer)/0 (failed-sign peer ~['sponsor-known']))
+  (expect-eq !>(~) !>((app-cards cards)))
+::
+::  An undeterminable liveness scan is the same class: `tip-scanned`, not
+::  `tip-unspent`.  Before this split, "we could not look" was reported as
+::  "we looked and the sat is gone" and demoted the peer.
+::
+++  test-unscannable-tip-emits-nothing
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  =^  cards  agent
+    (~(on-arvo agent bowl0) /verify/(scot %p peer)/0 (failed-sign peer ~['tip-scanned']))
+  (expect-eq !>(~) !>((app-cards cards)))
+::
+::  ... but ignorance never launders fraud: one fraud-class check failing
+::  alongside an unevaluable one is still a negative verdict.
+::
+++  test-fraud-alongside-ignorance-still-fails
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  =/  sign  (failed-sign peer ~['sponsor-known' 'entry-0-commitment'])
+  =^  cards  agent  (~(on-arvo agent bowl0) /verify/(scot %p peer)/0 sign)
+  =/  cs  (app-cards cards)
+  ;:  weld
+    (expect-eq !>(1) !>((lent cs)))
+    (expect-eq !>(`%writ-response) !>((fact-mark (snag 0 cs))))
+  ==
+::
+::  A ship that has never heard from its light client answers NOTHING --
+::  not even the negative verdict a structurally broken pass would
+::  otherwise draw.  The old gate was `?~ best`, which %bitcoin-client
+::  satisfies with the GENESIS block within milliseconds of boot.
+::
+::  The control is the same poke on a fresh agent, which does emit that
+::  negative verdict: so the silence below is caused by readiness alone.
+::  (Both passes are undecodable, so this pins the ORDER of the two
+::  branches -- structural rejection must not outrank readiness once a
+::  pass does decode, and the readiness branch is reached by everything
+::  that decodes.)
+::
+++  test-fresh-agent-has-no-readiness
+  =/  agent  gw-btc
+  =^  *  agent  ~(on-init agent bowl0)
+  ::  [synced tip indexing reorg-halt] -- not synced, no tip, not
+  ::  indexing, not halted.  A ship in this state judges nothing.
+  ::
+  ::  Both booleans are PINNED by +on-init: the bunt of ? is %.y, so a
+  ::  mold-level default would have a fresh agent believe its index was
+  ::  bootstrapped and its light client caught up.
+  ::
+  %+  expect-eq
+    !>  `*`[%.n ~ %.n ~]
+    !>  `*`(peek-noun (~(on-peek agent bowl0) /x/ready))
+::
+::  ... and .synced must SURVIVE an upgrade.  /is-synced answers the
+::  initial watch and then only on TRANSITIONS, so a value reset by
+::  +on-load is not repaired by the next fact -- it is repaired when the
+::  light client next changes its mind.  Resetting it would hold every
+::  attestation until then: fail-closed, but dead.
+::
+++  test-on-load-preserves-syncedness
+  =/  agent  gw-btc
+  =^  *  agent  ~(on-init agent bowl0)
+  =^  *  agent
+    (~(on-agent agent bowl0) /is-synced [%fact %is-synced !>(&)])
+  =/  before  (peek-noun (~(on-peek agent bowl0) /x/ready))
+  =^  *  agent  (~(on-load agent bowl0) ~(on-save agent bowl0))
+  =/  after   (peek-noun (~(on-peek agent bowl0) /x/ready))
+  ;:  weld
+    (expect-eq !>(`*`[%.y ~ %.n ~]) !>(`*`before))
+    (expect-eq !>(`*`before) !>(`*`after))
   ==
 --
