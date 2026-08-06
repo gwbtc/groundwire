@@ -598,4 +598,196 @@
     ::  treated as a retry, because only the tip could be one.
     (expect-eq !>(`custody-log:sa`~[e0 e1 e0]) !>((extend-log:sal ~[e0 e1] e0)))
   ==
+::
+::  ---------------------------------------------------------------------
+::  THE THIRD DOORWAY ONTO THE SNUB PATH: +verify-lc's early aborts
+::  ---------------------------------------------------------------------
+::
+::  ++run-checks is not the only thing that produces a $result.  The
+::  light-client adapter returns early in four places, each with a
+::  one-check failing verdict, and those four names used to belong to no
+::  class at all: +stale-checks did not have them, +unknown-checks did not
+::  have them, so the classifier's fall-through called every one of them
+::  fraud and %gw-btc snubbed -- stickily -- on all four.
+::
+::  Two of the four are genuine fraud, one is genuine fraud after an
+::  argument worth reading (+abort-class in lib/self-attestation), and one
+::  can only fire when THIS DESK's own arithmetic contradicts itself, for
+::  which snubbing a peer is indefensible.
+::
+++  test-abort-classes-are-assigned-deliberately
+  ;:  weld
+    ::  the peer's own xtr, judged before a single watch card is emitted:
+    ::  an empty log offers no evidence for the identity the pass asserts.
+    (expect-eq !>(%fraud) !>((abort-class:sal %empty-chain)))
+    ::  likewise structural, likewise local: entry 0 never opens the dat
+    ::  commitment, so the log is not bound to the name.
+    (expect-eq !>(%fraud) !>((abort-class:sal %spawn-opening)))
+    ::  after the fetches -- but every fetch that reached here was
+    ::  confirmed on the main chain at the claimed height and txid, because
+    ::  +fetch-tx-at strand-fails rather than return otherwise.  What is
+    ::  left is the peer's claim about that evidence.
+    (expect-eq !>(%fraud) !>((abort-class:sal %derive-tip)))
+    ::  ... and the one that is OUR bug if it ever fires: +derive-tip took
+    ::  that vout from +index-to-sont over this very output list.
+    (expect-eq !>(%unknown) !>((abort-class:sal %tip-vout-range)))
+  ==
+::
+::  Each abort's own $result must carry that class all the way through
+::  +classify -- the function %gw-btc actually switches on.  This is the
+::  end-to-end shape of the bug: before the fix all four landed on
+::  %fraud here, whatever +abort-class would have said.
+::
+++  test-abort-results-classify-as-their-class
+  =/  cls
+    |=  =abort:sa
+    ^-  verdict-class:sa
+    (classify:sal verdict:(fail-result:sal who abort))
+  ;:  weld
+    (expect-eq !>(%fraud) !>((cls %empty-chain)))
+    (expect-eq !>(%fraud) !>((cls %spawn-opening)))
+    (expect-eq !>(%fraud) !>((cls %derive-tip)))
+    ::  THE fix: this one is silence, not a sticky snub.
+    (expect-eq !>(%unknown) !>((cls %tip-vout-range)))
+    ::  and the two-valued views agree with the classifier
+    (expect !>((unknown-verdict:sal verdict:(fail-result:sal who %tip-vout-range))))
+    (expect !>(!(stale-verdict:sal verdict:(fail-result:sal who %tip-vout-range))))
+    (expect !>(!(unknown-verdict:sal verdict:(fail-result:sal who %derive-tip))))
+    (expect !>(!(stale-verdict:sal verdict:(fail-result:sal who %derive-tip))))
+  ==
+::
+::  ---------------------------------------------------------------------
+::  THE SECOND DOORWAY: a POSITIVE verdict the agent refuses locally
+::  ---------------------------------------------------------------------
+::
+::  ++run-checks says ok and %gw-btc still declines.  None of the four
+::  reasons is a finding about the peer: three are unreachable unless this
+::  desk contradicts itself, and the fourth is our lagging sat index
+::  disagreeing with a cryptographic proof.  A peer with a perfect
+::  attestation must never be snubbed for any of them.
+::
+++  test-refusal-classes-never-snub
+  ;:  weld
+    (expect-eq !>(%unknown) !>((refusal-class:sal %who-mismatch)))
+    (expect-eq !>(%unknown) !>((refusal-class:sal %no-point)))
+    (expect-eq !>(%unknown) !>((refusal-class:sal %pass-mismatch)))
+    (expect-eq !>(%unknown) !>((refusal-class:sal %tip-owned)))
+    ::  stated as the property rather than the table: no refusal is fraud.
+    %-  expect  !>
+    %+  levy  `(list refusal:sa)`~[%who-mismatch %no-point %pass-mismatch %tip-owned]
+    |=(r=refusal:sa !=(%fraud (refusal-class:sal r)))
+  ==
+::
+::  ---------------------------------------------------------------------
+::  The classification is STRUCTURALLY exhaustive
+::  ---------------------------------------------------------------------
+::
+::  The four abort strings are today's instance of the bug; the bug itself
+::  is that they were classified by LIST MEMBERSHIP with an implicit
+::  fall-through, so a name nobody remembered to add defaulted to the one
+::  outcome you can never take back.  Every classifier is now a ?- over a
+::  closed union, which has no default.
+::
+::  Asserting that from inside a suite that must itself compile takes
+::  +mint directly: build the switch as source, mint it against a subject
+::  holding the union, and check whether it compiles.  A missing case is
+::  -lost / mint-lost, exactly as it would be in the library.
+::
+++  test-classification-switches-are-exhaustive
+  =/  mints
+    |=  [sub=type src=tape]
+    ^-  ?
+    ::  NB: bind the +mule product before fishing on it.  `-:(mule ...)`
+    ::  re-mints the trap under a subject that has lost its $ arm
+    ::  (-find.$.+2); `=/` then `-.r` is the form that compiles.
+    ::
+    =/  r  (mule |.((~(mint ut sub) %noun (ream (crip src)))))
+    ?=(%& -.r)
+  =/  ab=type   -:!>([a=*abort:sa])
+  =/  rf=type   -:!>([a=*refusal:sa])
+  =/  vc=type   -:!>([a=*verdict-class:sa])
+  ::  the real +abort-class shape ...
+  =/  ab-full
+    ;:  weld
+      "?-(a %empty-chain %fraud, %spawn-opening %fraud, "
+      "%derive-tip %fraud, %tip-vout-range %unknown)"
+    ==
+  ::  ... the same switch with one reason left unclassified ...
+  =/  ab-short
+    "?-(a %empty-chain %fraud, %spawn-opening %fraud, %derive-tip %fraud)"
+  ::  ... and a case for a name that is not in the union at all.
+  =/  ab-extra
+    ;:  weld
+      "?-(a %empty-chain %fraud, %spawn-opening %fraud, "
+      "%derive-tip %fraud, %tip-vout-range %unknown, %brand-new %fraud)"
+    ==
+  =/  rf-full
+    ;:  weld
+      "?-(a %who-mismatch %unknown, %no-point %unknown, "
+      "%pass-mismatch %unknown, %tip-owned %unknown)"
+    ==
+  =/  rf-short  "?-(a %who-mismatch %unknown, %no-point %unknown)"
+  =/  vc-full   "?-(a %fraud 1, %stale 2, %unknown 3)"
+  =/  vc-short  "?-(a %fraud 1, %stale 2)"
+  ;:  weld
+    (expect !>((mints ab ab-full)))
+    ::  THE property: dropping a case does NOT compile, so a fifth abort
+    ::  reason cannot reach the snub branch by default -- it cannot reach
+    ::  any branch until somebody has classified it.
+    (expect !>(!(mints ab ab-short)))
+    ::  ... and a case whose name is not in the union does not compile
+    ::  either, so switch and union cannot drift apart in either direction.
+    (expect !>(!(mints ab ab-extra)))
+    ::  the same for the local-refusal classifier ...
+    (expect !>((mints rf rf-full)))
+    (expect !>(!(mints rf rf-short)))
+    ::  ... and for the agent's own three-way outcome switch, which is what
+    ::  actually chooses between silence, a demotion, and a sticky snub.
+    (expect !>((mints vc vc-full)))
+    (expect !>(!(mints vc vc-short)))
+  ==
+::
+::  +abort-of derives its recognizer from the $abort MOLD, so it cannot
+::  fall behind the union the way a hand-written list of tags would.  A
+::  recognizer that HAD fallen behind would answer "not an abort" -- i.e.
+::  fraud, i.e. a snub -- for the very reason nobody remembered to add.
+::
+++  test-abort-recognizer-follows-the-mold
+  ;:  weld
+    (expect-eq !>(`(unit abort:sa)`[~ %empty-chain]) !>((abort-of:sal 'empty-chain')))
+    (expect-eq !>(`(unit abort:sa)`[~ %spawn-opening]) !>((abort-of:sal 'spawn-opening')))
+    (expect-eq !>(`(unit abort:sa)`[~ %derive-tip]) !>((abort-of:sal 'derive-tip')))
+    (expect-eq !>(`(unit abort:sa)`[~ %tip-vout-range]) !>((abort-of:sal 'tip-vout-range')))
+    ::  ordinary check names are not aborts, and neither is the empty cord
+    (expect-eq !>(`(unit abort:sa)`~) !>((abort-of:sal 'sponsor-known')))
+    (expect-eq !>(`(unit abort:sa)`~) !>((abort-of:sal 'entry-0-commitment')))
+    (expect-eq !>(`(unit abort:sa)`~) !>((abort-of:sal '')))
+  ==
+::
+::  +report's marker and the emitted card come from ONE function now, so
+::  an operator can never be shown [XX] ("this is fraud") for a check that
+::  produced silence.  They were two copies of the same set lookups, and a
+::  name in neither set printed [XX] while +classify also said fraud --
+::  consistent, and consistently wrong, for all four aborts.
+::
+++  test-check-class-agrees-with-the-report-marker
+  =/  marker
+    |=  name=cord
+    ^-  tape
+    =/  v=verdict:sa  [who %.n ~[[name %.n]]]
+    =/  lines  (report:sal v)
+    ?>  ?=([* * ~] lines)
+    ?>  ?=(%leaf -.i.t.lines)
+    (scag 6 p.i.t.lines)
+  ;:  weld
+    (expect-eq !>("  [??]") !>((marker 'tip-vout-range')))
+    (expect-eq !>("  [??]") !>((marker 'sponsor-known')))
+    (expect-eq !>("  [??]") !>((marker 'tip-scanned')))
+    (expect-eq !>("  [..]") !>((marker 'tip-unspent')))
+    (expect-eq !>("  [..]") !>((marker 'life-monotonic')))
+    (expect-eq !>("  [XX]") !>((marker 'derive-tip')))
+    (expect-eq !>("  [XX]") !>((marker 'empty-chain')))
+    (expect-eq !>("  [XX]") !>((marker 'spawn-opening')))
+    (expect-eq !>("  [XX]") !>((marker 'entry-0-commitment')))
+  ==
 --

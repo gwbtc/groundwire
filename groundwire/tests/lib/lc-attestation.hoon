@@ -529,6 +529,51 @@
   (turn fx |=([* e=effect:urb] e))
 ::
 ++  c3  ~ligdes-risbur-folmus-mattyp--firpec-lispec-noddyl-daplyd
+::  --------------------------------------------------------------------
+::  Fixtures for +verify-lc's EARLY ABORTS -- the returns that never reach
+::  ++run-checks and therefore carry their own $abort rather than a list
+::  of checks.
+::  --------------------------------------------------------------------
+::
+::  a well-formed suite-C %gw-btc pass whose xtr decodes to an EMPTY log
+++  empty-pass  pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam ~))
+++  empty-sat   ^-(self-attestation:sa [who empty-pass ~])
+::  ... and one whose entry 0 carries no opening, so nothing opens the
+::  hiding dat commitment and the log is never bound to the name.
+++  no-open-chain  ^-(custody-log:sa ~[[c0-id 100 ~] [c1-id 101 ~]])
+++  no-open-pass
+  pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam no-open-chain))
+++  no-open-sat  ^-(self-attestation:sa [who no-open-pass no-open-chain])
+::  the tip transaction with the SAME txid the log claims (so +fetch-tx-at
+::  accepts it) but an input 0 that spends something else entirely, so the
+::  custody hop the log describes did not happen.
+++  c1-tx-broken
+  (mk-tx c1-id ~[(mk-input 0xbaad.0000 0 keypath-wit)] ~[tip-out])
+::
+++  start-verify-sat
+  |=  [sat=self-attestation:sa best-het=@ud]
+  ^-  pace
+  (step (verify-lc:lca sat ~ no-points best-het) ~)
+::  +drive-fetches, with the LAST transaction supplied by the caller.
+::
+++  drive-fetches-tip
+  |=  [best-het=@ud tip-tx=tx:bc]
+  ^-  pace
+  =/  s0  (start-verify best-het)
+  =/  s1  (answer-watch s0 (hdr-wire 778.000) (hdr-fact h-start 778.000))
+  =/  s2  (answer-watch s1 (tx-wire h-start start-id) (tx-fact h-start 778.000 start-id start-tx))
+  =/  s3  (answer-watch s2 (hdr-wire 100) (hdr-fact h-c0 100))
+  =/  s4  (answer-watch s3 (tx-wire h-c0 c0-id) (tx-fact h-c0 100 c0-id c0-tx))
+  =/  s5  (answer-watch s4 (hdr-wire 101) (hdr-fact h-c1 101))
+  (answer-watch s5 (tx-wire h-c1 c1-id) (tx-fact h-c1 101 c1-id tip-tx))
+::  the single failing check name an abort result carries
+::
+++  only-check
+  |=  =verdict:sa
+  ^-  cord
+  ?>  ?=([* ~] checks.verdict)
+  ?>  !ok.i.checks.verdict
+  name.i.checks.verdict
 --
 |%
 ::  ---- node <-> desk byte order, pinned to real mainnet data ---------
@@ -851,5 +896,117 @@
   ;:  weld
     (expect !>(=(~ cards.s2)))
     (expect-eq !>(%attestation-tx-not-found) !>(-.err.halt.s2))
+  ==
+::  ---- +verify-lc's EARLY ABORTS, and what each one is worth -----------
+::
+::    THE fail-open-to-snub path this section exists to close.  Four
+::    returns in +verify-lc never reach ++run-checks and so never produce
+::    a list of checks -- just one name.  Those names belonged to no class
+::    at all, and %gw-btc's classifier fell through to fraud for anything
+::    it did not recognise, so ALL FOUR ended in a sticky ames snub.  Two
+::    of them deserve it, one deserves it after an argument, and one fires
+::    only when this desk's own arithmetic is wrong.
+::
+::    Each test below drives the REAL strand to the real abort and pins
+::    both the name and the class the agent will route on.
+::
+::  An empty custody log is judged before a single watch card is emitted:
+::  no fetch can have gone wrong, because no fetch happened.  A suite-C
+::  %gw-btc pass asserts a confidential identity and this one offers no
+::  evidence for it -- exactly the condition ++run-checks calls
+::  `chain-nonempty' and also treats as fraud.
+::
+++  test-empty-chain-abort-is-fraud
+  =/  st  (start-verify-sat empty-sat 101)
+  =/  [res=result:sa *]  (done-result st)
+  ;:  weld
+    ::  finished immediately, having asked the light client for nothing
+    (expect !>(?=(%done -.halt.st)))
+    (expect-eq !>(~) !>((no-timers cards.st)))
+    (expect !>(!ok.verdict.res))
+    (expect-eq !>('empty-chain') !>((only-check verdict.res)))
+    ::  ... and it really is the fraud class, i.e. this one DOES snub
+    (expect-eq !>(%fraud) !>((classify:lsa verdict.res)))
+    (expect !>(!(unknown-verdict:lsa verdict.res)))
+    (expect !>(!(stale-verdict:lsa verdict.res)))
+  ==
+::
+::  Entry 0 with no opening never opens the pass's hiding dat commitment,
+::  so the log is not bound to the name it arrived under.  Again purely
+::  structural, again decided from the peer's own xtr before any fetch.
+::
+++  test-spawn-opening-abort-is-fraud
+  =/  st  (start-verify-sat no-open-sat 101)
+  =/  [res=result:sa *]  (done-result st)
+  ;:  weld
+    (expect !>(?=(%done -.halt.st)))
+    (expect-eq !>(~) !>((no-timers cards.st)))
+    (expect !>(!ok.verdict.res))
+    (expect-eq !>('spawn-opening') !>((only-check verdict.res)))
+    (expect-eq !>(%fraud) !>((classify:lsa verdict.res)))
+    (expect !>(!(unknown-verdict:lsa verdict.res)))
+  ==
+::
+::  +derive-tip is the one that sits AFTER the fetches, so "the fetch went
+::  wrong" would be a fair reading -- except it cannot be.  Every
+::  transaction reaching +derive-tip came through +fetch-tx-at, which
+::  STRAND-FAILS (see the three tests above) rather than return on a
+::  height mismatch, a txid mismatch, or an unknown transaction, and a
+::  failed strand emits no verdict at all.  So the evidence here was fully
+::  obtained and is genuinely on-chain; what fails is the peer's claim
+::  about it.  The tip transaction below has the exact txid the log
+::  claims -- the fetch layer is perfectly happy with it -- and an input 0
+::  that spends an outpoint the log never mentions.  That hop did not
+::  happen, and ++run-checks would call the same thing
+::  `entry-1-continuity' and snub for it.
+::
+++  test-derive-tip-abort-is-fraud
+  =/  st  (drive-fetches-tip 101 c1-tx-broken)
+  =/  [res=result:sa *]  (done-result st)
+  ;:  weld
+    ::  it got all the way through the six fetches before aborting
+    (expect !>(?=(%done -.halt.st)))
+    (expect !>(!ok.verdict.res))
+    (expect-eq !>('derive-tip') !>((only-check verdict.res)))
+    (expect-eq !>(%fraud) !>((classify:lsa verdict.res)))
+    (expect !>(!(unknown-verdict:lsa verdict.res)))
+    (expect !>(!(stale-verdict:lsa verdict.res)))
+    ::  no liveness scan was attempted -- the log never produced a tip to
+    ::  scan for, so the abort really did happen where we think it did.
+    (expect-eq !>(~) !>((no-timers cards.st)))
+  ==
+::
+::  The fourth abort, %tip-vout-range, has NO test here on purpose, and
+::  the reason is the reason it is classed %unknown: it is unreachable.
+::  +derive-tip's last hop takes vout from +index-to-sont:urb-core, which
+::  only ever names an output that exists, over the very list the bound
+::  re-checks -- so no chain data, honest or forged, can drive the strand
+::  into it.  Reaching it would mean this desk's ordinal arithmetic had
+::  contradicted itself, which is evidence about us and none about the
+::  peer.  Its class and its routing are pinned where they can be:
+::  +test-abort-classes-are-assigned-deliberately in
+::  tests/lib/self-attestation, and +test-abort-names-never-snub-when-
+::  unknown in tests/app/gw-btc.
+::
+::  What IS testable here is that the abort results are shaped the way the
+::  classifier expects: exactly one failing check, named by the abort.
+::
+++  test-abort-results-are-single-check
+  =/  a  (start-verify-sat empty-sat 101)
+  =/  b  (start-verify-sat no-open-sat 101)
+  =/  c  (drive-fetches-tip 101 c1-tx-broken)
+  =/  shape
+    |=  st=pace
+    ^-  ?
+    =/  [res=result:sa *]  (done-result st)
+    ?&  ?=([* ~] checks.verdict.res)
+        !ok.verdict.res
+        ?=(~ point.res)
+        =(0 tip-value.res)
+    ==
+  ;:  weld
+    (expect !>((shape a)))
+    (expect !>((shape b)))
+    (expect !>((shape c)))
   ==
 --

@@ -83,11 +83,18 @@
   ^-  form:m
   ;<  our=@p  bind:m  get-our:strandio
   =*  who  who.sat
+  ::  EVERY early return below is a $abort, and every $abort has a class
+  ::  in +abort-class:lsa.  They used to be bare cords in no class at all,
+  ::  which +classify read as fraud, so each of these four returns snubbed
+  ::  the peer -- including the two that can only fire when THIS DESK is
+  ::  wrong.  Do not add an early return with a bare cord: +fail-result
+  ::  will not take one.
+  ::
   ?~  chain.sat
-    (pure:m !>([(fail-result:lsa who 'empty-chain') *hexb:bc]))
+    (pure:m !>([(fail-result:lsa who %empty-chain) *hexb:bc]))
   =/  spawn-open  (spawn-of:lsa chain.sat)
   ?~  spawn-open
-    (pure:m !>([(fail-result:lsa who 'spawn-opening') *hexb:bc]))
+    (pure:m !>([(fail-result:lsa who %spawn-opening) *hexb:bc]))
   =/  spawn=sont:ord  spawn.u.spawn-open
   ::  Fetch the spawn transaction by [height txid].  +fetch-tx-at resolves
   ::  the canonical block hash from the height, requests the verified tx in
@@ -98,12 +105,23 @@
   ::  Every custody entry supplies a height; resolve each entry's tx the
   ::  same way, in custody order.
   ;<  txl=(list tx:bc)  bind:m  (fetch-entries our chain.sat)
+  ::  Every transaction below is confirmed on the main chain at the height
+  ::  and txid the log claimed -- +fetch-tx-at strand-fails rather than
+  ::  return otherwise -- so a failure here is the peer's claim about that
+  ::  evidence, not a failure to obtain it.  Hence %fraud; see
+  ::  +abort-class:lsa for the full argument.
+  ::
   =/  tip  (derive-tip:lsa spawn start txl)
   ?~  tip
-    (pure:m !>([(fail-result:lsa who 'derive-tip') *hexb:bc]))
+    (pure:m !>([(fail-result:lsa who %derive-tip) *hexb:bc]))
+  ::  Unreachable: +derive-tip took vout from +index-to-sont over this very
+  ::  output list.  Kept as a bound because +snag below would crash without
+  ::  it, and classed %unknown because reaching it means our own arithmetic
+  ::  disagreed with itself -- which says nothing about the peer.
+  ::
   =/  last=tx:bc  (rear txl)
   ?.  (lth vout.u.tip (lent os.last))
-    (pure:m !>([(fail-result:lsa who 'tip-vout-range') *hexb:bc]))
+    (pure:m !>([(fail-result:lsa who %tip-vout-range) *hexb:bc]))
   =/  tip-out=output:tx:bc  (snag vout.u.tip os.last)
   =/  tip-spk=hexb:bc  script-pubkey.tip-out
   ::  The tip transaction sits in the last custody entry's block.

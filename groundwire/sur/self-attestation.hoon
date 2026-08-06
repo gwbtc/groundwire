@@ -123,6 +123,49 @@
       ok=?
       checks=(list check)
   ==
+::  $verdict-class: what a NEGATIVE outcome entitles us to do about it
+::
+::    Every path in %gw-btc that declines to install a point resolves to
+::    exactly one of these, and the three are wildly different actions:
+::
+::      %fraud    jael %fail -> ames STICKY SNUB.  Reserved for evidence
+::                that was never true.  A snub blocks the very packet that
+::                would correct it, so it must be earned.
+::      %stale    %stale-notice -> jael drops the point, ames demotes the
+::                peer to a fresh alien.  Never a snub.
+::      %unknown  zero cards.  We could not evaluate the question, so we
+::                say nothing at all and look again next retransmission.
+::
+::    This is a CLOSED union on purpose: every consumer switches on it
+::    with ?- , so a fourth outcome cannot be added without visiting each
+::    decision point.
+::
++$  verdict-class  ?(%fraud %stale %unknown)
+::  $abort: why +verify-lc stopped before it could run ++run-checks
+::
+::    The light-client adapter has early returns that never reach the pure
+::    verifier, and each one still has to produce a $result -- which means
+::    each one still has to be CLASSIFIED.  They were free-form cords
+::    ('empty-chain', 'derive-tip', ...) that belonged to no class, so
+::    +classify's fall-through read them all as fraud and every one of
+::    them snubbed the peer.  Naming them in a union makes
+::    +abort-class:self-attestation a ?- that cannot compile until a new
+::    reason has been assigned a class, and makes +fail-result refuse a
+::    cord that is not one of them.
+::
++$  abort  ?(%empty-chain %spawn-opening %derive-tip %tip-vout-range)
+::  $refusal: why %gw-btc declined a verdict that PASSED every check
+::
+::    The second doorway onto the snub path.  ++run-checks can return
+::    ok=%.y and the agent still refuse the point, because three of the
+::    conditions are about OUR OWN state rather than the peer's evidence
+::    (see +local-refusal in app/gw-btc.hoon).  A refusal used to fall
+::    through to the same negative branch as fraud, so a peer with a
+::    perfect attestation could be snubbed for something it neither sent
+::    nor could observe.  Same treatment: a closed union, and a ?- that
+::    forces a class onto every future member.
+::
++$  refusal  ?(%who-mismatch %no-point %pass-mismatch %tip-owned)
 ::
 ::  On success, `sont.own` in point is the derived (and checked-unspent) tip.
 +$  result

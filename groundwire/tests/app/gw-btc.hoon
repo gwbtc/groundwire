@@ -192,7 +192,19 @@
 ++  verify-state
   |=  [conf=(set ship) ats=(map ship sont:ord) ids=unv-ids:urb]
   ^-  *
-  :*  `state:urb`[[0xdead.beef 900.100] ~ ~ ids]  :: urb-state
+  (verify-state-sm conf ats ids *sont-map:ord)
+::  ... the same, with the sat index populated.  A verified tip that our
+::  own index attributes to ANOTHER comet is the one local refusal that is
+::  reachable in production (+local-refusal, %tip-owned).
+::
+++  verify-state-sm
+  |=  $:  conf=(set ship)
+          ats=(map ship sont:ord)
+          ids=unv-ids:urb
+          sm=sont-map:ord
+      ==
+  ^-  *
+  :*  `state:urb`[[0xdead.beef 900.100] sm ~ ids]  :: urb-state
       %.y                                          :: indexing
       `[0xdead.beef 900.100]                       :: best
       ::  inflight: one $inflight-writ [dom pass sat job]
@@ -216,6 +228,41 @@
   !>  ^-  [result:sa hexb:bitcoin]
   :_  *hexb:bitcoin
   [[who %.n (turn bad |=(c=cord `check:sa`[c %.n]))] ~ 0]
+::  ---------------------------------------------------------------------
+::  fixtures for a verdict that PASSED and is refused LOCALLY
+::  ---------------------------------------------------------------------
+::
+::  the satpoint every fixture point below lands on
+::
+++  tip-sont  ^-(sont:ord [0xf00d.cafe 0 0])
+::  a point that the agent will accept: its .pass.net is the very pass the
+::  writ carried, so +attested-point-ok holds.
+::
+++  ok-point
+  |=  =pass
+  ^-  point:urb
+  [[tip-sont ~] rift=0 life=1 pass [%.y ~marzod] ~ ~]
+::  a $result that PASSED every check, naming .who and carrying .pt
+::
+++  ok-sign
+  |=  [who=ship pt=(unit point:urb)]
+  ^-  sign-arvo
+  :^  %khan  %arow  %.y
+  :-  %noun
+  !>  ^-  [result:sa hexb:bitcoin]
+  :_  *hexb:bitcoin
+  [[who %.y ~] pt 0]
+::  a sat index in which .tip-sont already belongs to a DIFFERENT comet
+::
+++  taken-sont-map
+  ^-  sont-map:ord
+  %-  malt
+  :~  :-  [`@ux`0xf00d.cafe `@ud`0]
+      [value=9.000 sats=(malt ~[[`@ud`0 `sont-val:ord`[`~marzod ~]]])]
+  ==
+::  the wire a finished verification for .peer (job 0) arrives on
+::
+++  verify-wire  /verify/(scot %p peer)/0
 --
 |%
 ::  Operator declines sponsorship: the ship is recorded in `declined`,
@@ -831,5 +878,168 @@
   ;:  weld
     (expect-eq !>(`*`[%.y ~ %.n ~]) !>(`*`before))
     (expect-eq !>(`*`before) !>(`*`after))
+  ==
+::
+::  ---------------------------------------------------------------------
+::  DOORWAY ONE: +verify-lc's early aborts must route by their class
+::  ---------------------------------------------------------------------
+::
+::  The library decides what each abort MEANS (+abort-class); this pins
+::  what the agent DOES about it, which is the only thing a peer ever
+::  experiences.  Before the fix all four names were unclassified and the
+::  classifier's fall-through snubbed on every one of them.
+::
+++  test-abort-names-route-by-class
+  =/  agent  gw-btc
+  =^  *  agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  ::  one card, and it is the negative %writ-response that becomes a jael
+  ::  %fail and an ames snub
+  ::
+  =/  snubs
+    |=  [ag=_agent name=cord]
+    ^-  ?
+    =^  cards  ag  (~(on-arvo ag bowl0) verify-wire (failed-sign peer ~[name]))
+    =/  cs  (app-cards cards)
+    ?&  =(1 (lent cs))
+        =(`%writ-response (fact-mark (snag 0 cs)))
+    ==
+  ;:  weld
+    ::  fraud-class: the peer's own xtr contradicts the identity it claims
+    (expect !>((snubs agent 'empty-chain')))
+    (expect !>((snubs agent 'spawn-opening')))
+    ::  fraud-class: the custody hop the log describes did not happen, on
+    ::  transactions we confirmed on the main chain ourselves
+    (expect !>((snubs agent 'derive-tip')))
+  ==
+::
+::  ... and the one abort that is NOT the peer's fault emits nothing.
+::  %tip-vout-range can only fire when +derive-tip's own output index
+::  disagrees with the output list it came from -- a bug in this desk.
+::  Snubbing a peer over that is exactly the failure this whole
+::  classification exists to prevent, and it is what used to happen.
+::
+++  test-abort-names-never-snub-when-unknown
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  =^  cards  agent
+    (~(on-arvo agent bowl0) verify-wire (failed-sign peer ~['tip-vout-range']))
+  ::  NO cards at all: not a %writ-response (a snub), not even a
+  ::  %stale-notice (a demotion)
+  (expect-eq !>(~) !>((app-cards cards)))
+::
+::  ---------------------------------------------------------------------
+::  DOORWAY TWO: a verdict that PASSED and is refused LOCALLY
+::  ---------------------------------------------------------------------
+::
+::  ++run-checks says ok=%.y and the agent still declines the point.  The
+::  four reasons are all about OUR state, so none of them may reach the
+::  snub branch -- and all four used to, because `verified=~' erased which
+::  one had fired and dropped straight through to the negative outcome.
+::
+::  THE CONTROL FIRST: the identical sign with nothing objecting really
+::  does install the point and emit a POSITIVE %writ-response.  Without
+::  it, four tests asserting silence prove only that the fixture is inert.
+::
+::  Each refusal test below is THIS test with exactly one ingredient
+::  swapped -- the ship in the verdict, the point, the point's pass, or
+::  the sat index -- so the silence it asserts is caused by that
+::  ingredient and nothing else.
+::
+++  test-passing-verdict-is-installed-control
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  =^  cards  agent
+    (~(on-arvo agent bowl0) verify-wire (ok-sign peer `(ok-point anew-pass)))
+  =/  cs   (app-cards cards)
+  ::  NB: /x/points is the PUBLIC snapshot, which filters confidential
+  ::  comets out by design.  /x/attested is where a verified confidential
+  ::  identity's tip is recorded.
+  ::
+  =/  ats  (peek-noun (~(on-peek agent bowl0) /x/attested))
+  ;:  weld
+    (expect-eq !>(1) !>((lent cs)))
+    (expect-eq !>(`%writ-response) !>((fact-mark (snag 0 cs))))
+    ::  ... and it is a POSITIVE one: [dom who `point], not [dom who ~]
+    (expect !>(?=([@ @ ^] (need (fact-payload (snag 0 cs))))))
+    ::  ... and the peer really was installed, at the tip it proved
+    %+  expect-eq  !>(`(unit sont:ord)`[~ tip-sont])
+    !>((~(get by ;;((map ship sont:ord) ats)) peer))
+  ==
+::
+::  %who-mismatch: the verdict names a ship the writ did not.  The peer
+::  never supplies who.verdict -- +pass-attestation set it from the writ
+::  after checking the pass fingerprints to it -- so a mismatch is our own
+::  bookkeeping and says nothing about the peer.
+::
+++  test-refusal-who-mismatch-is-silent
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  =^  cards  agent
+    (~(on-arvo agent bowl0) verify-wire (ok-sign ~dev `(ok-point anew-pass)))
+  (expect-eq !>(~) !>((app-cards cards)))
+::
+::  %no-point: ok=%.y with no point at all.  ++run-checks builds the point
+::  whenever ok holds, so this is a contradiction inside the verifier --
+::  again nothing the peer did.
+::
+++  test-refusal-no-point-is-silent
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  =^  cards  agent  (~(on-arvo agent bowl0) verify-wire (ok-sign peer ~))
+  (expect-eq !>(~) !>((app-cards cards)))
+::
+::  %pass-mismatch: the rebuilt pass's key disagrees with the pass jael
+::  forwarded.  They are the same pass in every real run, so reaching this
+::  means the desk contradicted itself; the peer is not the one who is
+::  wrong, and must not be snubbed for it.
+::
+++  test-refusal-pass-mismatch-is-silent
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  ::  a well-formed suite-C pass that is NOT the one the writ carried
+  =/  other  (kelvin-pass 7)
+  =^  cards  agent
+    (~(on-arvo agent bowl0) verify-wire (ok-sign peer `(ok-point other)))
+  (expect-eq !>(~) !>((app-cards cards)))
+::
+::  %tip-owned: THE reachable one.  Our own sat index already attributes
+::  the proven tip to another comet.  Two chain-valid logs cannot both end
+::  at one satpoint, so a conflict means one of the two views is out of
+::  date -- and ours is a forward-only scanner over an operator-chosen
+::  window, while the peer's is a proof against the chain.  We cannot tell
+::  which, so we do neither thing: the point is refused (the other comet's
+::  sat is not overwritten) AND no verdict is emitted.
+::
+++  test-refusal-tip-owned-by-another-comet-is-silent
+  =/  agent  gw-btc
+  =^  *  agent
+    (~(on-load agent bowl0) !>((verify-state-sm ~ ~ ~ taken-sont-map)))
+  =^  cards  agent
+    (~(on-arvo agent bowl0) verify-wire (ok-sign peer `(ok-point anew-pass)))
+  =/  ats  (peek-noun (~(on-peek agent bowl0) /x/attested))
+  ;:  weld
+    ::  no snub, no demotion -- nothing at all
+    (expect-eq !>(~) !>((app-cards cards)))
+    ::  ... and we did not install the peer over the other comet's sat
+    ::  (the control above records exactly this tip for exactly this peer)
+    (expect-eq !>(*(map ship sont:ord)) !>(;;((map ship sont:ord) ats)))
+  ==
+::
+::  The two doorways meet: a FRAUD verdict is still a snub.  Closing the
+::  fail-open must not have closed the fail-shut, or forged logs become
+::  unpunishable -- which would be exactly as wrong as snubbing on our own
+::  ignorance.
+::
+++  test-fraud-still-snubs-after-the-fix
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  =^  cards  agent
+    (~(on-arvo agent bowl0) verify-wire (failed-sign peer ~['entry-0-commitment']))
+  =/  cs  (app-cards cards)
+  ;:  weld
+    (expect-eq !>(1) !>((lent cs)))
+    (expect-eq !>(`%writ-response) !>((fact-mark (snag 0 cs))))
+    ::  a NEGATIVE writ-response: [dom who ~]
+    (expect !>(?=([@ @ ~] (need (fact-payload (snag 0 cs))))))
   ==
 --

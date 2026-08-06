@@ -33,19 +33,26 @@
   |=  =verdict:sa
   ^-  tang
   =/  outcome=tape
-    ?:  ok.verdict                  "VALID"
-    ?:  (unknown-verdict verdict)   "UNDETERMINED (no verdict emitted)"
-    ?:  (stale-verdict verdict)     "STALE (out of date, not fraud)"
-    "INVALID"
+    ?:  ok.verdict  "VALID"
+    ?-  (classify verdict)
+      %unknown  "UNDETERMINED (no verdict emitted)"
+      %stale    "STALE (out of date, not fraud)"
+      %fraud    "INVALID"
+    ==
   :-  leaf+"%gw-btc: attestation for {<who.verdict>} is {outcome}"
   %+  turn  checks.verdict
   |=  =check:sa
   ^-  tank
+  ::  the printed marker is the SAME function that routes the outcome, so
+  ::  the report and the cards can never disagree about a check's class.
+  ::
   =/  mark=tape
-    ?:  ok.check                                  "ok"
-    ?:  (~(has in unknown-checks) name.check)     "??"
-    ?:  (~(has in stale-checks) name.check)       ".."
-    "XX"
+    ?:  ok.check  "ok"
+    ?-  (check-class name.check)
+      %unknown  "??"
+      %stale    ".."
+      %fraud    "XX"
+    ==
   leaf+"  [{mark}] {(trip name.check)}"
 ::
 ::  +stale-checks: the named checks that mean OUT OF DATE, not WRONG
@@ -126,48 +133,197 @@
   ^-  (set cord)
   (silt ~['sponsor-known' 'tip-scanned'])
 ::
-::  +unknown-verdict: did this verdict fail because we could not tell?
+::  +abort-of: is this check name one of +verify-lc's early aborts?
 ::
-::    %.y when the verdict failed, at least one failing check is
-::    unevaluable, and NO failing check is fraud.  A stale check failing
-::    alongside an unevaluable one still reads as unknown: %stale is a real
-::    finding about the peer's evidence, and we are not entitled to make it
-::    while some of our own machinery came back blank.
+::    Derived from the $abort MOLD, never from a hand-written list of tags:
+::    ;; normalizes .name and asserts the normalization changed nothing, so
+::    a cord outside the union clams to some other tag, fails the assert,
+::    and +mole gives ~.  Add a tag to $abort and this recognizes it with
+::    no edit here -- which is the point, because a recognizer that had to
+::    be maintained alongside the union is a list membership test again,
+::    and would silently answer "not an abort" (i.e. fraud) for the one
+::    reason nobody remembered to add.
 ::
-::    Fraud beats both, exactly as in +stale-verdict: a peer does not get to
-::    launder bad evidence by also being unknowable.
+++  abort-of
+  |=  name=cord
+  ^-  (unit abort:sa)
+  (mole |.(;;(abort:sa name)))
+::
+::  +abort-class: what a +verify-lc early abort entitles us to do
+::
+::    THE arm this whole classification exists for.  +verify-lc returns
+::    before ++run-checks in four places; each produced a one-check failing
+::    verdict whose name was in neither class set, so +classify's
+::    fall-through called every one of them fraud and %gw-btc snubbed.
+::    Three of the four really are fraud.  One is not, and it is the one
+::    that can only fire if WE are wrong.
+::
+::    This is a ?- over a closed union: a fifth abort reason does not
+::    compile until somebody decides what it means.  That property, not
+::    the four answers below, is the fix.
+::
+++  abort-class
+  |=  =abort:sa
+  ^-  verdict-class:sa
+  ?-  abort
+    ::  The peer's pass decodes to an EMPTY custody log.  Nothing was
+    ::  fetched and nothing could have been: this is a judgement on the
+    ::  peer's own xtr, reached before the first watch card.  A suite-%c
+    ::  %gw-btc pass asserts a confidential identity, and an empty log
+    ::  offers no evidence whatsoever for it.  ++run-checks calls the
+    ::  identical condition `chain-nonempty' and treats it as fraud; the
+    ::  two paths must agree, or failing EARLY becomes a way to escape a
+    ::  check that failing late would have caught.
+    ::
+      %empty-chain  %fraud
+    ::  Entry 0 carries no $blind-opening, so the log never binds itself
+    ::  to the name the pass fingerprints to.  Again purely structural,
+    ::  again computed from the peer's own xtr with no fetch involved, and
+    ::  again ++run-checks' own `spawn-opening' check (same name, same
+    ::  condition) is fraud-class.
+    ::
+      %spawn-opening  %fraud
+    ::  +derive-tip could not walk the satpoint from the spawn to the tip.
+    ::
+    ::  This one deserves the argument, because it sits AFTER the fetches
+    ::  and "a fetch went wrong" would be unknown, not fraud.  It cannot
+    ::  be that here: every transaction handed to +derive-tip came through
+    ::  +fetch-tx-at, which STRAND-FAILS (never returns) if the block-info
+    ::  height disagrees, if the txid disagrees, or if the transaction is
+    ::  unknown -- and a failed strand emits no verdict at all.  So by the
+    ::  time +derive-tip runs, every transaction is confirmed on the main
+    ::  chain at the height the peer claimed, under the txid the peer
+    ::  claimed.  The evidence was fully obtained.
+    ::
+    ::  What is left for +derive-tip to reject is exactly the peer's claim
+    ::  ABOUT that evidence: a vout that does not exist in the previous
+    ::  transaction, a sat offset past the output's value, an input 0 that
+    ::  does not spend the outpoint the log says it spends, or a hop that
+    ::  drops the sat into fees.  ++run-checks names those same conditions
+    ::  entry-N-prevout-range / -off-range / -continuity / -sat-landed and
+    ::  calls every one of them fraud.  +derive-tip is only a pre-pass to
+    ::  get the tip scriptPubKey for the liveness scan, so classing it
+    ::  softer than the checks it duplicates would hand a forged log an
+    ::  escape hatch: fail early, be forgiven.
+    ::
+    ::  (A byzantine light client that returned a well-formed but WRONG
+    ::  transaction could make this fire for an honest peer.  That is true
+    ::  of entry-N-continuity too, and of every fraud verdict this desk
+    ::  emits -- the node is the trust root for all of them.  It is not a
+    ::  reason to treat this one differently.)
+    ::
+      %derive-tip  %fraud
+    ::  The derived tip names an output index outside the last fetched
+    ::  transaction.  UNREACHABLE, and that is why it is unknown rather
+    ::  than fraud: +derive-tip's last step sets vout from
+    ::  +index-to-sont:urb-core, which only ever returns an index at which
+    ::  an output actually exists, over the very list this bound re-checks.
+    ::  So if this fires, the peer has not been caught at anything -- OUR
+    ::  ordinal arithmetic has contradicted itself, and the honest report
+    ::  is that we could not evaluate the attestation.  Snubbing a peer
+    ::  over a bug in this desk is precisely the failure this file exists
+    ::  to prevent.
+    ::
+      %tip-vout-range  %unknown
+  ==
+::
+::  +refusal-class: what a LOCAL refusal of a passing verdict entitles us to
+::
+::    ++run-checks said ok, and %gw-btc still declined (see +local-refusal
+::    in app/gw-btc.hoon).  None of these is a finding about the peer:
+::    three are impossible unless this desk is internally inconsistent,
+::    and the fourth is a disagreement between the peer's chain proof and
+::    our own lagging index.  A peer that submitted a perfect attestation
+::    must never be snubbed for any of them.
+::
+++  refusal-class
+  |=  =refusal:sa
+  ^-  verdict-class:sa
+  ?-  refusal
+    ::  The verdict names a different ship than the writ did.  The peer
+    ::  never supplies who.verdict -- it is who.sat, which +pass-attestation
+    ::  set from the ship in the writ after checking the pass fingerprints
+    ::  to it.  A mismatch is our own inflight bookkeeping, not evidence.
+    ::
+      %who-mismatch  %unknown
+    ::  ok=%.y with no point.  ++run-checks builds the point whenever ok
+    ::  holds (ok implies `state-resolve', which implies a resolved
+    ::  snapshot), so this is a contradiction inside the verifier itself.
+    ::
+      %no-point  %unknown
+    ::  The rebuilt pass's key disagrees with the pass jael forwarded.
+    ::  Those are the same pass: +pass-attestation builds the attestation
+    ::  FROM the forwarded pass and ++run-checks copies it into the point.
+    ::  Another internal contradiction, with nothing to attribute to the
+    ::  peer.
+    ::
+      %pass-mismatch  %unknown
+    ::  Our sat index already attributes the proven tip satpoint to a
+    ::  DIFFERENT comet.  The only genuinely reachable refusal, and still
+    ::  not fraud: two chain-valid logs cannot both end at one satpoint, so
+    ::  a conflict means one of the two views is out of date -- and ours is
+    ::  the windowed, forward-only scanner that is routinely behind, while
+    ::  the peer's is a cryptographic proof against the chain.  We cannot
+    ::  tell which, so we do neither thing: we refuse to overwrite the
+    ::  other comet's sat AND we refuse to snub, and we look again on the
+    ::  next retransmission.
+    ::
+      %tip-owned  %unknown
+  ==
+::
+::  +check-class: the class of ONE failing check, by name
+::
+::    The single place a check name becomes an outcome.  +report's marker
+::    and the agent's card both come through here, so the operator can
+::    never be shown [XX] for something that produced silence.
+::
+++  check-class
+  |=  name=cord
+  ^-  verdict-class:sa
+  ?^  ab=(abort-of name)  (abort-class u.ab)
+  ?:  (~(has in unknown-checks) name)  %unknown
+  ?:  (~(has in stale-checks) name)    %stale
+  %fraud
+::
+::  +classify: the class of a whole verdict
+::
+::    Fraud beats everything: a peer does not get to launder bad evidence
+::    by also being out of date or unknowable.  Unknown then beats stale:
+::    %stale is a real finding about the peer's evidence, and we are not
+::    entitled to make it while some of our own machinery came back blank.
+::
+::    A verdict that PASSED has no failing checks to classify.  It should
+::    never reach here (the caller installs the point instead), and if it
+::    does, %unknown is the reading that does nothing.
+::
+++  classify
+  |=  =verdict:sa
+  ^-  verdict-class:sa
+  ?:  ok.verdict  %unknown
+  ::  NB: =(~ bad) rather than ?~, which would fish-narrow .bad and leave
+  ::  +levy/+lien mulling their sample against the bare ~ branch
+  ::  (mull-grow).
+  ::
+  =/  bad=(list check:sa)  (skip checks.verdict |=(c=check:sa ok.c))
+  ?:  =(~ bad)  %unknown
+  =/  classes=(list verdict-class:sa)
+    (turn bad |=(c=check:sa (check-class name.c)))
+  ?:  (lien classes |=(c=verdict-class:sa ?=(%fraud c)))    %fraud
+  ?:  (lien classes |=(c=verdict-class:sa ?=(%unknown c)))  %unknown
+  %stale
+::
+::  +unknown-verdict / +stale-verdict: the two-valued views of +classify,
+::  kept because they read better at the call sites that ask one question.
 ::
 ++  unknown-verdict
   |=  =verdict:sa
   ^-  ?
-  ?:  ok.verdict  %.n
-  =/  bad=(list check:sa)  (skip checks.verdict |=(c=check:sa ok.c))
-  ?:  =(~ bad)  %.n
-  ?.  (lien bad |=(c=check:sa (~(has in unknown-checks) name.c)))  %.n
-  %+  levy  bad
-  |=  c=check:sa
-  ?|  (~(has in unknown-checks) name.c)
-      (~(has in stale-checks) name.c)
-  ==
-::
-::  +stale-verdict: did this verdict fail ONLY because it is out of date?
-::
-::    %.y exactly when the verdict failed and EVERY failing check is in
-::    +stale-checks.  One genuine-fraud check failing alongside a stale
-::    one still reads as fraud: a peer does not get to launder bad
-::    evidence by also being out of date.
+  &(!ok.verdict ?=(%unknown (classify verdict)))
 ::
 ++  stale-verdict
   |=  =verdict:sa
   ^-  ?
-  ?:  ok.verdict  %.n
-  =/  bad=(list check:sa)  (skip checks.verdict |=(c=check:sa ok.c))
-  ::  NB: =(~ bad) rather than ?~, which would fish-narrow .bad and leave
-  ::  +levy mulling its sample against the bare ~ branch (mull-grow).
-  ::
-  ?:  =(~ bad)  %.n
-  %+  levy  bad
-  |=(c=check:sa (~(has in stale-checks) name.c))
+  &(!ok.verdict ?=(%stale (classify verdict)))
 ::
 ::  +routable: can anything COLD-CONTACT a comet in this state?
 ::
@@ -337,10 +493,18 @@
       ==
   ==
 ::
+::  +fail-result: the one-check verdict a +verify-lc early abort returns
+::
+::    The sample is $abort, not a cord, ON PURPOSE.  A free-form string
+::    here is what put four unclassified names into the verdict stream in
+::    the first place; now a new early return does not compile until its
+::    reason has been added to the union, and adding it to the union does
+::    not compile until +abort-class says what it means.
+::
 ++  fail-result
-  |=  [who=@p name=cord]
+  |=  [who=@p =abort:sa]
   ^-  result:sa
-  [[who %.n ~[[name %.n]]] ~ 0]
+  [[who %.n ~[[`cord`abort %.n]]] ~ 0]
 ::
 ++  fail-checks
   |=  [who=@p checks=(list check:sa)]

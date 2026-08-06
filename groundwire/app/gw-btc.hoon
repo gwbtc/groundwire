@@ -908,11 +908,18 @@
       ?:  (known-public who)
         `this
       %-  (slog (report:lsa verdict.res))
+      ::  THE SECOND DOORWAY ONTO THE SNUB PATH.  ++run-checks can say ok
+      ::  and this agent can still decline, for reasons that are about OUR
+      ::  state rather than the peer's evidence.  Those refusals used to
+      ::  fall straight through to the negative branch below, so a peer
+      ::  with a cryptographically perfect attestation could be snubbed --
+      ::  stickily -- for something it neither sent nor could observe.
+      ::  +local-refusal names them; +refusal-class:lsa classes them.
+      ::
+      =/  refused=(unit refusal:sa)  (local-refusal who req res)
       =/  verified=(unit point:urb)
-        ?.  &(ok.verdict.res =(who who.verdict.res))  ~
+        ?.  &(ok.verdict.res ?=(~ refused))  ~
         ?~  point.res  ~
-        ?.  (attested-point-ok pass.req u.point.res)  ~
-        ?.  (tip-owner-ok urb-state who sont.own.u.point.res)  ~
         `u.point.res(pass.net pass.req)
       ?~  verified
         ::  Decisions addendum section 3, on the PACKET path.  A verdict
@@ -950,39 +957,63 @@
         ::  we were missing has arrived.  See +unknown-checks in
         ::  lib/self-attestation for what qualifies and why.
         ::
-        ?:  (unknown-verdict:lsa verdict.res)
+        ::  ALL THREE OUTCOMES, IN ONE SWITCH OVER A CLOSED UNION.  This
+        ::  used to be a chain of ?: whose final else-branch was the snub,
+        ::  so anything the two predicates did not recognise -- a
+        ::  +verify-lc early abort, a local refusal -- arrived at the
+        ::  destructive outcome by DEFAULT.  A ?- over $verdict-class has
+        ::  no default: a fourth outcome stops the compiler right here.
+        ::
+        ::  The class comes from the refusal when there was one (the
+        ::  verdict itself passed every check, so it has nothing to say
+        ::  about the peer), and otherwise from the failing checks.
+        ::
+        =/  class=verdict-class:sa
+          ?^  refused  (refusal-class:lsa u.refused)
+          (classify:lsa verdict.res)
+        ?-    class
+            %unknown
           %-  %-  slog
+              ?^  refused
+                :~  leaf+"%gw-btc: attestation for {(scow %p who)} passed, but we refused it locally ({<u.refused>}); emitting no verdict"
+                    leaf+"  (that refusal is about OUR state, not the peer's evidence, so it"
+                    leaf+"   is not something the peer can be blamed -- or snubbed -- for)"
+                ==
               :~  leaf+"%gw-btc: attestation for {(scow %p who)} is UNDETERMINED; emitting no verdict"
                   leaf+"  (the [??] checks above could not be evaluated from what we can see;"
                   leaf+"   that is our ignorance, not the peer's fraud -- it will be retried)"
               ==
           `this
-        ?:  (stale-verdict:lsa verdict.res)
+        ::
+            %stale
           %-  %-  slog
               :~  leaf+"%gw-btc: attestation for {(scow %p who)} is STALE, not invalid"
                   leaf+"  (its identity sat has moved; demoting to alien, never snubbing)"
               ==
           :_  this
           ~[(stale-card dom.req who)]
-        ::  Everything else IS a negative verdict, and a negative verdict is
-        ::  destructive: jael %fails and ames snubs, stickily, which then
-        ::  blocks the packet that could correct it.  It has never announced
-        ::  itself -- Phase 6.7 found the snub itself to be invisible in the
-        ::  logs, discoverable only through .^(/snubbed) -- so say it here,
-        ::  at the one place that causes it.
         ::
-        =/  why=tape
-          ?:  ok.verdict.res
-            "its checks passed but the result was refused locally (the rebuilt pass's key disagrees with the forwarded pass, or its tip sat belongs to another comet)"
-          "the [XX] checks above are fraud-class: evidence that was never true, not evidence that expired"
-        %-  %-  slog
-            :~  leaf+"%gw-btc: SNUBBING {(scow %p who)} on a negative %gw-btc verdict"
-                leaf+"  {why}"
-                leaf+"  (a snub is sticky and blocks the packet that would correct it;"
-                leaf+"   inspect with .^(/snubbed) and undo with %snub %deny %del)"
-            ==
-        :_  this
-        ~[(writ-card dom.req who ~)]
+            %fraud
+          ::  A negative verdict is destructive: jael %fails and ames snubs,
+          ::  stickily, which then blocks the packet that could correct it.
+          ::  It has never announced itself -- Phase 6.7 found the snub
+          ::  itself to be invisible in the logs, discoverable only through
+          ::  .^(/snubbed) -- so say it here, at the one place that causes
+          ::  it.
+          ::
+          =/  why=tape
+            ?^  refused
+              "its checks passed but the result was refused locally ({<u.refused>}), and that refusal is classed as fraud"
+            "the [XX] checks above are fraud-class: evidence that was never true, not evidence that expired"
+          %-  %-  slog
+              :~  leaf+"%gw-btc: SNUBBING {(scow %p who)} on a negative %gw-btc verdict"
+                  leaf+"  {why}"
+                  leaf+"  (a snub is sticky and blocks the packet that would correct it;"
+                  leaf+"   inspect with .^(/snubbed) and undo with %snub %deny %del)"
+              ==
+          :_  this
+          ~[(writ-card dom.req who ~)]
+        ==
       ::  Sponsorship decision point.  A valid attestation whose snapshot
       ::  names US as sponsor IS the sponsorship request -- there is no
       ::  separate handshake and no consent signature.  Declining is
@@ -1587,6 +1618,37 @@
   |=  [submitted=pass verified=point:urb]
   ^-  ?
   (same-key:cc submitted pass.net.verified)
+::
+::  +local-refusal: why we decline a result that PASSED every check
+::
+::    ~ means nothing local objects.  Otherwise the named $refusal, whose
+::    class +refusal-class:lsa decides -- and today decides is %unknown for
+::    every one of them, because none is a finding about the peer.  These
+::    conditions used to be inlined as `?. ... ~` in the +verified
+::    computation, which erased WHICH one fired and dropped the result into
+::    the same branch as fraud.  Naming them is what makes the outcome
+::    classifiable, and what puts the reason in the operator's log.
+::
+::    A verdict that did NOT pass is not a local refusal: it is classified
+::    from its own failing checks, so this answers ~ for it.
+::
+++  local-refusal
+  |=  [who=ship req=inflight-writ res=result:sa]
+  ^-  (unit refusal:sa)
+  ?.  ok.verdict.res  ~
+  ::  the three below are internal-consistency guards: each is unreachable
+  ::  unless this desk contradicts itself (see +refusal-class:lsa), so if
+  ::  one ever fires it is a bug report, not evidence about the peer.
+  ::
+  ?.  =(who who.verdict.res)                             `%who-mismatch
+  ?~  point.res                                          `%no-point
+  ?.  (attested-point-ok pass.req u.point.res)           `%pass-mismatch
+  ::  ... and this one is reachable: our own sat index already attributes
+  ::  the proven tip to another comet.  We refuse the point, and we refuse
+  ::  to snub, because our index is a lagging window on the chain.
+  ::
+  ?.  (tip-owner-ok urb-state who sont.own.u.point.res)   `%tip-owned
+  ~
 ::
 ::  Confidential comets whose attested tip the scanner just saw move.  A
 ::  moved identity sat means the committed state may have changed and is
