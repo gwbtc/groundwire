@@ -871,22 +871,39 @@ def publication_noun(pass_atom: int, opening: dict) -> tuple:
 MAX_PUBLICATION = 512
 
 
+def push_data(payload: bytes) -> bytes:
+    """The minimal Bitcoin push opcode(s) for `payload`.
+
+    A direct push (opcode = length) reaches 75.  PUSHDATA1 (0x4c) carries ONE
+    length byte and so stops at 255 — below this codec's own 512-byte cap, so a
+    fief-carrying publication (265–269 bytes in practice) needs PUSHDATA2
+    (0x4d) and its TWO-byte LITTLE-ENDIAN length.  Byte-for-byte identical to
+    +push-data:gw-btc-pass and pushData() in causeway/src/spawn/publication.ts.
+    """
+    n = len(payload)
+    if n <= 75:
+        return bytes([n])
+    if n <= 0xFF:
+        return b"\x4c" + bytes([n])
+    if n <= 0xFFFF:
+        return b"\x4d" + n.to_bytes(2, "little")
+    raise ValueError(f"push {n} bytes is too big for OP_PUSHDATA2")
+
+
 def make_publication_script(pass_atom: int, opening: dict) -> bytes:
     """The OP_RETURN scriptPubKey for a deliberate on-chain publication:
 
         OP_RETURN PUSH3 'urb' PUSH1 <kelvin> <pushdata payload>
         payload = (jam [pass opening])
 
-    Payloads over 75 bytes use PUSHDATA1 (0x4c len); cap 512 bytes."""
+    Payloads over 75 bytes use PUSHDATA1 (0x4c len), over 255 PUSHDATA2
+    (0x4d len-lo len-hi); cap 512 bytes."""
     payload = jam_bytes(publication_noun(pass_atom, opening))
     if len(payload) > MAX_PUBLICATION:
         raise ValueError(f"publication payload {len(payload)} > {MAX_PUBLICATION}")
-    if len(payload) <= 75:
-        push = bytes([len(payload)])
-    else:
-        push = b"\x4c" + bytes([len(payload)])
     # 6a 03 'urb' 01 <kelvin> — matches +publication-script:gw-btc-pass.
-    return bytes([0x6A, 0x03, 0x75, 0x72, 0x62, 0x01, KELVIN]) + push + payload
+    return (bytes([0x6A, 0x03, 0x75, 0x72, 0x62, 0x01, KELVIN])
+            + push_data(payload) + payload)
 
 
 def _hoon_unit(rendered: str | None) -> str:

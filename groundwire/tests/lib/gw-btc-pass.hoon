@@ -5,7 +5,7 @@
 ::  BIP-340 tagged hashes.  Any change here is a protocol change.
 ::
 /-  ord, sa=self-attestation
-/+  *test, cc=gw-btc-pass, taproot, btc=bitcoin
+/+  *test, cc=gw-btc-pass, taproot, btc=bitcoin, bcu=bitcoin-utils
 |%
 ++  spawn  ^-  sont:ord  [txid=0x1234.5678.9abc.def0 vout=1 off=0]
 ++  seed   0xdead.beef
@@ -191,6 +191,203 @@
       !>  0xca2.828c.764a.0f3e.76e3.3df0.7be9.8703.06ec.5650.af8e.cae8.8f6f.0c64.2ec8.0bee
       !>  (state-key:cc internal-key.o snapshot.o)
   ==
+::  ------------------------------------------------------------------
+::  OP_PUSHDATA2 -- the publication that does not fit in one length byte
+::
+::  OP_PUSHDATA1 (0x4c) carries a SINGLE length byte and therefore stops
+::  at 255, but +max-publication is 512 and every fief-carrying
+::  publication measures 265-269 bytes.  Before +push-data learned
+::  OP_PUSHDATA2 (0x4d, TWO length bytes, LITTLE-ENDIAN), `[1 wid]` with
+::  wid > 255 packed to wid mod 256 and this lib emitted a silently
+::  corrupt script -- no crash, no parse, an unreadable OP_RETURN on
+::  chain.  These arms pin the encoding at every boundary and make the
+::  inexpressible cases loud.
+::  ------------------------------------------------------------------
+::
+::  +push-hdr: the 3 bytes after the 7-byte OP_RETURN envelope
+++  push-hdr
+  |=  n=@ud
+  ^-  @ux
+  =/  script  (publication-script:cc [n (fil 3 n 0xab)])
+  dat:(take:byt:bcu 3 (drop:byt:bcu 7 script))
+::
+::  the minimal push opcode at each boundary, per Bitcoin's own rules
+++  test-publication-push-opcodes
+  ;:  weld
+    ::  1..75: a direct push -- the opcode IS the length
+    (expect-eq !>(0x3.abab) !>((push-hdr 3)))
+    (expect-eq !>(0x4b.abab) !>((push-hdr 75)))
+    ::  76..255: OP_PUSHDATA1, one length byte
+    (expect-eq !>(0x4c.4cab) !>((push-hdr 76)))
+    (expect-eq !>(0x4c.feab) !>((push-hdr 254)))
+    (expect-eq !>(0x4c.ffab) !>((push-hdr 255)))
+    ::  256..: OP_PUSHDATA2, two LITTLE-ENDIAN length bytes.
+    ::  256 = 0x0100 -> 00 01;  269 = 0x010d -> 0d 01;  512 = 0x0200 -> 00 02
+    (expect-eq !>(0x4d.0001) !>((push-hdr 256)))
+    (expect-eq !>(0x4d.0d01) !>((push-hdr 269)))
+    (expect-eq !>(0x4d.0002) !>((push-hdr 512)))
+  ==
+::
+::  encode -> parse -> compare, across the 255/256 boundary the bug lived on
+++  test-publication-roundtrip-boundaries
+  %-  zing
+  %+  turn  `(list @ud)`~[1 75 76 77 254 255 256 269 511 512]
+  |=  n=@ud
+  ^-  tang
+  =/  payload=hexb:btc  [n (fil 3 n 0xab)]
+  %+  expect-eq
+    !>(`(unit [kel=@ud payload=hexb:btc])``[9 payload])
+    !>((parse-publication:cc (publication-script:cc payload)))
+::
+::  what the encoder cannot express it must CRASH on, never emit
+++  test-publication-refuses-the-inexpressible
+  ;:  weld
+    ::  one byte over the spec's cap
+    %-  expect-fail  |.
+    (publication-script:cc [513 (fil 3 513 0xab)])
+    ::  wider than OP_PUSHDATA2 can name
+    %-  expect-fail  |.
+    (push-data:cc [65.536 (fil 3 65.536 0xab)])
+    ::  a `dat` too wide for its declared `wid` -- the other way to emit a
+    ::  script whose length field lies about its payload
+    %-  expect-fail  |.
+    (publication-script:cc [1 0x12c])
+  ==
+::
+::  a leading byte that is not a push this codec emits is refused, not
+::  read as a length: 0x4d now MEANS OP_PUSHDATA2, and 0x4e/0xff never
+::  meant anything
+++  test-publication-rejects-non-push-opcodes
+  =/  bad
+    |=  [opc=@ux n=@ud]
+    ^-  hexb:btc
+    %-  cat:byt:bcu
+    ~[[5 0x6a.0375.7262] [1 0x1] [1 9] [1 opc] [n (fil 3 n 0xab)]]
+  ;:  weld
+    (expect-eq !>(*(unit [kel=@ud payload=hexb:btc])) !>((parse-publication:cc (bad 0x4e 78))))
+    (expect-eq !>(*(unit [kel=@ud payload=hexb:btc])) !>((parse-publication:cc (bad 0xff 255))))
+    ::  0x4d with a two-byte length that does not match the tail
+    (expect-eq !>(*(unit [kel=@ud payload=hexb:btc])) !>((parse-publication:cc (bad 0x4d 77))))
+  ==
+::  ------------------------------------------------------------------
+::  Golden vector "pushdata2-fief" (/vectors/gw-kelvin-9.json).
+::
+::  A realistic public spawn: a real 108-byte suite-%c pass, a snapshot
+::  committing a fief, a full blind-opening.  269 bytes of payload, so
+::  the script carries OP_PUSHDATA2 `4d 0d 01`.  Causeway desktop
+::  (Python) and Causeway web (TS) pin the SAME bytes from the SAME JSON
+::  -- that agreement is the point of the vector.
+::  ------------------------------------------------------------------
+++  v2-pass
+  ^-  pass
+  0x2aac.0e0b.79f6.b4fc.f9da.c3f6.cf75.f5ba.fdb4.c907.33ed.a811.
+    7d62.eeb8.9440.e15a.4918.dd18.8b5d.d9df.0112.007e.5662.ba9c.
+    7b41.343c.da61.5d33.8992.f009.596a.b8a2.8912.084b.ffd7.93ab.
+    d02b.ae4d.45ed.4517.a917.38d2.eeab.1876.aded.7707.3533.e061.
+    c872.748e.b161.1c02.e4a6.4063
+::
+++  v2-snapshot
+  ^-  snapshot:sa
+  :*  life=1
+      rift=0
+      key=0x7e56.62ba.9c7b.4134.3cda.615d.3389.92f0.
+             0959.6ab8.a289.1208.4bff.d793.abd0.2bae
+      sponsor=~
+      fief=`[%if .64.227.13.22 35.353]
+  ==
+::
+++  v2-internal-key
+  ^-  @ux
+  0x2.79be.667e.f9dc.bbac.55a0.6295.ce87.0b07.
+    029b.fcdb.2dce.28d9.59f2.815b.16f8.1798
+::
+++  v2-publication
+  ^-  publication:sa
+  :-  v2-pass
+  :*  internal-key=v2-internal-key
+      snapshot=v2-snapshot
+      :-  ~
+      :+  :+  txid=0xa1b2.c3d4.e5f6.0718.293a.4b5c.6d7e.8f90.
+                       a1b2.c3d4.e5f6.0718.293a.4b5c.6d7e.8f90
+            vout=1
+          off=0
+        start-height=961.059
+      blind=0x345b.c3c5.fc0e.b35b.ee8d.ce5d.e886.b130.
+               6e79.67e4.e111.b009.ab9e.13d2.2850.6127
+  ==
+::
+++  v2-payload
+  ^-  hexb:btc
+  :-  269
+  0x1.a0d7.3120.5372.018e.b058.473a.39e4.30f0.999a.83bb.f656.3b8c.
+    5577.699c.8bd4.8ba2.f6a2.26d7.15e8.d5c9.ebff.2504.8944.515c.
+    b5ac.0478.c9c4.99ae.306d.1e9a.a03d.4e5d.312b.3f00.8980.efec.
+    ae45.8c6e.8c24.ad70.204a.5c77.b1be.08d4.f699.8364.da7e.ddfa.
+    ba67.fb61.ed7c.7e5a.fbbc.0507.5635.000a.605e.e05b.6c05.ca67.
+    65a3.38b7.6cf3.6f0a.1c2c.1c3a.578a.8156.b1ee.72e7.fb99.f9e6.
+    599c.01f8.775d.815e.9dbc.fe5f.4290.4814.c555.cb4a.8097.4c9c.
+    e90a.d3e6.a109.dae3.d415.b3f2.6706.3ecd.1cf0.2d1a.c681.40c8.
+    50cc.0220.00e4.a35f.1bd7.924e.0ac6.817d.39f5.b06c.28e4.a35f.
+    1bd7.924e.0ac6.817d.39f5.b06c.686c.401a.5175.00fd.2761.5028.
+    d213.9eab.09b0.11e1.e467.796e.30b1.86e8.5dce.8dee.5bb3.0efc.
+    c5c3.5b34
+::
+++  v2-script
+  ^-  hexb:btc
+  :-  279
+  0x6a.0375.7262.0109.4d0d.0101.a0d7.3120.5372.018e.b058.473a.
+    39e4.30f0.999a.83bb.f656.3b8c.5577.699c.8bd4.8ba2.f6a2.26d7.
+    15e8.d5c9.ebff.2504.8944.515c.b5ac.0478.c9c4.99ae.306d.1e9a.
+    a03d.4e5d.312b.3f00.8980.efec.ae45.8c6e.8c24.ad70.204a.5c77.
+    b1be.08d4.f699.8364.da7e.ddfa.ba67.fb61.ed7c.7e5a.fbbc.0507.
+    5635.000a.605e.e05b.6c05.ca67.65a3.38b7.6cf3.6f0a.1c2c.1c3a.
+    578a.8156.b1ee.72e7.fb99.f9e6.599c.01f8.775d.815e.9dbc.fe5f.
+    4290.4814.c555.cb4a.8097.4c9c.e90a.d3e6.a109.dae3.d415.b3f2.
+    6706.3ecd.1cf0.2d1a.c681.40c8.50cc.0220.00e4.a35f.1bd7.924e.
+    0ac6.817d.39f5.b06c.28e4.a35f.1bd7.924e.0ac6.817d.39f5.b06c.
+    686c.401a.5175.00fd.2761.5028.d213.9eab.09b0.11e1.e467.796e.
+    30b1.86e8.5dce.8dee.5bb3.0efc.c5c3.5b34
+::
+++  test-golden-pushdata2-publication
+  =/  script  (make-publication:cc v2-publication)
+  ;:  weld
+    ::  the payload is 269 bytes -- past OP_PUSHDATA1's ceiling
+    (expect-eq !>(v2-payload) !>((jam-octs:cc v2-publication)))
+    ::  ... and the script is byte-identical to the shared vector
+    (expect-eq !>(v2-script) !>(script))
+    ::  ... and reads back to exactly the publication we encoded
+    (expect-eq !>(`(unit publication:sa)``v2-publication) !>((read-publication:cc script)))
+    ::  the fief-carrying snapshot's taproot output key, also pinned in
+    ::  the vector, so a fief silently dropped from the jam would show
+    %+  expect-eq
+      !>  0x6c60.baeb.b2f8.880a.20ee.d197.7ef2.2eae.
+             b93c.f147.f287.661c.12f8.1f83.7240.0d41
+      !>  (state-key:cc v2-internal-key v2-snapshot)
+  ==
+::
+::  ... and the "basic" vector, whose 69-byte payload takes the DIRECT
+::  push (0x45).  Pinned here too so the <=75 path cannot drift while
+::  OP_PUSHDATA2 is added above; Causeway desktop and web assert the same
+::  op_return_script bytes from the same JSON.
+++  test-golden-basic-publication-script
+  =/  pub=publication:sa
+    :-  0xdead.beef.cafe
+    :*  internal-key=0x2.cafe
+        snapshot=`snapshot:sa`[life=2 rift=0 key=0xabcd sponsor=`~zod fief=~]
+        :-  ~
+        :+  [txid=0x1234.5678.9abc.def0 vout=1 off=0]
+          start-height=778.000
+        blind=0xf0de.dc6a.72ec.b8c1.6b5d.af25.2b8d.b53b.
+                 2510.4f32.c2d9.e9bc.3459.db71.6535.ef2e
+    ==
+  %+  expect-eq
+    !>  ^-  hexb:btc
+        :-  77
+        0x6a.0375.7262.0109.4501.427f.e577.df56.ef80.e2af.6c21.3320.
+          34af.969a.05d8.e1bd.7935.f1ac.6864.6c40.82f8.5e00.02b8.bcd7.
+          94c5.6d67.d1f0.a667.0bcb.3c41.94ec.d436.ae94.bc76.ad05.e3b2.
+          cba9.717b.c303
+    !>  (make-publication:cc pub)
 ::
 ::  ---------------------------------------------------------------------
 ::  +with-xtr -- the pass a %anew refresh emits

@@ -40,6 +40,7 @@ _V = _find_vectors()
 _VECS = {v["name"]: v for v in _V["vectors"]}
 BASIC = _VECS["basic"]
 SKP = _VECS["state-key-pin"]
+PD2 = _VECS["pushdata2-fief"]
 
 # Byte convention (pinned by the JSON + the compiled Hoon lib gw-btc-pass.hoon
 # and its passing test, the real authority): a jammed noun enters a tagged-hash
@@ -58,9 +59,14 @@ def _snap(vec) -> dict:
         sponsor = 0  # ~zod @p
     elif sponsor is not None:
         sponsor = cw.patp_to_int("~" + sponsor)
+    # A vector's fief block carries the $fief NOUN verbatim under "noun"
+    # ([tag, [p, q]]), which is what causeway.fief_noun consumes.
+    fief = s.get("fief")
+    if fief is not None:
+        fief = fief["noun"]
     return {
         "life": s["life"], "rift": s["rift"],
-        "key": int(s["key"], 16), "sponsor": sponsor, "fief": None,
+        "key": int(s["key"], 16), "sponsor": sponsor, "fief": fief,
     }
 
 
@@ -431,13 +437,15 @@ def test_golden_publication_jam():
 def test_publication_script_shape():
     pub = BASIC["publication"]
     script = cw.make_publication_script(int(pub["pass"], 16), _basic_opening())
-    # OP_RETURN PUSH3 'urb' PUSH1 <kelvin=0x09> then pushdata.  (The JSON's
-    # `op_return_script` field is illustrative and even drops the 0x09 kelvin
-    # byte; the binding golden is jam_publication_le, checked above.)
+    # OP_RETURN PUSH3 'urb' PUSH1 <kelvin=0x09> then pushdata.
     assert script[:7] == bytes([0x6A, 0x03, 0x75, 0x72, 0x62, 0x01, 0x09])
     payload = bytes.fromhex(pub["jam_publication_le"])
     assert len(payload) == 69  # <= 75 -> a direct length push, not PUSHDATA1
     assert script[7:] == bytes([len(payload)]) + payload
+    # ... and the whole script is pinned in the shared vector
+    assert script.hex() == pub["op_return_script"]
+    assert len(script) == pub["op_return_script_bytes"]
+    assert script[7:8].hex() == pub["pushdata"]
 
 
 def test_publication_small_payload_uses_direct_push():
@@ -448,6 +456,89 @@ def test_publication_small_payload_uses_direct_push():
     payload = cw.jam_bytes(cw.publication_noun(1, opening))
     assert len(payload) <= 75
     assert script[7] == len(payload)  # direct push, not 0x4c
+
+
+# ---------------------------------------------------------------------------
+# OP_PUSHDATA2 — the publication that does not fit in one length byte.
+#
+# PUSHDATA1 (0x4c) carries a SINGLE length byte and so stops at 255, but
+# MAX_PUBLICATION is 512 and every fief-carrying publication measures 265–269.
+# This used to raise here ("bytes must be in range(0, 256)") and, worse,
+# silently emit a corrupt script on the Hoon side.  The vector below is the
+# shared cross-language pin: Hoon's +make-publication produces these exact
+# bytes for these exact inputs.
+# ---------------------------------------------------------------------------
+
+
+def _pd2_opening() -> dict:
+    pub = PD2["publication"]
+    sp = PD2["spawn_sont"]
+    return {
+        "internal_key": int(pub["internal_key"], 16),
+        "snapshot": _snap(PD2),
+        "blind_opening": {
+            "spawn": {"txid_hex": sp["txid"], "vout": sp["vout"], "off": sp["off"]},
+            "start_height": pub["start_height"],
+            "blind": bytes.fromhex(PD2["blind"]),
+        },
+    }
+
+
+def test_golden_pushdata2_blind_and_commitments():
+    # the vector's own inputs reproduce its blind / d / snapshot jam / Q
+    assert cw.make_blind(int(PD2["seed"], 16)).hex() == PD2["blind"]
+    sp = PD2["spawn_sont"]
+    assert cw.spawn_commit(
+        sp["txid"], sp["vout"], sp["off"], bytes.fromhex(PD2["blind"])
+    ).hex() == PD2["spawn_commit_d"]
+    snap = _snap(PD2)
+    assert cw.jam_bytes(cw.snapshot_dict_to_noun(snap)).hex() == PD2["jam_snapshot_le"]
+    assert cw.state_commit(snap).hex() == PD2["state_commit_c"]
+    q = cw.state_output_key(bytes.fromhex(PD2["internal_key_compressed"]), snap)
+    assert q.hex() == PD2["state_output_key_q"]
+
+
+def test_golden_pushdata2_publication_script():
+    """The whole point: byte-identical to Hoon for a >255-byte payload."""
+    pub = PD2["publication"]
+    pass_atom = int(pub["pass"], 16)
+    payload = cw.jam_bytes(cw.publication_noun(pass_atom, _pd2_opening()))
+    assert payload.hex() == pub["jam_publication_le"]
+    assert len(payload) == pub["payload_bytes"] == 269
+    assert len(payload) > 255  # PUSHDATA1 cannot express this
+
+    script = cw.make_publication_script(pass_atom, _pd2_opening())
+    assert script.hex() == pub["op_return_script"]
+    assert len(script) == pub["op_return_script_bytes"] == 279
+    # envelope, then OP_PUSHDATA2 with a TWO-byte LITTLE-ENDIAN length
+    assert script[:7] == bytes([0x6A, 0x03, 0x75, 0x72, 0x62, 0x01, 0x09])
+    assert script[7:10].hex() == pub["pushdata"] == "4d0d01"
+    assert script[8] | (script[9] << 8) == 269
+    assert script[10:] == payload
+
+
+@pytest.mark.parametrize("n,head", [
+    (3, "03"), (75, "4b"),                      # direct push: opcode IS the length
+    (76, "4c4c"), (254, "4cfe"), (255, "4cff"),  # PUSHDATA1, one length byte
+    (256, "4d0001"), (269, "4d0d01"), (512, "4d0002"),  # PUSHDATA2, LE length
+])
+def test_push_data_boundaries(n, head):
+    assert cw.push_data(b"\xab" * n).hex() == head
+
+
+def test_push_data_refuses_what_it_cannot_express():
+    assert len(cw.push_data(b"\xab" * 0xFFFF)) == 3
+    with pytest.raises(ValueError):
+        cw.push_data(b"\xab" * 0x10000)
+
+
+def test_publication_script_refuses_over_cap():
+    big = {"internal_key": int("ab" * 250, 16),
+           "snapshot": {"life": 1, "rift": 0, "key": int("cd" * 250, 16),
+                        "sponsor": None, "fief": None},
+           "blind_opening": None}
+    with pytest.raises(ValueError, match="publication payload"):
+        cw.make_publication_script(int("ef" * 200, 16), big)
 
 
 def test_golden_xtr_jam():

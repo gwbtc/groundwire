@@ -10,8 +10,10 @@
 //   * basic.state_commit_c  — JSON "8b4d1c6c…" is inconsistent with its own
 //                             basic.jam_snapshot_le (H_tag over it = 0bea6bbe…),
 //                             and with the Hoon `snap` test (life=1/sponsor=~ → c31d…).
-//   * basic.publication.op_return_script version byte — JSON shows "…0145";
-//                             Hoon +publication-script uses the Kelvin, 0x09.
+//
+// (basic.publication.op_return_script used to be a prose placeholder; it now
+// holds the real bytes, cross-checked against Hoon +make-publication, and is
+// asserted below.)
 //
 // For those we assert against the AUTHORITATIVE Hoon-test values (and prove the
 // JSON is self-inconsistent) rather than fudge. Every other JSON field
@@ -30,7 +32,8 @@ import {
   type Snapshot,
 } from "../src/spawn/snapshot.js";
 import {
-  publicationNoun, buildPublicationScript, type Opening,
+  publicationNoun, buildPublicationScript, pushData, MAX_PUBLICATION,
+  type Opening,
 } from "../src/spawn/publication.js";
 import { buildXtrAtom, type XtrEntry } from "../src/spawn/reveal-log.js";
 import { jam } from "../src/protocol/jam.js";
@@ -43,6 +46,7 @@ const VEC = JSON.parse(readFileSync(
 ));
 const basic = VEC.vectors.find((v: any) => v.name === "basic");
 const skp = VEC.vectors.find((v: any) => v.name === "state-key-pin");
+const pd2 = VEC.vectors.find((v: any) => v.name === "pushdata2-fief");
 
 const jamHex = (n: any): string => bytesToHex(jam(n));
 const atomHexLE = (a: bigint): string => bytesToHex(minimalLEBytes(a));
@@ -164,6 +168,98 @@ describe("kelvin-9 publication", () => {
     expect(payload.length).toBeLessThanOrEqual(75);
     expect(script[7]).toBe(payload.length); // 0x45 == 69
     expect(bytesToHex(script.slice(8))).toBe(basic.publication.jam_publication_le);
+    // ... and the whole script is pinned in the shared vector
+    expect(bytesToHex(script)).toBe(basic.publication.op_return_script);
+    expect(script.length).toBe(basic.publication.op_return_script_bytes);
+    expect(bytesToHex(script.slice(7, 8))).toBe(basic.publication.pushdata);
+  });
+});
+
+// OP_PUSHDATA2 — the publication that does not fit in one length byte.
+//
+// PUSHDATA1 (0x4c) carries a SINGLE length byte and so stops at 255, but
+// MAX_PUBLICATION is 512 and every fief-carrying publication measures 265–269.
+// Uint8Array.of(0x4c, n) silently takes n mod 256, so this used to emit a
+// corrupt script here with no error at all. The vector is the cross-language
+// pin: the Hoon desk (+make-publication) and the Python desktop tool
+// (make_publication_script) produce these exact bytes for these exact inputs.
+describe("kelvin-9 publication — OP_PUSHDATA2 (pushdata2-fief vector)", () => {
+  const snap: Snapshot = {
+    life: pd2.snapshot.life,
+    rift: pd2.snapshot.rift,
+    key: BigInt("0x" + pd2.snapshot.key),
+    sponsor: null,
+    fief: { type: "if", ip: pd2.snapshot.fief.ip_atom, port: pd2.snapshot.fief.port },
+  };
+  const spawn: SpawnSont = {
+    txidHex: pd2.spawn_sont.txid,
+    vout: pd2.spawn_sont.vout,
+    off: pd2.spawn_sont.off,
+  };
+  const opening: Opening = {
+    internalKey: BigInt("0x" + pd2.publication.internal_key),
+    snapshot: snap,
+    blindOpening: {
+      spawnSont: spawn,
+      startHeight: pd2.publication.start_height,
+      blind: BigInt("0x" + pd2.blind),
+    },
+  };
+  const pass = BigInt("0x" + pd2.publication.pass);
+
+  it("the fief-carrying snapshot reproduces the vector's jam, c and Q", () => {
+    expect(jamHex(snapshotToNoun(snap))).toBe(pd2.jam_snapshot_le);
+    expect(bytesToHex(stateCommit(snap))).toBe(pd2.state_commit_c);
+    expect(bytesToHex(stateLeafScript(stateCommit(snap)))).toBe(pd2.state_leaf_script);
+    expect(bytesToHex(leafHash(stateLeafScript(stateCommit(snap))))).toBe(pd2.state_leaf_hash);
+    expect(bytesToHex(stateOutputKey(hexToBytes(pd2.internal_key_compressed), snap)))
+      .toBe(pd2.state_output_key_q);
+  });
+
+  it("blind and d match the vector", () => {
+    expect(bytesToHex(makeBlind(BigInt("0x" + pd2.seed)))).toBe(pd2.blind);
+    expect(bytesToHex(spawnCommit(spawn, hexToBytes(pd2.blind)))).toBe(pd2.spawn_commit_d);
+    expect(jamHex(spawnNoun(spawn))).toBe(pd2.jam_spawn_le);
+  });
+
+  it("jam(publication) is 269 bytes and matches the vector", () => {
+    const payload = jam(publicationNoun(pass, opening));
+    expect(bytesToHex(payload)).toBe(pd2.publication.jam_publication_le);
+    expect(payload.length).toBe(pd2.publication.payload_bytes);
+    expect(payload.length).toBe(269);
+    expect(payload.length).toBeGreaterThan(255); // PUSHDATA1 cannot express this
+  });
+
+  it("the script uses OP_PUSHDATA2 with a two-byte LITTLE-ENDIAN length", () => {
+    const script = buildPublicationScript(pass, opening);
+    expect(bytesToHex(script)).toBe(pd2.publication.op_return_script);
+    expect(script.length).toBe(pd2.publication.op_return_script_bytes);
+    expect(bytesToHex(script.slice(0, 7))).toBe("6a03757262" + "01" + "09");
+    expect(bytesToHex(script.slice(7, 10))).toBe(pd2.publication.pushdata);
+    expect(bytesToHex(script.slice(7, 10))).toBe("4d0d01");
+    expect(script[8]! | (script[9]! << 8)).toBe(269); // little-endian, lo then hi
+    expect(bytesToHex(script.slice(10))).toBe(pd2.publication.jam_publication_le);
+  });
+});
+
+describe("pushData boundaries", () => {
+  const cases: [number, string][] = [
+    [3, "03"], [75, "4b"],                          // direct push: opcode IS length
+    [76, "4c4c"], [254, "4cfe"], [255, "4cff"],     // PUSHDATA1, one length byte
+    [256, "4d0001"], [269, "4d0d01"], [512, "4d0002"], // PUSHDATA2, LE length
+  ];
+  for (const [n, head] of cases) {
+    it(`${n} bytes -> ${head}`, () => {
+      expect(bytesToHex(pushData(new Uint8Array(n).fill(0xab)))).toBe(head);
+    });
+  }
+  it("refuses what OP_PUSHDATA2 cannot express", () => {
+    expect(pushData(new Uint8Array(0xffff)).length).toBe(3);
+    expect(() => pushData(new Uint8Array(0x10000))).toThrow(/OP_PUSHDATA2/);
+  });
+  it("MAX_PUBLICATION is inside PUSHDATA2's range", () => {
+    expect(MAX_PUBLICATION).toBe(512);
+    expect(MAX_PUBLICATION).toBeLessThanOrEqual(0xffff);
   });
 });
 

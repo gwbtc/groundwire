@@ -53,17 +53,34 @@ export function publicationNoun(pass: bigint, o: Opening): Noun {
   return [pass, openingNoun(o)];
 }
 
+// The minimal Bitcoin push opcode(s) for `payload`.
+//
+// A direct push (opcode = length) reaches 75. PUSHDATA1 (0x4c) carries ONE
+// length byte and so stops at 255 — below this codec's own 512-byte cap, so a
+// fief-carrying publication (265–269 bytes in practice) needs PUSHDATA2 (0x4d)
+// and its TWO-byte LITTLE-ENDIAN length. Byte-for-byte identical to
+// +push-data:gw-btc-pass and push_data() in causeway/desktop/causeway.py.
+//
+// Note Uint8Array.of(0x4c, n) SILENTLY takes n mod 256 — which is exactly how a
+// >255-byte payload used to produce a corrupt script here. Anything this cannot
+// express throws.
+export function pushData(payload: Uint8Array): Uint8Array {
+  const n = payload.length;
+  if (n <= 75) return Uint8Array.of(n);
+  if (n <= 0xff) return Uint8Array.of(0x4c, n);
+  if (n <= 0xffff) return Uint8Array.of(0x4d, n & 0xff, (n >>> 8) & 0xff);
+  throw new Error(`publication: push ${n} bytes is too big for OP_PUSHDATA2`);
+}
+
 // The full OP_RETURN scriptPubKey for a publication. Payloads over 75 bytes use
-// PUSHDATA1 (0x4c len); payloads over MAX_PUBLICATION are rejected.
+// PUSHDATA1 (0x4c len), over 255 PUSHDATA2 (0x4d len-lo len-hi); payloads over
+// MAX_PUBLICATION are rejected.
 export function buildPublicationScript(pass: bigint, o: Opening): Uint8Array {
   const payload = jam(publicationNoun(pass, o));
   if (payload.length > MAX_PUBLICATION) {
     throw new Error(`publication: payload ${payload.length} > ${MAX_PUBLICATION} bytes`);
   }
-  const psh = payload.length <= 75
-    ? Uint8Array.of(payload.length)
-    : Uint8Array.of(0x4c, payload.length);
   // 6a 03 'urb'(75 72 62) 01 <kelvin> <pushdata> <payload>
   const prefix = Uint8Array.of(0x6a, 0x03, 0x75, 0x72, 0x62, 0x01, KELVIN);
-  return concatBytes(prefix, psh, payload);
+  return concatBytes(prefix, pushData(payload), payload);
 }

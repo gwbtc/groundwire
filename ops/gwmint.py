@@ -440,7 +440,11 @@ def cmd_build(label, publish=False, fief=None, sponsor=None, fee_rate=1,
         chk("OP_RETURN envelope 6a 03 'urb' 01 09",
             pub_spk.startswith("6a0375726201" + "09"))
         chk("output 1 value == 0", dec["vout"][1]["value"] == 0)
-        print(f"       publication payload: {(len(pub_spk) // 2) - 9} bytes")
+        # envelope = 7 prefix bytes + the pushdata header (1 direct / 2
+        # PUSHDATA1 / 3 PUSHDATA2), so measure the payload rather than
+        # assuming PUSHDATA1.
+        pub_len = len(C.jam_bytes(C.publication_noun(pub_pass, pub_open)))
+        print(f"       publication payload: {pub_len} bytes")
     else:
         chk("no OP_RETURN output (confidential)",
             all(not o["scriptPubKey"].startswith("6a") for o in dec["vout"]))
@@ -820,7 +824,8 @@ def cmd_publish(label, artifact_n, fee_rate=4):
     chk("OP_RETURN envelope 6a 03 'urb' 01 09",
         pub_spk.startswith("6a03757262" + "0109"), pub_spk[:16])
     chk("OP_RETURN value is 0", dec["vout"][1]["value"] == 0)
-    chk("publication <= 512 bytes", len(bytes.fromhex(pub_spk)) <= 512 + 8,
+    # 512-byte payload + 7-byte envelope + up to a 3-byte PUSHDATA2 header.
+    chk("publication <= 512 bytes", len(bytes.fromhex(pub_spk)) <= 512 + 10,
         f"{len(bytes.fromhex(pub_spk))} bytes")
 
     # Core 29 rejects our OP_RETURN by policy, so testmempoolaccept on the real

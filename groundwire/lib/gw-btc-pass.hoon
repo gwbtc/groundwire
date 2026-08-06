@@ -197,14 +197,39 @@
 ::  verifiable and indexable with no packet exchange.
 ::
 ++  max-publication  512
+::  +push-data: the minimal Bitcoin push opcode(s) for a byte string
+::
+::    A direct push (opcode = length) reaches 75.  OP_PUSHDATA1 (0x4c)
+::    carries ONE length byte and therefore stops at 255 -- which is
+::    below this codec's own 512-byte cap, so a fief-carrying
+::    publication (265-269 bytes in practice) needs OP_PUSHDATA2
+::    (0x4d) and its TWO-byte LITTLE-ENDIAN length.
+::
+::    Every arm here is total or crashes: a width this encoding cannot
+::    express, or a `dat` too wide for its declared `wid`, is an %exit
+::    with a named reason.  It must never be a silently truncated
+::    length field -- `[1 wid]` with wid > 255 packs to wid mod 256 and
+::    emits a script that no parser can read back and no operator can
+::    see is wrong.
+::
+++  push-data
+  |=  b=hexb:btc
+  ^-  hexb:btc
+  ~|  [%push-data-width-exceeds-declared-wid (met 3 dat.b) wid.b]
+  ?>  (lte (met 3 dat.b) wid.b)
+  ?:  (lte wid.b 75)  [1 wid.b]
+  ?:  (lte wid.b 0xff)
+    (cat:byt:bcu ~[[1 0x4c] [1 wid.b]])
+  ?:  (lte wid.b 0xffff)
+    (cat:byt:bcu ~[[1 0x4d] (flip:byt:bcu [2 wid.b])])
+  ~|([%push-data-too-big-for-pushdata2 wid.b] !!)
 ::
 ++  publication-script
   |=  payload=hexb:btc
   ^-  hexb:btc
+  ~|  [%publication-payload-over-cap wid.payload max-publication]
   ?>  (lte wid.payload max-publication)
-  =/  psh=hexb:btc
-    ?:  (lte wid.payload 75)  [1 wid.payload]
-    (cat:byt:bcu ~[[1 0x4c] [1 wid.payload]])
+  =/  psh=hexb:btc  (push-data payload)
   (cat:byt:bcu ~[[5 0x6a.0375.7262] [1 0x1] [1 kelvin] psh payload])
 ::  +make-publication: full OP_RETURN scriptPubKey for a $publication
 ::
@@ -235,6 +260,12 @@
   ;;(publication:sa (cue (rev 3 wid.payload.u.env dat.payload.u.env)))
 ::  +parse-publication: (unit [kelvin payload]) from an output script
 ::
+::    Reads the three push forms +push-data can emit -- a direct push
+::    (1-75), OP_PUSHDATA1 (0x4c, one length byte) and OP_PUSHDATA2
+::    (0x4d, two LITTLE-ENDIAN length bytes).  Any other leading opcode
+::    is not a push this codec produced, so the script is refused
+::    rather than read as a length.
+::
 ++  parse-publication
   |=  script=hexb:btc
   ^-  (unit [kel=@ud payload=hexb:btc])
@@ -246,10 +277,14 @@
   ?>  =(0x1 dat:(take:byt:bcu 1 rst))
   =/  kel  dat:(take:byt:bcu 1 (drop:byt:bcu 1 rst))
   =.  rst  (drop:byt:bcu 2 rst)
-  =?  rst  =(0x4c dat:(take:byt:bcu 1 rst))
-    (drop:byt:bcu 1 rst)
-  =/  len=@ud  dat:(take:byt:bcu 1 rst)
-  =.  rst  (drop:byt:bcu 1 rst)
+  =/  opc=@ux  dat:(take:byt:bcu 1 rst)
+  =/  [len=@ud hed=@ud]
+    ?:  =(0x4c opc)  [dat:(take:byt:bcu 1 (drop:byt:bcu 1 rst)) 2]
+    ?:  =(0x4d opc)  [dat:(flip:byt:bcu (take:byt:bcu 2 (drop:byt:bcu 1 rst))) 3]
+    ::  a direct push: the opcode IS the length, and only 0-75 is one
+    ?>  (lte opc 75)
+    [`@ud`opc 1]
+  =.  rst  (drop:byt:bcu hed rst)
   ?>  =(len wid.rst)
   ?>  (lte len max-publication)
   [`@ud`kel rst]

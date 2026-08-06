@@ -564,6 +564,16 @@ attempted here.
 *Classification: **real bug**, high severity, previously unfound. Found only
 because these comets commit a fief at spawn.*
 
+> **Fixed after this run.** `OP_PUSHDATA2` support landed in all three
+> encoders (`+push-data:gw-btc-pass`, `causeway.push_data`,
+> `publication.ts pushData`) and in `+parse-publication`, with a shared
+> golden vector `pushdata2-fief` in `vectors/gw-kelvin-9.json` pinning a
+> 269-byte fief-carrying publication byte-for-byte across Hoon, Python and
+> TypeScript. The Hoon encoder now crashes `%exit` with a named reason on
+> anything it cannot express instead of truncating a length byte. The
+> **Tier-1 declassification path itself is still untested end to end** — the
+> encoding blocker is gone, but nothing has been broadcast.
+
 ---
 
 # Gap 2 — the residual single-flight wedge: **INDUCED, NOT TRIGGERED**
