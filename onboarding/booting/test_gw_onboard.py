@@ -1,7 +1,9 @@
 """Tests for gw-onboard.py pure functions."""
 
 import importlib.util
+import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -241,6 +243,79 @@ class TestCopyToClipboard(unittest.TestCase):
             patch("subprocess.run", side_effect=subprocess.SubprocessError),
         ):
             self.assertFalse(gw.copy_to_clipboard("hello"))
+
+
+class TestAgentInstructionFiles(unittest.TestCase):
+    def test_creates_agents_stub_and_claude_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            gw._write_agent_instruction_files(
+                tmp, "~sample-pier", "sample-pier", attested_to_bitcoin=False
+            )
+
+            agents_path = os.path.join(tmp, "AGENTS.md")
+            claude_path = os.path.join(tmp, "CLAUDE.md")
+            self.assertTrue(os.path.isfile(agents_path))
+            with open(agents_path, encoding="utf-8") as f:
+                content = f.read()
+            self.assertIn("You are ~sample-pier", content)
+            self.assertIn("configured for you as sample-pier", content)
+            self.assertIn(
+                "You do not have a permanent, sybil-resistant Groundwire ID attested to on the Bitcoin mainnet.",
+                content,
+            )
+            self.assertTrue(os.path.islink(claude_path))
+            self.assertEqual(os.readlink(claude_path), "AGENTS.md")
+
+    def test_preserves_existing_agents_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            agents_path = os.path.join(tmp, "AGENTS.md")
+            with open(agents_path, "w", encoding="utf-8") as f:
+                f.write("custom instructions\n")
+
+            gw._write_agent_instruction_files(
+                tmp, "~sample-pier", "sample-pier", attested_to_bitcoin=True
+            )
+
+            with open(agents_path, encoding="utf-8") as f:
+                self.assertEqual(f.read(), "custom instructions\n")
+
+    def test_renders_attested_groundwire_id_status(self):
+        content = gw._render_agent_instructions(
+            "~sample-pier", "sample-pier", attested_to_bitcoin=True
+        )
+
+        self.assertIn(
+            "You have a permanent, sybil-resistant Groundwire ID attested to on the Bitcoin mainnet.",
+            content,
+        )
+        self.assertNotIn("may or may not", content)
+
+    def test_mcp_server_name_for_long_pier(self):
+        self.assertEqual(
+            gw._mcp_server_name_for_pier("watwyd-bannyt-parmep-sivpes-motweb-daplyd"),
+            "watwyd_daplyd",
+        )
+
+    def test_write_ship_mcp_configs_creates_agent_instruction_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pier_path = os.path.join(tmp, "sample-pier")
+            os.mkdir(pier_path)
+
+            gw._write_ship_mcp_configs(
+                pier_path, 8080, "urbauth-test=abc", "~sample-pier", attested_to_bitcoin=True
+            )
+
+            agents_path = os.path.join(pier_path, "AGENTS.md")
+            self.assertTrue(os.path.isfile(agents_path))
+            with open(agents_path, encoding="utf-8") as f:
+                self.assertIn(
+                    "You have a permanent, sybil-resistant Groundwire ID attested to on the Bitcoin mainnet.",
+                    f.read(),
+                )
+            claude_path = os.path.join(pier_path, "CLAUDE.md")
+            self.assertTrue(os.path.islink(claude_path))
+            self.assertEqual(os.readlink(claude_path), "AGENTS.md")
+            self.assertTrue(os.path.isfile(os.path.join(pier_path, ".mcp.json")))
 
 
 if __name__ == "__main__":

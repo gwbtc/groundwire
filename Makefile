@@ -96,7 +96,7 @@ $(ONBOARD_VENV):
 	python3 -m venv $(ONBOARD_VENV)
 	$(ONBOARD_VENV)/bin/pip install -q -r $(ONBOARD_DIR)/requirements.txt pyinstaller
 
-$(ONBOARD_BIN): $(ONBOARD_VENV) $(ONBOARD_DIR)/gw-onboard.py
+$(ONBOARD_BIN): $(ONBOARD_VENV) $(ONBOARD_DIR)/gw-onboard.py $(ONBOARD_DIR)/AGENTS.md
 	@echo "Building gw-onboard binary..."
 	cd $(ONBOARD_DIR) && .venv/bin/pyinstaller --onefile \
 		--hidden-import requests \
@@ -113,6 +113,7 @@ $(ONBOARD_BIN): $(ONBOARD_VENV) $(ONBOARD_DIR)/gw-onboard.py
 		--hidden-import bitarray._util \
 		--hidden-import nacl._sodium \
 		--hidden-import mmh3 \
+		--add-data AGENTS.md:. \
 		gw-onboard.py
 	@echo "gw-onboard binary built at $(ONBOARD_BIN)"
 

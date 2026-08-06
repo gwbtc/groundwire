@@ -5,7 +5,7 @@ a = Analysis(
     ['gw-onboard.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('AGENTS.md', '.')],
     hiddenimports=['requests', 'nacl.bindings', 'embit.util.secp256k1', '_cffi_backend', 'bitstring.bitstore_bitarray', 'bitstring.bitstore_bitarray_helpers', 'bitstring.bitstore_common_helpers', 'bitstring.bitstore_tibs', 'bitstring.bitstore_tibs_helpers', 'bitarray', 'bitarray._bitarray', 'bitarray._util', 'nacl._sodium', 'mmh3'],
     hookspath=[],
     hooksconfig={},
