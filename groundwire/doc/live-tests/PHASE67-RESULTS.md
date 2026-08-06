@@ -1047,3 +1047,494 @@ C3 holds C1 at `lyfe [~ 3]`, `dome %gw-btc`, with a direct `%if` forward
 lane. It also pushed C2's fief lamp on its verdict — the **second
 independent confirmation** of `+on-publ-full`'s fix, on a different ship.
 
+
+---
+---
+
+# FIXES — 2026-08-06, later the same day
+
+Everything below was written after the run above, against its findings.
+Repo `/Users/trent/gw-building/groundwire` @ `hd/cc-landing`; nothing pushed.
+The kernel (`hd/cc-kernel` @ `efe63a546e`) needed **no change**: every defect
+here is in the `%gw-btc` desk or in Causeway.
+
+Build and test loop: the desk was committed to a scratch `%gwfix` desk on a
+`~zod` fakeship booted from the same P67 pill (so, base kelvin 408) and each
+changed file `%ca`-built out of that ship's own clay, then `-test`ed there.
+Deployment to the three mainnet comets was by `|commit %.n` into `%gw-p4` on
+each live pier, with `/x/ready` — a scry that only the fixed agent answers —
+as the proof that the agent really reloaded.
+
+## Bug 1 — the readiness gate was not a readiness check
+
+### What was actually wrong
+
+Two independent fail-open defects, either of which alone produces the false
+`INVALID`:
+
+**(a) `?~ best` is a `~`-check, not a sync check.** `%bitcoin-client` answers
+a fresh `/best-block` subscription with the **genesis** block, so `best` is
+set within milliseconds of boot. A ship 961,000 blocks behind sailed through
+a gate whose comment said "drop until the light client is usable".
+
+**(b) `+scan-liveness` returned "unspent" on an empty range.** Its loop exits
+when `h > best-height`; with the tip believed to be genesis that test is true
+on the *first* iteration, so it returned `` `%.y `` having examined **zero**
+blocks. `[%gw-btc-lc-scan-clean … from=961.196 to=0]` is that, verbatim. A
+spent tip would have read identically.
+
+And one classification defect that turned the result into a snub rather than
+silence: **`sponsor-known` was in the fraud class.** A verifier's public index
+is a *window* on the chain — it starts at an operator-chosen height and ends
+at whatever block the scanner has reached — so "not in it" can never mean
+"does not exist". C3 failed C1 on a sponsor that was C3 itself, 20 blocks
+above its own cursor.
+
+### What changed
+
+| file | change |
+|---|---|
+| `app/gw-btc.hoon` | new `.synced` state field, fed by a persistent `/is-synced` subscription to `%bitcoin-client` (the node's *own* answer to "am I caught up": block headers **and** filter headers at the tip, with live peers) |
+| `app/gw-btc.hoon` | the `%jael-writ` gate is now three conditions — `best` exists, `.synced`, and `best-height >= +log-top-height` (the highest block this particular log's evidence needs). Each failure logs and drops; none can produce a verdict |
+| `app/gw-btc.hoon` | the same gate on `+begin-anew`, so we cannot publish our own pass against a chain we have not seen |
+| `lib/lc-attestation.hoon` | `+scan-liveness` returns `~` (undeterminable) on a degenerate range, and logs `%gw-btc-lc-scan-degenerate` |
+| `lib/lc-attestation.hoon` | a zero-width BIP-158 filter is `%error`, not "no match" — the same fail-open one level down |
+| `lib/self-attestation.hoon` | **a third verdict class.** `+unknown-checks` / `+unknown-verdict`: a verdict whose failures are all *unevaluable* produces **no verdict at all** |
+| `lib/self-attestation.hoon` | `tip-unspent` split into `tip-scanned` (could we look?) and `tip-unspent` (did we find it spent?). Conflating them made "we could not look" indistinguishable from "we looked and it is gone" |
+| `lib/self-attestation.hoon` | `sponsor-known` moved from fraud to unevaluable |
+| `app/gw-btc.hoon` | `+report` names the OUTCOME (`VALID` / `STALE` / `UNDETERMINED` / `INVALID`) and marks each check `[ok]` / `[..]` stale / `[??]` unevaluable / `[XX]` fraud |
+
+The rule the whole change encodes: **a check that cannot be evaluated must
+never contribute a negative verdict.** `%stale` was already the non-fraud
+outcome for evidence that has *expired*; this adds the outcome for evidence we
+were unable to *examine*, which is weaker still and must be quieter still.
+
+### Audit — other checks that could evaluate against nothing
+
+Asked for explicitly, and reported whether fixed or not:
+
+| site | verdict |
+|---|---|
+| `+scan-liveness` empty range | **was fail-open — fixed** |
+| zero-width compact filter | not reachable today (the node registers a pending request rather than answering with a placeholder) — **guarded anyway** |
+| `sponsor-known` against an empty `known-public` | **was fraud — now unevaluable** |
+| `tracked-tip`, `tracked-prefix`, `life-monotonic` | only appended when `tracked` is `^`; `tracked-prefix` is vacuously `%.y` otherwise. Sound |
+| `fetch-count`, `chain-nonempty`, `chain-bounded` | structural, evaluable from the writ alone |
+| `+block-spends` on a block with no transactions | impossible (every block has a coinbase) |
+| `+derive-tip` / `opening-checks` | consume only fetched transactions; a missing fetch fails the strand, never a check |
+| `+self-known-public` (the `%anew` path) | deliberately admits our own owner-chosen sponsors — a liveness carve-out, documented, and it never travels to a peer |
+
+**One further fail-open, found while auditing and not previously known.**
+`.indexing` was declared `indexing=_|` to force its bunt to `%.n`. `_` is
+`$_`, the mold that **ignores its input** and returns the pinned value — so
+`;;(gw-state …)` in `+on-load` rewrote `.indexing` to `%.n` on **every
+upgrade**. Proven on a live mainnet ship: C3 held `%.y` before a desk
+redeploy and `%.n` immediately after, with nothing else changed. The
+consequence is not cosmetic: `.indexing` was the one-shot guard on
+`%gw-index-from`, which replaces `urb-state` **wholesale** — cursor, sat
+index and `unv-ids` — and `unv-ids` is exactly the set `sponsor-known` reads.
+So every desk upgrade re-armed a poke that would silently destroy the public
+index. Fixed three ways: an honest `?`, `+on-init` pinning both flags
+explicitly, and a bootstrap guard that looks at **the index itself** (a moved
+cursor or a single indexed point) rather than at a flag. The same `_|` trap
+had already reappeared in `.synced`, where it would have been worse:
+`/is-synced` gives a fact on the initial watch and then only on
+*transitions*, so a value reset by `+on-load` is not repaired by the next
+fact — it is repaired the next time the light client changes its mind. An
+upgrade would have held every attestation until then. Fail-closed, but dead.
+
+## Bug 2 — the stranded single-flight slot
+
+Phase 6.2 found the safety half correct (no verdict, no snub) and the liveness
+half broken: after a runtime fault the `inflight` slot was held for the full
+`+stuck-job-guard` of **two hours**, and the two retries poked in that window
+were dropped in total silence.
+
+The report's own diagnosis was right and is what was implemented: **release
+the slot when the LIGHT CLIENT fails, as distinct from the attestation
+failing** — exactly what `+block-fetch-timeout` already does for the public
+scanner. It needed no new state, no queue and no lock, which is what the
+repo owner asked for.
+
+The node never nacks: a request it cannot serve registers a pending request
+and waits for a peer, forever. So a `+watch-one` against a light client whose
+peers have died blocks the strand permanently. `+lc-fetch-timeout` (`~m5`)
+now wraps **every** individual light-client request — each `+fetch-tx-at` and
+each `+scan-height` — in `+set-timeout:strandio`. On expiry the strand fails,
+which lands on the `%verify` `[%khan %arow %.n]` branch, which deletes the
+`inflight` entry *before* it dispatches on the sign, logs
+`verification thread … ended without a verdict`, and emits nothing.
+
+Bounding each **request** rather than the whole verification is deliberate:
+a verification is legitimately `O(blocks since the comet last moved its sat)`
+and a fixed overall deadline would make long-dormant comets unverifiable as a
+function of a magic number. `+stuck-job-guard` stays at `~h2` as the
+leak backstop it was always documented to be.
+
+And the silence is gone. Every one of `%jael-writ`'s drop paths now logs one
+line naming the ship and the reason:
+
+```
+%gw-btc: writ from ~havnyl-… dropped: a verification is already in flight
+%gw-btc: writ from ~havnyl-… dropped: public-spawn replay in progress
+%gw-btc: writ from ~havnyl-… dropped: sponsorship declined by operator
+%gw-btc: writ from ~havnyl-… dropped: already a public point
+%gw-btc: writ from ~havnyl-… held: light client NOT synced
+%gw-btc: writ from ~havnyl-… held: tip N below evidence height M
+%gw-btc: writ from ~havnyl-… held: no chain tip yet
+```
+
+Because it is one line per dropped writ, the log is also the peer's retry
+rate, which is itself the thing an operator wants to know.
+
+`+begin-anew`'s **seven** silent refusals — the ones Phase 7.2 had to
+eliminate from outside, by re-deriving each precondition against the ship's
+own libraries — each say which one they were, and `/x/pending-own` exposes
+the `%anew` slot the way `/x/inflight` exposes the peer slot.
+
+Two more things that were invisible are not any more: `/x/ready` reports
+`[synced tip indexing reorg-halt]` (a ship quietly refusing every attestation
+used to look exactly like a ship nobody was talking to), and **the snub
+announces itself at the one place that causes it** —
+
+```
+%gw-btc: SNUBBING ~havnyl-… on a negative %gw-btc verdict
+  the [XX] checks above are fraud-class: evidence that was never true, …
+  (a snub is sticky and blocks the packet that would correct it;
+   inspect with .^(/snubbed) and undo with %snub %deny %del)
+```
+
+## Bug 3 — `%reorg-rollback` handled identically to `%new`
+
+This one needed a design decision, so the safest partial was implemented and
+the options are written down rather than guessed at.
+
+**Why a full fix is not available.** Rewinding the cursor is easy; undoing
+the facts is not. A `$point` in `unv-ids` does not record the height it was
+indexed at, so there is no way to tell which entries came out of the orphaned
+blocks. Rewinding and rescanning would therefore replay the winning chain
+**on top of** a corrupted index rather than instead of it — not a fix, a
+second bug.
+
+**What was implemented.** A rollback **above** our cursor is noted and
+ignored: nothing we hold came from those blocks. A rollback **at or below**
+our cursor halts the block scanner, records `$reorg-stop`
+`[at cursor since]`, and says so loudly every poll:
+
+```
+%gw-btc: CHAIN REORG TO 961.240 -- BLOCK SCANNER HALTED
+  our scan cursor was 961.245, so this index may contain facts
+  derived from orphaned blocks, and we cannot tell which: a $point does not
+  record the height it was indexed at.  The scanner will not advance.
+  Confidential verification is UNAFFECTED (it reads the light client directly).
+  Operator: `%gw-reorg-resume ~` resumes from the current cursor …
+```
+
+Confidential verification deliberately keeps running: it reads the chain
+through the light client, which does its own reorg handling, and its answers
+do not come from this index. `/x/ready` exposes the halt.
+
+`%gw-reorg-resume` gives the operator the choice the agent should not make:
+`~` resumes from the current cursor, accepting that orphaned facts may
+remain; `[~ height]` rewinds the cursor first so the winning chain from there
+is scanned, which *adds* correct facts but cannot remove wrong ones. Neither
+is a repair. **The repair is to rebootstrap the public index**, which
+requires a nuke — and that is now a deliberate act rather than an accident,
+because the bootstrap pokes refuse whenever there is an index to lose.
+
+**The options, for whoever takes this further.** (1) Record an index height
+on every `$point` and every `sont-val`, and make rollback a filter — correct,
+and a state migration. (2) Keep a bounded ring of `urb-state` snapshots, one
+per block within `block-confirmations`, and restore — simple, and bounds the
+reorg depth it survives. (3) Raise `block-confirmations` from its `1 for
+alpha` so the cursor is rarely inside the reorged range — cheap, but it only
+makes the gap rarer, and it does not close it. (2)+(3) together are probably
+the right answer; (1) is the honest one.
+
+## Bugs 4 and 5 — Causeway
+
+**Bug 4, headless `causeway spawn`.** `causeway/desktop/causeway.py`: all
+`input()` calls now route through one `prompt()` helper that aborts —
+non-zero, with a message on stderr naming the flag to pass — on `EOFError`,
+`KeyboardInterrupt`, or a non-TTY stdin. The two `continue`-on-EOF loops are
+gone. New flags cover every prompt: `--utxo TXID:VOUT`, `--signed-psbt
+PATH|-` (`-` reads stdin), and `--assume-saved`. Measured on the exact
+reproduction that filled a disk:
+
+```
+before:  t+31s   100% CPU   11,453,252 lines of "  > "   (57 MB)   never exits
+after:   exit=2  1,417 bytes  19 lines                             immediate
+```
+
+87/87 python tests pass.
+
+**Bug 5, the web SPA's hardcoded `fief: null`.** `src/ui/pages/op.ts:249` now
+reads `point.net.fief` — the same oracle projection the page already trusts
+for `life`, `rift`, `pass` and `sponsor`. `Snapshot.fief` is a real
+`Fief | null` rather than the literal type `null`, `snapshotToNoun` encodes
+it, and `decodeFief` no longer drops a `%turf`'s domain list on the floor.
+The encoder is pinned byte-for-byte against `jam(snapshot)` and
+`state-commit` vectors **generated by `causeway.py` itself** — the authority,
+since it produced the verified on-chain commitments — including the live C3
+fief `[%if .64.227.13.22 34.343]`. 108/108 vitest pass, `tsc --noEmit` clean.
+
+A dropped fief was not a cosmetic bug: the fief rides the snapshot into the
+state commitment, so it also determines the input's taproot merkle root. A
+web rekey of a fief-carrying comet produced a PSBT whose
+`PSBT_IN_TAP_MERKLE_ROOT` did not match the UTXO being spent — unsignable —
+and, had it been signed, would have silently erased the comet's route.
+
+---
+
+## RE-VERIFICATION ON THE LIVE MAINNET COMETS
+
+No transactions were broadcast and no sat was touched: C1 1445, C2 1544 and
+C3 1288 are exactly where they were. 7.4 was not re-run.
+
+### Deployment
+
+The desk was committed into `%gw-p4` on each live pier with `|commit %.n`,
+mounted only for the length of the rsync and unmounted immediately. The
+proof that each agent really *reloaded* is `/x/ready`, a scry that only the
+fixed agent answers at all:
+
+| ship | `app/gw-btc.hoon` in clay | `/x/ready` answers |
+|---|---|---|
+| C1 `~havnyl-…` (r1, N2) | 93,289 B | yes |
+| C2 `~barpyx-…` (r2, N3) | 93,289 B | yes |
+| C3 `~ligdes-…` (r3, N1) | see below | yes |
+
+The `+on-load` migration was checked field by field rather than assumed: the
+whole agent state was walked leg by leg on C3 *before* the upgrade (11
+fields) and on C1/C2 *after* (13 fields), and every leg — `urb-state`,
+`best`, `inflight`, `confidential`, `attested`, `publicizing`, `next-job`,
+`sponsees`, `declined`, `own` — matched what Phase 6/7 left behind. That
+walk is also how the `_|` state-corrupter was caught: `indexing` was the one
+leg that did *not* survive.
+
+### 6.1 — attestation while the light client is unsynced — **PASS**
+
+The control this test needed is a *genuinely* unsynced client, so C3's
+`%bitcoin-client` was nuked and reinstalled: 961,000 blocks of headers and
+filter headers gone, the light client back at **block 0**. Nothing else on
+the ship was touched — jael, ames, and `%gw-btc`'s public index (including
+C3's own publication at 961,059, which is what `sponsor-known` needs) all
+survived, and `/x/points` still listed `~ligdes-…` afterwards.
+
+That is the exact state that produced the false verdict: `best = [~ 0]`, so
+the old `?~ best` gate **opens**. C1's real, live, 405-byte life-3 pass —
+the same attestation, from the same peer, to the same ship — was poked in
+twice:
+
+```
+gw-blockid   961.278                     <- the public index, untouched
+ready        [synced=%.n tip=0 …]        <- light client at GENESIS
+writ 1: ok in 0.24s
+writ 2: ok in 0.22s
+
+%gw-btc: writ from ~havnyl-lonpub-botben-hidleb--…-daplyd held: light client NOT synced
+%gw-btc: writ from ~havnyl-lonpub-botben-hidleb--…-daplyd held: light client NOT synced
+
+INFLIGHT   ~          <- no job was even started
+SNUBBED    ('deny', ~)   <- nothing
+```
+
+**No verdict. No `INVALID`. No snub.** And, unlike every drop before this
+commit, the reason is in the log.
+
+Side by side with the same test on the same ship this morning:
+
+| | before | after |
+|---|---|---|
+| light client | height 0 | height 0 |
+| public index | 961,039 | 961,278 |
+| attestation | C1's life-3 pass | *the same pass* |
+| job started? | yes | **no** |
+| verdict | `INVALID`, `[XX] sponsor-known` | **none** |
+| snub | **C3 snubbed C1** | **none** |
+| log | silent | `held: light client NOT synced` |
+
+### … and the gate's own failure mode, caught on mainnet the same hour
+
+A readiness gate has two ways to be wrong, and fixing one exposed the other.
+
+`/is-synced` answers the **watch** with the current value and thereafter only
+on `%bitcoin-client`'s own transitions — and that emit coverage is
+**incomplete**. It announces losing its last peer (`+have-live-peers` falls
+out of `+is-fully-synced`), but nothing announces the recovery: a peer
+reconnecting emits nothing, and the headers/cfheaders handlers emit only when
+they process a batch, so a node already at the tip never says so again.
+
+Observed on C1 within an hour of the gate landing:
+
+```
+%bitcoin-client:  [%is-synced %.y]  [%live-earth-peers 72]  [%filter-headers 961.280]
+%gw-btc /x/ready: synced = %.n
+```
+
+The ship would have held every attestation from every peer, indefinitely, in
+silence. **Trading a false `INVALID` for a permanent hold is not a fix** — it
+is the same bug wearing the other mask, and the whole lesson of 5b/6.1 is
+that both directions have to be reachable from the evidence.
+
+`+refresh-synced` drops and re-establishes the subscription, because a fresh
+watch's initial fact is the reliable read. It is **demand-driven, not
+timed**: it runs on exactly the paths that were held for lack of readiness —
+a `%jael-writ` and a `%anew` — which is precisely when the answer matters,
+and a retransmitting peer is the poll. A quiet ship never asks and does not
+need to. (It also means no timer has to be armed on upgrade, which is the
+trap the `_|` bug was made of.)
+
+Verified live on C1, in one event:
+
+```
+%gw-btc: writ from ~barpyx-… held: light client NOT synced
+%gw-btc: light client is SYNCED; confidential verification enabled
+```
+
+and the next writ ran the full chain verification through to a verdict:
+
+```
+INFLIGHT   ~barpyx-…
+%gw-btc: attestation for ~barpyx-… is VALID
+INFLIGHT   ~            SNUBBED  ('deny', ~)
+```
+
+So the complete cycle is demonstrated on a live mainnet comet: **unsynced →
+held, no verdict, no snub, self-refreshing; synced → job runs → VALID → slot
+released.**
+
+### 6.2 — kill the light client mid-verification — **PASS, and the hazard is now mostly unreachable**
+
+Run twice on C1, synced, against C2's real life-2 pass.
+
+**(a) transport killed 2 minutes into a verification.** The `/is-synced`
+subscription reported the loss **within ~20 seconds** —
+`light client is NOT synced; holding all attestations (no verdicts)` — and
+the in-flight job, whose fetches were already served, completed normally:
+
+```
+%gw-btc: attestation for ~barpyx-… is VALID
+INFLIGHT  ~        SNUBBED  ('deny', ~)
+```
+
+No stranded slot. The two retries poked afterwards were **visible**, which is
+the half of this bug that mattered:
+
+```
+%gw-btc: writ from ~barpyx-… held: light client NOT synced
+%gw-btc: writ from ~barpyx-… held: light client NOT synced
+```
+
+**(b) forced wedge: transport killed and a writ poked immediately after.**
+The wedge **could not be reproduced**. The `/is-synced` fact beat the poke,
+the readiness gate held the writ, and no job was ever started against a dead
+transport. Across 12 minutes and three writs: `INFLIGHT ~`, `SNUBBED ~`, no
+verdict, one log line per writ.
+
+That is the honest and slightly surprising result: with readiness keyed on
+the node's own answer, **the ship stops accepting jobs before it can wedge on
+one.** `+lc-fetch-timeout` remains the backstop for the residual window (the
+transport dying *after* a job starts and before its fetches are served),
+and that path is pinned by `test-every-request-is-timeout-bounded` — the
+strand's very first card is the behn timer — rather than by a live
+reproduction, which this session could not construct.
+
+### 6.5 — chain reorg — still not reproducible on mainnet, so pinned in tests
+
+No reorg occurred during either session (they happen a few times a month),
+and one cannot be staged against mainnet. The behaviour is therefore pinned
+by four agent-level tests driven through the real `on-agent` interface with
+the exact `best-block:update` shape `%bitcoin-client` gives:
+
+| test | asserts |
+|---|---|
+| `test-reorg-below-the-cursor-halts-the-scanner` | `/x/ready` reports `[at cursor since]`, and **no cards are emitted** — a reorg is not a verdict about anyone |
+| `test-halted-scanner-does-not-advance` | the next `/timer` wake emits **exactly one** card, the timer re-arming — never a `%lard` block thread |
+| `test-reorg-above-the-cursor-does-not-halt` | no halt, and `.best` still moves |
+| `test-new-block-moves-the-tip` | `%new` is unaffected |
+
+### 6.7 — diagnosable from logs alone?
+
+Materially closer to yes. Every one of `%jael-writ`'s nine silent-drop
+returns now names itself, `+begin-anew`'s seven do too, `/x/ready` and
+`/x/pending-own` expose the last two invisible pieces of state, the verdict
+report classifies each check `[ok]` / `[..]` / `[??]` / `[XX]`, and — the
+one Phase 6.7 called out specifically — **the snub announces itself at the
+place that causes it**, with the incantation to undo it.
+
+### 6.1, the other half — the same attestation, once the client caught up
+
+C3's light client resynced from block 0 to the tip: **961,280 block headers
+and 961,280 filter headers, 148 live peers, `is-synced %.y`**, confirmed
+from `%bitcoin-client`'s own `%log-info` rather than inferred. That took
+about two hours on a 2-vCPU droplet, seeded 25 peers at a time (no sidecar
+SIGSEGV at that batch size, in ~450 peer additions across three ships).
+
+The identical writ was poked again:
+
+```
+INFLIGHT   ~havnyl-…                       <- accepted this time
+[%gw-btc-lc-scan-clean …]
+%gw-btc: attestation for ~havnyl-… is VALID
+  [ok] tip-scanned    [ok] tip-unspent    [ok] pass-key
+  [ok] sponsor-known  [ok] tracked-prefix
+INFLIGHT   ~        SNUBBED  ('deny', ~)
+```
+
+`sponsor-known` — the single check that produced this morning's snub — now
+passes on the same evidence, because the ship is only asked the question
+once it can answer it.
+
+**The whole retest, on one ship, one peer, one attestation:**
+
+| light client | verdict | snub | log |
+|---|---|---|---|
+| **before the fix**, height 0 | `INVALID` | **C3 snubbed C1** | silent |
+| **after**, height 0 | **none** | **none** | `held: light client NOT synced` |
+| **after**, height 961,280 | **`VALID`** | none | full 44-check list |
+
+### Final state — all three mainnet comets, on the committed build
+
+```
+                        C1              C2              C3
+app/gw-btc.hoon         95,262 B        95,262 B        95,262 B
+/x/ready synced         %.y             %.y             %.y
+/x/ready tip            961.280         961.280         961.280
+scanner cursor          961.278         961.279         961.279
+reorg-halt              ~               ~               ~
+INFLIGHT                ~               ~               ~
+SNUBBED                 ~               ~               ~
+bail: meme              0               0               0
+`is INVALID` in log     0               0               1  <- see below
+```
+
+C3's single `INVALID` is at **line 23,719 of a 2.49 MB log**: it is this
+morning's pre-fix verdict, the one immediately preceded by `to=0`. Nothing
+has produced another since. The same file holds the bug and its absence.
+
+Sats untouched: C1 1445, C2 1544, C3 1288. Zero transactions broadcast.
+
+---
+
+## What is still open
+
+1. **`+send-blob-via` never consults a peer's fief** (item 4 of the original
+   list). Untouched — it is a kernel change and was not in scope here. An
+   on-chain fief is still useful only to sponsors.
+2. **Reorg recovery is a halt, not a repair.** See the options above; the
+   honest fix needs an index height on every `$point`, which is a state
+   migration.
+3. **`%gw-index-from` on the live ships.** `.indexing` reads `%.n` on all
+   three because every pre-fix `+on-load` reset it. That is now inert — the
+   bootstrap guard reads the index itself — but it means the flag on those
+   piers is not a record of anything. Do not poke `%gw-index-from` at them
+   expecting a no-op; it is refused on the index, which is the correct
+   behaviour, but the *reason* is the index and not the flag.
+4. **`causeway spawn generate` still waits forever for funding** — not a
+   busy loop and not a disk-filler, but a headless run with no funding
+   hangs rather than timing out.
+5. **`prompt()` now aborts on any non-TTY stdin, even piped data.** Every
+   affected prompt has a flag, but `printf '1\n' | causeway spawn connect …`
+   used to work and now fails, naming the flag. A deliberate behaviour
+   change, recorded here rather than discovered later.
