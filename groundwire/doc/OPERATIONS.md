@@ -123,36 +123,62 @@ droplet as `/opt/gw/bin/gw-vere`.
 
 ### 3.2 the pill
 
-**Not built by this repo, and not by hand.** The authoritative recipe is
-the `build-pill` job of `.github/workflows/groundwire-build.yml` in
-`gwbtc/urbit`. It builds a **brass** pill on a fake `~zod` via
-`fyrd`/`khan-eval`, baking in `%gw-base` (the kernel), `%groundwire` (this
-repo's `make groundwire` output), `%mcp` and `%vitriol`. The pill is
-written into Clay at `/pill/pill` on `%base` and surfaces in the mounted
-desk; CI copies it out as `gw-base.pill`.
+Two routes. **Build locally** when you are testing a kernel branch — which is
+the normal case, because the kernel is usually what is under test.
 
-To get one:
+#### Locally, from a kernel branch (the route every live campaign has used)
+
+A **solid** pill, built by `fyrd`-ing `solid:pill` on a throwaway fakeship.
+`ops/` does not carry this as a script only because the builder pier is a
+long-lived local artifact; the recipe is six steps and is worth understanding:
+
+1. Boot a fakeship builder pier once (`urbit -F zod -B <any pill> -c builder`),
+   and thereafter restart it with `urbit -t --loom 32 builder`.
+2. `kiln-merge` a `%gw-base` desk off `%base`.
+3. Mount it, delete every child, and rsync `pkg/arvo/` and `tests/` from your
+   kernel checkout into it.
+4. `kiln-commit` with **`%.n`**, in a retry loop, until a `%cx` scry of a
+   known file matches its byte length on disk. A single poke does not reliably
+   take on a desk this large, and `%.y` arms a 1 Hz `%dirk` timer that
+   unmounting does not cancel (§5.4).
+5. **Unmount** before compiling.
+6. `fyrd` a thread that does
+   `(solid:pill /(scot %p our)/gw-base/(scot %da now)/sys ~ | now & ~)` and
+   `%ins`-es the result at `/pill/pill` on `%base`; it lands on disk in the
+   mounted `%base` desk as `pill.pill`.
+
+Verified in the cleanroom run of 2026-08-06: this produced a working pill from
+`hd/cc-kernel@de3222d36a` in about six minutes, and three comets booted from
+it. Take the sha256 and pin it in whatever boots from it — `ops/bootcomet.sh`
+refuses to boot a pill whose hash it does not expect.
+
+#### From CI
+
+The `build-pill` job of `.github/workflows/groundwire-build.yml` in
+`gwbtc/urbit` builds a **brass** pill the same way, baking in `%gw-base`,
+`%groundwire`, `%mcp` and `%vitriol`, and copies it out as `gw-base.pill`.
 
 ```sh
-gh workflow run groundwire-build.yml --repo gwbtc/urbit --ref gw/next/kelvin/408
-# then download the `gw-base-pill` artifact -> gw-base.pill
+gh workflow run groundwire-build.yml --repo gwbtc/urbit --ref <branch>
 ```
 
-Push to this repo's `main` triggers the same workflow
-(`.github/workflows/trigger-urbit-build.yml`).
+Push to this repo's `main` triggers it
+(`.github/workflows/trigger-urbit-build.yml`). Use this for release artifacts;
+it is up to 45 minutes and it builds whatever branch you name, which is rarely
+the one you are debugging.
 
-Record the pill's sha256 and re-verify it **after** transferring it to each
-droplet; a truncated pill fails late and confusingly.
+Record the sha256 and re-verify **after** transferring to each droplet; a
+truncated pill fails late and confusingly.
 
-```sh
-sha256sum gw-base.pill
-```
-
-> Not automated: there is no local pill build. `onboarding/booting/README.md`
-> used to document a manual `+pill/solid` route; it now marks that route
-> known-broken — the one attempt (`testnet/run/pillbuild.log`, a local,
-> gitignored run log) failed to compile with `mint-vain` in
-> `/sys/vane/ames/hoon` and never wrote a pill.
+> **Correction (2026-08-06).** This section used to say "not built by this
+> repo, and not by hand… there is no local pill build", and §11 repeated it.
+> That was wrong, and it was wrong at the time of writing: the Phase 6/7
+> campaign ran entirely on `gw-cc-kernel-solid-P67.pill`, built locally by
+> exactly the recipe above. What is genuinely broken is the **`+pill/solid`
+> dojo generator**; `fyrd`-ing the `solid:pill` *gate* is a different route and
+> it works. The distinction cost a cleanroom operator the better part of an
+> hour and would have sent them to CI on `gw/next/kelvin/408` — a branch that
+> is not the one under review.
 
 ### 3.3 the tcp-sidecar
 
@@ -262,10 +288,26 @@ causeway spawn generate [--invite <FAUCET_CODE>] [--sponsor <SPONSOR_PATP>] …
 - **Omit `--publish` for a confidential comet.** `--publish` adds the
   OP_RETURN publication output, which is permanent and irreversible: it is
   the difference between an identity whose opening lives on chain and one
-  whose opening lives only in twelve words. A confidential comet **cannot
-  later become public** — `+apply-spawn` in `lib/urb-core.hoon` is the only
-  writer of the public index and it requires spending the original funding
-  satpoint, which is already spent.
+  whose opening lives only in twelve words. A confidential comet **can** be
+  published later as a state update (§10), but only its existing peers will
+  accept that; publishing at spawn is the only way a stranger can learn it
+  from the chain alone.
+- **Never name a *confidential* comet as a sponsor.** `sponsor-ok`
+  (`lib/self-attestation.hoon:456-459`) is
+  `(~(has in known-public) u.sponsor…)` — the sponsor must be a **public**
+  point. Name a confidential one and `sponsor-known` fails; it is classified
+  unevaluable, so every verification of the sponsee returns **UNDETERMINED**,
+  no verdict is emitted and no point is ever installed. The sponsee is
+  silently unreachable forever, and nothing in the log says "your sponsor is
+  confidential". An **absent** sponsor is fine — it projects to self and
+  `sponsor-ok` is `%.y`. So: a sponsor must either be published at spawn, or
+  declassified (§10) before anyone names it.
+- **`--assume-saved` is not optional in a script.** Without it the blind-phrase
+  read-back fires a second time *after the transaction has been broadcast*, and
+  the run exits 2 with mainnet money already spent. Note also that piping stdin
+  does **not** answer prompts: the `isatty()` check fires before `input()`, so
+  every prompt must be pre-answered by a flag. One of `--sponsor` / `--no-route`
+  is likewise mandatory or the command aborts.
 - Full headless operation needs `--utxo`, `--signed-psbt` and
   `--assume-saved`; without them the flow prompts. `prompt()` now aborts
   non-zero on any non-TTY stdin naming the flag to pass, so a piped run
@@ -297,16 +339,41 @@ causeway proof show   <COMET>-spawn.proof.json
 
 ### 5.3 Boot the ship
 
-**Run the ship inside tmux, and do not pass `-t`.** `-t/--no-tty` disables
-terminal assumptions (`main.c:905`), which is exactly the dojo you need to
-drive the ship. `-d/--daemon` implies `-t`. A tmux pane gives you a live
-dojo you can drive with `send-keys` and read with `capture-pane`.
+**Decide first how you will drive the ship**, because it changes the boot
+flags and it is not reversible without a restart.
+
+| | tmux, no `-t` | `-t` under a supervisor |
+|---|---|---|
+| drive it with | dojo, `tmux send-keys` | `conn.sock`, `ops/gwctl.py` |
+| survives your ssh session | only while tmux lives | yes |
+| supervisable | no | yes |
+| use for | poking at one ship by hand | **anything that runs for hours** |
+
+**Use `-t` for a campaign.** Every ship in every live run has. A light-client
+bring-up is ~2.5 h and both vere and the sidecar die under load (§5.9), so the
+ship has to come back without you; a supervisor cannot restart a ship that only
+exists inside your tmux pane. `-t/--no-tty` disables terminal assumptions
+(`main.c:905`) and `-d/--daemon` implies it.
 
 ```sh
-ssh <HOST>
+# the campaign form -- see ops/bootcomet.sh, which adds the guards
+setsid nohup /opt/gw/bin/gw-vere -t --loom 32 \
+  -c <PIER> -p <PORT> -w <COMET_NO_TILDE> -G <FEED> -B <PILL> \
+  >> /opt/gw/<name>.log 2>&1 </dev/null &
+```
+
+> **Every `>` line in this runbook is notation, not something you can type.**
+> A ship booted with `-t` has no dojo. `> :gw-btc &noun [%jael-writ …]` means
+> "poke `%gw-btc` with that noun", and a scry written
+> `.^(* %gx /(scot %p our)/gw-btc/(scot %da now)/ready/noun)` has to be wrapped
+> in a `(strand ,vase)` thread and handed to khan over `<PIER>/.urb/conn.sock`.
+> `ops/gwctl.py` is that wrapping, and every `>` line below has a subcommand.
+
+If you do use tmux, the rules that have each cost hours:
+
+```sh
 tmux new-session -d -s <SESSION>
-tmux send-keys -t <SESSION>:0.0 \
-  '/opt/gw/bin/gw-vere -c <PIER> -w <COMET_NO_TILDE> -G <FEED> -p <PORT> --loom 32' C-m
+tmux send-keys -t <SESSION>:0.0 '/opt/gw/bin/gw-vere -c <PIER> …' C-m
 ```
 
 Rules that have each cost hours:
@@ -616,9 +683,35 @@ Two rules the supervisor must follow:
 A restart *is* recovery: measured 20 s down for a vere SIGSEGV with no state
 loss (the pier replays), and 19 s for a sidecar kill.
 
-> Not automated: `gwsup.sh`, `poolfill.py` and the other campaign scripts
-> lived in an operator scratchpad and on the droplets at `/opt/gw/`. They
-> are **not in this repo** and must be rewritten from the spec above.
+- **The supervisor must be a singleton.** Two supervisors on one pier both see
+  VERE-DOWN, both relaunch, and the loser's ship dies on
+  `mesa: bind: address already in use` — which reads exactly like a crash loop.
+  In the 2026-08-06 cleanroom run *all three* droplets were found running two
+  `gwsup.sh` instances per pier. `ops/gwsup.sh` now takes an `flock` and a
+  second start is a no-op.
+
+`gwsup.sh` and `poolfill.py` are in **`ops/`** (see `ops/README.md`).
+
+### 5.10 Stopping a ship
+
+There was no shutdown procedure in this runbook until 2026-08-06, and its
+absence has already caused one incident: three ships were believed stopped,
+were handed to a new operator as stopped, and were in fact running — because
+**stopping a supervised ship without stopping its supervisor first is a
+no-op**. `gwsup.sh` notices VERE-DOWN within one 30 s poll and relaunches.
+
+Order matters. Use `ops/stopship.sh <name>`, which does:
+
+1. **supervisors first** — there may be more than one; match on the exact
+   `gwsup.sh <name> <port>` argv, not a prefix.
+2. **then the runtime** — `SIGTERM` the king, matched by *exact* final argv
+   field. The serf exits with it, the event log is durable, and the pier
+   replays on next boot, so this is a clean stop with no state loss.
+3. **then the sidecar** — identified by `/proc/<pid>/cwd`, because it has no
+   port and no distinctive argv.
+
+Never `pkill -f urbit`, and never match a pier by `pgrep -f` prefix. A stopped
+pier is preserved in full; nothing here deletes anything.
 
 ---
 
@@ -629,7 +722,20 @@ covers the peer's evidence.
 
 Get the peer's **live jael pass** — not the artifact's `pass_atom_hex`,
 which is a different, shorter object (108 B vs ~330–405 B for the jael
-pass). Read it off the running ship via jael's `%pynt` → `keys` → `pass`.
+pass). Read it off the running ship via jael's `%pynt` → `keys` → `pass`
+(`ops/gwctl.py pass <PIER>`).
+
+> **The pass length is your custody-log signal, and it is the cheapest one
+> you have.** A ship booted from the miner's feed — the un-baked one — serves
+> a **108-byte** pass, because the ring carries no `xtr`. It looks completely
+> healthy: right `@p`, right life, agents installed, `/x/ready` fine. But it
+> has no custody evidence, so every peer that verifies it gets nothing to
+> check and no peer can ever install it. After `causeway finalize` bakes the
+> log in, or after the `%gw-custody-entry` poke lands on a running ship and
+> logs `custody log verified (N entries); refreshing our pass`, the same scry
+> returns ~330–405 B. **If you are about to debug "nobody can verify my
+> comet", check the length first.** 108 means you skipped §5.2's finalize
+> step, which is exactly what happens if you boot before the spawn confirms.
 
 Then, on the verifier:
 
@@ -923,10 +1029,7 @@ this, your pill predates the fix.
 
 ## 10. Things that are deliberately not repairable
 
-- **A confidential comet cannot become public.** `+apply-spawn` is the only
-  writer of the public index and requires spending the original funding
-  satpoint. Attempting it costs a fee, costs confidentiality permanently,
-  and leaves the comet *less* reachable than before.
+- **A destroyed blind destroys a confidential identity.** See below.
 - **A destroyed blind destroys a confidential identity.** `+verify-dat`'s
   `=(d.u.psd (spawn-commit spawn.open blind.open))` cannot be satisfied
   without the blind; brute force is a 2^256 search. A **public** comet's
@@ -934,19 +1037,71 @@ this, your pill predates the fix.
   secret material. This is the property, not a bug.
 - **Reorg recovery is a halt, not a repair.** See §9.
 
+### What *is* repairable, contrary to earlier drafts
+
+**A confidential comet CAN become public.** This section used to assert the
+opposite, as a permanent design property, on the grounds that `+apply-spawn`
+is the only writer of the public index and requires spending the original
+funding satpoint. Both halves are wrong:
+
+- `+apply-spawn` is **not** the only writer. `+apply-state` writes the index
+  through `+index-point` (`lib/urb-core.hoon:353` → `:376`), and the
+  confidential verifier writes it directly (`app/gw-btc.hoon:1919`) — which is
+  precisely why a confidential comet is *in* `unv-ids` at all.
+- The funding-satpoint guard (`lib/urb-core.hoon:311`) is real but belongs to
+  `+apply-spawn`, which a tracked comet never reaches:
+  `+process-publication` (`lib/urb-core.hoon:256-262`) routes any ship already
+  in `unv-ids` to `+apply-state` first.
+
+This is **Tier 1** in `doc/opret-revision/04-decisions-addendum.md:154`: a
+publication whose subject the scanner already tracks is a *state update*,
+whatever the shape of its opening. Input-0 continuity from the sat we already
+follow is the ownership proof. It shipped in `d63e28a`; the runbook commit
+landed after it and reproduced the superseded Phase-5b conclusion.
+
+The transaction is one input and (at least) two outputs: input 0 spends the
+comet's currently tracked identity satpoint; the sat-carrying output commits a
+snapshot whose `life` **strictly** exceeds the life peers hold; and an
+OP_RETURN carries `[pass opening]` jammed behind `6a 03 'urb' 01 09`, ≤512
+bytes. Every peer that has ever verified this comet accepts it, emits
+`[%point who %public ~]`, drops it from `.confidential`, and logs
+`published itself on chain; now PUBLIC, permanently`.
+
+Two caveats the test plan does not state:
+
+- **Only peers that already track the comet.** A scanner that has never
+  verified it is a stranger and refuses at `lib/urb-core.hoon:273`
+  (`state-update publication for a comet we do not track`). Admitting a
+  publication from a stranger is Tier 2, which is specified and **not
+  implemented**.
+- **Causeway cannot build it.** There is no `publish` subcommand and no
+  `--publish` on `rekey`; `build_rekey_psbt` accepts
+  `publication_pass_atom`/`publication_opening` but every caller passes
+  neither. Use `ops/gwmint.py`.
+
+Watch `/x/confidential` for the ship leaving the set — **not**
+`/x/publicizing`, which is an unrelated re-entrancy latch for the public-spawn
+replay race and never mentions declassification.
+
 ---
 
 ## 11. Not automated
 
 Stated plainly so nobody hunts for a script that does not exist:
 
-- **No local pill build.** The pill comes from CI in `gwbtc/urbit`.
-- **No supervisor in this repo.** `gwsup.sh` is specified in §5.9 and must
-  be written.
-- **No peer-pool tool in this repo.** `poolfill.py` is specified in §5.6.
-- **No deploy script.** The desk install in §5.4 is manual.
+- **No deploy script.** The desk install in §5.4 is manual (but see
+  `ops/gwctl.py desks`, which does it).
 - **No fully headless Causeway spawn without funding.** `spawn generate`
   with no funded UTXO waits forever rather than timing out.
+- **Causeway cannot commit a `fief`, and cannot publish anything except at
+  spawn.** No `--fief` anywhere; `rekey` carries the prior fief forward and
+  offers no way to set one. Since the sponsorship topology of Phase 4 requires
+  the sponsor to commit a real fief, that transaction has to come from
+  `ops/gwmint.py`.
+
+**No longer true — these are now in `ops/`** (see `ops/README.md`): the
+supervisor `gwsup.sh`, the peer-pool tool `poolfill.py`, the minting path
+`gwmint.py`, the operator surface `gwctl.py`, and a local pill build (§3.2).
 
 **Fixed since this runbook was written:** `causeway.py` and `gw-onboard.py`
 used to compute `f"{arch}-{os_name}-none"` for the zig output directory,
@@ -969,6 +1124,12 @@ the code.
 | `%gw-btc` scries `%light-client` | scattered comments, older results docs | the agent is `%bitcoin-client`; `%gw-btc` reaches it through `++light-client-agent:lca`. Fixed as Phase 2 finding B5. |
 | `causeway` has a `mine` subcommand | folklore | it does not. Mining happens inside `spawn generate`/`spawn connect` via the external `comet_miner` binary (`--miner`). |
 | the pier liveness signal is `<PIER>/.urb/log` mtime | early briefs | inert; measured 21 h stale on a live ship. Use `<PIER>/.urb/log/*/data.mdb`. |
+| "there is no local pill build" | **this runbook**, §3.2 and §11 | false, and false when written: every campaign has run on a locally built solid pill. `+pill/solid` the *generator* is broken; `fyrd`-ing the `solid:pill` *gate* is not. Rebuilt from `hd/cc-kernel@de3222d36a` in ~6 min on 2026-08-06. §3.2 rewritten. |
+| "a confidential comet cannot become public" | **this runbook**, §10 and §5.2 | false since `d63e28a`. `+apply-state` and `+apply-verified` both write the index; `+process-publication` routes a tracked comet to `+apply-state` and never reaches the funding-satpoint guard. §10 rewritten. |
+| boot into tmux and drive the dojo | **this runbook**, §5.3 | no live ship has ever run that way. Campaign ships run `-t` under a supervisor and are driven over `conn.sock`; the `>` lines are notation for a khan-eval. §5.3 rewritten, `ops/gwctl.py` added. |
+| — (nothing said) | **this runbook**, everywhere | there was **no shutdown procedure at all**, and stopping a supervised ship without stopping its supervisor first is a no-op. Directly caused an incident in which three running ships were handed over as "stopped". Added as §5.10. |
+| — (nothing said) | **this runbook**, §5.2/§5.8 | naming a **confidential** comet as a sponsor makes the sponsee permanently UNDETERMINED (`sponsor-ok` requires `known-public`). Nothing logs "your sponsor is confidential". Added to §5.2. |
+| `rekey` is the only on-chain management op | §12, below | true, and it is not enough: Causeway can commit **no** `fief` at all, and can publish only at spawn. The Phase 4 sponsorship topology therefore cannot be built with Causeway. `ops/gwmint.py` does both. |
 
 ### Reconciled since
 
