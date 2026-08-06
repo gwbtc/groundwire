@@ -16,7 +16,7 @@ The `%spv-wallet` desk contains an SPV Wallet Gall app. We currently use this ap
 
 ## Installation
 
-If you're interesting in running a Groundwire ship, go to [groundwire.dev](https://groundwire.dev/) and use the one-line command.
+If you're interesting in running a Groundwire ship, go to [groundwire.io](https://groundwire.io/) and use the one-line command.
 
 To install these desks for development purposes, you'll need to be running a ship using versions of Arvo and Vere with Groundwire's modifications. Until these modifications get merged into the official distros, setting a ship up in this way is a bit of an esoteric process. 
 

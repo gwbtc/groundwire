@@ -1,4 +1,4 @@
-::  +aqua-fixtures: regenerate the %gw-btc fixtures baked into base arvo.
+::  +aqua-fixtures: regenerate the confidential-comet fixtures in base arvo.
 ::
 ::    Base arvo implements GENERIC pluggable comet PKI and must not carry
 ::    a %gw-btc codec: there is exactly one authoritative implementation
@@ -9,22 +9,31 @@
 ::
 ::    The Aqua simulation in gwbtc/urbit still needs two confidential
 ::    comets to route packets for, so it carries this generator's OUTPUT
-::    as checked-in data: .dat and .xtr are opaque atoms to arvo, which
-::    hands them to +gw-crub and never looks inside.  Everything that
-::    defines the fixtures -- seeds, spawn satpoints, start height,
-::    internal key, comet indices -- is written down HERE and nowhere
-::    else.
+::    as checked-in data: the dat TAIL and the xtr are opaque atoms to
+::    arvo, which hands them to +cc-crub and never looks inside.
+::    Everything that defines the fixtures -- seeds, spawn satpoints,
+::    start height, internal key, comet indices -- is written down HERE
+::    and nowhere else.
+::
+::    Base arvo does not name a vendor, so the SIMULATION does not run
+::    the %gw-btc domain: +aqua-domain below is the term the fixtures
+::    commit to, and it must equal +cc-domain:aqua-azimuth there.  A dat
+::    is a +mat domain tag followed by that domain's own data; arvo
+::    spells out the tag (all it reads) and holds the rest as one opaque
+::    literal, so this generator prints that tail rather than a whole
+::    dat.  Change the domain and every fixture comet is renamed, which
+::    is the point: the tag is inside the key tweak.
 ::
 ::    Usage:
 ::
 ::        +groundwire!aqua-fixtures
 ::
-::    Paste the printed literals into +gw-dat and +gw-xtr in
+::    Paste the printed literals into +cc-dat-tail and +cc-xtr in
 ::    gwbtc/urbit/pkg/arvo/lib/aqua-azimuth.hoon.  The comet names it
-::    prints must equal +gw-comet-ok and +gw-comet-fail there, which
+::    prints must equal +cc-comet-ok and +cc-comet-fail there, which
 ::    arvo derives from the pasted data with its own generic cric; if
-::    they disagree, the paste is wrong or the kernel's suite-%c
-::    encoding moved.
+::    they disagree, the paste is wrong, the domain moved, or the
+::    kernel's suite-%c encoding moved.
 ::
 ::    The %fail fixture is broken deliberately and minimally: its
 ::    blind-opening names a satpoint its dat does NOT commit to, so a
@@ -69,12 +78,33 @@
   |=  which=?(%ok %fail)
   ^-  @ud
   ?:(?=(%ok which) 12 13)
-::  +dat: the immutable tweak data
+::  +aqua-domain: the pki domain the Aqua fixtures commit to
+::
+::    NOT %gw-btc.  Base arvo must not name a vendor anywhere, including
+::    in the name of the Gall agent its scenarios install, and jael
+::    routes a %writ to the agent named by the pass's leading +mat.  So
+::    the simulation runs a domain of its own; must equal
+::    +cc-domain:aqua-azimuth in gwbtc/urbit.
+::
+++  aqua-domain  %test-pki
+::  +dat: the immutable tweak data, under +aqua-domain
+::
+::    The real codec's output with its domain tag swapped.  Everything
+::    after the tag -- kelvin and hiding commitment -- is byte-identical
+::    to what +make-dat:gwp produces, which is what makes these fixtures
+::    derived data rather than an invention.
 ::
 ++  dat
   |=  which=?(%ok %fail)
   ^-  @
-  (make-dat:gwp (spawn which) (make-blind:gwp (seed which)))
+  (can 0 ~[(mat aqua-domain) [(met 0 (dat-tail which)) (dat-tail which)]])
+::  +dat-tail: the domain's own data, as base arvo holds it
+::
+++  dat-tail
+  |=  which=?(%ok %fail)
+  ^-  @
+  =/  real=@  (make-dat:gwp (spawn which) (make-blind:gwp (seed which)))
+  (rsh [0 p:(mat domain:gwp)] real)
 ::  +sed: the 64-byte cric seed of a fixture comet at .lyfe
 ::
 ::    Suite C splits the seed into a signing half (bytes 0-31, which
@@ -164,8 +194,9 @@
 ++  fixtures
   :*  comet-ok=`@p`fig:ex:(keys %ok 1)
       comet-fail=`@p`fig:ex:(keys %fail 1)
-      dat-ok=`@ux`(dat %ok)
-      dat-fail=`@ux`(dat %fail)
+      domain=aqua-domain
+      dat-tail-ok=`@ux`(dat-tail %ok)
+      dat-tail-fail=`@ux`(dat-tail %fail)
       xtr-ok-life-1=`@ux`(xtr %ok 1)
       xtr-ok-life-2=`@ux`(xtr %ok 2)
       xtr-fail-life-1=`@ux`(xtr %fail 1)

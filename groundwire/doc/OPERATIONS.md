@@ -968,7 +968,6 @@ the code.
 | light-client sync is "~8 min, ~850 MB pier" | `doc/opret-revision/05-live-test-plan.md` Phase 0 | ~2.5 h, ~2.2 GB. Measured twice. |
 | `%gw-btc` scries `%light-client` | scattered comments, older results docs | the agent is `%bitcoin-client`; `%gw-btc` reaches it through `++light-client-agent:lca`. Fixed as Phase 2 finding B5. |
 | `causeway` has a `mine` subcommand | folklore | it does not. Mining happens inside `spawn generate`/`spawn connect` via the external `comet_miner` binary (`--miner`). |
-| `_print_boot_oneliner` points at `https://groundwire.io/causeway/boot.sh` | `causeway/desktop/causeway.py:3415` | the repo README points users at `groundwire.dev`. One of the two hostnames is wrong; **unresolved — needs the owner's decision**, so both are left as they are. |
 | the pier liveness signal is `<PIER>/.urb/log` mtime | early briefs | inert; measured 21 h stale on a live ship. Use `<PIER>/.urb/log/*/data.mdb`. |
 
 ### Reconciled since
@@ -985,6 +984,7 @@ old claims are recognisable if they resurface.
 | Causeway supports `escape`, `adopt`, `detach`, `fief`, `set-mang` (`causeway/README.md`, `causeway/docs/OPERATIONS.md`) | `rekey` is the only on-chain management op. `causeway/docs/OPERATIONS.md`, which described the retired commit+reveal protocol and a non-existent `src/protocol/encoder.ts`, has been **deleted** in favour of this runbook. |
 | `causeway/desktop/README.md` documents the CLI | it now lists every subcommand, including `proof show` / `proof verify`, and the `--utxo` / `--signed-psbt` / `--assume-saved` flags that make a scripted spawn possible. |
 | `causeway/README.md` cites `tests/dat.spec.ts` | it cites `tests/kelvin9.spec.ts`, where the `dat` vectors actually live. |
+| the repo `README.md` sent users to `groundwire.dev` while the code printed `https://groundwire.io/causeway/boot.sh` (`causeway/desktop/causeway.py`) | **`groundwire.io` is correct** (owner, 2026-08-06). The README now says `groundwire.io`. Note that `alpha.groundwire.dev` is a different, live endpoint — the RPC proxy and faucet — and is unaffected. |
 
 ---
 

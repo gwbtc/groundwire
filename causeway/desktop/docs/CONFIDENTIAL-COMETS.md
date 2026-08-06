@@ -2,7 +2,8 @@
 
 > **Protocol update (cc-draft-2).** The kernel-integration spec
 > (`gwbtc/urbit` branch `cyc/cc-draft-2`,
-> `pkg/arvo/doc/spec/confidential-comets.md`) has landed since this
+> `pkg/arvo/doc/spec/pluggable-comet-pki.md`, plus this repo's
+> `groundwire/doc/confidential-comets.md`) has landed since this
 > document was written, and Causeway now follows it. What changed:
 >
 > - **The tweak (`dat`) format.** A confidential comet's signing-key

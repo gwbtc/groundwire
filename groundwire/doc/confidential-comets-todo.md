@@ -4,8 +4,9 @@ Updated: **2026-08-03**
 
 This is an ordered cross-repository work list. Read
 [confidential-comets-state.md](confidential-comets-state.md) first, and the
-kernel specification `gwbtc/urbit/pkg/arvo/doc/spec/confidential-comets.md` for
-normative kernel behavior. Items marked
+kernel specification `gwbtc/urbit/pkg/arvo/doc/spec/pluggable-comet-pki.md` for
+normative kernel behavior and
+[confidential-comets.md](confidential-comets.md) for the `%gw-btc` protocol. Items marked
 **decision** must not be silently resolved in implementation. Items marked
 **deferred** are not release blockers.
 
@@ -404,10 +405,12 @@ Tracking draft: [#63](https://github.com/gwbtc/urbit/pull/63), stacked on
   opaque atoms; base arvo carries **no** `%gw-btc` codec. Regenerate them with
   `+groundwire!aqua-fixtures`, whose output is produced by this desk's
   `lib/gw-btc-pass.hoon` — the one authoritative implementation, pinned in turn
-  by `vectors/gw-kelvin-9.json`. The fake `%gw-btc` agent in
-  `pkg/arvo/lib/ph/gw/util.hoon` is a lookup table over those fixtures, not a
-  verifier; real verification is tested here, in `tests/lib/gw-btc-pass.hoon`
-  and `tests/lib/self-attestation.hoon`.
+  by `vectors/gw-kelvin-9.json`. Note that the simulation does **not** run the
+  `%gw-btc` domain: base arvo may not name a vendor, so the fixtures commit to
+  `+aqua-domain` (`%test-pki`), which must equal `+cc-domain:aqua-azimuth`.
+  The fake verifier agent in `pkg/arvo/lib/ph/cc/util.hoon` is a lookup table
+  over those fixtures, not a verifier; real verification is tested here, in
+  `tests/lib/gw-btc-pass.hoon` and `tests/lib/self-attestation.hoon`.
 - [ ] Inject delayed and out-of-order `%light-client` answers to exercise job
   epochs, successor handling, timeout, and cancellation rules.
 - [ ] Cover public/confidential arrival in both orders and confirm that verified

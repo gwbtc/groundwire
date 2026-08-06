@@ -12,7 +12,7 @@
 ::  It is also the verifier agent for the %gw-btc PKI domain in the
 ::  confidential-comets kernel protocol (see the companion spec
 ::  doc/confidential-comets-agent.md and, in gwbtc/urbit,
-::  pkg/arvo/doc/spec/confidential-comets.md).  On boot it registers
+::  pkg/arvo/doc/spec/pluggable-comet-pki.md).  On boot it registers
 ::  itself with Jael via a %anex task, so that when a confidential
 ::  (suite-%c) comet self-attests to us, Ames routes the attestation
 ::  here as a %jael-writ poke.  We decode the custody log carried in the

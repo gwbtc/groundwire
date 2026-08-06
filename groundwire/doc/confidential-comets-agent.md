@@ -4,8 +4,9 @@ Status: **next-revision normative specification**. The implementation branches
 described in [confidential-comets-agent-state.md](confidential-comets-agent-state.md)
 are waypoints, not authorities where they disagree with this document.
 
-This is the userspace companion to the kernel confidential-comets specification
-in `gwbtc/urbit/pkg/arvo/doc/spec/confidential-comets.md`. The desk is
+This is the userspace companion to the generic kernel specification in
+`gwbtc/urbit/pkg/arvo/doc/spec/pluggable-comet-pki.md` and to the `%gw-btc`
+protocol specification in [confidential-comets.md](confidential-comets.md). The desk is
 `%groundwire`; the Gall agent and PKI-domain tag are both `%gw-btc`.
 
 The words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** describe protocol or

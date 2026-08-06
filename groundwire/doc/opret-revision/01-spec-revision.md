@@ -2,8 +2,9 @@
 
 **Status**: working revision. This document captures the protocol-level decisions
 of the 2026-07 pivot. It supersedes the corresponding sections of
-`pkg/arvo/doc/spec/confidential-comets.md` (gwbtc/urbit, `cyc/cc-draft-2`) and
-`groundwire/doc/confidential-comets-agent.md` where they conflict. Final spec
+`groundwire/doc/confidential-comets.md` (formerly
+`pkg/arvo/doc/spec/confidential-comets.md` in gwbtc/urbit, on `cyc/cc-draft-2`)
+and `groundwire/doc/confidential-comets-agent.md` where they conflict. Final spec
 synthesis (canonical spec documents plus a spec-history idea-maze document) is
 deferred; this is the substrate for it.
 

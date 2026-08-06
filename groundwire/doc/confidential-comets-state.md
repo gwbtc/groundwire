@@ -5,7 +5,8 @@ Updated: **2026-07-29**
 This is the handoff document for humans and fresh agents. It records what is
 merged, what was preserved in the legacy source stash, and what protocol revision
 has been selected next. It is descriptive; normative behavior lives in the
-kernel specification `gwbtc/urbit/pkg/arvo/doc/spec/confidential-comets.md`, and
+kernel specification `gwbtc/urbit/pkg/arvo/doc/spec/pluggable-comet-pki.md` and
+the protocol specification [confidential-comets.md](confidential-comets.md), and
 unfinished work lives in
 [confidential-comets-todo.md](confidential-comets-todo.md).
 
