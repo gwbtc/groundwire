@@ -296,7 +296,8 @@ def cmd_mine(label, txid, vout):
     print(f"\nwrote {statefile(label)}")
 
 
-def cmd_build(label, publish=False, fief=None, sponsor=None, fee_rate=1):
+def cmd_build(label, publish=False, fief=None, sponsor=None, fee_rate=1,
+              replace=False):
     w = load_wallet()
     st = load_state(label)
     txid, vout = st["funding"]["txid"], st["funding"]["vout"]
@@ -305,10 +306,28 @@ def cmd_build(label, publish=False, fief=None, sponsor=None, fee_rate=1):
     utxos = requests.get(
         f"https://mempool.space/api/address/{w['addr']}/utxo", timeout=30).json()
     match = [u for u in utxos if u["txid"] == txid and u["vout"] == vout]
-    assert match, f"funding utxo {txid}:{vout} not in wallet utxo set!"
-    value = match[0]["value"]
-    assert match[0]["status"]["confirmed"], "funding utxo unconfirmed"
-    print(f"funding utxo confirmed: {txid}:{vout} = {value} sats")
+    if match:
+        value = match[0]["value"]
+        assert match[0]["status"]["confirmed"], "funding utxo unconfirmed"
+        print(f"funding utxo confirmed: {txid}:{vout} = {value} sats")
+    elif replace:
+        # A fee-bump replacement.  mempool.space drops a UTXO from /utxo the
+        # moment an unconfirmed tx spends it, so the liveness check above can
+        # never pass for an RBF; reuse what the first build recorded.
+        #
+        # Replacing a spawn is safe and does NOT change the identity: the dat
+        # commits to the FUNDING outpoint, not to the spawn txid, so the @p and
+        # the life are untouched and Q is bit-identical.  Only the identity
+        # SATPOINT moves.  Do this only while nothing downstream exists yet --
+        # no finalize, no custody entry, no peer tracking the old satpoint.
+        value = int(st.get("funding_value")
+                    or (int(st["sat_value"]) + int(st["fee_paid"])))
+        print(f"REPLACING unconfirmed spawn {st.get('spawn_txid','?')[:16]}... ; "
+              f"funding {txid}:{vout} = {value} sats")
+    else:
+        raise AssertionError(f"funding utxo {txid}:{vout} not in wallet utxo "
+                             f"set (pass --replace to fee-bump a spawn)")
+    st["funding_value"] = value
 
     pass_atom = int(st["pass_atom_hex"], 16)
     fief_noun = None
@@ -656,7 +675,8 @@ if __name__ == "__main__":
             if a.startswith("--fee-rate="):
                 fee_rate = int(a.split("=", 1)[1])
         sys.exit(cmd_build(sys.argv[2], publish=pub, fief=fief,
-                           sponsor=sponsor, fee_rate=fee_rate))
+                           sponsor=sponsor, fee_rate=fee_rate,
+                           replace="--replace" in sys.argv))
     elif cmd == "broadcast":
         cmd_broadcast(sys.argv[2])
     elif cmd == "status":
