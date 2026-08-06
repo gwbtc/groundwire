@@ -440,7 +440,11 @@
             :~  leaf+"%gw-btc: writ from {(scow %p who.poke)} held: light client NOT synced"
                 leaf+"  (tip {<num.u.best>}; no verdict will be emitted until it catches up)"
             ==
-        `this
+        ::  ... and re-read the light client's answer while we are at it,
+        ::  because it may have caught up without telling us.  See
+        ::  +refresh-synced.
+        :_  this
+        (refresh-synced our.bowl)
       =/  need=@ud  (log-top-height u.sat)
       ?.  (gte num.u.best need)
         %-  %-  slog
@@ -1328,6 +1332,42 @@
   ^-  card
   [%pass /is-synced %agent [our light-client-agent:lca] %watch /is-synced]
 ::
+::  +refresh-synced: re-read the light client's sync state, on demand
+::
+::    /is-synced answers the WATCH immediately with the current value and
+::    then gives a fact only on the node's own transitions -- and that emit
+::    coverage is INCOMPLETE.  %bitcoin-client announces losing its last
+::    peer (+have-live-peers goes false, so +is-fully-synced does too), but
+::    nothing announces the recovery: a peer reconnecting does not emit,
+::    and the headers/cfheaders handlers only emit when they process a
+::    batch.  A node that was already at the tip therefore never says so
+::    again.
+::
+::    Observed live on mainnet, 2026-08-06, minutes after the gate landed:
+::    %bitcoin-client reported `is-synced %.y` with 72 live peers and
+::    filter headers at 961.280 while %gw-btc still held .synced %.n --
+::    and would have gone on holding every attestation indefinitely.  That
+::    is fail-closed, and it is also dead, and trading a false INVALID for
+::    a permanent silence is not a fix.
+::
+::    A fresh subscription's initial fact is the reliable read, so drop and
+::    re-establish it.  Gall processes a %leave and a %watch on the same
+::    wire in order within one event (+ap-move's move loop deletes from
+::    .boat before the %watch checks it), so this is one card pair and no
+::    window.
+::
+::    Driven by DEMAND rather than by a timer: it runs exactly when a writ
+::    or a %anew was held for lack of readiness, i.e. exactly when the
+::    answer matters, and a retransmitting peer is the poll.  A quiet ship
+::    never asks, and does not need to.
+::
+++  refresh-synced
+  |=  our=@p
+  ^-  (list card)
+  :~  [%pass /is-synced %agent [our light-client-agent:lca] %leave ~]
+      (watch-synced our)
+  ==
+::
 ::  +log-top-height: the highest chain height a custody log's evidence needs
 ::
 ::    The spawn transaction's block, plus every entry's block.  Below this
@@ -1676,7 +1716,7 @@
     `state
   ?.  synced
     %-  (slog leaf+"%gw-btc: %anew refused: light client not synced (tip {<num.u.tip>})" ~)
-    `state
+    [(refresh-synced our) state]
   =/  need=@ud  (log-top-height [our *pass cand])
   ?.  (gte num.u.tip need)
     %-  (slog leaf+"%gw-btc: %anew refused: tip {<num.u.tip>} below evidence height {<need>}" ~)
