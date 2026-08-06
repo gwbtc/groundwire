@@ -86,15 +86,31 @@ def cmd_who(pier):
 
 
 def cmd_pass(pier):
-    """The ship's LIVE jael pass -- NOT the artifact's pass_atom_hex, which is
-    a different and shorter object (108 B vs ~330-405 B)."""
+    """The ship's BARE pass, re-derived from jael's ring.
+
+    ~108 bytes, the same object as an artifact's `pass_atom_hex`, and it does
+    NOT grow when the ship ingests custody evidence -- the xtr rides the ring
+    that the BOOT FEED was baked from, not the ring jael stores.  So this is a
+    useful identity check and a useless liveness check.
+
+    The pass a peer must actually be handed for `gwctl.py writ` is the
+    xtr-bearing one (~305-405 B), which `ops/gwmint.py artifact` computes and
+    records as `pass_with_xtr_hex`.  Take it from there.
+
+    WARNING, learned the hard way: do not go fishing for it with an ad-hoc
+    `.^` on jael's /deed from inside a thread.  A scry that jael declines
+    returns `arvo: scry-lost` -> `bail: 4` -> `spider crashed, killing all
+    strands`, which kills every OTHER in-flight strand on the ship as well --
+    including a running verification, which then reports only
+    `%anew self-validation ended without a verdict` with no hint that an
+    unrelated diagnostic was the cause."""
     c = conn(pier, 600)
     r = ev(c, """=/  lyf=life  .^(life %j /(scot %p our)/life/(scot %da now)/(scot %p our))
 =/  rig=ring  .^(ring %j /(scot %p our)/vein/(scot %da now)/(scot %ud lyf))
 =/  pas=pass  pub:ex:(nol:nu:cric:crypto rig)
 (pure:m !>([life=lyf bytes=(met 3 pas) hex=(scot %ux `@ux`pas)]))""")
     life, (nbytes, hexcord) = r[0], r[1]
-    print(f"life {life}  bytes {nbytes}")
+    print(f"life {life}  bytes {nbytes} (BARE -- xtr pass is in the artifact)")
     print(_cord(hexcord))
 
 
@@ -221,17 +237,29 @@ def cmd_writ(pier, patp, pass_hex):
     NO wall-clock deadline by design: cost is O(blocks since the comet last
     moved its sat)."""
     c = conn(pier, 900)
-    h = pass_hex if pass_hex.startswith("0x") else "0x" + pass_hex
+    # A pass is ~305-405 bytes = 610-810 hex digits, and Hoon will not parse a
+    # bare 0x literal that long: @ux literals must be DOT-GROUPED every four
+    # digits.  OPERATIONS.md 6 writes this poke as `0x<peer's live pass>`,
+    # which taken literally is a syntax error.
+    h = hoonhex(int(pass_hex, 16))
     print(c.poke_our("gw-btc", "noun",
                      f"!>([%jael-writ %gw-btc `@p`{patp} `@ux`{h}])"))
 
 
 def cmd_point(pier, patp):
-    """/=lyfe=/ and /=dome=/ are the clean discriminator between a Groundwire
-    verdict and ordinary comet PKI: dome is [~ %gw-btc] only for the former."""
+    """/lyfe/ and /dome/ are the clean discriminator between a Groundwire
+    verdict and ordinary comet PKI: dome is [~ %gw-btc] only for the former.
+
+    NB the runbook writes these as `.^((unit @ud) %j /=lyfe=/~ship)`.  The
+    `=lyfe=` beak shorthand and the bare `~ship` path element are BOTH dojo
+    sugar; in a khan thread the ship has to be re-printed with (scot %p ...)
+    or the thread dies with `%thread-fail: syntax error`."""
     c = conn(pier, 600)
-    print(ev(c, f"""=/  l  .^((unit @ud)  %j /(scot %p our)/lyfe/(scot %da now)/{patp})
-=/  d  .^((unit @tas) %j /(scot %p our)/dome/(scot %da now)/{patp})
+    # NB single spaces inside every .^ -- a DOUBLE space is a gap in Hoon and
+    # ends wide form, which surfaces only as `%thread-fail: syntax error`.
+    print(ev(c, f"""=/  who  `@p`{patp}
+=/  l  .^((unit @ud) %j /(scot %p our)/lyfe/(scot %da now)/(scot %p who))
+=/  d  .^((unit @tas) %j /(scot %p our)/dome/(scot %da now)/(scot %p who))
 =/  s  .^(* %ax /(scot %p our)//(scot %da now)/snubbed)
 (pure:m !>([lyfe=l dome=d snub=s]))"""))
 

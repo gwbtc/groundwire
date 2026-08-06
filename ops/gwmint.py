@@ -560,6 +560,30 @@ def cmd_artifact(label, n):
     print(f"  verify_proof_onchain: {ok2} — {why2}")
     assert ok and ok2, "proof verification failed"
 
+    # start-height names the block of the tx that CREATED the spawn satpoint --
+    # the FUNDING tx -- and NOT the spawn tx's own block.  The verifier walks
+    # `header-height(start-height)` then `transaction(that block, spawn txid)`
+    # looking for the funding outpoint, so pointing it at the spawn's block
+    # makes it fetch a block the transaction is not in.  The whole custody log
+    # then fails to validate and the %anew thread ends WITHOUT A VERDICT, which
+    # is almost silent: one log line, no reason, pass stays 108 bytes.
+    #
+    # It is transport metadata and enters no hash preimage, so it changes no
+    # commitment, no @p and no on-chain data -- only the xtr and the baked feed.
+    #
+    # This was fixed once before, out of tree, by a fix_artifacts.py that
+    # hardcoded the three funding heights and was never folded back here.  It
+    # therefore reproduced exactly in the 2026-08-06 cleanroom run.
+    fh = st.get("funding_height")
+    if not fh:
+        fh = requests.get(
+            f"https://mempool.space/api/tx/{st['funding']['txid']}/status",
+            timeout=30).json()["block_height"]
+        st["funding_height"] = fh
+        save_state(label, st)
+    assert fh <= height, f"funding height {fh} above spawn height {height}"
+    print(f"  funding height      : {fh}  (spawn is at {height})")
+
     # bake the xtr (entry 0 = the spawn, opening the dat commitment)
     entry = dict(
         txid_hex=txid, height=height,
@@ -569,7 +593,7 @@ def cmd_artifact(label, n):
             blind_opening=dict(
                 spawn=dict(txid_hex=st["funding"]["txid"],
                            vout=st["funding"]["vout"], off=0),
-                start_height=height,
+                start_height=fh,
                 blind=bytes.fromhex(st["blind_hex"]),
             ),
         ),
@@ -588,8 +612,18 @@ def cmd_artifact(label, n):
     (_t, _z), (comet_p, (rift, ((life, feed_ring), _nil))) = noun
     assert feed_ring == ring_int, "feed ring != miner ring"
     assert comet_p == C.patp_to_int(st["comet"]), "feed comet != mined comet"
-    baked = C.encode_uw(C.rebuild_feed(comet_p, rift, life,
-                                       C.append_xtr_to_ring(ring_int, xtr)))
+    # The pass a PEER must be given to verify this comet is the one derived
+    # from the ring WITH the xtr appended -- ~330-405 B.  pass_atom_hex above
+    # is the bare 108-byte object and carries no custody evidence at all; a
+    # %jael-writ built from it is dropped silently through +public-pass.
+    # Deriving it from a running ship is a trap: jael's /vein gives you the
+    # ring, and re-deriving from that reproduces the BARE pass however much
+    # evidence the ship has ingested.  Compute it here instead.
+    ring_xtr = C.append_xtr_to_ring(ring_int, xtr)
+    pass_with_xtr = C.derive_pass_from_ring(C.encode_uw(ring_xtr))
+    print(f"  pass bare / with xtr: {(pass_atom_len := (int(st['pass_atom_hex'], 16).bit_length() + 7) // 8)}"
+          f" / {(pass_with_xtr.bit_length() + 7) // 8} bytes")
+    baked = C.encode_uw(C.rebuild_feed(comet_p, rift, life, ring_xtr))
     # the @p must be unchanged by baking
     n2 = C.hoon_cue(C.decode_uw(baked))
     assert n2[1][0] == comet_p, "baking changed the @p!"
@@ -606,7 +640,16 @@ def cmd_artifact(label, n):
         "feed_with_xtr_baked": baked,
         "pass_atom_hex": st["pass_atom_hex"],
         "xtr_hex": hex(xtr),
+        "ring_with_xtr": C.encode_uw(ring_xtr),
+        "pass_with_xtr_hex": hex(pass_with_xtr),
         "custody_entry_poke": custody_poke,
+        "funding_height": fh,
+        "start_height_note": (
+            "start-height is the block of the tx that CREATED the spawn "
+            "satpoint (the FUNDING tx), not the spawn tx's own block. It is "
+            "transport metadata and enters no hash preimage, so it changes no "
+            "commitment, no @p and no on-chain data -- only the xtr custody "
+            "log and the xtr-baked boot feed."),
 
         "blind_derivation": {
             "scheme": ("blind = H_tag('gw/spawn-blind', minimal_LE_bytes(blind_seed)) "
@@ -666,6 +709,164 @@ def cmd_artifact(label, n):
     print(f"  comet {st['comet']}  height {height}  sat {st['sat_value']} fee {st['fee_paid']}")
 
 
+def cmd_publish(label, artifact_n, fee_rate=4):
+    """TIER 1 DECLASSIFICATION -- a state update carrying an OP_RETURN
+    publication, for a comet that is already confidential.
+
+    There is no CLI for this anywhere: causeway has no `publish` subcommand and
+    no --publish on `rekey`, and build_rekey_psbt's publication parameters are
+    unreachable from any caller.  It is reachable here.
+
+    What the chain sees: input 0 spends the comet's currently tracked identity
+    satpoint (the ownership proof -- only its holder can), output 0 commits a
+    snapshot whose life STRICTLY exceeds the one peers hold, output 1 is the
+    OP_RETURN.  +process-publication routes any ship already in .unv-ids to
+    +apply-state, which is why this works for a tracked comet and is refused
+    for a stranger ("state-update publication for a comet we do not track").
+
+    The blind-opening is included and must stay consistent with the dat: a
+    present-but-wrong one is refused outright.
+    """
+    fee_rate = int(fee_rate)
+    w = load_wallet()
+    art_path = f"/Users/trent/gw-building/.gw-comet-{artifact_n}.json"
+    art = json.load(open(art_path))
+    proof = dict(art["causeway_proof"])
+    old_snap = dict(proof["snapshot"])
+
+    new_snap = dict(old_snap)
+    new_snap["life"] = int(old_snap["life"]) + 1
+    print(f"comet   : {art['comet']}")
+    print(f"spending: {proof['commit_txid']}:{proof['sat_vout']} "
+          f"= {proof['sat_value']} sats")
+    print(f"life    : {old_snap['life']} -> {new_snap['life']}")
+    print(f"fief    : {new_snap.get('fief')}   sponsor: {new_snap.get('sponsor')}")
+
+    pub_pass = int(art["pass_atom_hex"], 16)
+    pub_open = {
+        "internal_key": int("02" + proof["internal_pubkey_hex"], 16),
+        "snapshot": new_snap,
+        "blind_opening": {
+            "spawn": {"txid_hex": proof["funding"]["txid"],
+                      "vout": proof["funding"]["vout"], "off": 0},
+            # a LATE publication must carry a real start height, not the 0 that
+            # causeway's spawn-only helper hardcodes
+            "start_height": int(proof["block_height"]),
+            "blind": bytes.fromhex(art["blind_derivation"]["blind_hex"]),
+        },
+    }
+
+    psbt_obj, new_proof = C.build_rekey_psbt(
+        prior_proof=proof, new_snapshot=new_snap,
+        publication_pass_atom=pub_pass, publication_opening=pub_open,
+        fee_rate=fee_rate, network="main")
+    psbt_obj.sign_with(w["root"])
+    new_txid, tx_hex = C._extract_tx_from_psbt(psbt_obj.to_base64())
+
+    raw = bytes.fromhex(tx_hex)
+    dec = parse_raw_tx(raw)
+    print("\n" + "=" * 72 + "\nFULL INDEPENDENT DECODE\n" + "=" * 72)
+    print(json.dumps(dec, indent=2))
+
+    ok = True
+
+    def chk(name, cond, detail=""):
+        nonlocal ok
+        print(f"  [{'PASS' if cond else 'FAIL'}] {name}"
+              f"{(' — ' + detail) if detail else ''}")
+        ok = ok and bool(cond)
+
+    print("\nCHECKS")
+    chk("txid matches embit", dec["txid"] == new_txid, dec["txid"])
+    chk("exactly 1 input", len(dec["vin"]) == 1)
+    chk("input 0 spends the tracked identity satpoint",
+        dec["vin"][0]["txid"] == proof["commit_txid"]
+        and dec["vin"][0]["vout"] == int(proof["sat_vout"]),
+        f"{dec['vin'][0]['txid']}:{dec['vin'][0]['vout']}")
+    chk("input 0 scriptSig empty", dec["vin"][0]["scriptSig"] == "")
+    chk("witness is a single 64/65-byte schnorr sig",
+        len(dec["witness"]) == 1 and len(dec["witness"][0]) == 1
+        and len(dec["witness"][0][0]) // 2 in (64, 65),
+        f"{len(dec['witness'][0][0]) // 2} bytes")
+    chk("exactly 2 outputs (sat + OP_RETURN)", len(dec["vout"]) == 2,
+        f"got {len(dec['vout'])}")
+
+    c = C.state_commit(new_snap)
+    lh_ind = independent_leaf_hash(c)
+    chk("leaf hash: causeway == independent",
+        lh_ind == C.state_leaf_hash(C.state_leaf_script(c)), lh_ind.hex())
+    q_cw = C.state_output_key(w["xonly"], new_snap)
+    q_ind = independent_Q(w["xonly"], lh_ind)
+    chk("Q: causeway == from-scratch secp256k1", q_cw == q_ind, q_cw.hex())
+    chk("output 0 scriptPubKey == 5120||Q",
+        dec["vout"][0]["scriptPubKey"] == "5120" + q_ind.hex(),
+        dec["vout"][0]["scriptPubKey"])
+    chk("Q differs from the prior state key (the snapshot really moved)",
+        dec["vout"][0]["scriptPubKey"] != proof["sat_script_pubkey_hex"])
+    chk("life strictly increases",
+        int(new_snap["life"]) > int(old_snap["life"]),
+        f"{old_snap['life']} -> {new_snap['life']}")
+
+    sat_val = dec["vout"][0]["value"]
+    fee = int(proof["sat_value"]) - sum(o["value"] for o in dec["vout"])
+    chk("output 0 value >= 330 (P2TR dust)", sat_val >= 330, f"{sat_val} sats")
+    chk("fee sane (<= 2000 sats)", 0 < fee <= 2000, f"fee = {fee} sats")
+    chk("effective fee rate >= 1.0 sat/vB", fee / dec["vsize"] >= 1.0,
+        f"{fee}/{dec['vsize']} = {fee / dec['vsize']:.3f} sat/vB")
+
+    pub_spk = dec["vout"][1]["scriptPubKey"]
+    chk("output 1 is the OP_RETURN publication",
+        pub_spk == C.make_publication_script(pub_pass, pub_open).hex())
+    chk("OP_RETURN envelope 6a 03 'urb' 01 09",
+        pub_spk.startswith("6a03757262" + "0109"), pub_spk[:16])
+    chk("OP_RETURN value is 0", dec["vout"][1]["value"] == 0)
+    chk("publication <= 512 bytes", len(bytes.fromhex(pub_spk)) <= 512 + 8,
+        f"{len(bytes.fromhex(pub_spk))} bytes")
+
+    # Core 29 rejects our OP_RETURN by policy, so testmempoolaccept on the real
+    # script is expected to fail; prove the SIGNING path instead by swapping in
+    # a policy-legal script of the same shape.  We broadcast via mempool.space.
+    try:
+        res = rpc("testmempoolaccept", [[tx_hex]])[0]
+        if res.get("allowed"):
+            chk("bitcoind testmempoolaccept", True, json.dumps(res))
+        else:
+            print(f"  [note] Core rejects the real OP_RETURN by policy: "
+                  f"{res.get('reject-reason')}")
+            real = C.make_publication_script
+
+            def legal(p, o):
+                return bytes([0x6A, 0x20]) + hashlib.sha256(real(p, o)).digest()
+            try:
+                C.make_publication_script = legal
+                p2, _ = C.build_rekey_psbt(
+                    prior_proof=proof, new_snapshot=new_snap,
+                    publication_pass_atom=pub_pass, publication_opening=pub_open,
+                    fee_rate=fee_rate, network="main")
+                p2.sign_with(w["root"])
+                _t2, hex2 = C._extract_tx_from_psbt(p2.to_base64())
+                r2 = rpc("testmempoolaccept", [[hex2]])[0]
+            finally:
+                C.make_publication_script = real
+            chk("signing path valid (policy-legal OP_RETURN accepted)",
+                r2.get("allowed") is True, json.dumps(r2))
+    except Exception as e:  # noqa: BLE001
+        chk("bitcoind testmempoolaccept", False, str(e))
+
+    print("\n" + ("ALL CHECKS PASSED — safe to broadcast" if ok
+                  else "*** GATE FAILED — DO NOT BROADCAST ***"))
+    print(f"publication txid (pre-broadcast): {new_txid}")
+    st = {"label": f"{label}-publish", "comet": art["comet"],
+          "artifact": artifact_n, "spawn_txid": new_txid,
+          "signed_tx_hex": tx_hex, "gate_passed": ok, "fee_rate": fee_rate,
+          "sat_value": sat_val, "fee_paid": fee, "vsize": dec["vsize"],
+          "new_snapshot": {k: v for k, v in new_snap.items()},
+          "prior_txid": proof["commit_txid"], "published": True}
+    save_state(f"{label}-publish", st)
+    print(f"wrote {statefile(f'{label}-publish')}")
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == "artifact":
@@ -686,6 +887,12 @@ if __name__ == "__main__":
         sys.exit(cmd_build(sys.argv[2], publish=pub, fief=fief,
                            sponsor=sponsor, fee_rate=fee_rate,
                            replace="--replace" in sys.argv))
+    elif cmd == "publish":
+        fr = 4
+        for a in sys.argv:
+            if a.startswith("--fee-rate="):
+                fr = int(a.split("=", 1)[1])
+        sys.exit(cmd_publish(sys.argv[2], sys.argv[3], fee_rate=fr))
     elif cmd == "broadcast":
         cmd_broadcast(sys.argv[2])
     elif cmd == "status":
