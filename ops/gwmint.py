@@ -575,6 +575,14 @@ def cmd_artifact(label, n):
         ),
     )
     xtr = C.build_xtr_atom([entry])
+    # The poke that extends a RUNNING ship's custody log in place, no reboot.
+    # A ship booted from the miner's feed serves a 108-byte pass and CANNOT be
+    # verified by anyone; this is how it gets its evidence without a restart.
+    # The agent re-verifies the whole extended log against the chain before it
+    # will re-encode the pass, so this is evidence, not authority.
+    custody_poke = C.format_custody_entry_poke(entry)
+    print("\n  custody-entry poke (extends a RUNNING ship's log in place):")
+    print("    " + custody_poke)
     ring_int = C.decode_uw(st["ring"])
     noun = C.hoon_cue(C.decode_uw(st["feed"]))
     (_t, _z), (comet_p, (rift, ((life, feed_ring), _nil))) = noun
@@ -598,6 +606,7 @@ def cmd_artifact(label, n):
         "feed_with_xtr_baked": baked,
         "pass_atom_hex": st["pass_atom_hex"],
         "xtr_hex": hex(xtr),
+        "custody_entry_poke": custody_poke,
 
         "blind_derivation": {
             "scheme": ("blind = H_tag('gw/spawn-blind', minimal_LE_bytes(blind_seed)) "

@@ -315,6 +315,26 @@ causeway spawn generate [--invite <FAUCET_CODE>] [--sponsor <SPONSOR_PATP>] …
 - `spawn generate` with no funding still **waits forever**. Not automated.
 - Requires ≥ 1000 sats in the funding UTXO (`REQUIRED_SATS`), default fee
   rate 2 sat/vB, `BLOCK_CONFIRMATIONS = 2`.
+- **Pick the fee rate against the mempool, not against the default.** A spawn
+  is ~111 vB, so the whole fee is 111 × rate and every rate in the plausible
+  range is affordable — but the confirmation is on your critical path, because
+  the custody log cannot be baked until the spawn confirms and nothing can
+  verify you until it is (§6). In the 2026-08-06 run three spawns went out at
+  1 sat/vB and sat unconfirmed through two blocks whose own minimums were
+  **2.1 and 3.0 sat/vB**; `mempool.space`'s `hourFee` said 1 the whole time.
+  Check what recent blocks actually cleared to:
+
+  ```sh
+  curl -s https://mempool.space/api/v1/blocks/<tip> \
+    | python3 -c 'import sys,json;[print(b["height"],b["extras"]["feeRange"][0]) for b in json.load(sys.stdin)[:5]]'
+  ```
+
+  and bid above that. If you are already stuck, `ops/gwmint.py build <label>
+  --replace --fee-rate=N` rebuilds the spawn as a full-RBF replacement:
+  **the identity is unaffected** — the `dat` commits to the funding outpoint,
+  not the spawn txid, so `@p`, life and `Q` are bit-identical and only the
+  identity satpoint moves. Safe only before `finalize`, before any custody
+  entry, and before any peer has tracked the old satpoint.
 
 Then, once the spawn tx confirms, bake the custody log into the boot feed:
 
