@@ -963,9 +963,31 @@ start at §9.
 ## 9. Troubleshooting, by symptom
 
 **Filter-header height never leaves 1, block headers advance normally.**
-Your peers cannot serve compact filters. `++init` requires
-`node-compact-filters`, and unfiltered DNS seeds mostly do not have it.
-Re-seed from `x49.`-prefixed seeds (§5.6). This killed an entire test run.
+
+**First, check whether block headers have actually finished.** Filter headers
+sitting at 1 while block headers climb is **normal and expected** —
+`+continue-syncing-headers` (`bitcoin-client.hoon:1015-1032`) does not request
+a single filter header until `block-headers-are-synced` is true. During the
+whole ~55-minute block-header phase you will see exactly this:
+
+```
+[%headers 608.001]
+[%filter-headers 1]
+```
+
+and there is nothing wrong. A cleanroom operator following the old wording here
+would have torn down a perfectly healthy 139-peer set at the halfway mark.
+
+It is a real symptom **only once `%headers` has reached the chain tip and
+`%filter-headers` is still 1.** Then your peers cannot serve compact filters:
+`++init` requires `node-compact-filters` and unfiltered DNS seeds mostly do not
+have it. Re-seed from `x49.`-prefixed seeds (§5.6). This killed an entire test
+run.
+
+A quick way to tell the two apart without waiting: `++peer-services-are-sufficient`
+*requires* `node-compact-filters`, so any peer in `[%live-earth-peers N]` has
+already advertised it. A healthy N means the pool is fine and you are simply
+still in the block-header phase.
 
 **`live-earth-peers` is 0 and sync stalled, right after seeding a lot of peers.**
 The sidecar SIGSEGVed. Check `/opt/gw/sc-*.log` for `--- CRASH: signal 11 ---`.
