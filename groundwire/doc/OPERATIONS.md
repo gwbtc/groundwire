@@ -149,8 +149,10 @@ sha256sum gw-base.pill
 ```
 
 > Not automated: there is no local pill build. `onboarding/booting/README.md`
-> documents a manual `+pill/solid` route; it is stale (see §12) and the one
-> attempt in `testnet/run/pillbuild.log` failed with `mint-vain`.
+> used to document a manual `+pill/solid` route; it now marks that route
+> known-broken — the one attempt (`testnet/run/pillbuild.log`, a local,
+> gitignored run log) failed to compile with `mint-vain` in
+> `/sys/vane/ames/hoon` and never wrote a pill.
 
 ### 3.3 the tcp-sidecar
 
@@ -945,10 +947,14 @@ Stated plainly so nobody hunts for a script that does not exist:
 - **No deploy script.** The desk install in §5.4 is manual.
 - **No fully headless Causeway spawn without funding.** `spawn generate`
   with no funded UTXO waits forever rather than timing out.
-- **`causeway.py` and `gw-onboard.py` cannot find vere or the miner on Linux.**
-  Both compute `f"{arch}-{os_name}-none"` for the zig output directory,
-  which yields `x86_64-linux-none` — a triple zig never emits. Always pass
-  `--vere` and `--miner` explicitly on Linux.
+
+**Fixed since this runbook was written:** `causeway.py` and `gw-onboard.py`
+used to compute `f"{arch}-{os_name}-none"` for the zig output directory,
+yielding `x86_64-linux-none` — a triple zig never emits — so on Linux the
+defaults could never resolve and `--vere`/`--miner` were mandatory with no
+hint. Both now probe the triples zig actually emits (`…-linux-musl`, then
+`…-linux-gnu`; `…-macos-none` on Darwin) and, on a miss, print every path
+they looked at. The flags still override.
 
 ---
 
@@ -960,16 +966,25 @@ the code.
 | claim | where | reality |
 |---|---|---|
 | light-client sync is "~8 min, ~850 MB pier" | `doc/opret-revision/05-live-test-plan.md` Phase 0 | ~2.5 h, ~2.2 GB. Measured twice. |
-| build vere with zig **0.14.1**, output at `zig-out/x86_64-linux-none/urbit` | `onboarding/booting/README.md` | zig **0.15.2** (`vere/INSTALL.md`, CI pin); Linux output is `zig-out/x86_64-linux-musl/urbit`. `x86_64-linux-none` is not a triple zig emits. |
-| pill is built by hand with `+pill/solid` on a `%gw-base` desk | `onboarding/booting/README.md` | production is `brass:pill` via `fyrd`/`khan-eval` in CI, with `%groundwire`/`%mcp`/`%vitriol` baked in; output lands in Clay at `/pill/pill`, not `.urb/put/`. The solid route failed locally with `mint-vain`. |
-| the repo runs an agent called `%urb-watcher` on a `%groundwire` desk | this repo's `README.md` | the agents are `%gw-btc` and `%urb-snapshot` (`desk.bill`). `%urb-watcher` is the old name. |
 | `%gw-btc` scries `%light-client` | scattered comments, older results docs | the agent is `%bitcoin-client`; `%gw-btc` reaches it through `++light-client-agent:lca`. Fixed as Phase 2 finding B5. |
-| Causeway supports `escape`, `adopt`, `detach`, `fief`, `set-mang`… | `causeway/README.md`, `causeway/docs/OPERATIONS.md` | `src/ops/index.ts` exports exactly one op, `rekey`. Under the kelvin-9 OP_RETURN revision the other opcodes are removed. `causeway/docs/OPERATIONS.md` describes a retired commit+reveal protocol and a `protocol/encoder.ts` that does not exist — treat it as historical. |
 | `causeway` has a `mine` subcommand | folklore | it does not. Mining happens inside `spawn generate`/`spawn connect` via the external `comet_miner` binary (`--miner`). |
-| `causeway/desktop/README.md` documents the CLI | itself | it omits `proof show`, `proof verify`, and nearly every flag, including `--assume-saved`, `--utxo` and `--signed-psbt`, which are what make a scripted spawn possible. |
-| `causeway/README.md` cites `tests/dat.spec.ts` | itself | that file does not exist. |
-| `_print_boot_oneliner` points at `https://groundwire.io/causeway/boot.sh` | `causeway/desktop/causeway.py:3415` | the repo README points users at `groundwire.dev`. One of the two hostnames is wrong; unresolved here. |
+| `_print_boot_oneliner` points at `https://groundwire.io/causeway/boot.sh` | `causeway/desktop/causeway.py:3415` | the repo README points users at `groundwire.dev`. One of the two hostnames is wrong; **unresolved — needs the owner's decision**, so both are left as they are. |
 | the pier liveness signal is `<PIER>/.urb/log` mtime | early briefs | inert; measured 21 h stale on a live ship. Use `<PIER>/.urb/log/*/data.mdb`. |
+
+### Reconciled since
+
+These rows were live disagreements when this runbook was written; the docs
+have since been corrected to match the code, and are kept here only so the
+old claims are recognisable if they resurface.
+
+| former claim | now says |
+|---|---|
+| build vere with zig **0.14.1**, output at `zig-out/x86_64-linux-none/urbit` (`onboarding/booting/README.md`) | zig **0.15.2**, and a per-host table of the triples zig really emits (`…-macos-none`, `…-linux-musl`). |
+| pill is built by hand with `+pill/solid` (`onboarding/booting/README.md`) | the `+pill/solid` route is marked known-broken (`mint-vain` in `/sys/vane/ames/hoon`); the documented route is `brass:pill` via `fyrd` in `gwbtc/urbit` CI, landing in Clay at `/pill/pill`. |
+| the repo runs an agent called `%urb-watcher` (repo `README.md`) | `%gw-btc` (verifier + block scanner) and `%urb-snapshot`, per `desk.bill`, with `%urb-watcher` named as the retired alias. |
+| Causeway supports `escape`, `adopt`, `detach`, `fief`, `set-mang` (`causeway/README.md`, `causeway/docs/OPERATIONS.md`) | `rekey` is the only on-chain management op. `causeway/docs/OPERATIONS.md`, which described the retired commit+reveal protocol and a non-existent `src/protocol/encoder.ts`, has been **deleted** in favour of this runbook. |
+| `causeway/desktop/README.md` documents the CLI | it now lists every subcommand, including `proof show` / `proof verify`, and the `--utxo` / `--signed-psbt` / `--assume-saved` flags that make a scripted spawn possible. |
+| `causeway/README.md` cites `tests/dat.spec.ts` | it cites `tests/kelvin9.spec.ts`, where the `dat` vectors actually live. |
 
 ---
 

@@ -1273,3 +1273,43 @@ def test_format_hoon_fief_renders_every_arm():
     )
     with pytest.raises(ValueError):
         cw.format_hoon_fief((0xDEAD, (1, 2)))
+
+
+# ---------------------------------------------------------------------------
+# zig-out path resolution
+#
+# `zig build` names the install directory after the *resolved* target triple.
+# vere/build.zig and comet-miner/build.zig both rewrite a native Linux build to
+# musl, so "<arch>-linux-none" is a triple zig never emits and must never be a
+# default — that bug made --vere/--miner mandatory on Linux with no hint.
+# ---------------------------------------------------------------------------
+
+
+def test_zig_candidates_never_offer_a_linux_none_triple():
+    for machine in ("x86_64", "amd64", "aarch64", "arm64"):
+        cands = cw._zig_target_candidates(machine, "Linux")
+        assert not any(c.endswith("-linux-none") for c in cands), cands
+        assert cands[0].endswith("-linux-musl")
+        assert cands[1].endswith("-linux-gnu")
+
+
+def test_zig_candidates_are_unchanged_on_macos():
+    assert cw._zig_target_candidates("arm64", "Darwin") == ["aarch64-macos-none"]
+    assert cw._zig_target_candidates("x86_64", "Darwin") == ["x86_64-macos-none"]
+
+
+def test_zig_out_bin_prefers_the_directory_that_exists(tmp_path, monkeypatch):
+    monkeypatch.setattr(cw.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(cw.platform, "system", lambda: "Linux")
+    built = tmp_path / "zig-out" / "x86_64-linux-gnu"
+    built.mkdir(parents=True)
+    (built / "urbit").write_text("")
+    assert cw._zig_out_bin(str(tmp_path), "urbit") == f"{built}/urbit"
+
+
+def test_zig_out_bin_names_every_path_it_looked_at(tmp_path, monkeypatch):
+    monkeypatch.setattr(cw.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(cw.platform, "system", lambda: "Linux")
+    path = cw._zig_out_bin(str(tmp_path), "urbit")
+    assert path == f"{tmp_path}/zig-out/x86_64-linux-musl/urbit"
+    assert "x86_64-linux-gnu/urbit" in cw._not_found_hint(path)

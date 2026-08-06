@@ -59,15 +59,78 @@ RPC_USER = "mainnetrpcuser"
 RPC_PASS = "fc3d36ce83e15484e75a658b2a9a8a90a66f4cb017ace74c8631fe082b93adbf"
 
 
-def _detect_zig_target() -> str:
-    """Map the current platform to its Zig target triple for binary paths."""
-    machine = platform.machine().lower()
-    system = platform.system().lower()
+# --- zig output directories -------------------------------------------------
+#
+# `zig build` installs each binary into a directory named for the *resolved*
+# target triple (`build.zig`: `dest_dir = .{ .override = .{ .custom =
+# target_query.zigTriple(..) } }`).  That triple is not simply
+# "<arch>-<os>-none".  Both vere/build.zig and comet-miner/build.zig rewrite a
+# native Linux build to musl:
+#
+#     if (t.os.tag == .linux and target.query.isNative() and !asan and !ubsan)
+#         b.resolveTargetQuery(.{ .abi = .musl })
+#
+# so a plain `zig build` on Linux lands in `zig-out/x86_64-linux-musl/`
+# (or `aarch64-linux-musl` on ARM).  Only an `-Dasan`/`-Dubsan` build escapes
+# the rewrite and keeps the native glibc ABI, landing in `x86_64-linux-gnu`.
+# macOS has no rewrite and resolves to `-none`, e.g. `aarch64-macos-none`.
+#
+# `x86_64-linux-none` is a triple zig NEVER emits — the `supported_targets`
+# whitelist in both build.zig files only admits musl and gnu for Linux — so it
+# must never be a default.  We therefore probe the candidate triples on disk,
+# most-likely first, and remember the whole list so a miss can name it.
+
+
+def _zig_target_candidates(machine: str = "", system: str = "") -> list[str]:
+    """Zig target triples this platform may have built into, most likely first."""
+    machine = (machine or platform.machine()).lower()
+    system = (system or platform.system()).lower()
     arch = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64"}.get(
         machine, machine
     )
-    os_name = {"darwin": "macos", "linux": "linux"}.get(system, system)
-    return f"{arch}-{os_name}-none"
+    if system == "darwin":
+        return [f"{arch}-macos-none"]
+    if system == "linux":
+        # musl is what a plain `zig build` produces; gnu only for asan/ubsan
+        # builds and explicit `-Dtarget=…-linux-gnu` cross builds.
+        return [f"{arch}-linux-musl", f"{arch}-linux-gnu"]
+    if system == "windows":
+        return [f"{arch}-windows-gnu"]
+    return [f"{arch}-{system}-none"]
+
+
+def _detect_zig_target() -> str:
+    """The single most likely zig target triple for this platform."""
+    return _zig_target_candidates()[0]
+
+
+# resolved default path -> every path we looked at, for the not-found message
+_ZIG_SEARCHED: dict[str, list[str]] = {}
+
+
+def _zig_out_bin(tree: str, binary: str) -> str:
+    """Resolve `<tree>/zig-out/<triple>/<binary>` against the triples zig emits.
+
+    Returns the first candidate that exists.  If none do, returns the most
+    likely candidate and records the full search list, so the caller's
+    `os.path.isfile` check can report what was actually looked for rather than
+    a single invented path.
+    """
+    searched = [f"{tree}/zig-out/{triple}/{binary}" for triple in _zig_target_candidates()]
+    for path in searched:
+        if os.path.isfile(path):
+            return path
+    _ZIG_SEARCHED[searched[0]] = searched
+    return searched[0]
+
+
+def _not_found_hint(path: str) -> str:
+    """Extra guidance for a default binary path that resolved to nothing."""
+    searched = _ZIG_SEARCHED.get(path)
+    if not searched or len(searched) == 1:
+        return ""
+    others = "\n".join(f"    {p}" for p in searched[1:])
+    return f"  Also looked for it at:\n{others}\n"
 
 
 _ZIG_TARGET = _detect_zig_target()
@@ -79,8 +142,8 @@ if getattr(sys, "frozen", False):
     VERE_BIN = os.path.join(_BIN_DIR, "gw-vere")
     GW_PILL = os.path.join(_BIN_DIR, "gw-base.pill")
 else:
-    COMET_MINER_BIN = f"./comet-miner/zig-out/{_ZIG_TARGET}/comet_miner"
-    VERE_BIN = f"./vere/zig-out/{_ZIG_TARGET}/urbit"
+    COMET_MINER_BIN = _zig_out_bin("./comet-miner", "comet_miner")
+    VERE_BIN = _zig_out_bin("./vere", "urbit")
     GW_PILL = "./gw-base.pill"
 REQUIRED_SATS = 1_000
 POLL_INTERVAL = 15  # seconds between UTXO scans
@@ -1917,7 +1980,8 @@ def run_comet_miner(tweak_expr: str, miner_bin: str) -> dict:
     """
     if not os.path.isfile(miner_bin):
         print(f"\n  ERROR: Comet miner not found at: {miner_bin}")
-        print("  Make sure the comet_miner binary is in the expected location.")
+        print(_not_found_hint(miner_bin), end="")
+        print("  Build it with `zig build` in comet-miner/, or pass --miner.")
         sys.exit(1)
 
     cmd = [miner_bin, "-c", "--tweak", tweak_expr, "daplyd"]
@@ -2006,7 +2070,8 @@ def boot_comet(
 
     if not os.path.isfile(vere_bin):
         print(f"\n  ERROR: Urbit runtime not found at: {vere_bin}")
-        print("  Make sure the gw-vere binary is in the expected location.")
+        print(_not_found_hint(vere_bin), end="")
+        print("  Build it with `zig build` in vere/, or pass --vere.")
         sys.exit(1)
 
     if not os.path.isfile(pill):
