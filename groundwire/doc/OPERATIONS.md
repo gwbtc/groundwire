@@ -1017,11 +1017,29 @@ mtime across `<PIER>/.urb/log/*/data.mdb`.
 The ship is processing filter-header batches. Expected. Retry later.
 
 **Attestations produce no verdict and nothing in the log.**
-Check `/x/ready`. If `synced=%.n` the writ is being held, which is correct
-— but the log *does* name every drop now, so a genuinely silent drop means
-the agent is older than 2026-08-06. Check `/x/inflight`: a stranded
-single-flight slot silences that peer for up to `~h2`. Check
-`/x/pending-own` for the `%anew` equivalent.
+
+**Check the peer's pass length first (§6).** If it is 108 bytes the peer has
+no custody log, and `%jael-writ` drops it through `+public-pass` —
+**silently, with no log line and no verdict**. That is the correct *verdict*
+behaviour (a suite-C pass with no xtr is the public-onboarding shape, and
+judging it negatively would snub an honest comet the block scanner will
+resolve later), but it produces no diagnostic whatsoever, and it is exactly
+what you get if you booted before the spawn confirmed.
+
+Then check `/x/ready`. If `synced=%.n` the writ is being *held*, and that one
+**is** announced (`writ from … held: light client NOT synced`). Check
+`/x/inflight`: a stranded single-flight slot silences that peer for up to
+`~h2`. Check `/x/pending-own` for the `%anew` equivalent.
+
+> **Do not trust "every drop is announced".** The comment at
+> `app/gw-btc.hoon:340-348` says so, and this section used to say a silent
+> drop means an agent older than 2026-08-06. Neither is true: of the nine
+> `%jael-writ` returns, **four are still silent** — `+public-pass`,
+> `+foreign-kelvin`, an empty `chain.u.sat`, and a chain longer than 1024.
+> The last three emit a negative `writ-card` with no slog; the first emits
+> nothing at all. Phase 5b's finding 9 was fixed for the five gates that had
+> a `~&` added and the comment over-claims for the rest. Measured live on
+> 2026-08-06: a writ carrying a 108-byte pass produced **zero** log lines.
 
 **A peer got `INVALID` on `[XX] sponsor-known`, and is now snubbed.**
 Your scanner has not reached the block where that sponsor published. This
