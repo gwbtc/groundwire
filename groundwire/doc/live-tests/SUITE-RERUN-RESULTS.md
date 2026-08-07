@@ -580,3 +580,40 @@ every tool including `df`; cleared, 32 GB reclaimed.
 **Documentation:** the runbook held up well this time. Two additions earned:
 the jael-pass-vs-`chain.own` distinction (§6), and that `flog`/`|hi` output is
 invisible on a `-t` ship so the ack is the only delivery proof (§6).
+
+---
+
+# Rig left in this state
+
+| | k1 | k2 | k3 |
+|---|---|---|---|
+| ship | up, life 1, replayed clean after its SIGSEGV | up, life 1 | up, life 1 |
+| supervisor | 1 | 1 | 1 |
+| sidecar | connected | connected | connected |
+| desks mounted | **none** | **none** | **none** |
+| light client | synced to tip | synced, scanner following | synced, scanner following |
+| clean-room pier | preserved at `k1.pre-dos` (981M) | `k2.pre-dos` (1.1G) | `k3.pre-dos` (982M) |
+| iptables | clean (the wedge's DROP was removed) | — | — |
+
+**k1's on-chain identity is now life 2 and PUBLIC, while the running k1 ship is
+still life 1.** That divergence is expected — an on-chain state update does not
+rekey a running ship — and it demonstrably does **not** break traffic: k1↔k2 and
+k1↔k3 `|hi` both acked in 1–2 s afterwards, because the publication advanced
+only `life` and carried the same networking key forward. A future rekey that
+actually changes the key would need the ship rebooted onto the new life.
+
+## Two residual harness notes
+
+- **A supervisor was duplicated during the wedge test.** `wedge_remote.sh`
+  restarts one unconditionally in its `EXIT` trap, and the pier briefly had
+  two. `gwsup.sh`'s `flock` guard is **sound** — tested directly on the box, a
+  third start printed `a supervisor for k1 is already running; refusing` — so
+  this is the scratch script's fault, not the supervisor's. Cleaned up; one per
+  pier now.
+- **`ops/gwctl.py` argument conventions do not compose.** `gwctl.py pass`
+  prints a dot-grouped Hoon `@ux` (`0x2.e37a.b201…`) but `gwctl.py writ` does
+  `int(pass_hex, 16)`, which rejects the dots; and every command that takes a
+  `<patp>` needs the leading `~` because it interpolates into `` `@p`<patp> ``,
+  where a bare name parses as a wing. Neither is in the docstring. Both were
+  caught before they could corrupt a result, but both would stop a new operator
+  cold.
