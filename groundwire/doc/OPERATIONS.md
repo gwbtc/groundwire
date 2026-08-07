@@ -13,7 +13,9 @@ sibling repos named in §1) at the time of writing. Where a results doc and
 the code disagree, the code wins and the disagreement is recorded in §12.
 
 Placeholders: `<HOST>` a droplet address, `<PIER>` an absolute pier path,
-`<COMET>` a `~sampel-…` comet name, `<FEED>` an `0v…` boot feed atom,
+`<COMET>` a `~sampel-…` comet name, `<FEED>` an `0w…` boot feed atom
+(a `@uw` — vere parses `-G` with `(slaw %uw …)`, `king.c:707`, and refuses
+a `0v…` with `dawn: invalid private keys` after the pier already exists),
 `<PORT>` an ames UDP port, `<SESSION>` a tmux session name.
 
 ---
@@ -265,6 +267,34 @@ The other two desks ship as-is: `gwbtc/node/desk/` and
 
 ## 4. Order of operations
 
+> **If you are not modifying a component, do not do any of this by hand.**
+> `causeway/public/boot.sh` is the installer, and steps 5.3, 5.5, 5.6, 5.7
+> and 5.9 below are what it automates:
+>
+> ```sh
+> curl -fsSL https://groundwire.io/causeway/boot.sh | bash -s -- \
+>   --comet <COMET> --feed <FEED>
+> ```
+>
+> It detects the platform, fetches and unpacks the release, boots the ship
+> with `-w` and `-G` together and then *proves* the `@p` that came up is the
+> one you asked for, starts the sidecar, puts both under a supervisor that
+> performs the `gwbtc/node#1` wedge recovery, seeds `x49.`-filtered peers in
+> batches of 25, and reports sync progress until `[%is-synced %.y]`.
+> `--status` re-attaches to a running install; `--stop` stops one in the
+> §5.10 order. It refuses rather than guesses, and it never overwrites an
+> existing pier.
+>
+> It degrades honestly on today's releases: the `tcp-sidecar` binary and the
+> `%node` / `%tcp-sidecar` desks in the pill both arrive with `gwbtc/urbit`
+> PR #67, so against a release older than that it boots your comet, tells you
+> exactly which artifacts are missing, and stops rather than half-installing.
+>
+> The manual route below stays authoritative, and is what you want when you
+> are changing vere, the pill, a desk or the sidecar. It is also the
+> reference the installer was written from: where the two disagree, this
+> document is right and the script is a bug.
+
 Light-client sync from genesis is **~2.5 hours** and it is the critical
 path. Everything else fits inside it.
 
@@ -408,6 +438,8 @@ causeway proof show   <COMET>-spawn.proof.json
 ```
 
 ### 5.3 Boot the ship
+
+*Automated by `causeway/public/boot.sh` (which always uses the `-t` form).*
 
 **Decide first how you will drive the ship**, because it changes the boot
 flags and it is not reversible without a restart.
@@ -559,6 +591,9 @@ ssh <HOST> 'cd /opt/gw/desks/groundwire && find . -type f | sort | xargs md5sum 
 
 ### 5.5 Start the sidecar
 
+*Automated by `causeway/public/boot.sh`, including the `SSL_CERT_FILE`
+probe and the cwd-is-the-pier rule.*
+
 The sidecar must be running **before** the light client can do anything.
 
 ```sh
@@ -578,6 +613,9 @@ The sidecar has no internal recovery: `SIGSEGV`/`SIGBUS`/`SIGABRT` print
 socket is a hard exit too. **Run it under a supervisor** (§5.9).
 
 ### 5.6 Seed peers
+
+*Automated by `causeway/public/boot.sh`: it resolves the same ten `x49.`
+seeds, keeps the same per-pier used-address file, and pokes in batches of 25.*
 
 `%bitcoin-client` has **no DNS seeding and no hardcoded peer list**. It
 connects only to addresses you poke in, then self-sustains by `getaddr`
@@ -719,6 +757,13 @@ record of anything.
 `%gw-index-from 0` is a silent no-op.
 
 ### 5.9 Supervisor
+
+*`ops/gwsup.sh` is the campaign supervisor, for droplets laid out under
+`/opt/gw`. `causeway/public/boot.sh` writes its own `gwsup.sh` into the
+install directory for user-space installs: same algorithm and same three
+triggers, but portable to macOS and free of the `/opt/gw` layout and the
+`gwharness` Python dependency, neither of which exists in a release
+artifact. **Two implementations of one algorithm — change both.***
 
 Both vere and the sidecar die under load. Over one ~5h40m three-droplet
 session: 1 vere SIGSEGV (`loom: external fault`), 24 sidecar SIGSEGVs. Run
@@ -1221,6 +1266,26 @@ Stated plainly so nobody hunts for a script that does not exist:
   them, and `gwbtc/node` is **private**, so an outsider cannot complete an
   install from public artifacts alone. Making it public is in progress and is
   not gated on anything here.
+
+**No longer true — the bring-up is now a script.** §4's `curl … | bash`
+installer (`causeway/public/boot.sh`) does platform detection, release fetch,
+boot, sidecar, supervision, peer seeding and progress reporting. What it
+still cannot do, and why:
+
+- **It cannot mint.** That is Causeway's job and it involves a mainnet spend;
+  the installer never touches a wallet, a key or the chain.
+- **It cannot bake the custody log.** `causeway finalize` must run between the
+  spawn confirming and the boot, and the installer has no way to tell an
+  xtr-baked feed from a raw one — the difference is invisible until a peer
+  fails to verify you (§6). It says so in `--help` and stops there.
+- **It cannot verify what it downloads.** There is no `SHA256SUMS` and no
+  signature in the releases; the only authentication is GitHub's TLS. It
+  prints the digest it got and accepts one you supply out of band
+  (`--sha256`), and it will use a `SHA256SUMS` automatically if one ever
+  appears. Publishing one is the fix, and it is not in this repo.
+- **It cannot install the `%node` and `%tcp-sidecar` desks from source.**
+  Both come from the pill; before #67 there is nothing for it to install and
+  it says so rather than pretending (§3.3).
 
 **No longer true — these are now in `ops/`** (see `ops/README.md`): the
 supervisor `gwsup.sh`, the peer-pool tool `poolfill.py`, the minting path
