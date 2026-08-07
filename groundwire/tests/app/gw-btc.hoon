@@ -220,6 +220,38 @@
   ==
 ::  a $result whose verdict FAILED on exactly the named checks
 ::
+::  ---------------------------------------------------------------------
+::  readiness fixtures (test 6.7 / Phase 6.1)
+::  ---------------------------------------------------------------------
+::
+::  a well-formed suite-C %gw-btc pass at OUR kelvin whose xtr carries a
+::  NON-EMPTY custody log.  Every gate before the readiness ones keys on
+::  the pass, so a log with something in it is what it takes to reach
+::  them at all -- +kelvin-pass carries `(jam ~)` and stops at %empty-log.
+::
+++  logged-pass
+  |=  chain=custody-log:sa
+  ^-  pass
+  =/  seed  (shaz 'gw-btc-readiness-probe')
+  pub:ex:(pit:nu:cric:crypto 512 seed %c (kelvin-dat kelvin:cc) (jam chain))
+::
+::  a state with a chain tip above the log's evidence and NOTHING else
+::  going on, so the only thing left to decide a writ is .synced.
+::
+++  tip-state
+  ^-  *
+  :*  `state:urb`[[0xdead.beef 900.100] ~ ~ ~]   :: urb-state
+      %.y                                         :: indexing
+      `[0xdead.beef 900.100]                      :: best
+      ~                                           :: inflight
+      ~                                           :: confidential
+      ~                                           :: attested
+      ~                                           :: publicizing
+      1                                           :: next-job
+      ~                                           :: sponsees
+      ~                                           :: declined
+      [`custody-log:sa`~ ~]                       :: own
+  ==
 ++  failed-sign
   |=  [who=ship bad=(list cord)]
   ^-  sign-arvo
@@ -1041,5 +1073,49 @@
     (expect-eq !>(`%writ-response) !>((fact-mark (snag 0 cs))))
     ::  a NEGATIVE writ-response: [dom who ~]
     (expect !>(?=([@ @ ~] (need (fact-payload (snag 0 cs))))))
+  ==
+::  ---------------------------------------------------------------------
+::  READINESS NEVER CONDEMNS (test 6.7 / Phase 6.1), at the agent
+::  ---------------------------------------------------------------------
+::
+::  The two gates a live mainnet ship actually sits behind, driven through
+::  +on-poke with a pass whose custody log is non-empty -- which is what
+::  it takes to get past the structural checks and reach them at all.
+::
+::  Both used to be `?~ best` / `?. synced` returning silently, and Phase
+::  6.1 is what happens when the first of them is wrong: a ship 961,000
+::  blocks behind judged a real attestation and snubbed the honest comet
+::  it sponsors.  What must hold now is that neither gate can EVER emit a
+::  writ-response, whatever else it does.
+::
+++  test-writ-with-no-chain-tip-emits-no-verdict
+  =/  pas    (logged-pass ~[entry0])
+  =/  agent  gw-btc
+  =^  cards  agent
+    (~(on-poke agent bowl0) %noun (writ-vase-pass (fig-of pas) pas))
+  ::  a fresh agent has best=~, so this is the %no-tip hold
+  ::
+  (expect-eq !>(~) !>((app-cards cards)))
+::
+++  test-unsynced-writ-holds-and-never-condemns
+  =/  pas    (logged-pass ~[entry0])
+  =/  agent  gw-btc
+  =^  *  agent  (~(on-load agent bowl0) !>(tip-state))
+  =^  cards  agent
+    (~(on-poke agent bowl0) %noun (writ-vase-pass (fig-of pas) pas))
+  =/  out  (app-cards cards)
+  ;:  weld
+    ::  the tip is above the log's evidence, so the ONLY thing left is
+    ::  .synced -- which +on-load's migration correctly leaves %.n.
+    ::  It re-reads /is-synced (a %leave and a %watch on one wire) ...
+    ::
+    (expect-eq !>(2) !>((lent out)))
+    ::  ... and emits NO fact of any kind.  Not a verdict, not a
+    ::  %stale-notice: a ship that cannot tell whether it is synced has
+    ::  no business condemning anyone.
+    ::
+    %-  expect  !>
+    %+  levy  out
+    |=(c=card:agent:gall ?=(~ (fact-mark c)))
   ==
 --

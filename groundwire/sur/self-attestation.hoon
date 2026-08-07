@@ -166,6 +166,99 @@
 ::    forces a class onto every future member.
 ::
 +$  refusal  ?(%who-mismatch %no-point %pass-mismatch %tip-owned)
+::  $writ-drop: why a %jael-writ never became a verification
+::
+::    The THIRD doorway, and the one that had no witness at all.  $abort
+::    and $refusal cover outcomes of a verification that RAN; these are
+::    the dispositions %gw-btc reaches before it launches one, in
+::    +on-poke.  Nine of them announced themselves (bf90840); four did
+::    not, and from outside a silent drop is indistinguishable from a
+::    wedged agent -- which is precisely the confusion test 6.7 exists to
+::    catch.  Three of the four silent ones were not even drops: they
+::    emitted a NEGATIVE verdict, i.e. a sticky ames snub, with no line.
+::
+::    Closed union, switched on with ?- by both +writ-drop-report (what
+::    the operator is told) and +writ-drop-fate (what the kernel is
+::    told), so a new disposition cannot be added silently and cannot
+::    have its log line disagree with its cards.
+::
+::    Each case carries the numbers its own line needs, so the report is
+::    a pure function of the drop and can be tested without the agent.
+::
++$  writ-drop
+  $%  [%publicizing ~]              ::  a public-spawn replay is in progress
+      [%in-flight ~]                ::  single-flight: one job per ship
+      [%declined ~]                 ::  operator declined this sponsorship
+      [%already-public ~]           ::  we already hold a public point
+      [%onboarding ~]               ::  the public onboarding packet, no xtr
+      [%foreign-kelvin ~]           ::  minted under a kelvin we cannot read
+      [%undecodable ~]              ::  not a %gw-btc attestation at all
+      [%empty-log ~]                ::  decodes, but its custody log is empty
+      [%log-too-long len=@ud cap=@ud]
+      [%no-tip ~]                   ::  no chain tip yet
+      [%unsynced tip=@ud]           ::  light client not caught up
+      [%tip-below-log tip=@ud need=@ud]
+  ==
+::  $writ-fate: what a $writ-drop does, to the kernel AND to the log
+::
+::    Four values because an operator has three questions -- did it
+::    decline on purpose, could it not evaluate this yet, or is it
+::    condemning somebody -- and the cards only answer the third.
+::    %drop and %hold emit identical cards (none) and must NOT read
+::    identically, because one of them clears by itself and the other
+::    never will.
+::
+::    %drop     no cards, and nothing is pending: we declined on purpose
+::              and the condition will not clear on its own.
+::    %hold     no cards, but we could not evaluate it YET.  Our own
+::              readiness, and the peer's next retransmission is retried.
+::    %refresh  a %hold that also re-reads the light client's own sync
+::              state (+refresh-synced) -- the held writ is itself the
+::              poll, because /is-synced does not emit on recovery.
+::    %fail     a NEGATIVE verdict: jael %fails and ames snubs, stickily,
+::              which then blocks the packet that would correct it.  Three
+::              drops do this and none of them used to say so.
+::
+::    +writ-drop-verb turns this into the word the log line leads with, so
+::    the register an operator reads is derived from the same value as the
+::    cards and cannot drift from them.
+::
++$  writ-fate  ?(%drop %hold %refresh %fail)
+::  $anew-refusal: why OUR OWN pass refresh never started
+::
+::    The %anew mirror of $writ-drop.  Seven of these were silent until
+::    Phase 7.2 had to eliminate six of them from outside before it could
+::    conclude the seventh was the real one; they are announced today, and
+::    this union is what stops the tenth from being silent again.
+::
+::    None is a finding about anybody: every one is our own readiness or
+::    our own bookkeeping, so none of them ever emits a card.
+::
++$  anew-refusal
+  $%  [%in-flight job=@ud]          ::  a self-validation is already running
+      [%no-log ~]                   ::  nothing to validate
+      [%log-too-long len=@ud cap=@ud]
+      [%no-tip ~]
+      [%unsynced tip=@ud]
+      [%tip-below-log tip=@ud need=@ud]
+      [%no-pass ~]                  ::  jael holds no suite-C pass for us
+      [%encode-failed ~]            ::  +with-xtr could not rebuild it
+      [%name-mismatch ~]            ::  the rebuilt pass is not ours
+  ==
+::  $strand-death: a verification that DIED instead of answering
+::
+::    Not a verdict and never evidence: the light client stopped
+::    answering, a timeout fired, or spider was killed under us.  It has
+::    always logged one line, and that line was the observed failure of
+::    test 6.7 -- `%anew self-validation ended without a verdict', with no
+::    reason, because +set-timeout:strandio fails with `[%timeout ~]' (an
+::    EMPTY tang) and khan's mote was thrown away at the call site.  Say
+::    which job died, what it was doing, and what an empty tang means.
+::
++$  strand-death
+  $%  [%peer who=@p job=@ud]        ::  verifying somebody else's attestation
+      [%own job=@ud entries=@ud]    ::  validating our own custody log
+  ==
 ::
 ::  On success, `sont.own` in point is the derived (and checked-unspent) tip.
 +$  result

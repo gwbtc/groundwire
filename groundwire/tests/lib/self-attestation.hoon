@@ -129,6 +129,86 @@
   |=  [sat=self-attestation:sa txl=(list tx:bc) tracked=(unit anchor:sa)]
   ^-  result:sa
   (run-checks:sal sat start-tx txl `%.y tracked no-points)
+::
+::  ---------------------------------------------------------------------
+::  diagnostics (test 6.7): the operator-facing reports
+::  ---------------------------------------------------------------------
+::
+::  These assert PRESENCE and SHAPE, never prose.  The properties that
+::  matter are that a disposition cannot be silent, that its severity is
+::  computed from the same value as its cards, and that no two reasons
+::  read alike -- all of which survive any rewording.
+::
+++  has-sub
+  |=  [nedl=tape hstk=tape]
+  ^-  ?
+  ?=(^ (find nedl hstk))
+::
+++  leaf-tape
+  |=  =tank
+  ^-  tape
+  ?>  ?=(%leaf -.tank)
+  p.tank
+::
+++  head-tape
+  |=  =tang
+  ^-  tape
+  ?>  ?=(^ tang)
+  (leaf-tape i.tang)
+::
+++  all-leaves
+  |=  =tang
+  ^-  ?
+  (levy tang |=(t=tank ?=(%leaf -.t)))
+::
+::  every member of $writ-drop, with distinguishable numbers where the
+::  case carries any.  Pinned against the MOLD by
+::  +test-writ-drop-union-has-not-drifted, so a thirteenth disposition
+::  cannot be added without visiting this list.
+::
+++  all-writ-drops
+  ^-  (list writ-drop:sa)
+  :~  [%publicizing ~]
+      [%in-flight ~]
+      [%declined ~]
+      [%already-public ~]
+      [%onboarding ~]
+      [%foreign-kelvin ~]
+      [%undecodable ~]
+      [%empty-log ~]
+      [%log-too-long 2.048 1.024]
+      [%no-tip ~]
+      [%unsynced 900.000]
+      [%tip-below-log 900.000 900.100]
+  ==
+::
+++  all-anew-refusals
+  ^-  (list anew-refusal:sa)
+  :~  [%in-flight 7]
+      [%no-log ~]
+      [%log-too-long 2.048 1.024]
+      [%no-tip ~]
+      [%unsynced 900.000]
+      [%tip-below-log 900.000 900.100]
+      [%no-pass ~]
+      [%encode-failed ~]
+      [%name-mismatch ~]
+  ==
+::
+::  +mints: does this source compile against this subject type?
+::
+::    The exhaustiveness probe.  A ?- over a closed union that is missing
+::    a case does not compile, which is how a new member is stopped from
+::    reaching any branch -- least of all a silent one -- by default.
+::
+++  mints
+  |=  [sub=type src=tape]
+  ^-  ?
+  ::  NB: bind the +mule product before fishing on it.  `-:(mule ...)`
+  ::  re-mints the trap under a subject that has lost its $ arm.
+  ::
+  =/  r  (mule |.((~(mint ut sub) %noun (ream (crip src)))))
+  ?=(%& -.r)
 --
 |%
 ::  ---- decode -------------------------------------------------------
@@ -789,5 +869,205 @@
     (expect-eq !>("  [XX]") !>((marker 'empty-chain')))
     (expect-eq !>("  [XX]") !>((marker 'spawn-opening')))
     (expect-eq !>("  [XX]") !>((marker 'entry-0-commitment')))
+  ==
+::
+::  ---- diagnostics (test 6.7) ----------------------------------------
+::
+::  THE regression test for the clean-room finding.  Four %jael-writ
+::  dispositions emitted nothing at all -- and three of those four sent a
+::  NEGATIVE verdict, i.e. a sticky ames snub, with no line anywhere in
+::  the log.  From outside, a ship snubbing every peer it heard from was
+::  indistinguishable from a ship nobody was talking to.
+::
+::  Asserted here: no disposition is silent, every line is printable, every
+::  line names the ship it is about, and no two dispositions produce the
+::  same headline (a line that says only "dropped" is barely better than
+::  silence).  None of this constrains the wording.
+::
+++  test-every-writ-drop-is-announced
+  =/  peer  ~wes
+  =/  reports
+    %+  turn  all-writ-drops
+    |=(d=writ-drop:sa (writ-drop-report:sal peer d))
+  =/  heads  (turn reports head-tape)
+  ;:  weld
+    ::  nothing is silent
+    (expect !>((levy reports |=(t=tang ?=(^ t)))))
+    ::  every line is printable text, not a structure nobody reads
+    (expect !>((levy reports all-leaves)))
+    ::  every headline names the ship the decision is about
+    (expect !>((levy heads |=(h=tape (has-sub "~wes" h)))))
+    ::  ... and says WHY: twelve dispositions, twelve distinct headlines
+    (expect-eq !>((lent heads)) !>(~(wyt in (silt heads))))
+  ==
+::
+::  A routine duplicate and a sticky snub must not look alike at a glance,
+::  and "look alike" is a property of the verb the line leads with.  That
+::  verb is computed from the FATE, so the register an operator reads and
+::  the cards jael receives come from one value -- the same discipline
+::  +report's [XX]/[..]/[??] marker follows for post-verification
+::  outcomes.
+::
+++  test-writ-drop-severity-agrees-with-its-fate
+  =/  peer  ~wes
+  ;:  weld
+    %-  expect  !>
+    %+  levy  all-writ-drops
+    |=  d=writ-drop:sa
+    ^-  ?
+    =/  verb  (writ-drop-verb:sal (writ-drop-fate:sal d))
+    (has-sub verb (head-tape (writ-drop-report:sal peer d)))
+    ::  the three that emit a negative verdict, named individually: these
+    ::  are the ones that snub, and they are decided from the peer's own
+    ::  pass with no chain access, so no amount of catching up helps.
+    ::
+    (expect-eq !>(%fail) !>((writ-drop-fate:sal [%undecodable ~])))
+    (expect-eq !>(%fail) !>((writ-drop-fate:sal [%empty-log ~])))
+    (expect-eq !>(%fail) !>((writ-drop-fate:sal [%log-too-long 2.048 1.024])))
+    ::  READINESS NEVER CONDEMNS.  Phase 6.1 in one line.
+    ::
+    (expect-eq !>(%hold) !>((writ-drop-fate:sal [%no-tip ~])))
+    (expect-eq !>(%refresh) !>((writ-drop-fate:sal [%unsynced 900.000])))
+    (expect-eq !>(%hold) !>((writ-drop-fate:sal [%tip-below-log 900.000 900.100])))
+    ::  ... nor does declining to judge a shape we cannot read
+    (expect-eq !>(%drop) !>((writ-drop-fate:sal [%onboarding ~])))
+    (expect-eq !>(%drop) !>((writ-drop-fate:sal [%foreign-kelvin ~])))
+    ::  a snub is invisible everywhere else -- it is discoverable only
+    ::  through .^(/snubbed) -- so a REFUSED report is never a bare
+    ::  headline: it carries the consequence and the undo.
+    ::
+    %-  expect  !>
+    %+  levy  all-writ-drops
+    |=  d=writ-drop:sa
+    ^-  ?
+    ?.  ?=(%fail (writ-drop-fate:sal d))  %.y
+    (gth (lent (writ-drop-report:sal peer d)) 2)
+  ==
+::
+::  The property, not the twelve strings: a thirteenth disposition does
+::  not compile until it has been given a line AND a fate.  Both
+::  consumers are ?- over the closed union, so this test fails the moment
+::  the mold and the switches drift in either direction -- which is also
+::  what keeps +all-writ-drops above honest.
+::
+++  test-writ-drop-union-has-not-drifted
+  =/  wd=type  -:!>([a=*writ-drop:sa])
+  =/  wf=type  -:!>([a=*writ-fate:sa])
+  =/  ar=type  -:!>([a=*anew-refusal:sa])
+  =/  wd-full
+    ;:  weld
+      "?-(-.a %publicizing 0, %in-flight 0, %declined 0, %already-public 0, "
+      "%onboarding 0, %foreign-kelvin 0, %undecodable 0, %empty-log 0, "
+      "%log-too-long 0, %no-tip 0, %unsynced 0, %tip-below-log 0)"
+    ==
+  =/  wd-short
+    ;:  weld
+      "?-(-.a %publicizing 0, %in-flight 0, %declined 0, %already-public 0, "
+      "%onboarding 0, %foreign-kelvin 0, %undecodable 0, %empty-log 0, "
+      "%log-too-long 0, %no-tip 0, %unsynced 0)"
+    ==
+  =/  wd-extra
+    ;:  weld
+      "?-(-.a %publicizing 0, %in-flight 0, %declined 0, %already-public 0, "
+      "%onboarding 0, %foreign-kelvin 0, %undecodable 0, %empty-log 0, "
+      "%log-too-long 0, %no-tip 0, %unsynced 0, %tip-below-log 0, "
+      "%brand-new 0)"
+    ==
+  =/  wf-full   "?-(a %drop 1, %hold 2, %refresh 3, %fail 4)"
+  =/  wf-short  "?-(a %drop 1, %hold 2, %refresh 3)"
+  =/  ar-full
+    ;:  weld
+      "?-(-.a %in-flight 0, %no-log 0, %log-too-long 0, %no-tip 0, "
+      "%unsynced 0, %tip-below-log 0, %no-pass 0, %encode-failed 0, "
+      "%name-mismatch 0)"
+    ==
+  =/  ar-short
+    ;:  weld
+      "?-(-.a %in-flight 0, %no-log 0, %log-too-long 0, %no-tip 0, "
+      "%unsynced 0, %tip-below-log 0, %no-pass 0, %encode-failed 0)"
+    ==
+  ;:  weld
+    (expect !>((mints wd wd-full)))
+    ::  THE property: a dropped case does not compile, so a new
+    ::  disposition cannot reach the silent branch -- or the snub -- by
+    ::  default.  It cannot reach any branch at all.
+    (expect !>(!(mints wd wd-short)))
+    ::  ... and a case whose tag is not in the union does not compile
+    ::  either, so the switches and the mold cannot drift apart in either
+    ::  direction (which is what pins +all-writ-drops).
+    (expect !>(!(mints wd wd-extra)))
+    ::  the same for the four-valued fate, which is what separates a
+    ::  routine drop from a readiness hold from a snub ...
+    (expect !>((mints wf wf-full)))
+    (expect !>(!(mints wf wf-short)))
+    ::  ... and for our OWN pass refresh's refusals.
+    (expect !>((mints ar ar-full)))
+    (expect !>(!(mints ar ar-short)))
+  ==
+::
+::  The %anew side of the same finding.  Phase 7.2 had to eliminate six of
+::  these from outside -- re-deriving each precondition against the ship's
+::  own libraries -- before it could conclude the seventh was the real
+::  one.  None of them may be silent and none of them may condemn anybody:
+::  a refused %anew is always our own readiness or our own bookkeeping.
+::
+++  test-every-anew-refusal-is-announced
+  =/  me  ~nec
+  =/  reports
+    %+  turn  all-anew-refusals
+    |=(r=anew-refusal:sa (anew-refusal-report:sal me r))
+  =/  heads  (turn reports head-tape)
+  ;:  weld
+    (expect !>((levy reports |=(t=tang ?=(^ t)))))
+    (expect !>((levy reports all-leaves)))
+    ::  every line names the ship, because on a relay these interleave
+    ::  with peer verification for other ships
+    (expect !>((levy heads |=(h=tape (has-sub "~nec" h)))))
+    ::  nine refusals, nine distinct headlines
+    (expect-eq !>((lent heads)) !>(~(wyt in (silt heads))))
+    ::  the readiness one re-polls the light client (/is-synced does not
+    ::  emit on recovery, so the refused %anew is the poll) ...
+    (expect-eq !>(%refresh) !>((anew-refusal-fate:sal [%unsynced 900.000])))
+    ::  ... and nothing else emits a card of any kind
+    %-  expect  !>
+    %+  levy  all-anew-refusals
+    |=  r=anew-refusal:sa
+    ^-  ?
+    ?:  ?=(%unsynced -.r)  %.y
+    ?=(%drop (anew-refusal-fate:sal r))
+  ==
+::
+::  THE observed failure of test 6.7, pinned.  A verification that DIES
+::  rather than answering logged one line -- `%anew self-validation ended
+::  without a verdict' -- and nothing else.  It was reasonless for a
+::  structural reason: +set-timeout:strandio fails with `[%timeout ~]', an
+::  EMPTY tang, and khan's mote was thrown away at the call site, so the
+::  commonest death of all carried no information whatsoever.  The
+::  clean-room run hit it twice, from two unrelated causes, and could not
+::  tell them apart.
+::
+++  test-strand-death-is-never-reasonless
+  =/  empty   (strand-death-report:sal [%own 4 2] %timeout ~)
+  =/  filled  (strand-death-report:sal [%peer ~wes 3] %thread-fail ~[leaf+"boom"])
+  ;:  weld
+    ::  both are printable, and neither is a bare headline
+    (expect !>((all-leaves empty)))
+    (expect !>((all-leaves filled)))
+    ::  a death with an EMPTY tang still explains itself: the headline is
+    ::  two lines, so anything beyond that is the explanation the
+    ::  clean-room run did not get.
+    (expect !>((gth (lent empty) 2)))
+    ::  the mote is printed.  For a +set-timeout death it is the ONLY
+    ::  word there is, and it was the one being discarded.
+    (expect !>((lien empty |=(t=tank (has-sub "timeout" (leaf-tape t))))))
+    (expect !>((lien filled |=(t=tank (has-sub "thread-fail" (leaf-tape t))))))
+    ::  a supplied tang is not swallowed either
+    (expect !>((lien filled |=(t=tank (has-sub "boom" (leaf-tape t))))))
+    ::  the two kinds of death are told apart, and the peer's names the
+    ::  peer -- a dead strand is our infrastructure failing, never
+    ::  evidence, and the operator has to be able to see which ship's
+    ::  verification was lost.
+    (expect !>((has-sub "~wes" (head-tape filled))))
+    (expect !>(!=((head-tape filled) (head-tape empty))))
   ==
 --

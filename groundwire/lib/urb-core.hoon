@@ -226,14 +226,29 @@
     ::  never appear here.
     ++  process-publication
       ^+  cor
+      ::  The `?~ pub` filter is the hot one and stays silent: it runs on
+      ::  every transaction in every block, and all but a handful carry no
+      ::  Groundwire OP_RETURN at all.  Everything BELOW it has already
+      ::  matched the OP_RETURN "urb" envelope at this protocol kelvin, so
+      ::  reaching one of these is an operator who published on chain and
+      ::  will otherwise never learn why their comet did not appear.
+      ::
       ?~  pub=(find-publication os.tx)  cor
       =*  pass  pass.u.pub
       =*  op    opening.u.pub
-      ?~  meta=(parse-pass:cc pass)  cor
-      ?.  =(domain:cc dom.u.meta)  cor
-      ?.  =(kelvin:cc kel.u.meta)  cor
+      ?~  meta=(parse-pass:cc pass)
+        ~&  >>>  '%urb-core: publication carries a pass that does not parse'
+        cor
+      ?.  =(domain:cc dom.u.meta)
+        ~&  >>>  ['%urb-core: publication pass names another PKI domain' dom.u.meta]
+        cor
+      ?.  =(kelvin:cc kel.u.meta)
+        ~&  >>>  ['%urb-core: publication pass is at another protocol kelvin' kel.u.meta]
+        cor
       =/  cac  (com:nu:cric:crypto pass)
-      ?.  ?=(%c suite.+<.cac)  cor
+      ?.  ?=(%c suite.+<.cac)
+        ~&  >>>  '%urb-core: publication pass is not suite-C, so it is not a comet'
+        cor
       =/  who  `@p`fig:ex:cac
       ::  A comet we ALREADY track publishes a STATE UPDATE, whatever the
       ::  shape of its opening.  We track its custody position, so input-0

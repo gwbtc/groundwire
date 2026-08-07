@@ -252,12 +252,28 @@
   |=  script=hexb:btc
   ^-  (unit publication:sa)
   =/  env  (parse-publication script)
+  ::  THE HOT FILTER, and the only silent exit in this arm: it runs on
+  ::  every output of every transaction in every block, and virtually
+  ::  none of them is an OP_RETURN "urb" envelope.  Announcing it would
+  ::  drown the log in millions of lines a day.
+  ::
   ?~  env  ~
-  ?.  =(kelvin kel.u.env)  ~
-  %-  mole
-  |.
-  ::  undo +jam-octs: little-endian byte dump back into the jam atom
-  ;;(publication:sa (cue (rev 3 wid.payload.u.env dat.payload.u.env)))
+  ::  Past it, the script IS a Groundwire publication envelope, and both
+  ::  refusals below are us declining to read something an operator paid
+  ::  miner fees to put on chain.  They are rare by construction -- and
+  ::  they were invisible, which is the whole of test 6.7's complaint.
+  ::
+  ?.  =(kelvin kel.u.env)
+    ~&  >>>  [%gw-btc-publication-foreign-kelvin found=kel.u.env ours=kelvin]
+    ~
+  =/  dec
+    %-  mole
+    |.
+    ::  undo +jam-octs: little-endian byte dump back into the jam atom
+    ;;(publication:sa (cue (rev 3 wid.payload.u.env dat.payload.u.env)))
+  ?^  dec  dec
+  ~&  >>>  [%gw-btc-publication-undecodable payload-bytes=wid.payload.u.env]
+  ~
 ::  +parse-publication: (unit [kelvin payload]) from an output script
 ::
 ::    Reads the three push forms +push-data can emit -- a direct push

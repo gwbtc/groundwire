@@ -337,35 +337,45 @@
       ::  A prior block result has already proved this is a public spawn and
       ::  an exact sanitized replay is in progress.  Ignore reinsertion until
       ::  that block job resolves.
-      ::  EVERY drop below is announced.  They used to be silent, and
-      ::  Phase 5b's finding 9 was that %jael-writ has nine distinct
-      ::  silent-drop returns which from outside look identical to "nobody
-      ::  is talking to this ship".  Phase 6.2 then paid for it for real: a
-      ::  runtime fault stranded the single-flight slot and the two retries
-      ::  that would have diagnosed it were swallowed without a word.
+      ::  EVERY drop below is announced, and now that is TRUE.  Phase 5b's
+      ::  finding 9 was that %jael-writ has twelve distinct pre-verification
+      ::  exits which from outside look identical to "nobody is talking to
+      ::  this ship".  Phase 6.2 then paid for it for real: a runtime fault
+      ::  stranded the single-flight slot and the two retries that would
+      ::  have diagnosed it were swallowed without a word.  bf90840
+      ::  announced nine of the twelve and this comment claimed all of
+      ::  them; the clean-room run (6.7) found the other three still mute
+      ::  -- and all three of THOSE emit a sticky snub.
+      ::
+      ::  So every exit goes through +drop-writ, which takes a $writ-drop
+      ::  and derives BOTH the log line (+writ-drop-report:lsa) and the
+      ::  cards (+writ-drop-fate:lsa) from it.  Neither can be omitted and
+      ::  the two cannot disagree; a thirteenth disposition does not
+      ::  compile until it has a line and a fate.
+      ::
       ::  These lines are one-per-dropped-writ, so they are also the rate
       ::  at which a peer is retrying, which is itself the thing you want
       ::  to know.
       ::
       ?:  (~(has in publicizing) who.poke)
-        %-  (slog leaf+"%gw-btc: writ from {(scow %p who.poke)} dropped: public-spawn replay in progress" ~)
-        `this
+        :_  this
+        (drop-writ our.bowl dom.poke who.poke %publicizing ~)
       ::  Single-flight per ship: at most one verification job.  A
       ::  duplicate or replacement writ while one is in flight is
       ::  dropped -- the peer's retries re-enter after the verdict, and
       ::  the on-chain cost of minting states is the rate limit.  No
       ::  queue, no slot economy.
       ?:  (~(has by inflight) who.poke)
-        %-  (slog leaf+"%gw-btc: writ from {(scow %p who.poke)} dropped: a verification is already in flight" ~)
-        `this
+        :_  this
+        (drop-writ our.bowl dom.poke who.poke %in-flight ~)
       ::  A ship whose sponsorship we declined re-attests on every
       ::  retry; short-circuit before spending a full verification on
       ::  it.  Clearing the entry (%gw-sponsor-clear) restores normal
       ::  handling immediately -- the refusal is never sticky in the
       ::  kernel, only here.
       ?:  (~(has in declined) who.poke)
-        %-  (slog leaf+"%gw-btc: writ from {(scow %p who.poke)} dropped: sponsorship declined by operator" ~)
-        `this
+        :_  this
+        (drop-writ our.bowl dom.poke who.poke %declined ~)
       ?~  sat=(pass-attestation [dom who pass]:poke)
         ::  Two shapes we decline to JUDGE rather than judge negatively,
         ::  because a negative verdict becomes a Jael %fail and an Ames
@@ -381,23 +391,33 @@
         ::      kelvin bump, i.e. partition the network on upgrade.
         ::
         ::  Everything else that fails to decode really is malformed.
-        ?:  ?|  (public-pass [dom who pass]:poke)
-                (foreign-kelvin [dom who pass]:poke)
-            ==
-          `this
+        ::  All three were silent, and the third SNUBS -- an operator
+        ::  watching a peer get blacklisted saw nothing whatsoever, on
+        ::  the one path where the two harmless cases and the destructive
+        ::  one are told apart by a predicate they cannot see.
+        ::
+        ?:  (public-pass [dom who pass]:poke)
+          :_  this
+          (drop-writ our.bowl dom.poke who.poke %onboarding ~)
+        ?:  (foreign-kelvin [dom who pass]:poke)
+          :_  this
+          (drop-writ our.bowl dom.poke who.poke %foreign-kelvin ~)
         :_  this
-        ~[(writ-card dom.poke who.poke ~)]
+        (drop-writ our.bowl dom.poke who.poke %undecodable ~)
       ::  A present, canonically decoded xtr must contain the spawn opening.
       ::  The raw-0 public shape was classified above before +from-xtr.
       ?~  chain.u.sat
         :_  this
-        ~[(writ-card dom.poke who.poke ~)]
-      ?:  (gth (lent chain.u.sat) 1.024)
+        (drop-writ our.bowl dom.poke who.poke %empty-log ~)
+      ?:  (gth (lent chain.u.sat) max-custody-log)
         :_  this
-        ~[(writ-card dom.poke who.poke ~)]
+        %-  drop-writ
+        :*  our.bowl  dom.poke  who.poke
+            %log-too-long  (lent chain.u.sat)  max-custody-log
+        ==
       ?:  (known-public who.poke)
-        %-  (slog leaf+"%gw-btc: writ from {(scow %p who.poke)} dropped: already a public point" ~)
-        `this
+        :_  this
+        (drop-writ our.bowl dom.poke who.poke %already-public ~)
       ::  ------------------------------------------------------------
       ::  READINESS.  Drop until the LIGHT CLIENT can actually answer;
       ::  readiness is infrastructure, never evidence.
@@ -433,25 +453,18 @@
       ::  light-client-only deployment still verifies unsponsored comets.
       ::
       ?~  best
-        %-  (slog leaf+"%gw-btc: writ from {(scow %p who.poke)} held: no chain tip yet" ~)
-        `this
-      ?.  synced
-        %-  %-  slog
-            :~  leaf+"%gw-btc: writ from {(scow %p who.poke)} held: light client NOT synced"
-                leaf+"  (tip {<num.u.best>}; no verdict will be emitted until it catches up)"
-            ==
-        ::  ... and re-read the light client's answer while we are at it,
-        ::  because it may have caught up without telling us.  See
-        ::  +refresh-synced.
         :_  this
-        (refresh-synced our.bowl)
+        (drop-writ our.bowl dom.poke who.poke %no-tip ~)
+      ::  ... and the %unsynced fate re-reads the light client's answer
+      ::  while we are at it, because it may have caught up without
+      ::  telling us.  See +refresh-synced and +writ-drop-fate:lsa.
+      ?.  synced
+        :_  this
+        (drop-writ our.bowl dom.poke who.poke %unsynced num.u.best)
       =/  need=@ud  (log-top-height u.sat)
       ?.  (gte num.u.best need)
-        %-  %-  slog
-            :~  leaf+"%gw-btc: writ from {(scow %p who.poke)} held: tip {<num.u.best>} below evidence height {<need>}"
-                leaf+"  (our chain view does not reach this log; that is ignorance, not fraud)"
-            ==
-        `this
+        :_  this
+        (drop-writ our.bowl dom.poke who.poke %tip-below-log num.u.best need)
       =/  job  next-job
       =.  next-job  +(next-job)
       =/  req=inflight-writ  [dom.poke pass.poke u.sat job]
@@ -475,7 +488,18 @@
       ::  there is no request/response pairing to keep and no deadline to
       ::  miss (ames simply installs the pass when it lands).
       ::
+      ::  Jael addressed a %anew to a PKI domain that is not ours.  It
+      ::  cannot happen through the %anex registration (the domain is this
+      ::  agent's own name, 1:1 by construction), so a hand-poked or
+      ::  cross-domain %jael-anew is the only way here -- and it used to
+      ::  vanish, which reads exactly like a %anew that was accepted and
+      ::  then produced nothing.
+      ::
       ?.  =(dom.poke domain:cc)
+        %-  %-  slog
+            :~  leaf+"%gw-btc: %jael-anew for domain {<dom.poke>} ignored; this agent serves {<domain:cc>}"
+                leaf+"  (no pass will be refreshed -- poke %jael-anew with our own domain)"
+            ==
         `this
       =/  res
         %:  begin-anew
@@ -624,7 +648,14 @@
           ==
       `this
     =/  start=@ud  !<(@ud vase)
-    ?:  =(0 start)  `this
+    ::  Height 0 is the "did you mean to?" guard -- block 0 is the genesis
+    ::  block and nobody bootstraps from it -- and it used to swallow the
+    ::  poke without a word, so an operator who fat-fingered the argument
+    ::  saw an agent that accepted the command and then never indexed.
+    ::
+    ?:  =(0 start)
+      %-  (slog leaf+"%gw-btc: refusing %gw-index-from 0: name the first block to scan" ~)
+      `this
     %-  (slog leaf+"%gw-btc: indexing from block {<start>}" ~)
     =.  urb-state  [[0x0 (dec start)] *sont-map:ord *insc-ids:ord *unv-ids:urb]
     =.  indexing   &
@@ -746,6 +777,12 @@
       [=ship ~]
     ?>  =(our src):bowl
     =/  who  (slav %p ship.pole)
+    ::  Withholding a confidential point is the DESIGN, not a failure, and
+    ::  it is silent on purpose: jael and %urb-snapshot both read this
+    ::  surface, so a line here would fire on ordinary traffic rather than
+    ::  on anything going wrong.  /x/confidential is the witness -- it
+    ::  lists exactly the identities whose points are withheld.
+    ::
     ?:  (~(has in confidential) who)
       `this
     :_  this
@@ -816,6 +853,13 @@
     =/  who  (slav %p i.t.wire)
     =/  job  (slav %ud i.t.t.wire)
     =/  active  (~(get by inflight) who)
+    ::  DELIBERATELY SILENT, both of them, and this is the one place in
+    ::  this agent where silence is right.  +verify-cards sets a ~h2 behn
+    ::  timer per job and never rests it, so EVERY completed verification
+    ::  wakes here two hours later with nothing to release.  A line would
+    ::  be one per verification, two hours after the fact, saying nothing
+    ::  happened -- which is worse than nothing: it looks like a fault.
+    ::
     ?~  active
       `this
     ?.  =(job job.u.active)
@@ -838,15 +882,46 @@
     ::  NB: narrow a COPY.  ?~ on `pending.own` would retype the state
     ::  leg itself, and the `=.` below could then no longer put ~ back.
     =/  pend  pending.own
-    ?~  pend  `this
-    ?.  =(job job.u.pend)  `this
+    ::  An answer for a slot that is no longer ours.  Not routine: the
+    ::  only way here is that the ~h2 leak guard already released the
+    ::  slot (or a newer job took it) and the thread then answered
+    ::  anyway, so the work is real and is being thrown away.  Silence
+    ::  made that indistinguishable from an %anew that never ran.
+    ::
+    ?~  pend
+      %-  %-  slog
+          :~  leaf+"%gw-btc: discarding a %anew result for job {<job>}: no self-validation is pending"
+              leaf+"  (the ~h2 leak guard released the slot before the thread answered;"
+              leaf+"   our pass is NOT refreshed -- re-poke %jael-anew)"
+          ==
+      `this
+    ?.  =(job job.u.pend)
+      %-  %-  slog
+          :~  leaf+"%gw-btc: discarding a %anew result for job {<job>}: job {<job.u.pend>} holds the slot"
+              leaf+"  (a stale thread answered after a newer self-validation started)"
+          ==
+      `this
     =/  req=anew-job  u.pend
     =.  pending.own  ~
     ?+    sign-arvo  (on-arvo:def wire sign-arvo)
         [%khan %arow *]
       ?.  -.p.sign-arvo
         ?>  ?=([%khan %arow %.n *] sign-arvo)
-        %-  (slog leaf+"%gw-btc: %anew self-validation ended without a verdict" +.p.p.sign-arvo)
+        ::  THE line test 6.7 caught.  It read `%anew self-validation
+        ::  ended without a verdict' and nothing else -- twice in the
+        ::  clean-room run, from two unrelated causes, indistinguishable.
+        ::  The mote was thrown away here and the tang is EMPTY for the
+        ::  commonest death of all (+set-timeout:strandio fails with
+        ::  `[%timeout ~]'), so the line carried no information at all.
+        ::  +strand-death-report:lsa names the job, what it was doing, the
+        ::  mote, and what an empty tang means.
+        ::
+        %-  %-  slog
+            %:  strand-death-report:lsa
+                [%own job (lent chain.req)]
+                -.p.p.sign-arvo
+              +.p.p.sign-arvo
+            ==
         `this
       ?>  ?=([%khan %arow %.y %noun *] sign-arvo)
       =/  [%khan %arow %.y %noun =vase]  sign-arvo
@@ -875,6 +950,10 @@
       (on-arvo:def wire sign-arvo)
     =/  job  (slav %ud i.t.wire)
     =/  pend  pending.own
+    ::  Silent for the same reason as +stuck-job-guard above: the guard
+    ::  timer is never rested, so every successful %anew wakes here two
+    ::  hours later with an empty slot and nothing to say.
+    ::
     ?~  pend  `this
     ?.  =(job job.u.pend)  `this
     %-  (slog leaf+"%gw-btc: releasing stuck %anew self-validation slot" ~)
@@ -884,9 +963,25 @@
     =/  who  (slav %p i.t.wire)
     =/  job  (slav %ud i.t.t.wire)
     =/  active  (~(get by inflight) who)
+    ::  An answer for a slot this ship no longer holds.  Three ways in,
+    ::  all of them things that already went wrong: the ~h2 leak guard
+    ::  released it, the block scanner dropped it (+drop-inflight, on a
+    ::  public spawn or a stale tip), or a newer job replaced it.  The
+    ::  verification really ran and its verdict is being discarded, which
+    ::  is worth exactly one line -- and used to be worth none.
+    ::
     ?~  active
+      %-  %-  slog
+          :~  leaf+"%gw-btc: discarding a verdict for {(scow %p who)} (job {<job>}): it holds no verification slot"
+              leaf+"  (released by the ~h2 leak guard, or dropped by the block scanner;"
+              leaf+"   no verdict is emitted, and the peer's next packet re-runs it)"
+          ==
       `this
     ?.  =(job job.u.active)
+      %-  %-  slog
+          :~  leaf+"%gw-btc: discarding a verdict for {(scow %p who)} (job {<job>}): job {<job.u.active>} holds the slot"
+              leaf+"  (a stale thread answered after a newer verification started)"
+          ==
       `this
     =/  req=inflight-writ  u.active
     =.  inflight  (~(del by inflight) who)
@@ -894,9 +989,18 @@
         [%khan %arow *]
       ?.  -.p.sign-arvo
         ?>  ?=([%khan %arow %.n *] sign-arvo)
-        %-  (slog leaf+"%gw-btc: verification thread for {(scow %p who)} ended without a verdict" +.p.p.sign-arvo)
         ::  A generic strand crash is retryable/indeterminate.  Only a
-        ::  mold-valid verifier result may emit a Jael verdict.
+        ::  mold-valid verifier result may emit a Jael verdict.  Same
+        ::  reasonless-line problem as the %anew path above: the mote was
+        ::  dropped and a +set-timeout death carries an empty tang, so
+        ::  the operator was told a thread ended and nothing else.
+        ::
+        %-  %-  slog
+            %:  strand-death-report:lsa
+                [%peer who job]
+                -.p.p.sign-arvo
+              +.p.p.sign-arvo
+            ==
         `this
       ?>  ?=([%khan %arow %.y %noun *] sign-arvo)
       =/  [%khan %arow %.y %noun =vase]  sign-arvo
@@ -906,6 +1010,11 @@
       ::  belongs to the confidential verifier, but that is not evidence the
       ::  peer supplied a bad attestation, so do not emit a sticky failure.
       ?:  (known-public who)
+        %-  %-  slog
+            :~  leaf+"%gw-btc: verdict for {(scow %p who)} discarded: the block scanner indexed it as PUBLIC first"
+                leaf+"  (it is no longer the confidential verifier's to judge; not evidence"
+                leaf+"   against the peer, so no verdict is emitted and nothing is snubbed)"
+            ==
         `this
       %-  (slog (report:lsa verdict.res))
       ::  THE SECOND DOORWAY ONTO THE SNUB PATH.  ++run-checks can say ok
@@ -1399,6 +1508,61 @@
       (watch-synced our)
   ==
 ::
+::  +max-custody-log: the longest custody log this desk will walk
+::
+::    A denial-of-service bound, not a protocol limit on identity age: a
+::    log is O(n) light-client fetches and n is chosen by whoever built
+::    the pass.  Shared by the %jael-writ gate and +begin-anew so a log we
+::    would refuse from a peer is also one we refuse to publish ourselves.
+::
+++  max-custody-log  1.024
+::
+::  +drop-writ: dispose of a %jael-writ, out loud
+::
+::    THE fix for test 6.7 on the peer path.  Twelve dispositions reach
+::    this agent before a verification is ever launched; nine announced
+::    themselves and three did not, and all three of the silent ones
+::    emitted a NEGATIVE verdict -- a sticky ames snub -- with no line in
+::    the log at all.  From outside, a ship snubbing every peer looked
+::    exactly like a ship nobody was talking to.
+::
+::    So there is now one exit, and it derives the log line and the cards
+::    from the SAME $writ-drop: +writ-drop-report:lsa says what happened
+::    and +writ-drop-fate:lsa says what it costs.  Neither can be skipped
+::    and the two cannot contradict each other, and both are ?- over a
+::    closed union, so a thirteenth disposition is a compile error rather
+::    than a silent drop.  (Same shape as +report / +check-class for the
+::    post-verification outcomes.)
+::
+++  drop-writ
+  |=  [our=@p dom=@tas who=ship drop=writ-drop:sa]
+  ^-  (list card)
+  %-  (slog (writ-drop-report:lsa who drop))
+  ?-  (writ-drop-fate:lsa drop)
+    %drop     ~
+    %hold     ~
+    %refresh  (refresh-synced our)
+    %fail     ~[(writ-card dom who ~)]
+  ==
+::
+::  +refuse-anew: decline to refresh OUR OWN pass, out loud
+::
+::    The %anew counterpart of +drop-writ, and the same discipline: the
+::    reason is a $anew-refusal, the line comes from
+::    +anew-refusal-report:lsa and the cards from +anew-refusal-fate:lsa,
+::    so a tenth refusal cannot be added without a line.  Nothing here is
+::    a finding about anybody, so the only card any of them can emit is
+::    the light-client re-read.
+::
+++  refuse-anew
+  |=  [our=@p ref=anew-refusal:sa]
+  ^-  (list card)
+  %-  (slog (anew-refusal-report:lsa our ref))
+  ?-  (anew-refusal-fate:lsa ref)
+    %drop     ~
+    %refresh  (refresh-synced our)
+  ==
+::
 ::  +log-top-height: the highest chain height a custody log's evidence needs
 ::
 ::    The spawn transaction's block, plus every entry's block.  Below this
@@ -1754,19 +1918,19 @@
   ::  eliminate six of them from outside, by re-deriving each precondition
   ::  against the ship's own libraries, before it could conclude the
   ::  seventh (a stranded .pending slot) was the real one.  Every one of
-  ::  them now says which it was.  See also /x/pending-own.
+  ::  them now says which it was, through +refuse-anew: the reason is a
+  ::  $anew-refusal, and its line and its cards come from one place, so a
+  ::  tenth refusal does not compile until it has both.  See also
+  ::  /x/pending-own.
   ::
   ::  single-flight, exactly as for peer verification
   =/  pend  pending.own
   ?^  pend
-    %-  (slog leaf+"%gw-btc: %anew refused: a self-validation is already in flight (job {<job.u.pend>})" ~)
-    `state
+    [(refuse-anew our %in-flight job.u.pend) state]
   ?~  cand
-    %-  (slog leaf+"%gw-btc: %anew refused: no custody log to validate" ~)
-    `state
-  ?:  (gth (lent cand) 1.024)
-    %-  (slog leaf+"%gw-btc: %anew refused: custody log too long ({<(lent cand)>} entries)" ~)
-    `state
+    [(refuse-anew our %no-log ~) state]
+  ?:  (gth (lent cand) max-custody-log)
+    [(refuse-anew our %log-too-long (lent cand) max-custody-log) state]
   ::  readiness is infrastructure, never evidence -- and the same
   ::  correction as the %jael-writ gate applies here: `?~ best` passes on
   ::  the genesis block %bitcoin-client answers a fresh subscription with.
@@ -1774,30 +1938,24 @@
   ::  install it in ames for every peer to reject.
   =/  tip  best
   ?~  tip
-    %-  (slog leaf+"%gw-btc: %anew refused: no chain tip yet" ~)
-    `state
+    [(refuse-anew our %no-tip ~) state]
   ?.  synced
-    %-  (slog leaf+"%gw-btc: %anew refused: light client not synced (tip {<num.u.tip>})" ~)
-    [(refresh-synced our) state]
+    [(refuse-anew our %unsynced num.u.tip) state]
   =/  need=@ud  (log-top-height [our *pass cand])
   ?.  (gte num.u.tip need)
-    %-  (slog leaf+"%gw-btc: %anew refused: tip {<num.u.tip>} below evidence height {<need>}" ~)
-    `state
+    [(refuse-anew our %tip-below-log num.u.tip need) state]
   =/  base  (own-pass our now)
   ?~  base
-    %-  (slog leaf+"%gw-btc: %anew refused: jael has no suite-C pass for us" ~)
-    `state
+    [(refuse-anew our %no-pass ~) state]
   =/  pas  (with-xtr:cc u.base (jam cand))
   ?~  pas
-    %-  (slog leaf+"%gw-btc: %anew refused: +with-xtr could not re-encode our pass" ~)
-    `state
+    [(refuse-anew our %encode-failed ~) state]
   ::  the pass we are about to publish must still hash to our name.  the
   ::  tweak is immutable, so this can only fail if +with-xtr or the ring
   ::  ever drifts from the kernel's encoder -- but publishing a pass that
   ::  is not ours would be catastrophic, so check it anyway.
   ?.  =(our `@p`fig:ex:(com:nu:cric:crypto u.pas))
-    %-  (slog leaf+"%gw-btc: %anew refused: re-encoded pass does not hash to our own name" ~)
-    `state
+    [(refuse-anew our %name-mismatch ~) state]
   =/  job  next-job
   =/  sat=self-attestation:sa  [our u.pas cand]
   :-  (anew-cards byk now job sat (self-known-public cand) num.u.tip)

@@ -271,6 +271,325 @@
       %tip-owned  %unknown
   ==
 ::
+::  +writ-drop-fate: what a pre-verification disposition does
+::
+::    A ?- over the closed $writ-drop union, so a new disposition cannot
+::    reach ANY branch -- least of all the destructive one -- until
+::    somebody has decided what it costs the peer.  Same property, and
+::    the same reason, as +abort-class above.
+::
+::    Paired with +writ-drop-verb and +writ-drop-report: the agent calls
+::    all three from one place, so the cards jael receives, the register
+::    the line is written in, and the reason it gives are all derived
+::    from one value and cannot drift apart.
+::
+++  writ-drop-fate
+  |=  drop=writ-drop:sa
+  ^-  writ-fate:sa
+  ?-    -.drop
+    ::  Our own bookkeeping, all four.  None is a finding about the peer.
+    ::  %drop rather than %hold because none of them clears by our own
+    ::  chain view catching up: the block job resolves, the in-flight
+    ::  verification finishes, an operator clears the refusal, a public
+    ::  point makes the question moot.
+    ::
+      %publicizing     %drop
+      %in-flight       %drop
+      %declined        %drop
+      %already-public  %drop
+    ::  Two shapes we decline to JUDGE rather than judge negatively: the
+    ::  public onboarding packet (resolved by the block scanner, and its
+    ::  temporary absence from the index is not evidence) and a pass
+    ::  minted under a FOREIGN protocol kelvin, which we cannot check and
+    ::  must not blacklist -- snubbing there would partition the network
+    ::  on every kelvin bump.
+    ::
+      %onboarding      %drop
+      %foreign-kelvin  %drop
+    ::  THE THREE THAT SNUB.  Each is a judgement on the peer's own pass,
+    ::  reached with no fetch and no chain access at all: it does not
+    ::  decode as a %gw-btc attestation, or it decodes to a log that
+    ::  asserts a confidential identity while offering no evidence for it
+    ::  (empty), or one so long that walking it is a denial of service.
+    ::  Nothing about our readiness can change any of those answers, which
+    ::  is exactly what separates them from the readiness holds below.
+    ::
+      %undecodable     %fail
+      %empty-log       %fail
+      %log-too-long    %fail
+    ::  READINESS.  Infrastructure, never evidence -- see the gate in
+    ::  +on-poke.  These emit the same cards as %drop (none) and MUST NOT
+    ::  read the same: they clear on their own as our chain view catches
+    ::  up, and telling an operator "dropped" for a condition that is
+    ::  about to fix itself is how a healthy ship gets restarted.
+    ::
+    ::  %unsynced additionally re-reads the light client's own answer,
+    ::  because /is-synced does not emit on recovery and a held writ is
+    ::  the only poll we have (+refresh-synced).
+    ::
+      %no-tip          %hold
+      %unsynced        %refresh
+      %tip-below-log   %hold
+  ==
+::
+::  +writ-drop-verb: the word a drop's log line leads with
+::
+::    The SEVERITY MARKER, and the direct analogue of +report's
+::    [ok]/[XX]/[..]/[??]: it is computed from the fate, so what an
+::    operator sees at a glance cannot disagree with what the kernel was
+::    told.  A routine duplicate and a sticky snub must not look alike,
+::    and "look alike" is a property of this word.
+::
+::      dropped   declined on purpose.  Nothing is pending; the condition
+::                will not clear by itself.
+::      held      could not evaluate it YET.  The peer retransmits and we
+::                look again -- the "still working" reading.
+::      REFUSED   a NEGATIVE verdict went out: jael %fails and ames snubs,
+::                stickily, and the snub then blocks the packet that would
+::                correct it.  Shouted, and its report carries the remedy.
+::
+++  writ-drop-verb
+  |=  fate=writ-fate:sa
+  ^-  tape
+  ?-  fate
+    %drop     "dropped"
+    %hold     "held"
+    %refresh  "held"
+    %fail     "REFUSED"
+  ==
+::
+::  +writ-drop-report: what an operator is told about a writ that stopped
+::
+::    Phase 6.7's finding, exactly: nine of these announced themselves and
+::    four did not, and from outside a silent drop is indistinguishable
+::    from an agent nobody is talking to -- or from one that is wedged.
+::    Three of the silent four were not drops at all; they emitted a
+::    STICKY SNUB without a word.
+::
+::    Being a ?- over the same closed union as +writ-drop-fate is the
+::    fix, not the twelve strings: a thirteenth disposition does not
+::    compile until it has a line.
+::
+::    Every headline is "writ from <ship> <verb>: <reason>", with the verb
+::    from +writ-drop-verb, so the three questions an operator actually
+::    has -- declined on purpose, could not evaluate, or condemning
+::    somebody -- are answered by the first eight characters after the
+::    ship's name.  The three that snub then spend two more lines on the
+::    consequence and the undo, because nothing else in the log says a
+::    snub happened.
+::
+++  writ-drop-report
+  |=  [who=@p drop=writ-drop:sa]
+  ^-  tang
+  =/  verb=tape  (writ-drop-verb (writ-drop-fate drop))
+  =/  hed=tape   "%gw-btc: writ from {(scow %p who)} {verb}: "
+  ::  the two lines every REFUSED report ends with.  A snub is invisible
+  ::  everywhere else -- it is discoverable only through .^(/snubbed) --
+  ::  so the one place that causes it says how to see it and undo it.
+  ::
+  =/  snub=tang
+    :~  leaf+"  (a NEGATIVE verdict: jael %fails and ames SNUBS, stickily, and the snub"
+        leaf+"   then blocks the very packet that would correct it)"
+        leaf+"  (inspect with .^(/snubbed) and undo with %snub %deny %del)"
+    ==
+  ?-    -.drop
+      %publicizing
+    ~[leaf+"{hed}a public-spawn replay is in progress"]
+  ::
+      %in-flight
+    ~[leaf+"{hed}a verification is already in flight"]
+  ::
+      %declined
+    ~[leaf+"{hed}sponsorship declined by operator"]
+  ::
+      %already-public
+    ~[leaf+"{hed}already a public point"]
+  ::
+      %onboarding
+    ::  ONE line, deliberately.  This is the routine disposition for a
+    ::  publicly-onboarding comet and it fires once per retransmitted
+    ::  writ until the block scanner indexes the spawn, so it is the
+    ::  highest-frequency line in this arm by a wide margin.
+    ::
+    ~[leaf+"{hed}public onboarding packet (no xtr); the block scanner resolves it, so no verdict"]
+  ::
+      %foreign-kelvin
+    :~  leaf+"{hed}pass minted under a FOREIGN protocol kelvin"
+        leaf+"  (we cannot check it and must not blacklist it -- snubbing here would"
+        leaf+"   make old and new ships mutually snub across a kelvin bump)"
+    ==
+  ::
+      %undecodable
+    %+  weld
+      :~  leaf+"{hed}its pass is not a readable %gw-btc attestation"
+          leaf+"  (not the onboarding shape and not a foreign kelvin either, so it is"
+          leaf+"   malformed rather than merely unverifiable)"
+      ==
+    snub
+  ::
+      %empty-log
+    %+  weld
+      :~  leaf+"{hed}its pass decodes to an EMPTY custody log"
+          leaf+"  (a suite-C pass asserts a confidential identity and this offers no"
+          leaf+"   evidence whatsoever for it)"
+      ==
+    snub
+  ::
+      %log-too-long
+    %+  weld
+      :~  leaf+"{hed}custody log of {<len.drop>} entries is over the {<cap.drop>} cap"
+          leaf+"  (walking it is a denial of service, and the cap is protocol rather"
+          leaf+"   than readiness -- no amount of catching up changes this answer)"
+      ==
+    snub
+  ::
+      %no-tip
+    ~[leaf+"{hed}no chain tip yet"]
+  ::
+      %unsynced
+    ::  Two lines, and no more: this one fires on every held writ for the
+    ::  whole of a light-client sync, which is hours on mainnet.
+    ::
+    :~  leaf+"{hed}light client NOT synced"
+        leaf+"  (tip {<tip.drop>}; no verdict until it catches up, and this re-reads /is-synced)"
+    ==
+  ::
+      %tip-below-log
+    :~  leaf+"{hed}tip {<tip.drop>} below evidence height {<need.drop>}"
+        leaf+"  (our chain view does not reach this log; that is ignorance, not fraud)"
+    ==
+  ==
+::
+::  +anew-refusal-report: why OUR OWN pass refresh never started
+::
+::    The %anew mirror of +writ-drop-report, and the same closed-union
+::    discipline.  Phase 7.2 spent an hour eliminating six of these from
+::    outside -- by re-deriving each precondition against the ship's own
+::    libraries -- before it could conclude the seventh (a stranded
+::    .pending slot) was the real one.  Every line names the ship,
+::    because on a relay these interleave with peer verification.
+::
+::    None of these emits a card to anybody: they are all our own
+::    readiness or our own bookkeeping.  A refused %anew leaves the
+::    STORED log untouched, which is the safe direction -- a stale pass
+::    would be installed in ames and rejected by every peer.
+::
+++  anew-refusal-report
+  |=  [our=@p ref=anew-refusal:sa]
+  ^-  tang
+  =/  nom=tape  (scow %p our)
+  ?-    -.ref
+      %in-flight
+    :~  leaf+"%gw-btc: %anew for {nom} refused: a self-validation is already in flight (job {<job.ref>})"
+        leaf+"  (single-flight; /x/pending-own shows the slot, and it is released"
+        leaf+"   either by the thread's answer or by the ~h2 leak guard)"
+    ==
+  ::
+      %no-log
+    :~  leaf+"%gw-btc: %anew for {nom} refused: no custody log to validate"
+        leaf+"  (neither a stored log nor an xtr in the pass jael holds; a comet"
+        leaf+"   booted from a plain feed needs a %gw-custody-entry first)"
+    ==
+  ::
+      %log-too-long
+    ~[leaf+"%gw-btc: %anew for {nom} refused: custody log too long ({<len.ref>} entries, cap {<cap.ref>})"]
+  ::
+      %no-tip
+    ~[leaf+"%gw-btc: %anew for {nom} refused: no chain tip yet"]
+  ::
+      %unsynced
+    :~  leaf+"%gw-btc: %anew for {nom} refused: light client not synced (tip {<tip.ref>})"
+        leaf+"  (re-reading /is-synced; re-poke once the node reports it is caught up)"
+    ==
+  ::
+      %tip-below-log
+    ~[leaf+"%gw-btc: %anew for {nom} refused: tip {<tip.ref>} below evidence height {<need.ref>}"]
+  ::
+      %no-pass
+    :~  leaf+"%gw-btc: %anew for {nom} refused: jael has no suite-C pass for us"
+        leaf+"  (not a confidential comet, or the deed/vault endpoint answered with"
+        leaf+"   another suite -- this ship cannot serve a %gw-btc attestation)"
+    ==
+  ::
+      %encode-failed
+    ~[leaf+"%gw-btc: %anew for {nom} refused: +with-xtr could not re-encode our pass"]
+  ::
+      %name-mismatch
+    :~  leaf+"%gw-btc: %anew for {nom} refused: re-encoded pass does not hash to our own name"
+        leaf+"  (BUG: +with-xtr has drifted from the kernel's pass encoder.  Publishing"
+        leaf+"   it would install a pass that is not ours, so nothing is emitted)"
+    ==
+  ==
+::
+::  +anew-refusal-fate: does a refused %anew re-poll the light client?
+::
+::    Only the readiness one does, for the same reason +writ-drop-fate
+::    answers %refresh: /is-synced announces losing its last peer but
+::    nothing announces the recovery, so a refused %anew is the poll.
+::
+++  anew-refusal-fate
+  |=  ref=anew-refusal:sa
+  ^-  ?(%drop %refresh)
+  ?-  -.ref
+    %unsynced       %refresh
+    %in-flight      %drop
+    %no-log         %drop
+    %log-too-long   %drop
+    %no-tip         %drop
+    %tip-below-log  %drop
+    %no-pass        %drop
+    %encode-failed  %drop
+    %name-mismatch  %drop
+  ==
+::
+::  +strand-death-report: a verification that DIED instead of answering
+::
+::    THE observed failure of test 6.7.  This path has always logged, and
+::    what it logged was `%anew self-validation ended without a verdict'
+::    with nothing after it -- which the clean-room run hit twice, from
+::    two unrelated causes, and could not tell apart.
+::
+::    It was reasonless for a structural reason worth writing down:
+::
+::      - +set-timeout:strandio fails with `[%fail %timeout ~]', an EMPTY
+::        tang, so the most common death by far carries no text at all;
+::      - khan's mote (spider's `term') was dropped at the call site,
+::        which threw away the one word that WAS there.
+::
+::    So: name the job, say what it was doing, print the mote, and when
+::    the tang is empty say so explicitly along with the two causes that
+::    produce an empty one.  A verification that died is infrastructure
+::    failure and NEVER evidence -- no card is emitted on either path,
+::    and the peer is not snubbed for our light client going quiet.
+::
+++  strand-death-report
+  |=  [=strand-death:sa mote=term err=tang]
+  ^-  tang
+  =/  head=tang
+    ?-  -.strand-death
+        %peer
+      :~  leaf+"%gw-btc: verification of {(scow %p who.strand-death)} DIED (job {<job.strand-death>}); no verdict, and no snub"
+          leaf+"  (the peer is untouched: a dead strand is our infrastructure failing,"
+          leaf+"   never evidence.  Its next retransmission gets a fresh slot.)"
+      ==
+    ::
+        %own
+      :~  leaf+"%gw-btc: our own %anew self-validation DIED (job {<job.strand-death>}, {<entries.strand-death>} entries)"
+          leaf+"  (the stored custody log is UNCHANGED and no pass was published;"
+          leaf+"   re-poke %gw-custody-entry or %jael-anew to try again)"
+      ==
+    ==
+  =/  why=tang
+    ?^  err  [leaf+"  khan reported {<mote>}:" err]
+    :~  leaf+"  khan reported {<mote>} and NO reason at all.  An empty tang means either:"
+        leaf+"    1. a light-client request never answered and the ~m5 +lc-fetch-timeout"
+        leaf+"       fired (+set-timeout fails with an empty tang).  Check the node's"
+        leaf+"       /is-synced and whether it still has live peers."
+        leaf+"    2. spider was killed under us -- any bail in an unrelated thread, or a"
+        leaf+"       scry jael declines, tears down EVERY strand at once."
+    ==
+  (weld head why)
+::
 ::  +check-class: the class of ONE failing check, by name
 ::
 ::    The single place a check name becomes an outcome.  +report's marker
