@@ -125,3 +125,58 @@ procedure that could not see its target and could not tell it had failed.
 **Backups for this run** were therefore taken by *moving* each stopped pier to
 `<pier>.pre-dos` (atomic, instant, consistent) rather than copying a live one.
 The clean-room `de3222d36a` piers are preserved there on each box.
+
+---
+
+## Pre-verification baseline (captured before any attestation)
+
+All three piers are fresh, so **every peer is unknown on every verifier**. All
+six ordered pairs read identically:
+
+```
+lyfe = ~            no point installed
+dome = ~            not via the Groundwire path (nor any other)
+snub = [%deny ~]    empty
+```
+
+and `/x/sponsees` and `/x/declined` are both `~` on all three.
+
+This is the precondition that makes two of this run's three target gaps
+testable at all:
+
+- **DoS routing case 1** (unknown comet + valid attestation → `+on-hear-open`)
+  is the *onboarding* path and the regression a careless fix breaks. Because
+  every peer is unknown here, **every one of the six verifications below is a
+  genuine first contact from an unknown comet** — the case is exercised six
+  times over, on real wire packets, not simulated.
+- **Test 4.8** (self-announcing registration). k1 holds no point for k2 or k3
+  even though both are real, funded, on-chain, currently-running comets whose
+  identities are committed in confirmed Bitcoin transactions. Registration is
+  never inferred — from the chain, from a sponsor, or from anything else. It
+  requires the subject's own attestation.
+
+### Identity-sat economics, measured
+
+A fief-carrying publication is **401 vB** (1 input, 1 P2TR output, 1 OP_RETURN
+of 279 B). A state update takes its fee **out of the identity sat** — one
+input, one output of `prior − fee`, no change — so the sat bounds the fee rate
+the comet can ever pay:
+
+| comet | sat | max sat/vB (absolute) | max sat/vB (staying ≥330 dust) |
+|---|---|---|---|
+| k1 / k2 / k3 | 1556 | 3.88 | **3.06** |
+| C1 | 1445 | 3.60 | 2.78 |
+| C3 | 1288 | 3.21 | **2.39** |
+
+Two consequences worth stating, neither of which is a bug:
+
+- **4 sat/vB is not "expensive" for these comets, it is impossible** — the fee
+  would exceed the whole sat. The usual advice "bid above what recent blocks
+  cleared to" has a hard ceiling here, and on 2026-08-06 block 961343 cleared
+  at 4.01 sat/vB, *above k1's absolute ceiling*. A comet can be priced out of
+  its own identity.
+- **Publication is close to a one-way door at these sizes.** k1 publishing at
+  2 sat/vB leaves 754 sats, and `754 < 330 + 401` — so k1 can never fund
+  another *publication* at any fee rate. Plain rekeys (~111 vB) remain
+  affordable for a while. Identity sats shrink monotonically and this path
+  cannot top them up.
