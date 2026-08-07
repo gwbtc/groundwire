@@ -9,6 +9,36 @@ live. Plus the first-ever **Tier-1 declassification** broadcast.
 Companion to [`CLEANROOM-RESULTS.md`](CLEANROOM-RESULTS.md); every divergence
 from it is flagged.
 
+---
+
+## Headline
+
+1. **The deploy succeeded.** A solid pill was built from `hd/cc-kernel@6d9b3a4643`,
+   **both kernel fixes were verified inside it** by booting a ship from it and
+   scrying its own `sys/vane/ames.hoon`, and all three comets came back at the
+   right `@p` and life on desk `hd/cc-landing@bf90840`. The *running* ships were
+   then re-checked: the executing kernel carries `+on-hear-drop`.
+2. **All six ordered pairs re-verify VALID** — 10 VALID, 0 INVALID, 0 snubs,
+   `dome=[~ %gw-btc]` on every one, each an on-chain `fief` becoming a runtime
+   lane. Every one was also a first contact from an unknown comet.
+3. **Tier-1 declassification worked on chain — the first one ever sent.**
+   Transaction
+   [`08957455…0266`](https://mempool.space/tx/08957455470694feb0c82216635de43a4b43424bf037da544022dd5a062e0266)
+   confirmed in **block 961353**: one input (k1's identity sat), output 0 the
+   new life-2 snapshot, output 1 a 279-byte OP_RETURN whose push opcode is
+   **`0x4d` — OP_PUSHDATA2 with a 269-byte little-endian length**, which
+   `OP_PUSHDATA1` cannot express and which the Hoon encoder used to truncate
+   silently. **k2 and k3 both accepted it as a state update and declassified
+   k1**: out of `.confidential`, into `/x/points`, jael life 1 → 2, each
+   logging `published itself on chain; now PUBLIC, permanently`.
+
+Both other target gaps also closed: **4.4/4.5/4.6** ran properly on a current
+kernel for the first time (named drop, never a snub, fully reversible), and
+**bug 2's wedge was reproduced and behaved correctly** against a long-dormant
+comet — slot released, no verdict, no snub, re-poke accepted.
+
+**No product bugs were found.** Cost: 802 sats. C2 and C3 untouched.
+
 | | |
 |---|---|
 | desk | `groundwire@hd/cc-landing` `bf90840` (was `8878da0` in the clean-room run) |
