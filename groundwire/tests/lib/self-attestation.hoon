@@ -57,6 +57,18 @@
   ?~  cs  %.n
   ?:  =(name.i.cs name)  ok.i.cs
   $(cs t.cs)
+::  +has-check: was this check EMITTED at all?
+::
+::    +got-check answers %.n both for "failed" and "never ran", which is
+::    fine when the check is unconditional and useless when it is not.
+::    `tracked-lag' is emitted only for a log that really is an older copy
+::    of ours, so "absent" and "failing" are different claims and the
+::    tests have to be able to say which one they mean.
+::
+++  has-check
+  |=  [v=verdict:sa name=cord]
+  ^-  ?
+  (lien checks.v |=(c=check:sa =(name.c name)))
 ::
 ++  no-points  *(set ship)
 ::  --------------------------------------------------------------------
@@ -124,6 +136,63 @@
 ++  pass-s
   pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam chain-s))
 ++  sat-s  ^-(self-attestation:sa [who pass-s chain-s])
+::
+::  ---------------------------------------------------------------------
+::  a THIRD hop, so a log can be behind by TWO as well as by one
+::  ---------------------------------------------------------------------
+::
+::  The tolerance is one custody-log ENTRY, so the boundary it draws --
+::  0 / 1 / 2 -- only exists on a log with at least three of them.
+::
+++  ikey2     (mk-ikey 29)
+++  c2-id     0x4e4e.4e4e
+++  tip2-out  ^-(output:tx:bitcoin [(p2tr-spk (output-pubkey:tr ikey2 ~)) 8.500])
+++  c2-tx     (mk-tx c2-id ~[(mk-input c1-id 0 keypath-wit)] ~[tip2-out])
+++  txl3      ^-((list tx:bc) ~[c0-tx c1-tx c2-tx])
+++  chain3
+  ^-  custody-log:sa
+  ~[[c0-id 100 `open0] [c1-id 101 ~] [c2-id 102 ~]]
+++  pass3  pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam chain3))
+++  sat3   ^-(self-attestation:sa [who pass3 chain3])
+::  the same custody two events earlier: one entry, one fetched tx.
+::
+++  chain1  ^-(custody-log:sa ~[[c0-id 100 `open0]])
+++  pass1   pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam chain1))
+++  sat1    ^-(self-attestation:sa [who pass1 chain1])
+::
+::  ---------------------------------------------------------------------
+::  the REORG fixtures: the same hops, re-mined one block over
+::  ---------------------------------------------------------------------
+::
+::  Both height fields move -- the entry's own .height and the
+::  .start-height inside entry 0's $blind-opening -- because a reorg deep
+::  enough to move the custody transaction moves the funding transaction
+::  too.  Nothing else changes: same txids, same outpoints, same
+::  commitments, same spawn sat.
+::
+++  spawn-open-r  ^-(blind-opening:sa [spawn start-height=777.000 blind])
+++  open0-r       ^-(opening:sa [ikey0 snap0 `spawn-open-r])
+++  chain-r
+  ^-  custody-log:sa
+  ~[[c0-id 90 `open0-r] [c1-id 91 ~]]
+++  pass-r  pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam chain-r))
+::  a genuinely DIFFERENT entry 0: same shape, another transaction.
+::
+++  chain-f
+  ^-  custody-log:sa
+  ~[[0xdead.beef 100 `open0] [c1-id 101 ~]]
+++  pass-f  pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam chain-f))
+::
+::  +anchor-at: the anchor a verifier holds for a comet
+::
+::    .pas is the pass whose xtr carries the log we already verified; .tip
+::    is the satpoint we tracked it to; .lyf is the life we installed.
+::
+++  anchor-at
+  |=  [pas=pass tip=sont:ord lyf=@ud]
+  ^-  (unit anchor:sa)
+  =/  pt=point:urb  [[tip ~] 0 lyf pas [%.n who] ~ ~]
+  `[pt tip]
 ::
 ++  run
   |=  [sat=self-attestation:sa txl=(list tx:bc) tracked=(unit anchor:sa)]
@@ -418,19 +487,270 @@
   (expect !>(ok.verdict.res))
 ::
 ++  test-run-tracked-rejects-history-rewrite
-  ::  a prefix that disagrees with the anchor's proven chain is rejected
+  ::  a log that DISAGREES with the anchor's proven chain at a shared
+  ::  position is rejected.  One of the nine adversarial cases that must
+  ::  keep snubbing, and it is now pinned with a genuine divergence -- a
+  ::  different transaction at entry 0 -- rather than with a height, which
+  ::  an honest reorg changes and which is deliberately no longer a
+  ::  divergence at all (see +test-run-tracked-reorg-is-not-a-fork).
   ::
-  =/  anchored=point:urb
-    [[[c1-id 0 0] ~] 0 1 carried-pass [%.n who] ~ ~]
-  =/  rewritten=custody-log:sa
-    ~[[c0-id 99 `open0] [c1-id 101 ~]]
-  =/  bad-pass
-    pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam rewritten))
-  =/  res
-    (run [who bad-pass rewritten] ~[c0-tx c1-tx] `[anchored [c1-id 0 0]])
+  ::  The DIVERGENCE is put in the anchor rather than in the packet so
+  ::  that every other check still passes and this test isolates
+  ::  tracked-prefix; the relation +compare-log computes is symmetric in
+  ::  which side moved.
+  ::
+  =/  tracked  (anchor-at pass-f [c1-id 0 0] 1)
+  =/  res  (run good-sat ~[c0-tx c1-tx] tracked)
   ;:  weld
     (expect !>(!ok.verdict.res))
     (expect !>(!(got-check verdict.res 'tracked-prefix')))
+    ::  a fork is not a lag, so the lag check is not even emitted ...
+    (expect !>(!(has-check verdict.res 'tracked-lag')))
+    ::  ... and the outcome is the snub it always was.
+    (expect-eq !>(%fraud) !>((classify:sal verdict.res)))
+  ==
+::
+::  ---------------------------------------------------------------------
+::  BUG 2: a log is a fork or not by its HOPS, never by their heights
+::  ---------------------------------------------------------------------
+::
+::  Custody entries carry a block height, and entry 0's $blind-opening
+::  carries the funding transaction's, so heights sit INSIDE the log the
+::  pass commits to.  Comparing whole entries therefore made an ordinary
+::  Bitcoin reorg -- which at block-confirmations=1 happens several times
+::  a month -- into fraud: the comet re-finalizes with corrected heights,
+::  re-attests, every walk check passes, and the prefix comparison snubs
+::  it stickily for the block its own transactions were re-mined into.
+::
+::  No replay, no attacker.  The same transactions, the same outpoints,
+::  the same commitments, one block over.
+::
+++  test-run-tracked-reorg-is-not-a-fork
+  =/  tracked  (anchor-at pass-r [c1-id 0 0] 1)
+  =/  res  (run good-sat ~[c0-tx c1-tx] tracked)
+  ;:  weld
+    ::  THE assertion: not a fork ...
+    (expect !>((got-check verdict.res 'tracked-prefix')))
+    ::  ... and not a lag either -- nothing happened, so nothing is behind
+    (expect !>(!(has-check verdict.res 'tracked-lag')))
+    ::  ... which leaves an honest comet VALID, as it was before the reorg
+    (expect !>(ok.verdict.res))
+    (expect !>(!(stale-verdict:sal verdict.res)))
+  ==
+::
+::  ---------------------------------------------------------------------
+::  BUG 1: an older copy of OUR OWN log is a lag, and one is forgiven
+::  ---------------------------------------------------------------------
+::
+::  OPERATIONS.md section 6: a refreshed pass is not written back to the
+::  boot keyfile, so a comet that rekeys and then reboots serves the
+::  shorter, feed-baked log -- forever, and with no attacker anywhere.
+::  Reproduced live on two verifiers, two subjects, both desk revisions:
+::  three stale-class checks in the verdict said "old copy" and
+::  tracked-prefix overruled all three with fraud.
+::
+::  The rule: behind by exactly ONE entry is forgiven, behind by more is
+::  not.  The unit is a custody-log entry -- one spend of the identity sat
+::  -- because that is the one thing our own ingestion path advances by
+::  exactly one (+extend-log, one %anew round-trip, one packet in flight).
+::
+++  test-run-tracked-one-behind-is-stale-not-fraud
+  =/  tracked  (anchor-at pass3 [c2-id 0 0] 1)
+  =/  res  (run good-sat ~[c0-tx c1-tx] tracked)
+  ;:  weld
+    (expect !>(!ok.verdict.res))
+    ::  forgiven: the fraud-class check passes ...
+    (expect !>((got-check verdict.res 'tracked-prefix')))
+    ::  ... and the lag is still SAID OUT LOUD, in the stale class
+    (expect !>((has-check verdict.res 'tracked-lag')))
+    (expect !>(!(got-check verdict.res 'tracked-lag')))
+    ::  forgiveness cannot fail open, and this is why: a strictly shorter
+    ::  log ends before the tracked tip, so tracked-tip must fail.
+    (expect !>(!(got-check verdict.res 'tracked-tip')))
+    ::  so the verdict is negative -- but a DEMOTION, never a snub.
+    (expect-eq !>(%stale) !>((classify:sal verdict.res)))
+    (expect !>((stale-verdict:sal verdict.res)))
+    (expect !>(?=(~ point.res)))
+  ==
+::
+++  test-run-tracked-one-behind-cannot-walk-us-backwards
+  ::  the property that makes the tolerance safe even after the demotion
+  ::  has dropped our anchor.  A log is shorter BECAUSE a later entry
+  ::  spent its tip -- that is what the missing entry is -- so its tip
+  ::  outpoint is spent on chain, and our own filter scan proves it with
+  ::  no anchor involved.  The old log therefore cannot reach ok=%.y on
+  ::  the next packet either, tracked or not: forgiveness only ever
+  ::  chooses between two NEGATIVE outcomes.
+  ::
+  =/  tracked  (anchor-at pass3 [c2-id 0 0] 1)
+  ::  with the anchor, and its tip proven spent
+  ::
+  =/  both
+    (run-checks:sal good-sat start-tx ~[c0-tx c1-tx] `%.n tracked no-points)
+  ::  and with the anchor gone -- the state the demotion leaves us in
+  ::
+  =/  bare  (run-checks:sal good-sat start-tx ~[c0-tx c1-tx] `%.n ~ no-points)
+  ;:  weld
+    (expect !>(!ok.verdict.both))
+    (expect !>(!(got-check verdict.both 'tip-unspent')))
+    (expect-eq !>(%stale) !>((classify:sal verdict.both)))
+    ::  no anchor at all: tracked-prefix is vacuously ok, tracked-lag is
+    ::  not even emitted -- and the spent tip alone still refuses it.
+    (expect !>(!ok.verdict.bare))
+    (expect !>((got-check verdict.bare 'tracked-prefix')))
+    (expect !>(!(has-check verdict.bare 'tracked-lag')))
+    (expect !>(!(got-check verdict.bare 'tip-unspent')))
+    (expect-eq !>(%stale) !>((classify:sal verdict.bare)))
+  ==
+::
+++  test-run-tracked-two-behind-is-fraud
+  ::  the other side of the boundary.  Two missing entries is not a lag
+  ::  anybody's normal operation produces, and an unbounded rewind would
+  ::  let a peer re-present any historical state it liked -- an old key,
+  ::  an old sponsor -- and have it read as merely out of date.
+  ::
+  =/  tracked  (anchor-at pass3 [c2-id 0 0] 1)
+  =/  res  (run sat1 ~[c0-tx] tracked)
+  ;:  weld
+    (expect !>(!ok.verdict.res))
+    (expect !>(!(got-check verdict.res 'tracked-prefix')))
+    ::  it IS a lag, and the report says so -- it is just too big to
+    ::  forgive, which is tracked-prefix's answer and not this one's.
+    (expect !>((has-check verdict.res 'tracked-lag')))
+    (expect !>(!(got-check verdict.res 'tracked-lag')))
+    (expect-eq !>(%fraud) !>((classify:sal verdict.res)))
+    (expect !>(!(stale-verdict:sal verdict.res)))
+  ==
+::
+++  test-run-tracked-zero-behind-is-valid
+  ::  behind by nothing: the peer re-sends the log we already hold.  This
+  ::  is the ordinary retransmission, and it must stay VALID.
+  ::
+  =/  tracked  (anchor-at pass3 [c2-id 0 0] 1)
+  =/  res  (run sat3 txl3 tracked)
+  ;:  weld
+    (expect !>(ok.verdict.res))
+    (expect !>((got-check verdict.res 'tracked-prefix')))
+    (expect !>(!(has-check verdict.res 'tracked-lag')))
+  ==
+::
+++  test-run-tracked-dropped-opening-is-a-fork
+  ::  the downgrade a bare length test would miss: same length, same
+  ::  txids, but the peer has DROPPED the opening it previously published
+  ::  at entry 1.  The log is not shorter, so it is not behind; it
+  ::  contradicts what we already verified about one on-chain output, and
+  ::  it would resolve the identity to an older snapshot (an older key).
+  ::  That is a fork, and forks stay fraud.
+  ::
+  =/  tracked  (anchor-at pass-s [c1-id 0 0] 1)
+  =/  res  (run good-sat ~[c0-tx c1-tx] tracked)
+  ;:  weld
+    (expect !>(!ok.verdict.res))
+    (expect !>(!(got-check verdict.res 'tracked-prefix')))
+    (expect !>(!(has-check verdict.res 'tracked-lag')))
+    (expect-eq !>(%fraud) !>((classify:sal verdict.res)))
+  ==
+::
+::  ---------------------------------------------------------------------
+::  +compare-log / +anchor-ok -- the rule itself, without a chain
+::  ---------------------------------------------------------------------
+::
+::  +prefix-chain answered this question with a loobean, and so said the
+::  same %.n for a log that DIVERGES from ours and for one that is our own
+::  log with its last entries missing.  Fraud and staleness, reported as
+::  one bit.  The relation is four-valued now, and these pin every value
+::  and every boundary between them.
+::
+++  test-compare-log-counts-the-gap-in-entries
+  =/  e0  `custody-entry:sa`[c0-id 100 `open0]
+  =/  e1  `custody-entry:sa`[c1-id 101 ~]
+  =/  e2  `custody-entry:sa`[c2-id 102 ~]
+  =/  l3  `custody-log:sa`~[e0 e1 e2]
+  ;:  weld
+    ::  behind by 0
+    (expect-eq !>(`log-relation:sal`[%same ~]) !>((compare-log:sal l3 l3)))
+    ::  behind by 1, by 2, by all of it
+    (expect-eq !>(`log-relation:sal`[%behind 1]) !>((compare-log:sal l3 ~[e0 e1])))
+    (expect-eq !>(`log-relation:sal`[%behind 2]) !>((compare-log:sal l3 ~[e0])))
+    (expect-eq !>(`log-relation:sal`[%behind 3]) !>((compare-log:sal l3 ~)))
+    ::  and the ordinary direction: they are ahead of us
+    (expect-eq !>(`log-relation:sal`[%extends 1]) !>((compare-log:sal ~[e0 e1] l3)))
+    (expect-eq !>(`log-relation:sal`[%extends 3]) !>((compare-log:sal ~ l3)))
+    (expect-eq !>(`log-relation:sal`[%same ~]) !>((compare-log:sal ~ ~)))
+  ==
+::
+++  test-compare-log-forks-at-first-middle-and-last
+  =/  e0  `custody-entry:sa`[c0-id 100 `open0]
+  =/  e1  `custody-entry:sa`[c1-id 101 ~]
+  =/  e2  `custody-entry:sa`[c2-id 102 ~]
+  =/  l3  `custody-log:sa`~[e0 e1 e2]
+  ::  a hop of the same SHAPE that is simply a different transaction
+  ::
+  =/  x0  `custody-entry:sa`[0xdead.beef 100 `open0]
+  =/  x1  `custody-entry:sa`[0xdead.beef 101 ~]
+  ;:  weld
+    (expect-eq !>(`log-relation:sal`[%fork 0]) !>((compare-log:sal l3 ~[x0 e1 e2])))
+    (expect-eq !>(`log-relation:sal`[%fork 1]) !>((compare-log:sal l3 ~[e0 x1 e2])))
+    (expect-eq !>(`log-relation:sal`[%fork 2]) !>((compare-log:sal l3 ~[e0 e1 x1])))
+    ::  a divergence is a fork whatever the LENGTHS are: a log that both
+    ::  disagrees and is shorter is not a lag we may forgive ...
+    (expect-eq !>(`log-relation:sal`[%fork 1]) !>((compare-log:sal l3 ~[e0 x1])))
+    (expect-eq !>(`log-relation:sal`[%fork 0]) !>((compare-log:sal l3 ~[x0])))
+    ::  ... and one that disagrees while being LONGER is not an extension.
+    (expect-eq !>(`log-relation:sal`[%fork 1]) !>((compare-log:sal ~[e0 e1] ~[e0 x1 e2])))
+  ==
+::
+++  test-compare-log-keys-on-hops-not-heights
+  =/  e0   `custody-entry:sa`[c0-id 100 `open0]
+  =/  e1   `custody-entry:sa`[c1-id 101 ~]
+  ::  the same two hops after a reorg: both heights moved, including the
+  ::  start-height inside entry 0's blind-opening.
+  ::
+  =/  e0r  `custody-entry:sa`[c0-id 90 `open0-r]
+  =/  e1r  `custody-entry:sa`[c1-id 91 ~]
+  ::  same txid and height, DIFFERENT opening: an incompatible claim about
+  ::  one on-chain output, and not something a reorg can produce.
+  ::
+  =/  open0-x  ^-(opening:sa [ikey1 snap0 `spawn-open])
+  =/  e0x      `custody-entry:sa`[c0-id 100 `open0-x]
+  ::  same txid and height, opening DROPPED
+  ::
+  =/  e0n  `custody-entry:sa`[c0-id 100 ~]
+  ;:  weld
+    ::  THE bug-2 property: heights are not hop identity.
+    (expect-eq !>(`log-relation:sal`[%same ~]) !>((compare-log:sal ~[e0 e1] ~[e0r e1r])))
+    ::  ... nor is a height a way to hide a shorter log
+    (expect-eq !>(`log-relation:sal`[%behind 1]) !>((compare-log:sal ~[e0 e1] ~[e0r])))
+    ::  ... and everything else still is.
+    (expect-eq !>(`log-relation:sal`[%fork 0]) !>((compare-log:sal ~[e0 e1] ~[e0x e1])))
+    (expect-eq !>(`log-relation:sal`[%fork 0]) !>((compare-log:sal ~[e0 e1] ~[e0n e1])))
+  ==
+::
+++  test-anchor-ok-forgives-exactly-one-entry
+  =/  tip  ^-(sont:ord [c1-id 0 0])
+  =/  hit  `(unit sont:ord)``tip
+  =/  mis  `(unit sont:ord)``[0xdead.beef 0 0]
+  ;:  weld
+    ::  THE RULE, stated once: one is forgiven, two is not.
+    (expect !>((anchor-ok:sal [%behind 1] hit tip)))
+    (expect !>(!(anchor-ok:sal [%behind 2] hit tip)))
+    (expect !>(!(anchor-ok:sal [%behind 3] hit tip)))
+    (expect !>(!(anchor-ok:sal [%behind 99] hit tip)))
+    ::  a forgiven lag does not consult the boundary at all -- it cannot,
+    ::  because the packet never reaches the position we anchored at.
+    (expect !>((anchor-ok:sal [%behind 1] ~ tip)))
+    (expect !>((anchor-ok:sal [%behind 1] mis tip)))
+    ::  a fork is never forgiven, at any position, boundary or no.
+    (expect !>(!(anchor-ok:sal [%fork 0] hit tip)))
+    (expect !>(!(anchor-ok:sal [%fork 1] hit tip)))
+    (expect !>(!(anchor-ok:sal [%fork 99] hit tip)))
+    ::  at or past our anchor, the anchor must still be reachable.
+    (expect !>((anchor-ok:sal [%same ~] hit tip)))
+    (expect !>((anchor-ok:sal [%extends 1] hit tip)))
+    (expect !>(!(anchor-ok:sal [%same ~] mis tip)))
+    (expect !>(!(anchor-ok:sal [%extends 1] mis tip)))
+    (expect !>(!(anchor-ok:sal [%same ~] ~ tip)))
+    (expect !>(!(anchor-ok:sal [%extends 1] ~ tip)))
   ==
 ::
 ++  test-run-tracked-life-monotonic
@@ -623,16 +943,12 @@
   =/  ahead=point:urb
     [[[0xfeed 0 0] ~] 0 1 old-pass [%.n who] ~ ~]
   =/  moved  (run good-sat ~[c0-tx c1-tx] `[ahead [c0-id 0 0]])
-  ::  but a log that is not an EXTENSION of the one we verified is a
-  ::  fork, not an old copy -- that stays fraud.
+  ::  but a log that DIVERGES from the one we verified is a fork, not an
+  ::  old copy -- that stays fraud.  (Pinned with a different transaction
+  ::  at entry 0; it used to be pinned with a different HEIGHT, which is
+  ::  what an honest reorg produces and is no longer a divergence.)
   ::
-  =/  rewritten=custody-log:sa  ~[[c0-id 99 `open0] [c1-id 101 ~]]
-  =/  fork-pass
-    pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam rewritten))
-  =/  forked=point:urb
-    [[[c1-id 0 0] ~] 0 1 carried-pass [%.n who] ~ ~]
-  =/  fork
-    (run [who fork-pass rewritten] ~[c0-tx c1-tx] `[forked [c1-id 0 0]])
+  =/  fork  (run good-sat ~[c0-tx c1-tx] (anchor-at pass-f [c1-id 0 0] 1))
   ;:  weld
     (expect !>(!ok.verdict.older))
     (expect !>(!(got-check verdict.older 'life-monotonic')))
@@ -865,6 +1181,12 @@
     (expect-eq !>("  [??]") !>((marker 'tip-scanned')))
     (expect-eq !>("  [..]") !>((marker 'tip-unspent')))
     (expect-eq !>("  [..]") !>((marker 'life-monotonic')))
+    (expect-eq !>("  [..]") !>((marker 'tracked-tip')))
+    ::  the lag and the judgement passed on it are DIFFERENT classes, and
+    ::  an operator has to be able to see which is which: an older copy of
+    ::  our own log is staleness, a log we cannot reconcile is fraud.
+    (expect-eq !>("  [..]") !>((marker 'tracked-lag')))
+    (expect-eq !>("  [XX]") !>((marker 'tracked-prefix')))
     (expect-eq !>("  [XX]") !>((marker 'derive-tip')))
     (expect-eq !>("  [XX]") !>((marker 'empty-chain')))
     (expect-eq !>("  [XX]") !>((marker 'spawn-opening')))

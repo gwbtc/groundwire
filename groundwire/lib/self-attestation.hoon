@@ -81,14 +81,20 @@
 ::      life-monotonic  the log's latest life is below one we already hold,
 ::                      i.e. this is an older copy of a log we know
 ::
+::      tracked-lag     this log is a hop-for-hop PREFIX of the one we
+::                      already verified for this comet: not a different
+::                      log, the same log with its last entries missing.
+::                      See +anchor-ok -- the FACT is recorded here, and
+::                      whether it is forgiven is tracked-prefix's answer.
+::
 ::    Everything else stays a %fail, because it is evidence that was never
 ::    true rather than evidence that has expired: spawn-commit (the log is
 ::    not bound to this name), entry-N-commitment (a snapshot never
 ::    committed on chain), entry-N-continuity / -key-path / -sat-landed /
 ::    -txid (a custody hop that did not happen), entry-N-life-order (a log
-::    that contradicts itself), tracked-prefix (a log that is not an
-::    extension of the one we already verified -- a fork, not an old
-::    copy), pass-key, and every structural check.
+::    that contradicts itself), tracked-prefix (a log we cannot reconcile
+::    with the one we already verified -- a fork, or a lag too big to be
+::    our own scanner), pass-key, and every structural check.
 ::
 ::    sponsor-known used to be in that list and is NOT any more; see
 ::    +unknown-checks below.  It failed for exactly the reason this comment
@@ -97,7 +103,7 @@
 ::
 ++  stale-checks
   ^-  (set cord)
-  (silt ~['tip-unspent' 'tracked-tip' 'life-monotonic'])
+  (silt ~['tip-unspent' 'tracked-tip' 'life-monotonic' 'tracked-lag'])
 ::
 ::  +unknown-checks: the named checks that mean WE CANNOT TELL
 ::
@@ -754,14 +760,204 @@
       (lien entering |=(s=sont:ord =(s tracked)))
   ==
 ::
-++  prefix-chain
+::  +spawn-id: a $blind-opening reduced to WHICH SAT IT IS
+::
+::    start-height dropped.  sur/self-attestation says it in as many words
+::    -- "start-height is transport metadata, not part of the commitment
+::    preimage" -- and +spawn-commit:gw-btc-pass agrees: the pass's hiding
+::    dat commits to [spawn blind] and to nothing else.  A comparison that
+::    included the height would therefore be strictly stricter than the
+::    commitment the whole identity rests on, and would disagree with it
+::    the first time a reorg re-mined the funding transaction.
+::
+::    Rebuilt field by field under a cast rather than patched with %=, so
+::    a new field in $blind-opening does not compile until somebody has
+::    decided whether it identifies the sat.
+::
+++  spawn-id
+  |=  bo=(unit blind-opening:sa)
+  ^-  (unit blind-opening:sa)
+  ?~  bo  ~
+  `[spawn.u.bo 0 blind.u.bo]
+::
+::  +hop-id: one custody entry reduced to its HOP IDENTITY
+::
+::    THE fix for the reorg half of this (live 2026-08-07): the prefix
+::    comparison must key on the outpoint a hop consumes, never on the
+::    block that hop landed in.
+::
+::    A $custody-entry is [txid height opening].  For entry i the outpoint
+::    consumed is fixed by the spawn satpoint plus the txids of entries
+::    0..i-1 -- input-0 continuity leaves no freedom -- and all of those
+::    are compared, positionally, by +compare-log below.  So comparing
+::    txids by position IS comparing outpoints, with no chain access.  The
+::    opening stays in: it is the reveal of what that transaction
+::    committed, checked against that transaction's own output by
+::    entry-N-commitment, and therefore as immutable as the transaction
+::    itself.  Two logs that name the same txid and disagree about its
+::    opening are making incompatible claims about one on-chain output --
+::    a fork, not a lag.
+::
+::    The heights come out.  BOTH of them: .height, and the .start-height
+::    buried in entry 0's $blind-opening (+spawn-id).  A height is where
+::    the chain happened to put a transaction, which a reorg rewrites
+::    while the transaction, its txid and its outpoints all survive
+::    unchanged; it is not a property of the comet's custody.  Keeping it
+::    in the equality test is what let an ordinary shallow reorg -- which
+::    at block-confirmations=1 happens several times a month -- turn an
+::    honest comet's CORRECTED log into fraud and snub it stickily.  It is
+::    the same reason the block-hash proposal was accepted over heights.
+::
+::    Height keeps its two real jobs, neither of them here:
+::
+::      a FETCH HINT.  The light client cannot look a transaction up by
+::      bare txid, so every fetch is height-addressed (+fetch-tx-at).  It
+::      is a hint and not evidence: +fetch-tx-at strand-fails -- emitting
+::      NO verdict -- if the block it names does not hold that txid, so a
+::      wrong height buys a liar silence, never a pass.
+::
+::      an ORDERING bound.  entry-N-height-order still requires heights
+::      not to regress along the log, which is cheap and survives a reorg
+::      (a corrected log is still monotone).
+::
+::    Rebuilt under a cast, like +spawn-id: if $custody-entry or $opening
+::    grows a field, this stops compiling instead of silently deciding.
+::
+++  hop-id
+  |=  ent=custody-entry:sa
+  ^-  custody-entry:sa
+  :+  txid.ent
+    0
+  ?~  opening.ent  ~
+  =*  op  u.opening.ent
+  `[internal-key.op snapshot.op (spawn-id blind-opening.op)]
+::
+::  $log-relation: how an incoming custody log stands to the one we hold
+::
+::    The replacement for +prefix-chain, which answered this question with
+::    a loobean and so could not distinguish the two facts that matter:
+::    it said %.n both for a log that DIVERGES from ours (a fork) and for
+::    one that is our own log with its last entries missing (an old copy).
+::    Fraud and staleness, reported as one bit.  Live on mainnet that
+::    snubbed honest comets, stickily, on two verifiers and two subjects.
+::
+::    A closed union switched on with ?- (+anchor-ok), so a fifth relation
+::    cannot reach a branch -- least of all the snubbing one -- until
+::    somebody has decided what it costs the peer.  Kept in this library
+::    rather than sur/ because it crosses no wire and no agent boundary:
+::    it is the shape of one comparison, and ++run-checks is its only
+::    consumer.
+::
++$  log-relation
+  $%  [%same ~]           ::  hop for hop identical
+      [%extends by=@ud]   ::  ours is a prefix of theirs: they are ahead
+      [%behind by=@ud]    ::  theirs is a prefix of ours: they are behind
+      [%fork at=@ud]      ::  they disagree at entry .at
+  ==
+::
+::  +compare-log: place an incoming log against the one we already verified
+::
+::    .by / .at are counted in CUSTODY-LOG ENTRIES, and that unit is the
+::    whole basis of the one-entry tolerance in +anchor-ok, so it is worth
+::    being exact about what one of them is.
+::
+::    One entry is one custody transaction: one spend of the identity sat
+::    through input 0, which is the only thing that can move a comet's
+::    identity at all.  It is NOT one life -- an opening may advance life
+::    by any amount, and most entries are plain custody moves that advance
+::    it by none -- and it is NOT one block: entries can share a block or
+::    sit years apart.  The entry count is the only counter here that is
+::    monotone, chain-verified, and incremented by exactly one per event:
+::    +extend-log appends exactly one per %anew ingestion.  So "behind by
+::    one entry" is precisely "behind by one thing that happened", which
+::    is the quantity the tolerance is about.
+::
+++  compare-log
   |=  [old=custody-log:sa new=custody-log:sa]
-  ^-  ?
+  ^-  log-relation
+  =|  idx=@ud
   |-
-  ?~  old  %.y
-  ?~  new  %.n
-  ?.  =(i.old i.new)  %.n
-  $(old t.old, new t.new)
+  ?~  old  ?~(new [%same ~] [%extends (lent new)])
+  ?~  new  [%behind (lent old)]
+  ?.  =((hop-id i.old) (hop-id i.new))  [%fork idx]
+  $(old t.old, new t.new, idx +(idx))
+::
+::  +anchor-ok: does this log reconcile with the one we already verified?
+::
+::    The tracked-prefix judgement, and the one place a lag is forgiven.
+::
+::    A peer serving an out-of-date copy of ITS OWN log is judged by HOW
+::    FAR BEHIND it is:
+::
+::      behind by exactly one entry -> FORGIVEN.  We may simply be the one
+::      who is out of date, and a one-entry gap is indistinguishable from
+::      our own scanner lag: it is exactly the gap our own ingestion path
+::      opens (one +extend-log, one %anew round-trip, one packet in
+::      flight).  It is also reachable with no attacker at all --
+::      OPERATIONS.md section 6 records that a refreshed pass is not
+::      written back to the boot keyfile, so a comet that rekeys and then
+::      reboots serves precisely this log, forever.
+::
+::      behind by more than one -> FRAUD.  Two or more missing entries is
+::      no longer a lag anybody's normal operation produces, and forgiving
+::      an unbounded rewind would let a peer re-present any historical
+::      state it liked -- an old key, an old sponsor -- and have it read
+::      as merely out of date.
+::
+::    Forgiving cannot fail open, and the reason is structural rather
+::    than a matter of trust: a strictly shorter log ends at a satpoint
+::    STRICTLY BEFORE the tracked tip, so `tracked-tip' (+tracked-ok --
+::    the tip is neither our tracked satpoint nor among the ones this log
+::    consumes) necessarily fails.  The verdict is therefore always
+::    negative; the only thing forgiveness changes is WHICH negative.
+::
+::    And it should be %stale, not %unknown.  %stale is a positive finding
+::    and we are entitled to make it: we hold the peer's own longer log,
+::    already custody-proven against the chain, of which this packet is a
+::    bit-identical prefix.  That is knowledge that the packet is
+::    superseded, not ignorance -- %unknown is for questions we could not
+::    evaluate, and this one we evaluated.  The consequence is right too.
+::    In the reboot case above the ship really is BACK at the older life,
+::    running the key its un-refreshed feed carries; the point WE hold
+::    describes a state it no longer runs, so dropping our point and
+::    demoting the peer %known -> fresh %alien is not a loss, it is a
+::    correction.  It also lets the replacement packet through and gives
+::    the peer a reason to re-handshake, which silence would not.  Neither
+::    outcome is a snub, which is the property this whole file exists for.
+::
+::    Nothing here needed inventing: `tip-unspent', `tracked-tip' and
+::    `life-monotonic' already said "old copy" in the same verdict, in the
+::    stale class, and were overruled by this one check saying fraud.  The
+::    fix is to stop overruling them.
+::
+::    One more property, and it is the one that makes forgiveness safe
+::    even AFTER the demotion drops our anchor.  A shorter log is shorter
+::    because a later entry spent its tip -- that is what the missing
+::    entry IS -- so the log's tip outpoint is spent ON CHAIN, and our own
+::    BIP-158 scan proves it (`tip-unspent') with no anchor involved.  A
+::    peer therefore cannot use this tolerance to walk us backwards: even
+::    on the next packet, with the point dropped and nothing tracked, the
+::    old log still cannot reach ok=%.y.  Forgiveness only ever chooses
+::    between two negative outcomes.
+::
+++  anchor-ok
+  |=  [rel=log-relation boundary=(unit sont:ord) tip=sont:ord]
+  ^-  ?
+  ?-    -.rel
+    ::  they disagree at a shared position: one of the two logs is not
+    ::  this comet's.  Never a lag, whatever its length.
+    ::
+      %fork     %.n
+    ::  an older copy of our own log.  One entry is forgiven, more is not.
+    ::
+      %behind   =(1 by.rel)
+    ::  they are at or past where we left them, so the anchor must still
+    ::  be reachable: re-deriving the satpoint at the boundary -- the
+    ::  position our own log ended at -- must land on the tip we recorded.
+    ::
+      %same     =(`tip boundary)
+      %extends  =(`tip boundary)
+  ==
 ::
 ::  Derive the final satpoint using only input-0 continuity and output values.
 ::  The light-client adapter uses this before its final /tx-out request.
@@ -947,15 +1143,42 @@
     =/  old-sat=(unit self-attestation:sa)
       ?~  tracked  ~
       (from-xtr who pass.net.point.u.tracked)
-    =/  anchor-ok=?
+    ::  where this log stands against the one we already verified.  ~ when
+    ::  there is nothing to compare it to, or when the comparison is
+    ::  disqualified before it can start: an anchor whose pass we cannot
+    ::  decode, or one that opens a DIFFERENT identity sat.  Both of those
+    ::  stay fraud below -- they are not lags of anything.
+    ::
+    ::  NB the spawn comparison runs through +spawn-id for the same reason
+    ::  +hop-id does: entry 0's blind-opening carries a start-height, and
+    ::  a reorg of the FUNDING transaction moves it.  The commitment this
+    ::  gate is standing in for (spawn-commit, checked above) covers
+    ::  [spawn blind] and not the height, so this must not be stricter.
+    ::
+    =/  rel=(unit log-relation)
+      ?~  tracked  ~
+      ?~  old-sat  ~
+      ?.  =((spawn-id (spawn-of chain.u.old-sat)) (spawn-id spawn-open))  ~
+      `(compare-log chain.u.old-sat chain.sat)
+    =/  prefix-ok=?
       ?~  tracked  %.y
       ?~  old-sat  %.n
-      ?.  =((spawn-of chain.u.old-sat) spawn-open)  %.n
-      ?.  (prefix-chain chain.u.old-sat chain.sat)  %.n
-      =/  boundary
+      ?~  rel      %.n
+      =/  boundary=(unit sont:ord)
         (derive-tip spawn start (scag (lent chain.u.old-sat) txl))
-      =(`tip.u.tracked boundary)
-    =.  checks  (snoc checks ['tracked-prefix' anchor-ok])
+      (anchor-ok u.rel boundary tip.u.tracked)
+    =.  checks  (snoc checks ['tracked-prefix' prefix-ok])
+    ::  A LAG IS A FACT AND MUST BE VISIBLE, whether or not it is forgiven.
+    ::  Emitted for every %behind, not only the forgiven ones, so the
+    ::  report distinguishes "an older copy of our own log" (this check)
+    ::  from the judgement passed on it (tracked-prefix): behind by one
+    ::  reads [ok] tracked-prefix / [..] tracked-lag, behind by more reads
+    ::  [XX] tracked-prefix / [..] tracked-lag, and a fork -- which is not
+    ::  a lag at all -- never emits this check.  It is stale-class, so it
+    ::  cannot by itself turn any verdict into a snub.
+    ::
+    =?  checks  ?=([~ %behind *] rel)
+      (snoc checks ['tracked-lag' %.n])
     =/  life-ok=?
       ?~  tracked  %.y
       ?~  latest  %.n
