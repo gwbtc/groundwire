@@ -373,3 +373,93 @@ untested"; it is now exercised live, on mainnet, against a real dormant comet.
 
 *Classification: **no defect**. The fix behaves exactly as designed under the
 one condition that can actually produce the wedge.*
+
+---
+
+# GAP 3 — the pre-auth DoS fix, live
+
+`4db0cfe544` had never run anywhere. It does now, on all three ships:
+
+**The running kernel is the fixed kernel.** Scried from each *live* ship's own
+`%base`, not from the pill: `sys/vane/ames.hoon` is **558410 bytes** with
+`+open-jam-shaped` @17654, **`+on-hear-drop` @170840**, the
+`dropped unroutable packet` trace @170972 and the `%open-packet-malformed`
+assertion in `+sift-open-packet` @15069 — byte-identical offsets to the pill.
+
+## Test 3.1 — two attested comets exchange `|hi` both ways: **PASS**
+
+All six ordered pairs, over real ames packets:
+
+| | k1→k2 | k2→k1 | k1→k3 | k3→k1 | k2→k3 | k3→k2 |
+|---|---|---|---|---|---|---|
+| result | ACKED 1s | ACKED 2s | ACKED 1s | ACKED 1s | ACKED 2s | ACKED 1s |
+
+> **How the receiver is proved, since the obvious signal is a trap.** `+poke-hi`
+> emits through `flog %text`, which goes to **dill's terminal** — and a `-t`
+> ship has none, so the message never reaches the log file and grepping for it
+> proves nothing. The real signal is the **ack**: strandio's `+poke` blocks
+> until the remote `%poke-ack`, so a returned `'sent'` *is* the round trip.
+> Negative control: the identical poke aimed at a comet that does not exist
+> **never returned** (timed out at 65 s), while every real pair returned in
+> 1–2 s.
+
+## The four routing cases
+
+| case | sender | payload | arm | how covered |
+|---|---|---|---|---|
+| 1 | unknown comet | valid attestation | `+on-hear-open` | **the onboarding path.** All six verifications ran against peers whose `lyfe` and `dome` were both `~` — every one a first contact from an unknown comet, all six VALID. Unit-covered on this exact kernel by `test-hear-attestation-from-unknown-comet` |
+| 2 | known comet | re-attestation | `+on-hear-open` | exercised by the 4.6 re-attestation after clear (k3 already `%known` on k2) → VALID. Unit: `test-hear-reattestation-from-known-comet` |
+| 3 | known comet | `$shut-packet` | `+on-hear-shut` | **the six `|hi` round-trips above**, all acked. Unit: `test-hear-shut-packet-from-known-comet` |
+| 4 | unknown comet | garbage | **`+on-hear-drop`** | unit-covered on this exact kernel by `test-hear-drops-unroutable-comet-packet`, using **the real captured mainnet `%meme` bomb**. Deliberately **not** spoofed at a production ship — see below |
+
+**`bail: meme` = 0 on all three ships across the entire campaign** — through
+2 h 17 m of light-client sync, ten verifications, six `|hi` round-trips, a
+transport partition, a vere SIGSEGV and a full replay. The old kernel logged
+378 and never recovered.
+
+Two honest limits on the live half:
+
+- **Case 4 was not induced on a live ship.** Sending a spoofed-`sndr` `%meme`
+  bomb at a production mainnet comet is an attack; it is covered by a unit test
+  against the real captured packet on the byte-identical kernel, which is the
+  right place for it. `+on-hear-drop` therefore never fired in production —
+  correctly, because nobody attacked us.
+- **`dropped unroutable packet` is `(ev-trace rcv.veb …)`,** so it only prints
+  with `%rcv` ames verbosity on. A count of 0 is consistent with "no
+  unroutable packets arrived" *and* with "the trace is off", and this run does
+  not distinguish them. The load-bearing live claim is the negative one — the
+  fix did not break case 1, 2 or 3 — and that is established six times over.
+
+*Classification: **no regression**. Onboarding, re-attestation and steady-state
+comet traffic all work on the fixed kernel; the structural guard is present in
+the running image; zero `%meme` events.*
+
+---
+
+# Stability
+
+| | Phase 6/7 (~5 h 40 m) | clean-room | this run (~3 h) |
+|---|---|---|---|
+| vere SIGSEGV | 1 | 0 | **1** (k1, during the transport partition; supervisor restarted it and it replayed events 67437–76813 with no state loss, back in ~20 s) |
+| tcp-sidecar SIGSEGV | 24 | 0 | **0** |
+| `bail: meme` | 0 (fixed kernel) | 0 | **0** |
+| supervisor interventions | many | 0 | **1** (the above — and it worked) |
+| peak RAM | — | — | ~700 MB of 3915, swap ~0 |
+| synced pier | ~2.2 GB doc'd | 0.96 GB | **~0.84 GB** |
+
+Timings against §8: block headers 0→tip **~65 min** (§8 says ~55), filter
+headers 0→tip **~7 min** (§8 says ~95 — off by an order of magnitude, as the
+clean-room also found), full bring-up **2 h 17 m**, one confidential
+verification **70–150 s** (§8 says 100–110).
+
+## Money
+
+| | |
+|---|---|
+| spent | **802 sats**, the publication fee, taken out of k1's identity sat |
+| k1 identity sat | 1556 → **754 sats** (new outpoint `08957455…:0`) |
+| C2 | `0cca2561…` **1544 sats — untouched** |
+| C3 | `8e713009…` **1288 sats — untouched** |
+| wallet change | ~17,822 sats — **not needed and not touched**; the publication is self-funded from the identity sat |
+
+Nothing else was broadcast. C1's sat was read for the wedge test but never spent.
