@@ -280,19 +280,36 @@ staleness, and routes to `%stale`, only when **every** failing check is one of
 
 | check | meaning |
 |---|---|
-| `tip-unspent` | our filter scan found the log's tip outpoint spent — or could not determine it, which fails closed and is likewise never fraud (§8) |
+| `tip-unspent` | our filter scan positively PROVED the log's tip outpoint spent. A scan that could not be evaluated at all is `tip-scanned`, below — a different class |
 | `tracked-tip` | our own tracker holds this comet's sat somewhere this log never reaches |
 | `life-monotonic` | the log's latest life is below one we already hold: an older copy |
 | `tracked-lag` | this log is a hop-for-hop **prefix** of the one we already verified for this comet — the same log with its last entries missing, not a different one. Added 2026-08-07; see the staleness-by-degree rule below |
+
+A third class sits beside staleness: checks the verifier could not EVALUATE.
+`+unknown-verdict:self-attestation` is its discriminator, and a failing verdict
+in this class emits **no verdict at all** — not `%fail`, not `%stale`, silence.
+Ignorance is not evidence, and a negative verdict here would snub the peer over
+a gap in our own knowledge, blocking the very packet that would close it.
+
+| check | meaning |
+|---|---|
+| `sponsor-known` | the snapshot names a sponsor we cannot see as a public point. Our public index is a *window* on the chain — it begins at an operator-chosen height and ends wherever our scanner has reached — so "not in it" never distinguishes *no such comet* from *we have not looked there yet*. A verifier that has not indexed the sponsor cannot judge, and must not |
+| `tip-scanned` | the BIP-158 liveness scan could not be evaluated: an unavailable filter or block, an inconsistent answer, or a degenerate (empty) scan range. `tip-unspent` passes vacuously in that case, which is not a fail-open — the verdict is already not `ok`, so no point is installed; all it decides is which of the two non-fraud outcomes we take |
 
 Everything else stays `%fail`: `spawn-commit` (the log is not bound to this
 name), `entry-N-commitment` (a snapshot never committed on chain),
 `entry-N-continuity`/`-key-path`/`-sat-landed`/`-txid` (a custody hop that did
 not happen), `entry-N-life-order` (a log that contradicts itself),
 `tracked-prefix` (a log we cannot reconcile with the one we already verified —
-a fork, or a lag too big to be our own scanner), `pass-key`, `sponsor-known`,
-and every structural check. One fraud check failing alongside a stale one is
-fraud: a peer does not get to launder bad evidence by also being out of date.
+a fork, or a lag too big to be our own scanner), `pass-key`, and every
+structural check.
+
+The classes are ordered, not summed: a verdict is `%fail` if **any** failing
+check is fraud-class, otherwise `%unknown` if any is unknown-class, otherwise
+`%stale`. Fraud beats everything — a peer does not get to launder bad evidence
+by also being out of date, or by being unknowable. Unknown then beats stale:
+`%stale` is a positive finding about the peer's evidence, and we are not
+entitled to make it while some of our own machinery came back blank.
 
 **Staleness is forgiven by degree** (owner decision, 2026-08-07; implemented in
 `cdaf7cf`). `tracked-prefix` used to answer "does this log reconcile with ours"
