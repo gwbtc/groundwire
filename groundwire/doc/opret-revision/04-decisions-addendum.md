@@ -283,15 +283,39 @@ staleness, and routes to `%stale`, only when **every** failing check is one of
 | `tip-unspent` | our filter scan found the log's tip outpoint spent — or could not determine it, which fails closed and is likewise never fraud (§8) |
 | `tracked-tip` | our own tracker holds this comet's sat somewhere this log never reaches |
 | `life-monotonic` | the log's latest life is below one we already hold: an older copy |
+| `tracked-lag` | this log is a hop-for-hop **prefix** of the one we already verified for this comet — the same log with its last entries missing, not a different one. Added 2026-08-07; see the staleness-by-degree rule below |
 
 Everything else stays `%fail`: `spawn-commit` (the log is not bound to this
 name), `entry-N-commitment` (a snapshot never committed on chain),
 `entry-N-continuity`/`-key-path`/`-sat-landed`/`-txid` (a custody hop that did
 not happen), `entry-N-life-order` (a log that contradicts itself),
-`tracked-prefix` (a log that is not an extension of the one we verified — a
-fork, not an old copy), `pass-key`, `sponsor-known`, and every structural
-check. One fraud check failing alongside a stale one is fraud: a peer does not
-get to launder bad evidence by also being out of date.
+`tracked-prefix` (a log we cannot reconcile with the one we already verified —
+a fork, or a lag too big to be our own scanner), `pass-key`, `sponsor-known`,
+and every structural check. One fraud check failing alongside a stale one is
+fraud: a peer does not get to launder bad evidence by also being out of date.
+
+**Staleness is forgiven by degree** (owner decision, 2026-08-07; implemented in
+`cdaf7cf`). `tracked-prefix` used to answer "does this log reconcile with ours"
+with a loobean, and so gave the same `%.n` to a log that *diverges* from ours
+and to one that *is* ours with its last entries missing. Fraud and staleness,
+reported as one bit — and a fraud-class bit, so a sticky snub. The relation is
+now a closed union, `$log-relation` (`%same` / `%extends by=n` / `%behind by=n`
+/ `%fork at=i`), judged in `+anchor-ok`:
+
+- a **fork at any position** is fraud, regardless of length;
+- **behind by exactly one** custody entry is **forgiven** — we may simply be the
+  one who is out of date, and a one-entry gap is exactly the gap our own
+  ingestion path opens. The verdict comes out `%stale`, which demotes to a fresh
+  `%alien` and lets the replacement packet through;
+- **behind by two or more** is fraud.
+
+`.by` / `.at` are counted in custody-log **entries**, not lives and not blocks.
+The comparison keys on hop *identity* (`+hop-id` / `+spawn-id`, which strip
+`height` and `start-height`), because heights are reorg-unstable and sit inside
+the log the pass commits to — the same reason the accepted-but-unimplemented
+block-hash rollback proposal is right. `tracked-lag` is emitted for every
+`%behind`, forgiven or not, so a forgiveness is recorded in the report rather
+than being silent.
 
 Emitting `%stale` for a ship jael never verified under this domain is a no-op
 there (it checks `hep` first), so this is also the "stay silent" case without a

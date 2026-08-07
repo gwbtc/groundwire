@@ -161,7 +161,10 @@ opening = [internal-key=@ux snapshot blind-opening=(unit [spawn=sont blind=@])]
   unknown tip status.
 - Tip liveness, bounded log length (1,024), non-decreasing heights,
   tracked-prefix monotonicity against the last accepted attestation: all
-  retained unchanged from the adversarial branch.
+  retained unchanged from the adversarial branch. *(Amended 2026-08-07:
+  tracked-prefix monotonicity is now graduated rather than a single bit — a
+  fork is fraud, being behind by exactly one custody entry is forgiven as
+  staleness, and the comparison ignores heights. Addendum §3.)*
 
 ## 6. Publication layer: OP_RETURN, default off
 

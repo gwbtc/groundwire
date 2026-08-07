@@ -75,6 +75,9 @@ onboarding/comet-miner, `[spec]` decision needed first.
   existing `urb-point-to-jael` fallback in the adversarial branch).
 - `+derive-tip`, `+prefix-chain`, `+tracked-ok`, the check-report structure,
   and `lc-attestation`'s fetch loop survive with type-level adjustments only.
+  *(Superseded for one of them: `+prefix-chain` was replaced in `cdaf7cf` by
+  `$log-relation` / `+compare-log` / `+anchor-ok`, which distinguishes a fork
+  from a lag instead of answering both with one loobean. See addendum §3.)*
 
 ## 4. Block scanner — `lib/urb-core`, `lib/urb-encoder`, `lib/ord`
 

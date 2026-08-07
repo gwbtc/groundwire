@@ -608,28 +608,58 @@ fact about the chain, arrived at through the normal path, and was left in place.
 
 - **[14]** — over-cap custody log snubs as fraud. Reproduced again
   (`REFUSED: custody log of 1.025 entries is over the 1.024 cap` + snub).
+  **Still open.** A log we refuse to walk is a log we have not judged, so the
+  outcome should be UNDETERMINED, not fraud.
 - **[15]** — a comet replaying its own genuine older attestation is snubbed via
   `[XX] tracked-prefix`, with the three sibling checks all saying *stale*.
-  Reproduced again on k2 against C2.
+  Reproduced again on k2 against C2. **Fixed since this run, in `cdaf7cf`** —
+  see below.
 - **[16]** — a positive verdict never clears an existing snub. Consistent with
-  everything seen here.
+  everything seen here. **Fixed since this run, in the kernel's `f68a547b2b`**:
+  `+sy-sybl`'s `%full` branch now calls `(sy-snub %deny %del ~[her])`. Note what
+  that does and does not buy: it is a safety net for a positive verdict that
+  arrives by an unblocked route (the block scanner, an operator writ, or the
+  mesa `%page` path), **not** self-healing on classic ames, where `%hear` still
+  drops the snubbed peer's packets before they can produce that verdict.
 
-## New consequence of [15] — worth reporting
+## New consequence of [15] — worth reporting — **fixed in `cdaf7cf`**
 
-**`tracked-prefix` is height-sensitive, so an ordinary Bitcoin reorg can snub an
-honest comet.** Custody entries are `[txid height opening]`
+**`tracked-prefix` was height-sensitive, so an ordinary Bitcoin reorg could snub
+an honest comet.** Custody entries are `[txid height opening]`
 (`sur/self-attestation.hoon:68-72`) and `$blind-opening` carries `start-height`
 (`:57`) — heights are *inside* the log the pass commits to. If a reorg re-mines
 a comet's custody transaction one block over, its old attestation stops
 fetching (safe: silence). It re-finalizes with corrected heights and re-attests
 — every walk check passes, `spawn-commit` still passes because `start-height` is
-explicitly not in the commitment preimage — and then
-`lib/self-attestation.hoon:950-957` compares whole entries, the heights differ,
-`prefix-chain` returns `%.n`, `tracked-prefix` is fraud-class, and the honest
-comet is **snubbed stickily**. `+detect-stale`, which would clear the stale
-anchor, runs only from the scanner path (`app/gw-btc.hoon:1285`) — which the
-reorg has halted. This is [15]'s mechanism reached without any replay and
-without any attacker.
+explicitly not in the commitment preimage — and then the tracked-log comparison
+compared whole entries, the heights differed, `prefix-chain` returned `%.n`,
+`tracked-prefix` is fraud-class, and the honest comet was **snubbed stickily**.
+`+detect-stale`, which would clear the stale anchor, runs only from the scanner
+path (`app/gw-btc.hoon:1285`) — which the reorg has halted. This was [15]'s
+mechanism reached without any replay and without any attacker.
+
+**What `cdaf7cf` changed.** `+prefix-chain` is gone, replaced by
+`$log-relation` — `%same` / `%extends by=n` / `%behind by=n` / `%fork at=i` —
+computed by `+compare-log` and judged by `+anchor-ok`:
+
+- a **fork at any position** is fraud, regardless of length;
+- **behind by exactly one** custody entry is **forgiven**: the verdict comes out
+  `%stale`, which demotes the peer to a fresh `%alien` and never snubs, and the
+  replacement packet gets through;
+- **behind by two or more** is fraud.
+
+The comparison keys on hop **identity** via `+hop-id` / `+spawn-id`, which strip
+`height` and `start-height`, so a re-mined transaction at a different height is
+no longer a divergence at all. Height survives as a fetch hint and an ordering
+bound only. A new stale-class check, **`tracked-lag`**, is emitted for every
+`%behind` — forgiven or not — so a forgiveness is visible in the report rather
+than silent; `tracked-prefix` remains the *judgement* passed on the lag. Nine
+adversarial cases still snub.
+
+Two things this does **not** fix, and they are still open: reorg **rollback**
+itself is still the loud halt (`$reorg-stop` + `%gw-reorg-resume`, no repair —
+Robin's block-hash proposal is accepted but unimplemented), and `+detect-stale`
+still runs only from the scanner path.
 
 ## Real bugs (product) found this run
 

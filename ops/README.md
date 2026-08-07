@@ -132,9 +132,10 @@ Three things learned the hard way, all in
 `doc/live-tests/PHASE2-RERUN-RESULTS.md`:
 
 - **Pick a subject the verifier has never verified.** An anchored subject adds
-  `tracked-tip` / `tracked-prefix` / `life-monotonic` to every verdict, and any
-  mutation of entry 0 breaks them too, so nothing fails for one reason and
-  nothing is readable.
+  `tracked-tip` / `tracked-prefix` / `life-monotonic` to every verdict — and
+  `tracked-lag` too, whenever the log you feed it is a prefix of the one the
+  verifier already holds — and any mutation of entry 0 breaks them too, so
+  nothing fails for one reason and nothing is readable.
 - **Clear the snub set first.** Several cases emit a sticky snub; if the
   subject is already snubbed you cannot tell whether this one snubbed it.
   `gwsnub.py show` / `gwsnub.py del`.

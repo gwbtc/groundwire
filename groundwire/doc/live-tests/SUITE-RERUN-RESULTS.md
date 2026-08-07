@@ -635,9 +635,10 @@ three comets, zero sats spent. **Three classifications changed and all three
 changed for the better** (2.8 tip-spent → STALE, 2.9 foreign kelvin → silence,
 2.11 unknown sponsor → UNDETERMINED, none of them snubbing any more), and two
 new findings came out of it — an honest comet replaying its own older
-attestation is still classed fraud and snubbed, and `sponsor-known` accepts a
-*confidentially* verified sponsor, which is the opposite of what `OPERATIONS.md`
-§5.2 says.
+attestation is still classed fraud and snubbed (**fixed since, in `cdaf7cf`**:
+behind by exactly one custody entry is now forgiven as `%stale`), and
+`sponsor-known` accepts a *confidentially* verified sponsor, which is the
+opposite of what `OPERATIONS.md` §5.2 says.
 
 That run also deployed `hd/cc-landing@167e143` to **k3** (k1 and k2 are still
 on `bf90840`), so the rig is no longer uniform. `25f0a1d`'s four newly-announced

@@ -35,7 +35,8 @@ Two new findings, both about classification, neither previously recorded:
   checks in the same verdict (`tip-unspent`, `tracked-tip`, `life-monotonic`)
   all say *stale*. Reproduced on two verifiers, two subjects and both desk
   versions. **This is reachable by an honest comet with no attacker involved**
-  (§Finding 1).
+  (§Finding 1). **Fixed since, in `cdaf7cf`** — staleness is now forgiven by
+  degree; see §Finding 1.
 - **`sponsor-known` is satisfied by a CONFIDENTIALLY verified sponsor**, not
   only by a publicly indexed one. `OPERATIONS.md` §5.2 and `ops/README.md` both
   assert in bold that it is not. The agent carries two different definitions of
@@ -232,6 +233,17 @@ snub — was tested (2.8) and passes.
 
 ## Finding 1 (real, product) — an honest comet replaying its own older attestation is classed FRAUD and snubbed
 
+> **Fixed since this run, in `cdaf7cf`.** `+prefix-chain` is replaced by
+> `$log-relation` (`%same` / `%extends` / `%behind by=n` / `%fork at=i`) and
+> judged by `+anchor-ok`: a fork at any position is still fraud, **behind by
+> exactly one custody entry is forgiven** and comes out `%stale` (demote to a
+> fresh `%alien`, never a snub), behind by two or more is fraud. The comparison
+> keys on hop *identity* (`+hop-id` / `+spawn-id`, which strip `height` and
+> `start-height`), which also removes the reorg variant recorded in
+> [`MATRIX-COMPLETION-RESULTS.md`](MATRIX-COMPLETION-RESULTS.md). A new
+> stale-class check `tracked-lag` fires on every `%behind` so the forgiveness is
+> never silent. The record below is left as it was written.
+
 **Reproduced on two verifiers, two subjects, and both desk versions.**
 
 Install a comet from its current log, then present an **earlier, genuine,
@@ -315,6 +327,15 @@ itself about it, and that the runbook documents the opposite of what ships, is
 not.
 
 ## Finding 3 (real, kernel; bounded) — a positive verdict does not clear a snub
+
+> **Fixed since this run, in the kernel's `f68a547b2b`:** `+sy-sybl`'s `%full`
+> branch now calls `(sy-snub %deny %del ~[her])`, so a positive verdict lifts an
+> existing snub. Read it as a safety net, not as self-healing: `%hear` still
+> drops a snubbed peer's packets, so the positive verdict must arrive by a route
+> the snub does not block — the block scanner learning a publication, an
+> operator-poked `%jael-writ`, or the mesa `%page` path, which has no snub gate
+> at all and is a separate open question. The record below is left as it was
+> written.
 
 After Finding 1's snub, the correct attestation verified **VALID** and the
 point was installed — and `.^(/snubbed)` still contained the peer.
