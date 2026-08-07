@@ -24,6 +24,8 @@ expect `gwharness` importable from `/opt/gw` (`testnet/gwharness/`).
 | `gwsup.sh` | per-ship supervisor: restarts vere and the sidecar, unwedges the light client |
 | `poolfill.py` | refill the peer pool from `x49.`-filtered DNS seeds |
 | `addpeers.py` | `%add-earth-peer` a batch of IPs in one strand |
+| `gwvec.py` | build the Phase-2 adversarial attestation vectors from a comet artifact |
+| `gwsnub.py` | read and clear a ship's ames blocklist — the only recovery from a snub |
 
 ## The things that cost hours
 
@@ -92,10 +94,51 @@ gwmint.py status    <label>          # poll for confirmation
 gwmint.py artifact  <label> <n>      # -> ~/gw-building/.gw-comet-<n>.json (0600)
 ```
 
-> **A comet must not name a *confidential* comet as its sponsor.**
-> `sponsor-ok` in `lib/self-attestation.hoon:456-459` is
-> `(~(has in known-public) u.sponsor...)` — it requires the sponsor to be a
-> **public** point. Naming a confidential one makes `sponsor-known` fail, which
-> is classified unevaluable, so every verification of the sponsee returns
-> UNDETERMINED and no point is ever installed. An absent sponsor is fine: it
-> projects to self and `sponsor-ok` is `%.y`.
+> **A comet naming another comet as its sponsor is only as verifiable as the
+> sponsor is *known*.** `sponsor-ok` (`lib/self-attestation.hoon`) is
+> `(~(has in known-public) u.sponsor...)`, and `known-public` is whatever
+> `+verify-cards` hands the thread — which is `~(key by unv-ids.urb-state)`,
+> **raw**. A verifier that has never seen the sponsor fails the check, and
+> since 2026-08-06 that is classified *unevaluable*, so the sponsee reads
+> UNDETERMINED, no verdict is emitted and no point is installed. It is not
+> permanent: the same packet verifies VALID the moment the verifier learns the
+> sponsor (measured live, 2026-08-07).
+>
+> This paragraph used to say the sponsor had to be **public**. Measured live,
+> it does not: `unv-ids` also holds comets this verifier has verified
+> **confidentially**, and one of those satisfies `sponsor-known` — even though
+> the agent's own `+known-public` predicate, used two arms away for the writ
+> gate, explicitly subtracts `.confidential`. Two definitions, one agent. See
+> `doc/live-tests/PHASE2-RERUN-RESULTS.md`, Finding 2. An absent sponsor is
+> fine either way: it projects to self and `sponsor-ok` is `%.y`.
+
+## Testing verification, without spending anything
+
+`gwvec.py` builds the Phase-2 adversarial matrix
+(`doc/opret-revision/05-live-test-plan.md`, tests 2.2–2.16) out of a comet's
+**own on-chain custody log**: truncate it and the tip is a satpoint the next
+entry already spent; flip a bit in the blind and `spawn-commit` cannot open
+`dat`; append a real foreign transaction and `derive-tip` breaks. No
+transaction is built and nothing is broadcast.
+
+```sh
+gwvec.py show  ~/gw-building/.gw-comet-3.json          # the real custody log
+gwvec.py build ~/gw-building/.gw-comet-3.json \
+               --foreign ~/gw-building/.gw-comet-1.json -o vectors.json
+gwctl.py writ  <pier> <patp> <pass_hex>                # feed one to a verifier
+```
+
+Three things learned the hard way, all in
+`doc/live-tests/PHASE2-RERUN-RESULTS.md`:
+
+- **Pick a subject the verifier has never verified.** An anchored subject adds
+  `tracked-tip` / `tracked-prefix` / `life-monotonic` to every verdict, and any
+  mutation of entry 0 breaks them too, so nothing fails for one reason and
+  nothing is readable.
+- **Clear the snub set first.** Several cases emit a sticky snub; if the
+  subject is already snubbed you cannot tell whether this one snubbed it.
+  `gwsnub.py show` / `gwsnub.py del`.
+- **A verification is `O(blocks since the comet last moved its sat)`.** A comet
+  dormant for ~250 blocks costs ~5 minutes per case on a 2-vCPU droplet. Two
+  *different* subjects run concurrently on one verifier (single-flight is per
+  ship); the same subject does not.

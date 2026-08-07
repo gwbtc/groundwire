@@ -102,7 +102,17 @@ peer_count() {
 ensure_sidecar() {
   if [ -z "$(sc_pids)" ]; then
     log "sidecar not running -> starting"
-    ( cd "$PIER" && SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    # exec 9>&- FIRST.  The singleton lock is taken with `exec 9>`, which is
+    # not close-on-exec, so this subshell -- which outlives us as the sidecar's
+    # parent -- inherits fd 9.  A BSD flock belongs to the open file
+    # DESCRIPTION, so that inherited fd keeps the lock held after the real
+    # supervisor exits, and the next `gwsup.sh <pier>` is refused with "a
+    # supervisor is already running" while none is.  That is precisely the
+    # failure the flock exists to prevent, wearing the flock's error message.
+    # Observed on k2, 2026-08-07: an orphan /bin/bash ops/gwsup.sh with
+    # /proc/<pid>/fd/9 -> /opt/gw/.gwsup-k2.lock, parent of the sidecar.
+    ( exec 9>&-
+      cd "$PIER" && SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
         setsid nohup /opt/gw/bin/tcp-sidecar . >> /opt/gw/sc-$P.log 2>&1 </dev/null & )
     sleep 5
     return 0

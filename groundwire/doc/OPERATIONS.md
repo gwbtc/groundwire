@@ -332,16 +332,26 @@ causeway spawn generate [--invite <FAUCET_CODE>] [--sponsor <SPONSOR_PATP>] …
   published later as a state update (§10), but only its existing peers will
   accept that; publishing at spawn is the only way a stranger can learn it
   from the chain alone.
-- **Never name a *confidential* comet as a sponsor.** `sponsor-ok`
-  (`lib/self-attestation.hoon:456-459`) is
-  `(~(has in known-public) u.sponsor…)` — the sponsor must be a **public**
-  point. Name a confidential one and `sponsor-known` fails; it is classified
-  unevaluable, so every verification of the sponsee returns **UNDETERMINED**,
-  no verdict is emitted and no point is ever installed. The sponsee is
-  silently unreachable forever, and nothing in the log says "your sponsor is
-  confidential". An **absent** sponsor is fine — it projects to self and
-  `sponsor-ok` is `%.y`. So: a sponsor must either be published at spawn, or
-  declassified (§10) before anyone names it.
+- **A named sponsor must be one the verifier already knows.** `sponsor-ok`
+  (`lib/self-attestation.hoon`) is `(~(has in known-public) u.sponsor…)`, and
+  the set handed to the thread by `+verify-cards` is
+  `~(key by unv-ids.urb-state)`. A verifier that has not indexed or verified
+  the sponsor fails `sponsor-known`; that is classified **unevaluable**, so the
+  sponsee reads **UNDETERMINED**, no verdict is emitted, no snub is emitted and
+  no point is installed. It is **not permanent**: the identical packet verifies
+  VALID the moment the verifier learns the sponsor — measured live on
+  2026-08-07, five minutes apart, on the same ship (see
+  `doc/live-tests/PHASE2-RERUN-RESULTS.md`).
+
+  This bullet used to say the sponsor had to be **public**, and that naming a
+  confidential comet left the sponsee "silently unreachable forever". Measured
+  live: false. `unv-ids` also holds comets the verifier has verified
+  *confidentially*, and one of those satisfies `sponsor-known` — while the
+  agent's own `+known-public` predicate (`app/gw-btc.hoon:2068`), used for the
+  writ gate, does subtract `.confidential`. Two definitions of the same name in
+  one agent; the peer-facing check uses the broader one. Recorded in §12 as a
+  disagreement to settle, not relied on. An **absent** sponsor is fine either
+  way — it projects to self and `sponsor-ok` is `%.y`.
 - **`--assume-saved` is not optional in a script.** Without it the blind-phrase
   read-back fires a second time *after the transaction has been broadcast*, and
   the run exits 2 with mainnet money already spent. Note also that piping stdin
@@ -1071,15 +1081,22 @@ Then check `/x/ready`. If `synced=%.n` the writ is being *held*, and that one
 `/x/inflight`: a stranded single-flight slot silences that peer for up to
 `~h2`. Check `/x/pending-own` for the `%anew` equivalent.
 
-> **Do not trust "every drop is announced".** The comment at
-> `app/gw-btc.hoon:340-348` says so, and this section used to say a silent
-> drop means an agent older than 2026-08-06. Neither is true: of the nine
-> `%jael-writ` returns, **four are still silent** — `+public-pass`,
-> `+foreign-kelvin`, an empty `chain.u.sat`, and a chain longer than 1024.
-> The last three emit a negative `writ-card` with no slog; the first emits
-> nothing at all. Phase 5b's finding 9 was fixed for the five gates that had
-> a `~&` added and the comment over-claims for the rest. Measured live on
-> 2026-08-06: a writ carrying a 108-byte pass produced **zero** log lines.
+> **"Every drop is announced" became true in `25f0a1d`, and was false before
+> it.** On `bf90840` and earlier, four `%jael-writ` exits were completely
+> silent — an undecodable pass, a decoded-but-empty custody log, a log over the
+> 1.024 cap, and the shared public-onboarding/foreign-kelvin return — and
+> **three of those four emit a sticky ames snub**. An operator watching a peer
+> get blacklisted saw exactly what an idle ship looks like. Measured live
+> 2026-08-06 (a 108-byte pass: zero log lines) and again 2026-08-07, where
+> determining snub-or-not for each of them required clearing the snub set and
+> re-poking one case at a time.
+>
+> Since `25f0a1d` every exit goes through `+drop-writ`, which derives the line
+> and the cards from one `$writ-drop` value, and the verb says which it is:
+> **`dropped`** (harmless), **`held`** (readiness, clears by itself),
+> **`REFUSED`** (a negative verdict — jael `%fail`s and ames snubs). All five
+> re-verified live on 2026-08-07. If a writ vanishes with no line at all, the
+> desk predates `25f0a1d`.
 
 **A peer got `INVALID` on `[XX] sponsor-known`, and is now snubbed.**
 Your scanner has not reached the block where that sponsor published. This
@@ -1241,7 +1258,9 @@ the code.
 | "a confidential comet cannot become public" | **this runbook**, §10 and §5.2 | false since `d63e28a`. `+apply-state` and `+apply-verified` both write the index; `+process-publication` routes a tracked comet to `+apply-state` and never reaches the funding-satpoint guard. §10 rewritten. |
 | boot into tmux and drive the dojo | **this runbook**, §5.3 | no live ship has ever run that way. Campaign ships run `-t` under a supervisor and are driven over `conn.sock`; the `>` lines are notation for a khan-eval. §5.3 rewritten, `ops/gwctl.py` added. |
 | — (nothing said) | **this runbook**, everywhere | there was **no shutdown procedure at all**, and stopping a supervised ship without stopping its supervisor first is a no-op. Directly caused an incident in which three running ships were handed over as "stopped". Added as §5.10. |
-| — (nothing said) | **this runbook**, §5.2/§5.8 | naming a **confidential** comet as a sponsor makes the sponsee permanently UNDETERMINED (`sponsor-ok` requires `known-public`). Nothing logs "your sponsor is confidential". Added to §5.2. |
+| naming a **confidential** comet as a sponsor makes the sponsee permanently UNDETERMINED | **this runbook**, §5.2 (added 2026-08-06) | false, measured live 2026-08-07. `+verify-cards` hands `+run-checks` the **raw** `~(key by unv-ids.urb-state)`, which includes confidentially-verified comets, while `+known-public:gw-btc` — same name, same agent, two arms away — subtracts `.confidential`. A confidential sponsor satisfies `sponsor-known`. And UNDETERMINED is never permanent: it clears the moment the verifier learns the sponsor. §5.2 rewritten; the two definitions still need reconciling. |
+| a snub is undone by a later positive verdict | folklore | it is not. `+sy-sybl`'s `%full` branch (`sys/vane/ames.hoon`) installs the point and never touches `ships.snub`; only `%fail` writes it. Verified live 2026-08-07: a comet re-verified VALID with its snub intact. Only an ames `%snub %deny %del` clears it — `ops/gwsnub.py`. |
+| `tracked-prefix` failing means "a fork, not an old copy" | `lib/self-attestation.hoon`, `+stale-checks`' comment | `+prefix-chain` cannot tell the two apart: it answers `%.n` both when the logs *diverge* (a fork) and when the new log is a **strictly shorter identical prefix** (an old copy). So a comet replaying its own genuine earlier attestation — which a reboot from the un-refreshed boot feed produces — is classed fraud and snubbed, alongside three stale-class checks in the same verdict that all say "old copy". Reproduced on two verifiers 2026-08-07. |
 | `rekey` is the only on-chain management op | §12, below | true, and it is not enough: Causeway can commit **no** `fief` at all, and can publish only at spawn. The Phase 4 sponsorship topology therefore cannot be built with Causeway. `ops/gwmint.py` does both. |
 
 ### Reconciled since

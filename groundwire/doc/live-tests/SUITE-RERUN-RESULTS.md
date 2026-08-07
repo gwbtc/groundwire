@@ -617,3 +617,28 @@ actually changes the key would need the ship rebooted onto the new life.
   where a bare name parses as a wing. Neither is in the docstring. Both were
   caught before they could corrupt a result, but both would stop a new operator
   cold.
+
+---
+
+# Follow-up: the adversarial matrix, 2026-08-07
+
+This run left 2.2–2.16 and 5.1–5.5 unattempted (see "Not attempted, and why",
+above) on the grounds that the code was unchanged and pinned by unit tests.
+The first half of that is true; the second is not the same as live-fire, and
+`bf90840` had changed **verdict classification** — which failures are fraud,
+which are stale, which are undetermined — without that surface ever being
+exercised against a real chain.
+
+It has been now: **[`PHASE2-RERUN-RESULTS.md`](PHASE2-RERUN-RESULTS.md)**.
+Fifteen adversarial cases plus the phase-5 rekey/`%stale` path, on the same
+three comets, zero sats spent. **Three classifications changed and all three
+changed for the better** (2.8 tip-spent → STALE, 2.9 foreign kelvin → silence,
+2.11 unknown sponsor → UNDETERMINED, none of them snubbing any more), and two
+new findings came out of it — an honest comet replaying its own older
+attestation is still classed fraud and snubbed, and `sponsor-known` accepts a
+*confidentially* verified sponsor, which is the opposite of what `OPERATIONS.md`
+§5.2 says.
+
+That run also deployed `hd/cc-landing@167e143` to **k3** (k1 and k2 are still
+on `bf90840`), so the rig is no longer uniform. `25f0a1d`'s four newly-announced
+`%jael-writ` exits were verified live on it.
