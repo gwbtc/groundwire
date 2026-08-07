@@ -58,6 +58,7 @@ Desk `8878da0 → bf90840`:
 | ships backed up | **PASS** — each old pier moved aside to `<pier>.pre-dos` (atomic; 981M/1.1G/982M). NB: `ops/stopship.sh` matches the king by trailing argv, which for a `-c…-B<pill>` boot is the *pill*, so it silently missed; and `gw-vere -t` did not die on SIGTERM/SIGINT — only SIGKILL stopped it. Both are harness gaps (below), not ship faults. |
 | booted `-w <name> -G <feed>` from the **xtr-baked** feed | **PASS** — each came up as exactly the intended `@p`, life 1, rift 0; live jael pass 380–383 B (≫ 108 B), so the custody log is present with no post-boot poke — booting the xtr feed removes the clean-room's finalize-ordering trap |
 | three desks installed on each (`%tcp`, `%bitcoin-client`, `%gw-btc`, `%urb-snapshot`) | **PASS** — every commit landed; all unmounted; `/x/ready` answers on all three |
+| deployed desk verified **in clay**, not just on disk | **PASS** — `%cx` byte lengths on all three ships: `app/gw-btc.hoon` 98404, `lib/self-attestation.hoon` 30115, `lib/urb-core.hoon` 19073, `lib/gw-btc-pass.hoon` 10274 — byte-exact to the built desk on all three |
 
 The old (`de3222d36a`) piers are preserved at `<pier>.pre-dos` on each box and
 were not deleted.
