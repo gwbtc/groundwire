@@ -463,3 +463,90 @@ verification **70–150 s** (§8 says 100–110).
 | wallet change | ~17,822 sats — **not needed and not touched**; the publication is self-funded from the identity sat |
 
 Nothing else was broadcast. C1's sat was read for the wedge test but never spent.
+
+---
+
+# Matrix versus `CLEANROOM-RESULTS.md`
+
+| # | test | clean-room | **this run** | divergence |
+|---|---|---|---|---|
+| 0 | bring-up | PASS on a `de3222d36a` pill | **PASS** on a pill built from `6d9b3a4643` | first pill carrying the DoS fix |
+| 1.1–1.4 | mint + confirm + `5120\|\|Q` | PASS ×3 | *n/a* — same three identities reused, nothing minted | — |
+| 2.1 | genuine attestation | PASS ×6 | **PASS ×6** | held |
+| 3.1 | `\|hi` both ways | not attempted | **PASS ×6**, acked 1–2 s | **NEW — closed** |
+| 3.4 | prove the Groundwire path was used | PASS ×6 | **PASS ×6** (`dome=[~ %gw-btc]`) | held |
+| 4.4 | decline, subject re-attests | last "passed" on a stale kernel via poke injection | **PASS** — named drop, no snub | **TARGET GAP — closed** |
+| 4.5 | declined subject re-attests repeatedly | ditto | **PASS** — short-circuits before verification | **TARGET GAP — closed** |
+| 4.6 | clear, back to normal | ditto | **PASS** — VALID again | **TARGET GAP — closed** |
+| 4.7 | on-chain fief reaches the holder | PASS ×6 | **PASS ×6** (`ames: lamp`) | held |
+| 4.8 | a comet that never attests never registers | not attempted | **PASS** | **NEW — closed** |
+| 5.6 / 7.2 | custody entry → `%gw-btc` → jael | PASS ×3 | **PASS ×3** | held |
+| 5.7 / 5b.2 | **confidential → public (Tier 1)** | **BLOCKED** — `PUSHDATA1` bug | **PASS — broadcast, confirmed in 961353, both peers declassified k1** | **THE HEADLINE — closed** |
+| 6.1 | attestation while light client unsynced | PASS | **PASS** — observed again during the wedge (`light client is NOT synced; holding all attestations`) | held |
+| 6.2 | kill transport mid-verification | **not reproduced** | **PASS — reproduced and clean** | **TARGET GAP — closed** |
+| 6.7 | diagnosable from logs alone | "still no" | **better, still qualified** — see below | improved |
+| DoS | four `+on-hear-packet` routing cases | *postdates the run* | **cases 1–3 live, case 4 unit-only; 0 `bail: meme`** | **TARGET GAP — closed as far as is safe** |
+| — | ames/jael/dawn vane suites on the built kernel | — | **28 OK / 6 pre-existing failures / 0 new**; jael + dawn green | new evidence |
+
+**Not attempted, and why:** 2.2–2.16 (the adversarial matrix — unchanged code,
+pinned by unit tests); 4.1–4.3 (sponsorship topology — needs an on-chain
+`sponsor=` state update, and k2/k3 would each have to spend their identity
+sats); 5.1–5.5 (rekey/stale/re-attest — each needs its own spend); 6.3–6.6;
+7.1/7.3/7.4 (Causeway-side, unchanged since the clean-room proved them).
+
+## 6.7 — are failures diagnosable from logs alone?
+
+**Better than the clean-room found, and still not "yes".** Improvements seen
+directly this run: the decline path now names itself
+(`dropped: sponsorship declined by operator`), the readiness gate names itself
+(`light client is NOT synced; holding all attestations`), the wedge names
+itself (`verification thread for ~… ended without a verdict`), and the custody
+ingest names itself (`custody log verified (1 entries)`).
+
+Two things still cost real time here and would cost an operator more:
+
+- **`+poke-hi` writes to dill, which a `-t` ship does not have.** The delivery
+  succeeded and the log said nothing at all; the only proof is the ack. A
+  reader who greps for the message concludes traffic is broken. This is not a
+  `%gw-btc` issue but it sits squarely on the main "did it work" path.
+- **`/x/custody` reads `~` on a perfectly healthy, fully verifiable ship**
+  until a custody entry is poked in, because jael's pass and `%gw-btc`'s
+  `chain.own` are independent stores. Nothing says so.
+
+# Classification of every finding
+
+**Real bugs (product): none found this run.** Every product behaviour observed
+matched its specification, including the two paths that had never executed
+(Tier-1 declassification and the `%arow %.n` wedge branch).
+
+**Latent issue, worth fixing before Tier 2:** `ops/gwmint.py cmd_publish` sets
+the blind-opening's `start_height` from `proof["block_height"]` — the **spawn**
+block (961324) — while the opening's satpoint is the **funding** outpoint,
+created in block 961302 (`funding_height`). It did not matter here and could
+not: `+process-publication` routes a *tracked* comet to `+apply-state`, whose
+only opening check is `spawn-commit(spawn, blind) == dat`, and `start_height`
+is not an input to it (verified: the value matches the artifact's
+`spawn_commit_d_hex` exactly). It **would** matter on any path that walks from
+the spawn — Tier 2, or a stranger's verification — where the verifier fetches
+the block at `start_height` and looks for the funding transaction there. This
+is the same `start_height` bug the clean-room fixed in `cmd_artifact`, still
+present in `cmd_publish`.
+
+**Harness / tooling (fixed here, `d0c29b6` + `aaf3baf`):** `stopship.sh`
+matched the king by trailing argv and so could not see a `-c…-B<pill>` boot;
+`gw-vere -t` ignores SIGTERM/SIGINT and needs SIGKILL, and the old script
+returned 0 anyway; `gwsup.sh`'s `king_pid` had the same matcher bug;
+`ops/state-*.json` (a signed mainnet transaction) was not git-ignored.
+Also: `gwctl.py pass` prints dot-grouped Hoon `@ux` but `gwctl.py writ` does
+`int(pass,16)`, which rejects the dots — the two do not compose, and the
+docstring does not say the `<patp>` argument needs its leading `~`.
+
+**Infrastructure:** one vere `loom: external fault` on k1 during the transport
+partition, recovered automatically by the supervisor with a full replay and no
+state loss. Zero sidecar crashes. Separately, the **build host** ran out of
+disk mid-run (a 28 GB stale aqua pier in a scratch directory), which broke
+every tool including `df`; cleared, 32 GB reclaimed.
+
+**Documentation:** the runbook held up well this time. Two additions earned:
+the jael-pass-vs-`chain.own` distinction (§6), and that `flog`/`|hi` output is
+invisible on a `-t` ship so the ack is the only delivery proof (§6).
