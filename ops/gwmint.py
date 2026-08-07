@@ -713,7 +713,36 @@ def cmd_artifact(label, n):
     print(f"  comet {st['comet']}  height {height}  sat {st['sat_value']} fee {st['fee_paid']}")
 
 
-def cmd_publish(label, artifact_n, fee_rate=4):
+def find_funding_utxo(w, exclude=(), min_value=1_000):
+    """Pick a spendable UTXO from the ops wallet's funding address.
+
+    Used to TOP UP an identity sat: a state update with no funding input pays
+    its fee out of the identity output, so the sat shrinks every time and the
+    comet can end up unable to afford its own next state update.  Returns a
+    build_rekey_psbt funding-input dict, or None if nothing is available.
+    """
+    try:
+        utxos = requests.get(
+            f"https://mempool.space/api/address/{w['addr']}/utxo", timeout=30).json()
+    except Exception as e:  # noqa: BLE001
+        print(f"  warning: could not fetch funding UTXOs: {e}")
+        return None
+    skip = {(t.lower(), int(v)) for t, v in exclude}
+    cands = [u for u in utxos
+             if u.get("status", {}).get("confirmed")
+             and u["value"] >= min_value
+             and (u["txid"].lower(), int(u["vout"])) not in skip]
+    if not cands:
+        return None
+    u = max(cands, key=lambda x: x["value"])   # biggest: fewest top-ups later
+    return {
+        "txid": u["txid"], "vout": u["vout"], "value": u["value"],
+        "script_pubkey": w["spk"], "xonly": w["xonly"],
+        "path": FUNDING_PATH, "fingerprint": w["fpr"],
+    }
+
+
+def cmd_publish(label, artifact_n, fee_rate=4, fund=False, sat_target=None):
     """TIER 1 DECLASSIFICATION -- a state update carrying an OP_RETURN
     publication, for a comet that is already confidential.
 
@@ -730,6 +759,11 @@ def cmd_publish(label, artifact_n, fee_rate=4):
 
     The blind-opening is included and must stay consistent with the dat: a
     present-but-wrong one is refused outright.
+
+    --fund adds a funding input from the ops wallet AFTER input 0, so the
+    identity output is topped up rather than shrunk by the fee.  The verifier
+    reads input 0 only (self-attestation.hoon:674-689) and sats are assigned to
+    outputs in input order, so an input behind the identity cannot move it.
     """
     fee_rate = int(fee_rate)
     w = load_wallet()
@@ -760,10 +794,28 @@ def cmd_publish(label, artifact_n, fee_rate=4):
         },
     }
 
+    fund_kwargs = {}
+    if fund:
+        fi = find_funding_utxo(
+            w, exclude=[(proof["commit_txid"], int(proof["sat_vout"]))])
+        if fi is None:
+            raise SystemExit("--fund: no confirmed funding UTXO available")
+        print(f"funding : {fi['txid']}:{fi['vout']} = {fi['value']} sats "
+              f"(input 1, AFTER the identity sat)")
+        fund_kwargs["funding_inputs"] = [fi]
+        if sat_target is not None:
+            fund_kwargs["sat_target"] = int(sat_target)
+            fund_kwargs["change_script_pubkey"] = w["spk"]
+            fund_kwargs["change_internal_xonly"] = w["xonly"]
+            fund_kwargs["change_path"] = FUNDING_PATH
+
     psbt_obj, new_proof = C.build_rekey_psbt(
         prior_proof=proof, new_snapshot=new_snap,
         publication_pass_atom=pub_pass, publication_opening=pub_open,
-        fee_rate=fee_rate, network="main")
+        fee_rate=fee_rate, network="main", **fund_kwargs)
+    if new_proof.get("topped_up_by") is not None:
+        print(f"identity: {proof['sat_value']} -> {new_proof['sat_value']} sats "
+              f"({new_proof['topped_up_by']:+d})")
     psbt_obj.sign_with(w["root"])
     new_txid, tx_hex = C._extract_tx_from_psbt(psbt_obj.to_base64())
 
@@ -781,19 +833,36 @@ def cmd_publish(label, artifact_n, fee_rate=4):
         ok = ok and bool(cond)
 
     print("\nCHECKS")
+    n_fund = len(fund_kwargs.get("funding_inputs", []))
     chk("txid matches embit", dec["txid"] == new_txid, dec["txid"])
-    chk("exactly 1 input", len(dec["vin"]) == 1)
+    chk(f"exactly {1 + n_fund} input(s)", len(dec["vin"]) == 1 + n_fund,
+        f"got {len(dec['vin'])}")
+    # The ONE structural invariant: the verifier reads input 0 and nothing
+    # else (self-attestation.hoon:674-689), and ordinals assign sats in input
+    # order, so funding must sit BEHIND the identity or the sat moves.
     chk("input 0 spends the tracked identity satpoint",
         dec["vin"][0]["txid"] == proof["commit_txid"]
         and dec["vin"][0]["vout"] == int(proof["sat_vout"]),
         f"{dec['vin'][0]['txid']}:{dec['vin'][0]['vout']}")
-    chk("input 0 scriptSig empty", dec["vin"][0]["scriptSig"] == "")
-    chk("witness is a single 64/65-byte schnorr sig",
-        len(dec["witness"]) == 1 and len(dec["witness"][0]) == 1
-        and len(dec["witness"][0][0]) // 2 in (64, 65),
-        f"{len(dec['witness'][0][0]) // 2} bytes")
-    chk("exactly 2 outputs (sat + OP_RETURN)", len(dec["vout"]) == 2,
-        f"got {len(dec['vout'])}")
+    for j, fi in enumerate(fund_kwargs.get("funding_inputs", []), start=1):
+        chk(f"input {j} is the funding UTXO (behind the identity)",
+            dec["vin"][j]["txid"] == fi["txid"]
+            and dec["vin"][j]["vout"] == int(fi["vout"]),
+            f"{dec['vin'][j]['txid']}:{dec['vin'][j]['vout']}")
+    chk("every scriptSig empty", all(v["scriptSig"] == "" for v in dec["vin"]))
+    chk("every witness is a single 64/65-byte schnorr sig",
+        len(dec["witness"]) == 1 + n_fund
+        and all(len(wl) == 1 and len(wl[0]) // 2 in (64, 65)
+                for wl in dec["witness"]),
+        f"{[len(wl[0]) // 2 for wl in dec['witness']]} bytes")
+    n_change = 1 if new_proof.get("change_value") else 0
+    chk(f"exactly {2 + n_change} outputs (sat + OP_RETURN"
+        f"{' + change' if n_change else ''})",
+        len(dec["vout"]) == 2 + n_change, f"got {len(dec['vout'])}")
+    # Output 0 must stay the sat-carrying one: +index-to-sont walks outputs in
+    # order from the sat's offset, so anything ahead of it would take the sat.
+    chk("sat-carrying output is output 0 (change, if any, comes last)",
+        dec["vout"][0]["scriptPubKey"] == new_proof["sat_script_pubkey_hex"])
 
     c = C.state_commit(new_snap)
     lh_ind = independent_leaf_hash(c)
@@ -812,8 +881,14 @@ def cmd_publish(label, artifact_n, fee_rate=4):
         f"{old_snap['life']} -> {new_snap['life']}")
 
     sat_val = dec["vout"][0]["value"]
-    fee = int(proof["sat_value"]) - sum(o["value"] for o in dec["vout"])
+    total_in = int(proof["sat_value"]) + sum(
+        int(fi["value"]) for fi in fund_kwargs.get("funding_inputs", []))
+    fee = total_in - sum(o["value"] for o in dec["vout"])
     chk("output 0 value >= 330 (P2TR dust)", sat_val >= 330, f"{sat_val} sats")
+    if n_fund:
+        chk("identity sat was topped up, not shrunk",
+            sat_val > int(proof["sat_value"]),
+            f"{proof['sat_value']} -> {sat_val} sats")
     chk("fee sane (<= 2000 sats)", 0 < fee <= 2000, f"fee = {fee} sats")
     chk("effective fee rate >= 1.0 sat/vB", fee / dec["vsize"] >= 1.0,
         f"{fee}/{dec['vsize']} = {fee / dec['vsize']:.3f} sat/vB")
@@ -847,7 +922,7 @@ def cmd_publish(label, artifact_n, fee_rate=4):
                 p2, _ = C.build_rekey_psbt(
                     prior_proof=proof, new_snapshot=new_snap,
                     publication_pass_atom=pub_pass, publication_opening=pub_open,
-                    fee_rate=fee_rate, network="main")
+                    fee_rate=fee_rate, network="main", **fund_kwargs)
                 p2.sign_with(w["root"])
                 _t2, hex2 = C._extract_tx_from_psbt(p2.to_base64())
                 r2 = rpc("testmempoolaccept", [[hex2]])[0]
@@ -897,7 +972,12 @@ if __name__ == "__main__":
         for a in sys.argv:
             if a.startswith("--fee-rate="):
                 fr = int(a.split("=", 1)[1])
-        sys.exit(cmd_publish(sys.argv[2], sys.argv[3], fee_rate=fr))
+        st = None
+        for a in sys.argv:
+            if a.startswith("--sat-target="):
+                st = int(a.split("=", 1)[1])
+        sys.exit(cmd_publish(sys.argv[2], sys.argv[3], fee_rate=fr,
+                             fund="--fund" in sys.argv, sat_target=st))
     elif cmd == "broadcast":
         cmd_broadcast(sys.argv[2])
     elif cmd == "status":

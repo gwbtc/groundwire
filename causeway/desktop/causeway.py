@@ -1655,6 +1655,92 @@ def add_tap_merkle_root_hint(psbt_obj, input_idx: int, merkle_root: bytes) -> No
     inp.taproot_merkle_root = merkle_root
 
 
+#  Sizing constants for the rekey/state-update builder.  A P2TR key-path input
+#  is 57.5 vB (41 base + 66/4 witness); a P2TR output is 43 vB; tx overhead with
+#  a segwit marker is ~10.5 vB.  111 = overhead + one input + one output, the
+#  historical single-input estimate, kept exactly so an unfunded rekey builds
+#  byte-identically to before.
+P2TR_KEYPATH_INPUT_VB = 58
+P2TR_OUTPUT_VB = 43
+P2TR_DUST = 330
+
+
+def normalize_funding_input(f: dict) -> dict:
+    """Validate + normalize one funding-input spec for build_rekey_psbt.
+
+    Accepts hex or bytes for the binary fields, and the key names that
+    scan_addresses() already produces (`scriptpubkey`, `xonly`, `path`).
+    """
+    def _b(v, name, length=None):
+        if v is None:
+            raise ValueError(f"funding input is missing {name!r}")
+        b = bytes.fromhex(v) if isinstance(v, str) else bytes(v)
+        if length is not None and len(b) != length:
+            raise ValueError(f"funding input {name!r} must be {length} bytes, got {len(b)}")
+        return b
+
+    txid = str(f.get("txid", "")).strip().lower()
+    if len(txid) != 64 or any(c not in "0123456789abcdef" for c in txid):
+        raise ValueError(f"funding input txid {txid!r} is not 64 hex characters")
+    vout = int(f["vout"])
+    if vout < 0:
+        raise ValueError("funding input vout must be >= 0")
+    value = int(f["value"])
+    if value <= 0:
+        raise ValueError("funding input value must be positive")
+    spk = _b(f.get("script_pubkey", f.get("scriptpubkey")), "script_pubkey")
+    xonly = _b(f.get("xonly", f.get("internal_xonly")), "xonly", 32)
+    fpr = _b(f.get("fingerprint", f.get("fingerprint_hex")) or b"\x00\x00\x00\x00",
+             "fingerprint", 4)
+    return {
+        "txid": txid,
+        "vout": vout,
+        "value": value,
+        "script_pubkey": spk,
+        "xonly": xonly,
+        "path": str(f.get("path") or "m/86h/0h/0h/0/0"),
+        "fingerprint": fpr,
+    }
+
+
+def assert_identity_input_zero(tx, prior_txid: str, prior_vout: int) -> None:
+    """Refuse any state-update transaction whose input 0 is not the identity sat.
+
+    This is the ONE structural invariant a funded state update must not break,
+    and it is load-bearing twice over:
+
+      * ownership — the verifier reads only input 0.  self-attestation.hoon:674
+        takes `(snag-input 0 this)` and :678-680 requires its outpoint to equal
+        the tracked satpoint (`input-zero`, `continuity`); :683-689 derives the
+        key-path check from input 0's prevout alone.  urb-core.hoon's
+        +apply-state compares `[txid vout]:cur` against `i.inputs`.  An identity
+        input anywhere else is simply not seen.
+
+      * ordinals — sats are assigned to outputs in input order, so the tracked
+        sat's transaction-wide index equals its offset within input 0's prevout
+        ONLY while input 0 is first.  +index-to-sont (urb-core.hoon:491) is fed
+        exactly that offset (self-attestation.hoon:695), so an input ahead of
+        the identity would shift the sat by that input's whole value and land it
+        in the wrong output — or in the fee.
+
+    Funding inputs after input 0 contribute sats strictly behind the tracked one
+    and cannot move it, which is why topping up is safe at all.
+    """
+    if len(tx.vin) == 0:
+        raise ValueError("state update has no inputs")
+    #  embit stores TransactionInput.txid in DISPLAY order and reverses it on
+    #  the wire, so this compares like for like with the proof's txid hex.
+    got_txid = tx.vin[0].txid.hex()
+    if got_txid != prior_txid.lower() or int(tx.vin[0].vout) != int(prior_vout):
+        raise ValueError(
+            "input 0 must be the identity satpoint "
+            f"{prior_txid}:{prior_vout}, got {got_txid}:{tx.vin[0].vout}. "
+            "Funding inputs belong AFTER input 0 — the verifier reads input 0 "
+            "only (self-attestation.hoon:674-689), and an input ahead of the "
+            "identity shifts the sat's ordinal index by its whole value."
+        )
+
+
 def build_rekey_psbt(
     *,
     prior_proof: dict,
@@ -1663,6 +1749,11 @@ def build_rekey_psbt(
     publication_opening: dict | None = None,
     fee_rate: int = 2,
     network: str = "main",
+    funding_inputs: list[dict] | None = None,
+    sat_target: int | None = None,
+    change_script_pubkey: bytes | None = None,
+    change_internal_xonly: bytes | None = None,
+    change_path: str | None = None,
 ) -> tuple["psbt.PSBT", dict]:
     """Build a rekey / state-update transaction — the one surviving on-chain
     management op (spec §5, §7.4).
@@ -1672,6 +1763,20 @@ def build_rekey_psbt(
     state leaf, so the external signer can compute the key-path tweak), and
     commits the new snapshot at output 0 = P2TR(new Q).  An OP_RETURN
     publication output is added for public comets.
+
+    Shape:
+      * input 0    — the identity sat, ALWAYS.  See assert_identity_input_zero.
+      * input 1..n — optional funding inputs from the operator's wallet.
+      * output 0   — the sat-carrying P2TR output committing `new_snapshot`.
+      * OP_RETURN publication output, if publishing.
+      * change, last.
+
+    Without `funding_inputs` a state update pays its fee out of the identity sat
+    and so shrinks monotonically — the failure mode that priced a live comet
+    down to 754 sats.  With them, output 0 can GROW: `sat_target` names the
+    value output 0 should end up holding (default: everything that is left after
+    the fee, i.e. the whole top-up lands on the identity sat and there is no
+    change).  Change, when it exists, goes last so it cannot displace output 0.
 
     Returns (psbt, new_proof_dict) — a chained proof.
     """
@@ -1706,27 +1811,94 @@ def build_rekey_psbt(
         if publish else None
     )
 
-    est_vbytes = 111
+    funds = [normalize_funding_input(f) for f in (funding_inputs or [])]
+    seen = {(prior_txid.lower(), int(prior_vout))}
+    for f in funds:
+        key = (f["txid"], f["vout"])
+        if key in seen:
+            raise ValueError(
+                f"funding input {f['txid']}:{f['vout']} is already an input "
+                f"(the identity sat, or a duplicate) — a tx cannot spend an "
+                f"outpoint twice"
+            )
+        seen.add(key)
+
+    total_in = prior_value + sum(f["value"] for f in funds)
+
+    # 111 = overhead + the identity input + the sat output (unchanged for the
+    # unfunded case, so an ordinary rekey builds exactly as it always has).
+    base_vbytes = 111 + P2TR_KEYPATH_INPUT_VB * len(funds)
     if pub_script is not None:
-        est_vbytes += 11 + len(pub_script)
-    fee = est_vbytes * fee_rate
-    new_value = prior_value - fee
-    if new_value < 330:
+        base_vbytes += 11 + len(pub_script)
+
+    fee_no_change = base_vbytes * fee_rate
+    fee_with_change = (base_vbytes + P2TR_OUTPUT_VB) * fee_rate
+
+    if sat_target is None:
+        #  Everything the inputs carry, minus the fee, lands on the identity
+        #  sat.  For an unfunded rekey this is the historical behaviour
+        #  (shrink by the fee); with funding it is a full top-up.
+        fee = fee_no_change
+        new_value = total_in - fee
+        change_value = 0
+    else:
+        new_value = int(sat_target)
+        change_value = total_in - fee_with_change - new_value
+        fee = fee_with_change
+        if total_in - fee_no_change < new_value:
+            raise RuntimeError(
+                f"sat_target={new_value} is more than the inputs can pay for: "
+                f"{total_in} sats in, {fee_no_change} sats of fee leaves "
+                f"{total_in - fee_no_change}. Add more funding or lower the target."
+            )
+        if change_value < P2TR_DUST:
+            #  Change would be dust: drop the output and give the remainder to
+            #  the identity sat rather than burning it as fee.
+            fee = fee_no_change
+            new_value = total_in - fee
+            change_value = 0
+        elif change_script_pubkey is None:
+            raise ValueError(
+                f"sat_target={new_value} leaves {change_value} sats of change "
+                f"but no change_script_pubkey was given — pass one, or drop "
+                f"sat_target to put the whole top-up on the identity sat"
+            )
+
+    if new_value < P2TR_DUST:
+        have = (f"prior sat output {prior_value} sats"
+                if not funds else
+                f"prior sat output {prior_value} sats + {total_in - prior_value} "
+                f"sats of funding = {total_in}")
         raise RuntimeError(
-            f"prior sat output {prior_value} sats too small: need >= 330 + {fee} "
-            f"(fee). Top up the sat-carrying UTXO or lower the fee-rate."
+            f"{have} too small: need >= {P2TR_DUST} + {fee} (fee). "
+            f"Add a funding input (rekey --fund-xpub/--fund-utxo) or lower the "
+            f"fee-rate."
+        )
+
+    #  Ordinal floor: the sat sits at `sat_off` bytes into the prevout, and
+    #  +index-to-sont (urb-core.hoon:491) lands it in output 0 only while
+    #  sat_off < output 0's value.  Shrinking output 0 past the offset would
+    #  silently move the identity to a later output — or into the fee.
+    sat_off = int(prior_proof.get("sat_off", 0))
+    if new_value <= sat_off:
+        raise RuntimeError(
+            f"sat output {new_value} would be at or below the tracked sat's "
+            f"offset {sat_off}: the identity would not land in output 0"
         )
 
     outputs = [_TxOut(new_value, _script_from_spk(new_sat_spk))]
     if pub_script is not None:
         outputs.append(_TxOut(0, _script_from_spk(pub_script)))
+    if change_value:
+        outputs.append(_TxOut(change_value, _script_from_spk(change_script_pubkey)))
 
-    tx = _Tx(
-        version=2,
-        vin=[_TxIn(bytes.fromhex(prior_txid), prior_vout, sequence=0xFFFFFFFF)],
-        vout=outputs,
-        locktime=0,
-    )
+    #  Input 0 is the identity sat; funding follows.  Never the other way round.
+    vin = [_TxIn(bytes.fromhex(prior_txid), prior_vout, sequence=0xFFFFFFFF)]
+    vin += [_TxIn(bytes.fromhex(f["txid"]), f["vout"], sequence=0xFFFFFFFF)
+            for f in funds]
+
+    tx = _Tx(version=2, vin=vin, vout=outputs, locktime=0)
+    assert_identity_input_zero(tx, prior_txid, prior_vout)
     p = _psbt.PSBT(tx)
 
     # Key-path spend of the tweaked sat output: the signer needs the current
@@ -1741,6 +1913,28 @@ def build_rekey_psbt(
         _psbt.DerivationPath(funding_fingerprint, _parse_path(funding_path)),
     )
 
+    #  Funding inputs are plain BIP-86 P2TR key-path spends: internal key +
+    #  derivation, and NO merkle root (they carry no state commitment).
+    for i, f in enumerate(funds, start=1):
+        fin = p.inputs[i]
+        fin.witness_utxo = _TxOut(f["value"], _script_from_spk(f["script_pubkey"]))
+        fpub = _ec.PublicKey.from_xonly(f["xonly"])
+        fin.taproot_internal_key = fpub
+        fin.taproot_bip32_derivations[fpub] = (
+            [],
+            _psbt.DerivationPath(f["fingerprint"], _parse_path(f["path"])),
+        )
+
+    #  Change output metadata (known-derivation output for the signer).
+    if change_value and change_internal_xonly is not None and change_path is not None:
+        change_pubkey = _ec.PublicKey.from_xonly(change_internal_xonly)
+        out_change = p.outputs[-1]
+        out_change.taproot_internal_key = change_pubkey
+        out_change.taproot_bip32_derivations[change_pubkey] = (
+            [],
+            _psbt.DerivationPath(funding_fingerprint, _parse_path(change_path)),
+        )
+
     new_proof = {
         "version": 2,
         "protocol": "kelvin-9",
@@ -1750,6 +1944,9 @@ def build_rekey_psbt(
         "leaf_hash_hex": new_leaf_hash.hex(),
         "sat_script_pubkey_hex": new_sat_spk.hex(),
         "sat_value": new_value,
+        #  The sat's offset inside output 0.  Funding lands strictly behind it
+        #  (inputs are consumed in order), so a top-up never moves it.
+        "sat_off": sat_off,
         "published": bool(publish),
         "network": network,
         "funding": {
@@ -1764,6 +1961,15 @@ def build_rekey_psbt(
             "sat_vout": prior_vout,
         },
     }
+    if funds:
+        new_proof["funding_inputs"] = [
+            {"txid": f["txid"], "vout": f["vout"], "value": f["value"],
+             "path": f["path"]}
+            for f in funds
+        ]
+        new_proof["topped_up_by"] = new_value - prior_value
+    if change_value:
+        new_proof["change_value"] = change_value
     return p, new_proof
 
 
@@ -2625,28 +2831,100 @@ _MGMT_PRIOR_PROOF_HELP = (
               help="Read the signed PSBT from a file (or `-` for stdin) instead of "
                    "prompting. A named pipe works: the unsigned PSBT is written to "
                    "<patp>-rekey.psbt first.")
+@click.option("--fund-xpub", default=None,
+              help="TOP-UP: taproot xpub or descriptor of a wallet holding sats to "
+                   "add to the identity output. Without this a state update pays "
+                   "its fee out of the identity sat, which shrinks every time and "
+                   "eventually prices the comet out of its own identity.")
+@click.option("--fund-utxo", default=None, metavar="TXID:VOUT",
+              help="Which --fund-xpub UTXO to spend as the funding input. Omit to "
+                   "pick interactively from the scan.")
+@click.option("--sat-target", type=int, default=None,
+              help="Value the identity output should end up holding, in sats. "
+                   "Default: everything the inputs carry after the fee (no change).")
 def cmd_rekey(point, prior_proof, new_pass_hex, breach, fee_rate, network, output_dir, mempool_base,
-              sponsor, no_route, signed_psbt):
+              sponsor, no_route, signed_psbt, fund_xpub, fund_utxo, sat_target):
     """Rotate a comet's messaging key — a state update committed in the sat
     output's taproot tweak. Spends the current sat-carrying UTXO key-path;
-    chains off --prior-proof."""
+    chains off --prior-proof.
+
+    Pass --fund-xpub to add a funding input AFTER the identity sat and top the
+    identity output up instead of shrinking it by the fee.
+    """
     point = int_to_patp(resolve_id(point))  # accept mnemonym or @p
     new_pass = int.from_bytes(bytes.fromhex(new_pass_hex), "little")
     new_key = messaging_key_from_pass(new_pass)
     _run_rekey_op(point, prior_proof, new_key, breach, fee_rate, network, output_dir, mempool_base,
-                  sponsor=sponsor, no_route=no_route, signed_psbt=signed_psbt)
+                  sponsor=sponsor, no_route=no_route, signed_psbt=signed_psbt,
+                  fund_xpub=fund_xpub, fund_utxo=fund_utxo, sat_target=sat_target)
+
+
+def _resolve_rekey_funding(*, fund_xpub: str | None, fund_utxo: str | None,
+                           sat_target: int | None, network: str,
+                           mempool_base: str) -> dict:
+    """Turn --fund-xpub/--fund-utxo/--sat-target into build_rekey_psbt kwargs.
+
+    Returns {} when no funding was asked for, so an ordinary rekey calls the
+    builder exactly as it always did.  Change (needed only when --sat-target
+    leaves a remainder) is derived from the same xpub at m/<account>/1/0, the
+    same place a spawn puts its change, and is appended LAST so it can never
+    displace the sat-carrying output 0.
+    """
+    if fund_xpub is None:
+        if fund_utxo is not None:
+            raise SystemExit("--fund-utxo needs --fund-xpub to know whose UTXO it is")
+        if sat_target is not None:
+            raise SystemExit(
+                "--sat-target only means something with a funding input; "
+                "pass --fund-xpub (without funding, output 0 is whatever the "
+                "identity sat has left after the fee)"
+            )
+        return {}
+
+    source = parse_key_source(fund_xpub, network=network)
+    print("\n  Scanning --fund-xpub for a funding UTXO...")
+    utxos = scan_addresses(source, mempool_base=mempool_base)
+    utxo = pick_utxo_interactive(utxos, min_value=P2TR_DUST, select=fund_utxo)
+    print(f"  Funding input: {utxo['txid']}:{utxo['vout']}  {utxo['value']} sat "
+          f"(added AFTER the identity sat, as input 1)")
+
+    kwargs: dict = {
+        "funding_inputs": [{
+            "txid": utxo["txid"],
+            "vout": utxo["vout"],
+            "value": utxo["value"],
+            "script_pubkey": utxo["scriptpubkey"],
+            "xonly": utxo["xonly"],
+            "path": utxo["path"],
+            "fingerprint": source.master_fingerprint,
+        }],
+    }
+    if sat_target is not None:
+        _addr, change_spk, change_xonly, change_path = source.derive_address(1, 0)
+        kwargs.update(
+            sat_target=int(sat_target),
+            change_script_pubkey=change_spk,
+            change_internal_xonly=change_xonly,
+            change_path=change_path,
+        )
+    return kwargs
 
 
 def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool, fee_rate: int, network: str, output_dir: str, mempool_base: str,
                   sponsor: str | None = None, no_route: bool = False,
-                  signed_psbt: str | None = None) -> None:
+                  signed_psbt: str | None = None,
+                  fund_xpub: str | None = None, fund_utxo: str | None = None,
+                  sat_target: int | None = None) -> None:
     """Spend the point's current sat-carrying output key-path, commit a new
     snapshot (life+1, rift+1 on breach, rotated key), await signed PSBT,
     broadcast, and emit `<patp>-rekey-<txid>.proof.json`.
 
     Sponsorship and escape are off-chain in kelvin-9; only key rotation / breach
     is an on-chain state update.  The sponsor/fief carry forward from the prior
-    snapshot unchanged."""
+    snapshot unchanged.
+
+    `fund_xpub`/`fund_utxo` add a funding input AFTER the identity sat so the
+    identity output can be topped up rather than shrinking by the fee."""
     print()
     print("=" * 60)
     print(f"  CAUSEWAY — kelvin-9 REKEY for {patp_to_mnemonym(point)}")
@@ -2683,12 +2961,23 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
           f"sat={str(prior_txid)[:16]}..:{prior.get('sat_vout', 0)} "
           f"value={prior.get('sat_value', '?')}  life {prior_snap.get('life','?')}→{new_snapshot['life']}")
 
+    fund_kwargs = _resolve_rekey_funding(
+        fund_xpub=fund_xpub, fund_utxo=fund_utxo, sat_target=sat_target,
+        network=network, mempool_base=mempool_base,
+    )
+
     psbt_obj, proof = build_rekey_psbt(
         prior_proof=prior,
         new_snapshot=new_snapshot,
         fee_rate=fee_rate,
         network=network,
+        **fund_kwargs,
     )
+    if proof.get("topped_up_by") is not None:
+        delta = proof["topped_up_by"]
+        click.echo(click.style(
+            f"  Identity output: {prior.get('sat_value', '?')} → {proof['sat_value']} sats "
+            f"({delta:+d}){'  [TOP-UP]' if delta > 0 else ''}", fg="green"))
     proof["op"] = "rekey"
     proof["patp"] = point
 
