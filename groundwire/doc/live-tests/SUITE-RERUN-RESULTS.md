@@ -181,3 +181,76 @@ Two consequences worth stating, neither of which is a bug:
   another *publication* at any fee rate. Plain rekeys (~111 vB) remain
   affordable for a while. Identity sats shrink monotonically and this path
   cannot top them up.
+
+---
+
+# THE HEADLINE — six pairs re-verified, and Tier-1 declassification broadcast
+
+## Step 1 result: all six ordered pairs VALID on the new pill
+
+Full bring-up from genesis took **2 h 17 m** (block headers ~65 min, filter
+headers ~7 min). Every pair driven by the documented `%jael-writ` path against
+the verifier's own from-genesis light client, and — because all three piers are
+fresh — **every one is a first contact from an unknown comet**:
+
+| verifier → subject | verdict | point state |
+|---|---|---|
+| k1 → k2 | **VALID** | `lyfe=[~ 1]  dome=[~ %gw-btc]  snub=[%deny ~]` |
+| k1 → k3 | **VALID** | idem |
+| k2 → k1 | **VALID** | idem |
+| k2 → k3 | **VALID** | idem |
+| k3 → k1 | **VALID** | idem |
+| k3 → k2 | **VALID** | idem |
+
+Each emitted `[%gw-btc-lc-scan-clean …]`, then
+`%gw-btc: attestation for ~… is VALID`, then
+`ames: lamp ~… static ip … port …` — the on-chain `fief` becoming a runtime
+lane (**test 4.7**). `dome=[~ %gw-btc]` on all six is the clean discriminator
+that the Groundwire path was used and not vanilla comet PKI (**test 3.4**).
+
+**Tally across the three ships: 9 VALID** (2 peers + 1 self-`%anew` each),
+**0 INVALID, 0 STALE, 0 UNDETERMINED, 0 snubs, 6 fief lamps, 0 `bail: meme`,
+0 vere SIGSEGVs, 0 sidecar SIGSEGVs, 0 supervisor interventions.**
+
+**Tests 5.6 / 7.2 PASS ×3** — the Causeway-built `%gw-custody-entry` was
+ingested on all three; each logged
+`custody log verified (1 entries); refreshing our pass` and `/x/custody` went
+from empty to 1 entry.
+
+> **A distinction the runbook does not draw.** Booting the xtr-baked feed gives
+> jael a correct 305–307 B pass immediately — that is what peers verify — but
+> `%gw-btc`'s **own** `chain.own` (`/x/custody`) stays **empty** until a custody
+> entry is poked in. The two are independent stores. A ship can therefore be
+> perfectly verifiable by everyone while its own `/x/custody` reads `~`, which
+> looks alarming and is not. Only the poke populates `chain.own`, and it needs a
+> synced light client because `+begin-anew` re-walks the whole log against the
+> chain.
+
+## Tests 4.4 / 4.5 / 4.6 — sponsor decline and clear: **PASS**
+
+The clean-room could not close these; they last "passed" on a stale kernel via
+poke injection. Run properly here on the live DoS kernel, k2 as verifier and k3
+as subject, **after** k3 was already an installed point on k2 — so the only
+variable is the decline gate.
+
+| # | action | result |
+|---|---|---|
+| 4.4 | `%gw-sponsor-decline ~k3` on k2 | `/x/declined` = `{~k3}` (atom `231321342428198689666916463453877977805`, k3's `@p` exactly) |
+| 4.4 | k3 re-attests | `writ from ~hacsut-… dropped: sponsorship declined by operator` — **a named drop, not silence** |
+| 4.5 | k3 re-attests again | same named line; short-circuits **before** verification (no light-client work — cheap retries) |
+| — | snub state throughout | `snub=[%deny ~]` — **never a snub**, and the existing point survived untouched at `lyfe=[~ 1] dome=[~ %gw-btc]` |
+| 4.6 | `%gw-sponsor-clear ~k3`, k3 re-attests | `/x/declined` = `~`, then `%gw-btc-lc-scan-clean` → **VALID** again |
+
+This is the designed behaviour exactly: declining produces *silence toward the
+peer* and a *named line for the operator*, costs nothing to re-refuse, never
+snubs, and is fully reversible.
+
+## Test 4.8 — registration is self-announcing: **PASS**
+
+Before any attestation, k1 held **no point** for k2 or k3 (`lyfe=~`, `dome=~`)
+even though both are real, funded, currently-running comets whose identities
+are committed in confirmed Bitcoin transactions, and k1's own light client was
+fully synced over those blocks. `/x/sponsees` and `/x/declined` were empty on
+all three. A point appears **only** after the subject's own attestation is
+verified. Registration is never inferred — not from the chain, not from a
+sponsor, not from liveness.
