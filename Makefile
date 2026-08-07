@@ -118,11 +118,22 @@ $(ONBOARD_BIN): $(ONBOARD_VENV) $(ONBOARD_DIR)/gw-onboard.py
 
 gw-onboard: $(ONBOARD_BIN)
 
+# `cp -r groundwire/*` sweeps in groundwire/doc/, which is repo documentation
+# and not desk content -- and shipping it does not merely bloat the desk, it
+# breaks it outright.  Clay needs a /mar/<ext>/hoon for every file it takes,
+# and neither this desk nor vendor/base-dev has one for `md`.  The failure is
+# SILENT: measured on a live ship, a desk with a single .md file in it
+# committed to no new revision and printed nothing at all, while the same desk
+# with the .md removed went 2 -> 3.  So both the pill job's rsync into Clay's
+# mount and deploy-desk.yml's `|commit %groundwire` would no-op, leaving a
+# %groundwire desk with no %gw-btc in it and no error anywhere to say so.
+# Hence the rm below.  Anything else added under groundwire/ needs a mark.
 groundwire:
 	@rm -rf dist-groundwire
 	@mkdir -p dist-groundwire
 	@echo "Building groundwire desk..."
 	@cp -r groundwire/* dist-groundwire/
+	@rm -rf dist-groundwire/doc
 	@for f in $(VENDOR_BASE_DEV_GW); do \
 		mkdir -p dist-groundwire/$$(dirname $$f); \
 		cp vendor/base-dev/$$f dist-groundwire/$$f; \

@@ -629,7 +629,31 @@ gwl_our() {
     | grep -oE '~[a-z]{6}(-{1,2}[a-z]{6})+' | head -1 || true
 }
 
+# /x/ready, but ONLY if %gw-btc is actually running.  A `%gx` scry into an
+# agent gall is not running -- or into a path that agent's +on-peek does not
+# handle -- is not a soft miss.  It bails, and the bail takes %spider with it:
+#
+#   peek bad result
+#   "unexpected scry into %urb-watcher on path /x/ready"
+#   spider crashed, killing all strands: %arvo-response
+#
+# "all strands" includes kiln's OTA sync strands, one per desk carrying a
+# desk.ship, and each one logs its own death:
+#
+#   kiln: activation failed into %groundwire from ~watwyd-.../%groundwire; retrying sync
+#
+# That line is about the OTA sync, not about the desk, and the desk stays
+# live either way -- but it reads like an activation failure, and a --status
+# run against a release whose pill predates %gw-btc printed one per desk and
+# sent an afternoon chasing a bug that was not there.  Measured on a fresh
+# comet booted from groundwire-daily-2026.8.7.
+#
+# `mule` does not help: the bail is in gall's peek, not in our nock, so it is
+# not ours to catch.  The only safe guard is not to send the scry.  This is
+# the same hazard the +gwl_agent_installed comment below describes; that one
+# was written about %gu and the rule is general.
 gwl_ready() {
+  if ! gwl_agent_installed gw-btc; then return 0; fi
   printf '%s\n' \
     '=/  r  .^(* %gx /(scot %p our)/gw-btc/(scot %da now)/ready/noun)' \
     '(pure:m !>(r))' | gwl_eval "${1:-120}"
@@ -1193,13 +1217,26 @@ start_sidecar() {
   fi
 }
 
-# The pill bakes the desks into clay, but a desk carrying a desk.ship waits
-# on an OTA from its publisher rather than activating the local copy -- a
-# fresh comet logs "kiln: activation failed into %<desk> ...; retrying sync"
-# and the agents never come up until that sync lands.  %node and
-# %tcp-sidecar are deliberately published WITHOUT a desk.ship for exactly
-# this reason, so they should activate locally; this is the fallback for when
-# they have not.  A poke is safe where the scry above was not.
+# A pill-baked desk activates locally whether or not it carries a desk.ship.
+# This comment used to claim the opposite; it was wrong.  +on-init in
+# lib/hood/kiln.hoon walks every desk in the pill and emits
+# `%zest <desk> %live` unconditionally, and only THEN, if the desk has a
+# desk.ship naming someone else, additionally opens an OTA sync to them.  The
+# sync is a second channel, not a gate.  Measured on a fresh comet booted
+# from groundwire-daily-2026.8.7, whose %groundwire desk does carry a
+# desk.ship pointing at an unreachable distribution ship:
+#
+#   .^((set [dude live=?]) %ge /<our>/groundwire/<now>/$)
+#     ~[[dude=%urb-watcher live=%.y] [dude=%reg-tester live=%.y]
+#       [dude=%urb-snapshot live=%.y]]
+#
+# The "kiln: activation failed ...; retrying sync" line names that OTA sync
+# and nothing else -- see the +gwl_ready comment for what actually emits it.
+#
+# So this is not a workaround for desk.ship.  It is a fallback for the plain
+# case where a desk is not in the pill at all, which is every release older
+# than the one that baked in %node and %tcp-sidecar.  A poke is safe where a
+# scry into a missing agent is not.
 ensure_agents() {
   local a desk
   for a in bitcoin-client tcp; do
