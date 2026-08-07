@@ -254,3 +254,122 @@ fully synced over those blocks. `/x/sponsees` and `/x/declined` were empty on
 all three. A point appears **only** after the subject's own attestation is
 verified. Registration is never inferred — not from the chain, not from a
 sponsor, not from liveness.
+
+---
+
+# TIER-1 DECLASSIFICATION — the first ever, and it WORKED
+
+No Tier-1 declassification had ever been broadcast. It was impossible before
+`194e56d` (a fief-carrying publication is 265–269 B and `OP_PUSHDATA1` stops at
+255) and merely unproven after it. It is now proven on mainnet.
+
+**Transaction `08957455470694feb0c82216635de43a4b43424bf037da544022dd5a062e0266`,
+confirmed in block 961353.**
+
+| | |
+|---|---|
+| subject | k1 `~talryg-widseg-nisdex-mipryd--dibweb-narzod-tortes-daplyd` |
+| input 0 | `1653a2ce…:0` — k1's tracked identity satpoint, 1556 sats (the ownership proof: only its holder can spend it) |
+| output 0 | `5120ad601c4846924a3f82c19c8f49933cd9416d25ec68fe270db6e19447bf58631b`, **754 sats** — `5120‖Q`, `Q` recomputed from `[internal-key, new-snapshot]` by a from-scratch secp256k1/BIP-341 implementation and compared against causeway's |
+| output 1 | OP_RETURN, 0 sats, **279 bytes** — the publication rider |
+| life | **1 → 2**, strictly increasing |
+| fee | 802 sats, 401 vB, **2.000 sat/vB** (blocks around it cleared at 0.62–2.16) |
+| outputs | exactly 2 — no change, no stray |
+
+The OP_RETURN, decoded independently from the *signed* transaction bytes:
+
+```
+6a                 OP_RETURN
+03 'urb'           the Groundwire envelope
+01 09              protocol kelvin 9
+4d 0d 01           OP_PUSHDATA2, length 0x010d = 269 LITTLE-ENDIAN
+<269 bytes>        jammed [pass [internal-key snapshot blind-opening]]
+```
+
+**That `4d` is the whole point.** `OP_PUSHDATA1` carries one length byte and
+cannot express 269; the Hoon encoder used to truncate it silently to
+`269 mod 256`. This transaction is only encodable because of `194e56d`, and it
+is the first one ever broadcast.
+
+Re-encoding the intended publication from the artifact reproduces the on-chain
+script **byte-for-byte**, and `spawn-commit(funding satpoint, blind)` equals the
+`dat` commitment `2532d042cb…` — which is precisely the check the verifiers run.
+
+## Both peers accepted it and declassified k1
+
+`block-confirmations = 1`, so each scanner processed 961353 once the tip reached
+961354. Both k2 and k3 logged, unprompted:
+
+```
+%gw-btc: ~talryg-widseg-nisdex-mipryd--dibweb-narzod-tortes-daplyd
+         published itself on chain; now PUBLIC, permanently
+```
+
+and their state moved exactly as `+apply-state` → `+index-point` specifies:
+
+| | k2 | k3 |
+|---|---|---|
+| in `/x/confidential` | **`%.n`** — left the set | **`%.n`** |
+| in `/x/points` | **`%.y`** — now a public point | **`%.y`** |
+| jael `/lyfe/` | **`[~ 2]`** — advanced 1 → 2 | **`[~ 2]`** |
+| jael `/dome/` | `[~ %gw-btc]` | `[~ %gw-btc]` |
+
+This closes the clean-room's Gap 1 and test 5.7 / 5b.2 — **"shipped but never
+broadcast" is now "broadcast, confirmed, and accepted by every peer that tracked
+it."** It also confirms the mechanism the runbook §10 describes and the
+superseded Phase-5b conclusion denied: a confidential comet **can** become
+public, because `+process-publication` routes a comet already in `unv-ids` to
+`+apply-state` and never reaches `+apply-spawn`'s funding-satpoint guard.
+
+---
+
+# GAP 2 — the single-flight wedge: **REPRODUCED AND CLEAN**
+
+The clean-room could not construct this: a freshly-spawned comet's entire
+verification is servable from local light-client state, so cutting the transport
+changed nothing and the job simply completed. The fix was to pick a
+**long-dormant** subject — **C1** (`~havnyl-…`), whose sat last moved at height
+**961196**, ~157 blocks back, so its BIP-158 liveness scan must genuinely fetch.
+
+Method (`ops`-style, all on the droplet to avoid round-trip latency): poke the
+writ, and 6 s later `iptables -I OUTPUT -p tcp --dport 8333 -j DROP` — leaving
+the **sidecar alive**, because killing it trips `%gw-btc`'s readiness gate and
+no job ever starts (fail-closed, and the reason the wedge is hard to build).
+
+It stranded, exactly as intended:
+
+```
+[+6s]  DROP installed; sidecar 238507/238509 alive; serf alive; newt errors: 0
+[26s]  inflight = (~havnyl-…)
+[46s]  inflight = (~havnyl-…)
+ …     unchanged through
+[126s] inflight = (~havnyl-…)
+```
+
+No runtime death, no `%kick`, zero `newt: write failed` — the job was genuinely
+blocked on fetches that could never arrive. Then:
+
+```
+[200s] %gw-btc: verification thread for ~havnyl-… ended without a verdict
+5. inflight after: 0
+6. re-poke: 27503 ('ok')   -- NOT "dropped: a verification is already in flight"
+```
+
+**All four properties hold:**
+
+1. `+lc-fetch-timeout` fired and the strand failed.
+2. **The slot was released** — `/x/inflight` went from `{~havnyl-…}` to empty.
+   (`inflight` is deleted *before* the `?+ sign-arvo` switch, so even the crash
+   path releases it.)
+3. **No verdict was emitted** — no VALID, no INVALID, and **no snub**. A
+   generic strand crash is correctly treated as retryable/indeterminate.
+4. **The slot is reusable** — the re-poked writ was accepted, not rejected as
+   already-in-flight.
+
+This is `app/gw-btc.hoon:894-900` — the `[%khan %arow %.n …]` branch on a
+`/verify/<ship>/<job>` wire — **observed firing for the first time.** The
+clean-room recorded that "no test anywhere injects it" and it "remains
+untested"; it is now exercised live, on mainnet, against a real dormant comet.
+
+*Classification: **no defect**. The fix behaves exactly as designed under the
+one condition that can actually produce the wedge.*
