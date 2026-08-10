@@ -25,12 +25,17 @@ import sys
 import time
 
 sys.path.insert(0, "/Users/trent/gw-building/groundwire/causeway/desktop")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import requests
 from embit import bip32, bip39, script, psbt
 from embit.networks import NETWORKS
 
 import causeway as C
+# The one decoder this needs that causeway does not export: the inverse of
+# build_xtr_atom.  It lives next door in gwvec rather than being written a
+# second time here.
+from gwvec import cue_log
 
 # The wallet holds real mainnet money and lives OUTSIDE any repo, chmod 600.
 # Override with GW_WALLET; the default is the campaign's location.
@@ -346,13 +351,31 @@ def cmd_build(label, publish=False, fief=None, sponsor=None, fee_rate=1,
 
     pub_pass = pub_open = None
     if publish:
+        # A SPAWN publication is the degenerate packet: xtr empty, so the
+        # watcher completes a one-entry log whose single entry is this
+        # transaction, and its opening carries the blind-opening.  That is
+        # correct here and only here -- see cmd_publish for the late case.
         pub_pass = pass_atom
+        # start-height names the block of the transaction that CREATED the
+        # spawn satpoint -- the FUNDING tx, which the check above has just
+        # confirmed -- and it is the FIRST thing +verify-lc fetches, with
+        # +fetch-tx-at at exactly this height (lib/lc-attestation.hoon:104).
+        # A 0 here sends the verifier looking for the funding transaction in
+        # the GENESIS block: the strand fails with attestation-tx-not-found
+        # and the publication yields no verdict at all, having reached no
+        # check.  That is C3's spawn publication on mainnet (ec5c1fbe...,
+        # start-height 0), which is why it does not verify today.  The field
+        # enters no hash preimage, so getting it right changes no
+        # commitment, no @p and no Q -- only the OP_RETURN payload.
+        st["funding_height"] = fh = C.resolve_start_height(
+            {"funding": {"txid": txid, "height": st.get("funding_height")}})
+        print(f"start-height (funding tx block): {fh}")
         pub_open = {
             "internal_key": int.from_bytes(b"\x02" + w["xonly"], "big"),
             "snapshot": snapshot,
             "blind_opening": {
                 "spawn": {"txid_hex": txid, "vout": vout, "off": 0},
-                "start_height": 0,   # not known pre-broadcast; not in any hash
+                "start_height": fh,
                 "blind": bytes.fromhex(st["blind_hex"]),
             },
         }
@@ -578,11 +601,10 @@ def cmd_artifact(label, n):
     # This was fixed once before, out of tree, by a fix_artifacts.py that
     # hardcoded the three funding heights and was never folded back here.  It
     # therefore reproduced exactly in the 2026-08-06 cleanroom run.
-    fh = st.get("funding_height")
-    if not fh:
-        fh = requests.get(
-            f"https://mempool.space/api/tx/{st['funding']['txid']}/status",
-            timeout=30).json()["block_height"]
+    fh = C.resolve_start_height(
+        {"funding": {"txid": st["funding"]["txid"],
+                     "height": st.get("funding_height")}})
+    if st.get("funding_height") != fh:
         st["funding_height"] = fh
         save_state(label, st)
     assert fh <= height, f"funding height {fh} above spawn height {height}"
@@ -760,9 +782,11 @@ def cmd_publish(label, artifact_n, fee_rate=4, fund=False, sat_target=None):
     hands it to the same +verify-lc a packet gets.  See
     doc/opret-revision/04-decisions-addendum.md section 0.
 
-    NOTE: this builder still publishes the comet's BOOT pass (empty xtr), which
-    only verifies for a spawn.  To publish late, pass a pass carrying the
-    custody log (C.pass_with_xtr(pass_atom, C.build_xtr_atom(log))).
+    The pass published here is the pass a PEER receives -- custody log in its
+    xtr -- and that is what makes it a LATE publication rather than a claimed
+    spawn.  See the comment over pub_pass below for what publishing the boot
+    pass instead does, and what it did to the three state updates already on
+    mainnet.
 
     --fund adds a funding input from the ops wallet AFTER input 0, so the
     identity output is topped up rather than shrunk by the fee.  The verifier
@@ -784,18 +808,44 @@ def cmd_publish(label, artifact_n, fee_rate=4, fund=False, sat_target=None):
     print(f"life    : {old_snap['life']} -> {new_snap['life']}")
     print(f"fief    : {new_snap.get('fief')}   sponsor: {new_snap.get('sponsor')}")
 
-    pub_pass = int(art["pass_atom_hex"], 16)
+    # PUBLISH THE PASS A PEER GETS, NOT THE BOOT PASS.  Since 2026-08-10 the
+    # payload is verified as an attestation packet, and the custody log lives
+    # in the pass's xtr.  Publish a boot pass (xtr empty) and the watcher
+    # completes a ONE-ENTRY log whose single entry is this transaction -- the
+    # degenerate SPAWN shape -- so +run-checks requires input 0 to spend the
+    # spawn satpoint.  A state update spends the satpoint its LAST hop landed
+    # on, so the check fails and the comet never declassifies.
+    #
+    # That is measured, not theorised.  Of the four publications on mainnet,
+    # all built here with boot passes, only C3's spawn is the shape the
+    # verifier now reads; k1's Tier-1 declassification (08957455..., 961353)
+    # fails `0-continuity` for exactly this reason.
+    xtr = int(art["xtr_hex"], 16)
+    log = cue_log(art["xtr_hex"])
+    assert log, "artifact carries no custody log; there is nothing to publish"
+    last_txid, (last_height, _op) = log[-1]
+    # The log must END where this transaction BEGINS: input 0 spends the
+    # output the last hop landed on.  If the comet has moved its sat since
+    # the artifact was baked, the artifact's log is short by those hops and
+    # the publication would fail `N-continuity` on chain.  Refuse rather than
+    # pay miner fees for a packet nobody can verify.
+    assert f"{last_txid:064x}" == proof["commit_txid"], (
+        f"custody log ends at {last_txid:064x} @ {last_height} but input 0 "
+        f"spends {proof['commit_txid']}:{proof['sat_vout']} -- the artifact's "
+        f"log is missing the hops in between.  Extend it first (the "
+        f"%gw-custody-entry poke path) and re-bake the artifact.")
+    pub_pass = C.pass_with_xtr(int(art["pass_atom_hex"], 16), xtr)
+    print(f"pass    : {(int(art['pass_atom_hex'], 16).bit_length() + 7) // 8} B bare"
+          f" -> {(pub_pass.bit_length() + 7) // 8} B with a "
+          f"{len(log)}-entry custody log")
     pub_open = {
         "internal_key": int("02" + proof["internal_pubkey_hex"], 16),
         "snapshot": new_snap,
-        "blind_opening": {
-            "spawn": {"txid_hex": proof["funding"]["txid"],
-                      "vout": proof["funding"]["vout"], "off": 0},
-            # a LATE publication must carry a real start height, not the 0 that
-            # causeway's spawn-only helper hardcodes
-            "start_height": int(proof["block_height"]),
-            "blind": bytes.fromhex(art["blind_derivation"]["blind_hex"]),
-        },
+        # The dat opening may sit ONLY on entry 0 -- `blind-opening-zero` in
+        # +run-checks -- and entry 0 is inside the xtr above, carrying the
+        # real start-height the artifact recorded.  This transaction is entry
+        # N>0, so its own opening carries none.
+        "blind_opening": None,
     }
 
     fund_kwargs = {}
@@ -910,6 +960,22 @@ def cmd_publish(label, artifact_n, fee_rate=4, fund=False, sat_target=None):
     chk(f"publication <= {C.MAX_PUBLICATION} bytes",
         len(bytes.fromhex(pub_spk)) <= C.MAX_PUBLICATION + 10,
         f"{len(bytes.fromhex(pub_spk))} bytes")
+    # THE CHECK THAT SEPARATES A LATE PUBLICATION FROM A CLAIMED SPAWN.  Read
+    # the payload BACK out of the script we are about to broadcast and prove
+    # the pass in it carries the log -- not the pass we think we passed in.
+    # An empty xtr here is the shape that put three unverifiable publications
+    # on mainnet, and it is invisible in the decode: same envelope, same
+    # opening, ~200 fewer bytes.
+    pub_noun = C.hoon_cue(int.from_bytes(
+        bytes.fromhex(pub_spk)[-(len(C.jam_bytes(
+            C.publication_noun(pub_pass, pub_open)))):], "little"))
+    chk("payload decodes to [pass opening]",
+        isinstance(pub_noun, tuple) and len(pub_noun) == 2)
+    chk("published pass carries the custody log (not the boot pass)",
+        pub_noun[0] == pub_pass and pub_pass != int(art["pass_atom_hex"], 16),
+        f"{len(log)} entries, ending {f'{last_txid:064x}'[:16]}...")
+    chk("terminal opening carries no blind-opening (entry 0 owns it)",
+        pub_open["blind_opening"] is None)
 
     # Core 29 rejects our OP_RETURN by policy, so testmempoolaccept on the real
     # script is expected to fail; prove the SIGNING path instead by swapping in
@@ -949,7 +1015,13 @@ def cmd_publish(label, artifact_n, fee_rate=4, fund=False, sat_target=None):
           "signed_tx_hex": tx_hex, "gate_passed": ok, "fee_rate": fee_rate,
           "sat_value": sat_val, "fee_paid": fee, "vsize": dec["vsize"],
           "new_snapshot": {k: v for k, v in new_snap.items()},
-          "prior_txid": proof["commit_txid"], "published": True}
+          "prior_txid": proof["commit_txid"], "published": True,
+          # WHICH SHAPE WAS PUBLISHED.  A boot-pass publication and a
+          # packet publication are indistinguishable in the tx decode --
+          # same envelope, same opening, ~200 fewer bytes -- and the
+          # difference is whether anyone can verify it.  Record it.
+          "published_pass_hex": hex(pub_pass),
+          "published_log_entries": len(log)}
     save_state(f"{label}-publish", st)
     print(f"wrote {statefile(f'{label}-publish')}")
     return 0 if ok else 1

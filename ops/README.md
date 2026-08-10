@@ -119,7 +119,20 @@ gwmint.py build <label> [--fief=IP:PORT] [--sponsor=~patp] [--publish] [--fee-ra
 gwmint.py broadcast <label>          # refuses unless the gate passed
 gwmint.py status    <label>          # poll for confirmation
 gwmint.py artifact  <label> <n>      # -> ~/gw-building/.gw-comet-<n>.json (0600)
+gwmint.py publish <label> <n> [--fee-rate=N] [--fund] [--sat-target=S]
 ```
+
+`publish` is the LATE publication — Tier-1 declassification for a comet that
+is already confidential — and it is the only builder anywhere that produces
+one. Since 2026-08-10 the OP_RETURN payload is the comet's whole attestation
+packet, so what goes in it is the pass a **peer** receives: the custody log in
+its `xtr` (`pass_with_xtr`, from the artifact's baked `xtr_hex`), and an
+opening with **no** blind-opening, because the dat opening may sit only on
+entry 0 and entry 0 is inside that log. Publish the 108-byte boot pass
+instead and the watcher completes a one-entry log whose single entry is this
+transaction — the degenerate *spawn* shape — so `+run-checks` demands that
+input 0 spend the spawn satpoint, which a state update never does. The build
+refuses if the artifact's log does not end at the outpoint input 0 spends.
 
 > **A comet naming another comet as its sponsor is only as verifiable as the
 > sponsor is *known*.** `sponsor-ok` (`lib/self-attestation.hoon`) is
