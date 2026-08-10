@@ -13,13 +13,19 @@ negative `%verdict`, jael turns it into `[%give %sybl %fail ...]`, and
 existing snub.
 
 That is a SAFETY NET, NOT SELF-HEALING, and the difference is why this tool
-still exists.  On the classic-ames `%hear` path `+pe-hear` tests the blocklist
-before it classifies the packet at all, so a snubbed peer cannot deliver the
-attestation that would earn it a `%full`: the verdict has to arrive by some
-route the snub does not block.  (On the mesa `%heer` path `%page` has no snub
-gate, so an attestation does land and the fix really is self-healing there.
-That asymmetry is an open question, not settled behaviour -- OPERATIONS.md
-Section 12, "Closed by a code change".)
+still exists.  A SNUB HOLDS ON EVERY TRANSPORT: on the classic-ames `%hear`
+path `+pe-hear` tests the blocklist the moment it has a `$shot`, before it
+classifies the packet at all, and since the kernel's `b0a8e962ff` mesa's
+`+pe-heer` gates its `%page` branch the same way, keyed on `her.name`.  That
+branch -- which routed an alien's attestation straight to `+al-take-proof` --
+was the last way back in, and it is closed.  So a snubbed peer cannot deliver
+the attestation that would earn it a `%full` over ANY route, and the only
+positive verdict that reaches it is one an OPERATOR asked for.
+
+Nor does a snub expire.  Expiry needs a per-ship timer, and durable state an
+attacker can make us allocate is a resource-exhaustion vector, so there is no
+TTL, no decay and no sweep -- see OPERATIONS.md Section 12, "Closed by a code
+change".
 
 So there are two ways to undo a wrong snub, and they are not equivalent:
 

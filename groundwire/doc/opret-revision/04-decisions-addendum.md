@@ -335,7 +335,7 @@ now a closed union, `$log-relation` (`%same` / `%extends by=n` / `%behind by=n`
 The comparison keys on hop *identity* (`+hop-id` / `+spawn-id`, which strip
 `height` and `start-height`), because heights are reorg-unstable and sit inside
 the log the pass commits to — the same reason the accepted-but-unimplemented
-block-hash rollback proposal is right. `tracked-lag` is emitted for every
+block-hash rollback proposal (§11b) is right. `tracked-lag` is emitted for every
 `%behind`, forgiven or not, so a forgiveness is recorded in the report rather
 than being silent.
 
@@ -669,6 +669,8 @@ resource-leak backstop as peer verification, which emits no verdict.
 - Packet-carried inclusion evidence and merkle trust hydration.
 - Jael domain tombstones (`%bane` permanence) — requires a proper Jael state
   version bump and migration; not an in-place `%5` edit.
+- Public-index reorg repair: the block-hash-per-point design of §11b. What
+  ships is the halt of §11a.
 - Kernel-wide DOS pass.
 
 ## 8. Verification backend: `%light-client` = gwbtc/node `%bitcoin-client`
@@ -758,3 +760,87 @@ wrong against a real node:
   facts only from a live registered domain agent or an explicitly configured
   legacy source. (The authorization guard from the `%bane` prototype branch,
   landed without the unsafe state edit.)
+
+## 11. Chain reorganisation
+
+Two different things in this system are reorg-sensitive, and only one of them
+is handled. Attestation *verification* was made reorg-tolerant by `cdaf7cf`
+(§3): the tracked-log comparison keys on hop identity rather than on heights,
+so a custody transaction re-mined one block over is no longer a divergence.
+The **public block index** has no such tolerance. What ships for it today is a
+halt, and this section records it, because the spec has so far described only
+the replacement.
+
+### 11a. What ships today: `$reorg-stop` and `%gw-reorg-resume`
+
+`%bitcoin-client` reports a reorg as a `%reorg-rollback` on `/best-block`,
+carrying the height and hash the chain rolled back to. `%gw-btc` compares that
+height against its own scan cursor, `num.block-id.urb-state`
+(`app/gw-btc.hoon:1386-1431`), and there are two cases:
+
+- **rollback above the cursor.** The orphaned blocks are ones the scanner had
+  not reached, so nothing we hold came from them. The agent slogs a line, moves
+  `.best`, and carries on; the winning chain gets walked normally.
+- **rollback at or below the cursor.** The index may contain facts derived from
+  blocks that no longer exist. **The scanner stops**, and `.reorg-halt` is set
+  to a `$reorg-stop` (`app/gw-btc.hoon:92-121`) recording `at` (the height
+  rolled back to), `cursor` (where we had scanned to), and `since`.
+
+A halt is not silent, deliberately. It slogs a capitalised block at the moment
+it happens; the `/timer` arm keeps re-arming itself every `~m5` and reprints
+the halt on every poll (`app/gw-btc.hoon:818-827`), on the principle that a
+stopped scanner which stops mentioning it is indistinguishable from a working
+one; and `.reorg-halt` is the fourth field of the `/x/ready` scry, alongside
+`synced`, `tip` and `indexing`, so a monitor sees it without reading logs.
+
+**Confidential verification deliberately keeps running.** It reads the chain
+through the light client, which does its own reorg handling (and re-checks tip
+liveness at apply time, §8); its answers do not come from this index at all.
+Only the public index is frozen.
+
+**Why a halt and not a repair.** The index cannot be rewound, because a
+`$point` records no provenance: not the height, not the block it was indexed
+out of. There is therefore no way to tell which entries of `.unv-ids` came from
+the losing chain, and rewinding the cursor to rescan would replay the winning
+chain *on top of* a corrupted index rather than instead of it — a second bug,
+not a fix. A halted index is a liveness failure that announces itself; a
+silently forked one is a correctness failure that does not.
+
+`%gw-reorg-resume` (`app/gw-btc.hoon:530-569`, `our`-only) therefore does not
+claim to repair anything. It exists so an operator chooses deliberately and on
+the record, rather than having the agent guess:
+
+- `~` — resume from the current cursor, accepting that facts from orphaned
+  blocks may still be in `.unv-ids` and that the winning chain's replacements
+  in the skipped range were never seen.
+- `[~ height]` — rewind the cursor first (stored as `height - 1`, since
+  `.block-id` is the *last* block scanned) and then resume, so the winning
+  chain from there is scanned. This **adds** the correct facts; it cannot
+  remove the wrong ones.
+
+Neither is a repair. The only true repair is to rebootstrap the public index,
+which needs a nuke — `%urb-start-indexing` is one-shot by design.
+
+### 11b. The agreed replacement (team decision 2026-08-10) — NOT IMPLEMENTED
+
+Recorded here as the accepted design. None of it is in the code; §11a is what
+runs.
+
+- **`$point` gains a block hash** in our userspace point type, **refreshed on
+  every observation** — attestation, rotation and so on — rather than fixed at
+  index time. That is a refinement on the original proposal: the hash tracks
+  the most recent evidence for a point rather than its origin.
+- **Robin supplies the list of orphaned blocks** on a reorg, so the index can
+  be *filtered* against those hashes instead of being nuked or frozen.
+- **An orphaned point is forgotten, not snubbed.** The peer drops to `%alien`
+  and is asked to re-attest via `%sybl`; it still knows where to find us. This
+  is the same shape as `%stale` (§3) and right for the same reason: **a reorg
+  is not fraud**, and a snub is permanent on every transport (`b0a8e962ff`), so
+  spending one on a chain event would be unrecoverable without an operator.
+- **Migration.** Every point already in `unv-ids` carries no hash, so on the
+  first reorg after the upgrade they cannot be filtered. "Forget and go
+  `%alien`" is a safe default for them — conservative, and the peer re-attests
+  — so this may need no special handling at all; that should be confirmed as
+  the intent rather than discovered.
+- **Future work:** two peers both reorged and unable to find each other. It
+  may already be covered by public sponsor fallback.

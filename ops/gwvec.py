@@ -36,9 +36,10 @@ or poke `[%jael-writ %gw-btc `@p`<patp> `@ux`<pass_hoon>]` directly.
 
 DANGER, and it is not theoretical: several of these produce a NEGATIVE verdict,
 which is a jael %fail and an ames snub of the named comet on the verifier you
-poke.  A later positive verdict does lift a snub (kernel `f68a547b2b`), but on
-the `%hear` path the snub drops the very packet that would earn one, so assume
-you have to clear it yourself: `gwsnub.py del <pier> <patp>`, or the same ames
+poke.  A later positive verdict does lift a snub (kernel `f68a547b2b`), but the
+snub drops the very packet that would earn one on EVERY transport -- classic
+ames `%hear`, and mesa's `%page` since `b0a8e962ff` -- so assume you have to
+clear it yourself: `gwsnub.py del <pier> <patp>`, or the same ames
 `%snub %deny %del` task by hand -- from a khan thread that is
 `(send-raw-card %pass /unsnub %arvo %a %snub %deny %del ~[<patp>])`, with a
 BARE `send-raw-card`: `send-raw-card:strandio` does not resolve inside a
