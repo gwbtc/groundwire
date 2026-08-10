@@ -67,6 +67,33 @@
 +$  mang  $%([%sont =sont:ord] [%pass =pass])
 ::
 ::  Ownership and networking info for a @p
+::
+::    .seen is PROVENANCE, and it is the only field here that is about US
+::    rather than about the identity: the hash of the block we most
+::    recently learned this point's state from.
+::
+::    It is REFRESHED ON EVERY OBSERVATION -- a verified attestation, an
+::    on-chain publication, a custody move the block scanner walked --
+::    and not fixed when the point was first indexed (team decision,
+::    2026-08-10; doc/opret-revision/04-decisions-addendum.md section
+::    11b).  It therefore names the most recent evidence for this point,
+::    which is the thing a chain reorganisation can take away.  Origin
+::    would be the wrong quantity: a point spawned a year ago and moved
+::    yesterday is invalidated by a reorg of yesterday's block.
+::
+::    ONE hash, so it names the LAST block the point was seen in, not
+::    every block its custody log touches.  A reorg deep enough to orphan
+::    an EARLIER hop is not caught by this field; it is caught by the
+::    re-attestation, which cannot be fetched at a height that no longer
+::    holds its txid (+fetch-tx-at:lc-attestation strand-fails).
+::
+::    ~ means NO PROVENANCE RECORDED: a point that predates this field
+::    (+on-load's $gw-state-13 migration) and has not been observed
+::    since.  It cannot be filtered against a list of orphaned blocks,
+::    so a reorg must decide what to do with it without evidence -- see
+::    +orphaned-points in lib/urb-core.hoon.  The population of such
+::    points only ever shrinks: anything re-observed acquires a hash.
+::
 +$  point
   $:  $=  own
       $:  =sont:ord
@@ -81,6 +108,8 @@
           escape=(unit @p)
           fief=(unit fief)
       ==
+  ::
+      seen=(unit hax:block:bitcoin)
   ==
 ::
 +$  turf  (list @t)  ::  domain, tld first

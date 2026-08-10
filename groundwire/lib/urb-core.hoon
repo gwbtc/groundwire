@@ -391,14 +391,61 @@
       =/  dat  (~(got by insc-ids) insc)
       state(insc-ids (~(put by insc-ids) insc dat(sont sont)))
     ::
+    ::  A custody move IS an observation, so it refreshes .seen as well as
+    ::  the satpoint: this block is now the most recent evidence we have
+    ::  for this point, and it is the block a reorg would have to orphan
+    ::  to invalidate what we just wrote.  .block-id is set to the block
+    ::  under scan before ++handle-block runs (see +get-blocks in
+    ::  app/gw-btc.hoon), so .hax is this block's, not the previous one's.
+    ::
     ++  update-comet
       |=  [=state:urb com=@p =sont:ord]
       =/  point  (~(got by unv-ids:state) com)
-      state(unv-ids (~(put by unv-ids:state) com point(sont.own sont)))
+      =.  point  point(sont.own sont, seen `hax.block-id.state)
+      state(unv-ids (~(put by unv-ids:state) com point))
     ::
     ::
     --
   --
+::
+::  +orphaned-points: which points did a reorg take the evidence for?
+::
+::    .orphans is the set of block hashes the light client says are no
+::    longer on the main chain.  A point whose .seen names one of them was
+::    last observed in a block that did not happen, so what we hold about
+::    it is not knowledge any more: %gw-btc forgets it (+forget-points)
+::    and asks the peer to re-attest (+forget-cards).  Never a snub -- a
+::    reorg is not fraud, and a snub is permanent.
+::
+::    A point with NO provenance (.seen=~) is selected too.  It predates
+::    the field (+lift-urb-state in app/gw-btc.hoon), so it cannot be
+::    filtered, and the team decision of 2026-08-10 is that forgetting is
+::    the safe default: conservative, and the peer re-attests.  The rule
+::    is self-limiting rather than recurring -- a re-observed point
+::    acquires a hash, so the hashless population only ever shrinks and a
+::    given point can be forgotten this way at most once.
+::
+::    NOTHING CALLS THIS YET, and one thing about it is unresolved.
+::    $best-block's %reorg-rollback carries the block the chain rolled
+::    back TO (sur/light-client), which is the new best block and not the
+::    orphaned set, so there is nothing to pass as .orphans and the loud
+::    halt of $reorg-stop remains the honest answer.  When the list
+::    arrives, note that .unv-ids holds PUBLIC points as well as
+::    confidential ones, and "the peer re-attests" is only true of the
+::    confidential ones: a forgotten public point is re-derived only by
+::    rescanning the range it was indexed from, which rewinding to the
+::    rollback height does not necessarily cover.  That is a question for
+::    the team, not for this arm.
+::
+++  orphaned-points
+  |=  [st=state:urb orphans=(set hax:block:bitcoin)]
+  ^-  (set @p)
+  %-  silt
+  %+  murn  ~(tap by unv-ids.st)
+  |=  [who=@p pt=point:urb]
+  ^-  (unit @p)
+  ?~  seen.pt  `who
+  ?.((~(has in orphans) u.seen.pt) ~ `who)
 ::
 ::  Take a list of outputs and a sat index across
 ::  those outputs, and return the output index

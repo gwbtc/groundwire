@@ -38,6 +38,12 @@ export interface Point {
     escape: bigint | null;
     fief: Fief | null;
   };
+  // The block the indexer most recently observed this point's state in
+  // (`seen`, sur/urb.hoon). Provenance, refreshed on every observation, and
+  // what a chain reorganisation is filtered against. `null` in two cases that
+  // are the same statement: a snapshot from an indexer that predates the
+  // field, or a point that indexer had not re-observed since.
+  seen: bigint | null;
 }
 
 export interface UrbState {
@@ -107,11 +113,21 @@ function decodeSponsor(n: Noun): Sponsor {
   return { has: asAtom(has) !== 0n, who: asAtom(who) };
 }
 
-function decodePoint(n: Noun): Point {
-  // point = [own net] where own = [sont mang-unit] and
-  // net = [rift life pass sponsor escape fief]
-  const [ownN, netN] = asT2(n);
+export function decodePoint(n: Noun): Point {
+  // point = [own net seen] where own = [sont mang-unit],
+  // net = [rift life pass sponsor escape fief] and seen is a (unit block-hash).
+  //
+  // A snapshot written before `seen` existed is [own net], and both shapes are
+  // still in circulation (the pinned fixture is one). They are told apart
+  // exactly, by the same argument the Hoon migration uses: in the two-field
+  // shape the tail IS net, whose head `rift` is an ATOM; in the three-field
+  // shape the tail is [net seen], whose head is the net CELL. Never guess from
+  // the length of anything -- a jammed tuple has no length.
+  const [ownN, restN] = asT2(n);
   const [sontN, mangN] = asT2(ownN);
+  const legacy = isAtom(head(restN));
+  const netN = legacy ? restN : head(restN);
+  const seenN = legacy ? null : tail(restN);
   const [rift, life, pass, sponsor, escape, fief] = asT6(netN);
   return {
     own: {
@@ -126,6 +142,7 @@ function decodePoint(n: Noun): Point {
       escape: asUnit(escape, (v) => asAtom(v)),
       fief: asUnit(fief, decodeFief),
     },
+    seen: seenN === null ? null : asUnit(seenN, (v) => asAtom(v)),
   };
 }
 

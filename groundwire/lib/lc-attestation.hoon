@@ -98,13 +98,18 @@
   =/  spawn=sont:ord  spawn.u.spawn-open
   ::  Fetch the spawn transaction by [height txid].  +fetch-tx-at resolves
   ::  the canonical block hash from the height, requests the verified tx in
-  ::  that block, and strand-fails on any height/txid disagreement.
-  ;<  start=tx:bc  bind:m
-    %+  (set-timeout:strandio ,tx:bc)  lc-fetch-timeout
+  ::  that block, and strand-fails on any height/txid disagreement.  It
+  ::  returns that block hash alongside the transaction: it is the one
+  ::  place that knows it, and the LAST one is the provenance stamped onto
+  ::  the point (.seen, sur/urb).
+  ;<  start-at=confirmed  bind:m
+    %+  (set-timeout:strandio ,confirmed)  lc-fetch-timeout
     (fetch-tx-at our start-height.u.spawn-open txid.spawn)
+  =/  start=tx:bc  tx.start-at
   ::  Every custody entry supplies a height; resolve each entry's tx the
   ::  same way, in custody order.
-  ;<  txl=(list tx:bc)  bind:m  (fetch-entries our chain.sat)
+  ;<  fetched=(list confirmed)  bind:m  (fetch-entries our chain.sat)
+  =/  txl=(list tx:bc)  (turn fetched |=(c=confirmed tx.c))
   ::  Every transaction below is confirmed on the main chain at the height
   ::  and txid the log claimed -- +fetch-tx-at strand-fails rather than
   ::  return otherwise -- so a failure here is the peer's claim about that
@@ -130,9 +135,24 @@
   ::  outpoint.  `%.y`/`%.n`/~ = unspent/spent/undeterminable (fails closed).
   ;<  live=(unit ?)  bind:m
     (scan-liveness our u.tip tip-spk tip-height best-height)
+  ::  .fetched is non-empty: chain.sat was checked non-empty above and
+  ::  +fetch-entries returns one entry per custody entry.
+  ::
+  =/  tip-hash=(unit hax:block:bc)
+    ?~(fetched ~ `hax:(rear fetched))
   =/  result=result:sa
-    (run-checks:lsa sat start txl live tracked known-public)
+    (run-checks:lsa sat start txl live tracked known-public tip-hash)
   (pure:m !>([result tip-spk]))
+::
+::  +confirmed: a fetched transaction and the block hash it was found in
+::
+::    The hash is not evidence and nothing is checked against it -- it is
+::    already implied by the height, which +fetch-tx-at verifies against
+::    both the header fact and the transaction fact.  It is carried out
+::    because it is the PROVENANCE the verified point records (.seen), and
+::    this is the only layer that ever sees it.
+::
++$  confirmed  [hax=hax:block:bc =tx:bc]
 ::
 ::  +fetch-tx-at: resolve one transaction by [height txid].
 ::
@@ -144,7 +164,7 @@
 ::
 ++  fetch-tx-at
   |=  [our=@p height=@ud tid=@ux]
-  =/  m  (strand:strandio ,tx:bc)
+  =/  m  (strand:strandio ,confirmed)
   ^-  form:m
   ;<  h-cage=cage  bind:m  (watch-header-height our height)
   =/  hres  !<(block-header-by-height:update:lc q.h-cage)
@@ -162,19 +182,24 @@
   ?.  =(tid txid.tres)
     %+  strand-fail:strandio  %attestation-txid-mismatch
     [>[tid txid.tres]< ~]
-  (pure:m (common-tx-to-bc tid transaction.tres))
+  ::  block-hash.hres and block-hash.tres are the same block: the header
+  ::  fact fixed the canonical hash at .height and the transaction was
+  ::  requested IN that block, with its own block-info height re-checked
+  ::  above.  Carry the one we addressed the request with.
+  ::
+  (pure:m [block-hash.hres (common-tx-to-bc tid transaction.tres)])
 ::
 ++  fetch-entries
   |=  [our=@p entries=custody-log:sa]
-  =/  m  (strand:strandio ,(list tx:bc))
+  =/  m  (strand:strandio ,(list confirmed))
   ^-  form:m
-  =|  acc=(list tx:bc)
+  =|  acc=(list confirmed)
   |-
   ?~  entries  (pure:m (flop acc))
-  ;<  =tx:bc  bind:m
-    %+  (set-timeout:strandio ,tx:bc)  lc-fetch-timeout
+  ;<  con=confirmed  bind:m
+    %+  (set-timeout:strandio ,confirmed)  lc-fetch-timeout
     (fetch-tx-at our height.i.entries txid.i.entries)
-  $(entries t.entries, acc [tx acc])
+  $(entries t.entries, acc [con acc])
 ::
 ::  +scan-liveness: is the tip output still unspent?
 ::

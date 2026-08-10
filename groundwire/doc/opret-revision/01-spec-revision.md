@@ -163,8 +163,10 @@ opening = [internal-key=@ux snapshot blind-opening=(unit [spawn=sont blind=@])]
   tracked-prefix monotonicity against the last accepted attestation: all
   retained unchanged from the adversarial branch. *(Amended 2026-08-07:
   tracked-prefix monotonicity is now graduated rather than a single bit — a
-  fork is fraud, being behind by exactly one custody entry is forgiven as
-  staleness, and the comparison ignores heights. Addendum §3.)*
+  fork is fraud, being behind is forgiven as staleness, and the comparison
+  ignores heights. Addendum §3. Further amended 2026-08-10: the lag is
+  forgiven at ANY depth, because a lag is what a replayed packet looks like
+  and reading its depth as guilt let a third party snub an honest comet.)*
 
 ## 6. Publication layer: OP_RETURN, default off
 

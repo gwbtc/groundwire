@@ -7,7 +7,7 @@
 ::  must not be snubbed.
 ::
 /-  urb, sa=self-attestation, ord, bitcoin, lc=light-client
-/+  *test, cc=gw-btc-pass, lsa=self-attestation
+/+  *test, cc=gw-btc-pass, lsa=self-attestation, ol=ord, uc=urb-core
 /=  gw-btc  /app/gw-btc
 =>
 |%
@@ -181,6 +181,52 @@
   :*  `state:urb`[[0xdead.beef 943.140] ~ ~ ~]
       %.y  ~  ~  ~  ~  ~  0  ~  ~
   ==
+::  ---------------------------------------------------------------------
+::  the pre-PROVENANCE state (13), and the point inside it
+::  ---------------------------------------------------------------------
+::
+::  A $point gained .seen -- the block it was most recently observed in --
+::  and every point written before that has no such field.  This is the
+::  state shape immediately before it: the CURRENT twelve fields, with a
+::  two-field point.
+::
+::  The unv-ids entry is what makes this case real rather than notional.
+::  A -13 state with an EMPTY index is genuinely indistinguishable from a
+::  current one, and does not need to be distinguished: there is nothing
+::  to convert, and the current mold takes it (which +legacy-12-state
+::  already pins for the ambiguous all-empty tail).  With a point in it,
+::  .seen is a TAIL field and discriminates by itself.
+::
+++  legacy-13-point
+  ^-  *
+  :*  [[0xf00d.cafe 0 0] ~]                        :: own
+      0                                            :: rift
+      1                                            :: life
+      anew-pass                                    :: pass
+      [%.y ~marzod]                                :: sponsor
+      ~                                            :: escape
+      ~                                            :: fief
+  ==
+::
+++  legacy-13-state
+  ^-  *
+  :*  :*  `id:block:bitcoin`[0xdead.beef 961.100]  :: block-id
+          *sont-map:ord                            :: sont-map
+          *insc-ids:ord                            :: insc-ids
+          (malt ~[[`ship`~wes legacy-13-point]])   :: unv-ids
+      ==
+      %.y                                          :: indexing
+      `[0xdead.beef 961.100]                       :: best
+      ~                                            :: inflight
+      ~                                            :: confidential
+      ~                                            :: attested
+      0                                            :: next-job
+      ~                                            :: sponsees
+      (silt ~[~wes])                               :: declined
+      [`custody-log:sa`~ ~]                        :: own
+      %.y                                          :: synced
+      ~                                            :: reorg-halt
+  ==
 ::  a verifier result: .ok, naming .who, carrying a routable point
 ::
 ++  anew-result
@@ -191,8 +237,9 @@
       ?.  ok  ~
       :-  ~
       ^-  point:urb
-      :-  [[0xf00d.cafe 0 0] ~]
-      [rift=0 life=1 anew-pass [%.y ~marzod] ~ ~]
+      :+  [[0xf00d.cafe 0 0] ~]
+        [rift=0 life=1 anew-pass [%.y ~marzod] ~ ~]
+      seen=`0xb10c
       0
   ==
 ::  the khan sign a finished verification thread delivers
@@ -295,7 +342,7 @@
 ++  ok-point
   |=  =pass
   ^-  point:urb
-  [[tip-sont ~] rift=0 life=1 pass [%.y ~marzod] ~ ~]
+  [[tip-sont ~] [rift=0 life=1 pass [%.y ~marzod] ~ ~] seen=`0xb10c]
 ::  a $result that PASSED every check, naming .who and carrying .pt
 ::
 ++  ok-sign
@@ -314,6 +361,87 @@
   :~  :-  [`@ux`0xf00d.cafe `@ud`0]
       [value=9.000 sats=(malt ~[[`@ud`0 `sont-val:ord`[`~marzod ~]]])]
   ==
+::  ---------------------------------------------------------------------
+::  PROVENANCE fixtures: a point, the block it was last observed in, and
+::  the state a ship written by THIS revision holds
+::  ---------------------------------------------------------------------
+::
+::  +ok-point with the provenance spelled out.  .seen is what a
+::  reorg filters against (+orphaned-points:uc) and what every
+::  observation refreshes, so it is the one field these tests vary.
+::
+++  ok-point-at
+  |=  [=pass seen=(unit @ux)]
+  ^-  point:urb
+  [[tip-sont ~] [rift=0 life=1 pass [%.y ~marzod] ~ ~] seen]
+::
+++  seen-of
+  |=  pt=point:urb
+  ^-  (unit @ux)
+  seen.pt
+::  the satpoint the scanner watches the identity move TO
+::
+++  moved-sont  ^-(sont:ord [0xfeed.face 0 0])
+::
+::  A CURRENT-shape state with one verification in flight for .peer, plus
+::  whatever index/registry the test needs.  +verify-state builds the -12
+::  shape, which predates .seen and therefore cannot carry a modern point;
+::  this is what a ship running this revision actually saves.
+::
+++  live-state
+  |=  $:  ids=unv-ids:urb
+          sm=sont-map:ord
+          conf=(set ship)
+          ats=(map ship sont:ord)
+      ==
+  ^-  *
+  :*  `state:urb`[[0xdead.beef 961.100] sm ~ ids]  :: urb-state
+      %.y                                          :: indexing
+      `[0xdead.beef 961.100]                       :: best
+      (malt ~[[peer [%gw-btc anew-pass [peer anew-pass ~[entry0]] 0]]])
+      conf                                         :: confidential
+      ats                                          :: attested
+      1                                            :: next-job
+      ~                                            :: sponsees
+      ~                                            :: declined
+      [`custody-log:sa`~ ~]                        :: own
+      %.y                                          :: synced
+      ~                                            :: reorg-halt
+  ==
+::  the sat index that names .peer as the owner of .tip-sont
+::
+++  peer-sont-map
+  ^-  sont-map:ord
+  (put-com:si:ol *sont-map:ord 0xf00d.cafe 0 0 9.000 peer)
+::  the block batch in which the scanner watches .peer's identity sat
+::  MOVE -- the physical fact that makes a verified attestation stale.
+::
+::    base and live agree (the point sits at .tip-sont); the scanned
+::    result has it at .moved-sont, in a later block.  +reconcile-block
+::    takes the scanner's tip, and +detect-stale then sees it disagree
+::    with the tip .peer attested to.
+::
+++  moved-blocks-sign
+  ^-  sign-arvo
+  :^  %khan  %arow  %.y
+  :-  %noun
+  !>  ^-  [state:urb [(list [id:block:bitcoin effect:urb]) state:urb]]
+  =/  base=state:urb
+    :*  [0xdead.beef 961.100]
+        peer-sont-map
+        *insc-ids:ord
+        (malt ~[[peer (ok-point-at anew-pass `0xb.10c1)]])
+    ==
+  =/  result=state:urb
+    :*  [0xb.10c2 961.101]
+        (put-com:si:ol *sont-map:ord 0xfeed.face 0 0 9.000 peer)
+        *insc-ids:ord
+        %-  malt
+        :~  :-  peer
+            `point:urb`[[moved-sont ~] [0 1 anew-pass [%.y ~marzod] ~ ~] `0xb.10c2]
+        ==
+    ==
+  [base [~ result]]
 ::  the wire a finished verification for .peer (job 0) arrives on
 ::
 ++  verify-wire  /verify/(scot %p peer)/0
@@ -711,6 +839,58 @@
     ::  and the slot is released either way, so the replacement
     ::  attestation can re-enter
     ::
+    (expect-eq !>(*(set ship)) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/inflight)))))
+  ==
+::
+::  ---------------------------------------------------------------------
+::  A DEEP LAG IS STALE AND EMITS NO SNUB
+::  ---------------------------------------------------------------------
+::
+::  `%behind =(1 by.rel)' in +anchor-ok made a log more than one custody
+::  entry behind FRAUD -- a permanent ames snub.  A lag is exactly what a
+::  REPLAYED packet looks like (ames has already proved the pass hashes to
+::  the claimed @p, so nobody can forge one, but anyone who saw one can
+::  re-send it, and a replay is always a prefix and never a fork), so that
+::  handed any observer a way to sever two honest ships for good.
+::
+::  The check list below is DERIVED FROM THE RULE rather than written
+::  down: `tracked-prefix' carries +anchor-ok's verdict on the relation,
+::  so a rule that condemned a five-deep lag would put that name in the
+::  failing list and this test would see a %verdict card instead of a
+::  %stale-notice.  That is what makes it a mutation test and not a
+::  restatement of the classifier.
+::
+++  test-deep-lag-is-stale-and-never-snubs
+  =/  agent  gw-btc
+  =^  *  agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  ::  what a log behind by FIVE, from a tracked peer, really fails on:
+  ::  its tip is not the one we tracked, and the lag is reported.
+  ::
+  =/  bad=(list cord)
+    %+  weld  ~['tracked-tip' 'tracked-lag']
+    ?:  (anchor-ok:lsa [%behind 5] ~ tip-sont)  ~
+    ~['tracked-prefix']
+  =^  cards  agent  (~(on-arvo agent bowl0) verify-wire (failed-sign peer bad))
+  =/  out  (app-cards cards)
+  ;:  weld
+    ::  the rule itself: any lag reconciles, at any depth
+    (expect !>((anchor-ok:lsa [%behind 5] ~ tip-sont)))
+    ::  ... so the verdict is stale-class ...
+    %+  expect-eq
+      !>  %stale
+      !>  (classify:lsa `verdict:sa`[peer %.n (turn bad |=(c=cord [c %.n]))])
+    ::  ... and the peer is DEMOTED, not condemned: one card, a
+    ::  %stale-notice naming it, and no %verdict anywhere.
+    (expect-eq !>(1) !>((lent out)))
+    (expect-eq !>(`%stale-notice) !>((fact-mark (snag 0 out))))
+    (expect !>(!(lien out |=(c=card:agent:gall =(`%verdict (fact-mark c))))))
+    %+  expect-eq
+      !>  `[@tas ship]`[%gw-btc peer]
+      !>  ^-  [@tas ship]
+          ?~  pay=(fact-payload (snag 0 out))  [%$ ~zod]
+          ;;([dom=@tas =ship] u.pay)
+    ::  and the single-flight slot is released, so the replacement
+    ::  attestation can re-enter
     (expect-eq !>(*(set ship)) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/inflight)))))
   ==
 ::
@@ -1352,4 +1532,191 @@
     %+  levy  out
     |=(c=card:agent:gall ?=(~ (fact-mark c)))
   ==
+::
+::  ---------------------------------------------------------------------
+::  PROVENANCE: a point records the block it was last observed in
+::  ---------------------------------------------------------------------
+::
+::  The public index had NO provenance at all, which is why a reorg could
+::  only be answered with a halt: nothing recorded which block a fact came
+::  out of, so nothing could be filtered.  A $point now carries .seen.
+::
+::  It is REFRESHED ON EVERY OBSERVATION rather than fixed when the point
+::  is first indexed -- the team's refinement on the original proposal --
+::  because what a reorg invalidates is the most recent evidence, not the
+::  origin.  These two tests are the write and the refresh, driven through
+::  the PUBLICATION road because that is the one that leaves a point the
+::  scries will show (a confidential point is filtered out of all of them,
+::  deliberately).
+::
+++  test-verified-point-records-its-block
+  =/  agent  gw-btc
+  =^  *  agent  (~(on-load agent bowl0) !>((live-state ~ ~ ~ ~)))
+  =^  *  agent
+    %-  ~(on-arvo agent bowl0)
+    [claim-wire (ok-sign peer `(ok-point-at anew-pass `0xb.10c1))]
+  =/  got  ;;(point:urb (peek-noun (~(on-peek agent bowl0) /x/point/(scot %p peer))))
+  ;:  weld
+    (expect-eq !>(`(unit @ux)``0xb.10c1) !>((seen-of got)))
+    ::  the rest of the point is untouched by the new field
+    (expect-eq !>(tip-sont) !>(sont.own.got))
+    (expect-eq !>(`life`1) !>(life.net.got))
+  ==
+::
+++  test-a-later-observation-refreshes-the-block
+  ::  the point is already indexed, out of block 0xb.10c1.  A fresh
+  ::  observation of the SAME state -- same satpoint, same life -- in a
+  ::  LATER block must move .seen forward.  If provenance were fixed at
+  ::  index time this would still read 0xb.10c1, and a reorg of the block
+  ::  that actually carries our evidence would not touch the point.
+  ::
+  =/  agent  gw-btc
+  =^  *  agent
+    %-  ~(on-load agent bowl0)
+    !>  %^  live-state  (malt ~[[peer (ok-point-at anew-pass `0xb.10c1)]])
+          peer-sont-map
+        [~ ~]
+  =/  before  ;;(point:urb (peek-noun (~(on-peek agent bowl0) /x/point/(scot %p peer))))
+  =^  *  agent
+    %-  ~(on-arvo agent bowl0)
+    [claim-wire (ok-sign peer `(ok-point-at anew-pass `0xb.10c2))]
+  =/  after  ;;(point:urb (peek-noun (~(on-peek agent bowl0) /x/point/(scot %p peer))))
+  ;:  weld
+    (expect-eq !>(`(unit @ux)``0xb.10c1) !>((seen-of before)))
+    (expect-eq !>(`(unit @ux)``0xb.10c2) !>((seen-of after)))
+  ==
+::
+::  ---------------------------------------------------------------------
+::  FORGET AND RE-ALIEN: the one way this agent un-knows an identity
+::  ---------------------------------------------------------------------
+::
+::  A reorg that orphans the block a point was last seen in will take this
+::  route (+orphaned-points:uc -> +forget-points -> +forget-cards), and it
+::  is the route a moved identity sat already takes.  So drive the moved
+::  sat, and pin what it emits and what it clears -- because that is
+::  exactly what the reorg path will emit and clear when the light client
+::  reports which blocks were orphaned.
+::
+++  test-a-moved-sat-forgets-the-point-and-never-snubs
+  =/  agent  gw-btc
+  =^  *  agent
+    %-  ~(on-load agent bowl0)
+    !>  %^  live-state  (malt ~[[peer (ok-point-at anew-pass `0xb.10c1)]])
+          peer-sont-map
+        [(silt ~[peer]) (malt ~[[peer tip-sont]])]
+  =^  cards  agent  (~(on-arvo agent bowl0) /blocks moved-blocks-sign)
+  =/  out    (app-cards cards)
+  =/  notes  (skim out |=(c=card:agent:gall =(`%stale-notice (fact-mark c))))
+  =/  index  ;;(state:urb (peek-noun (~(on-peek agent bowl0) /x/urb-state)))
+  ;:  weld
+    ::  ONE %stale-notice, naming the peer.  Jael drops its point and ames
+    ::  demotes the peer to a fresh alien; it keeps our lane and
+    ::  re-attests of its own accord.
+    (expect-eq !>(1) !>((lent notes)))
+    %+  expect-eq
+      !>  `[@tas ship]`[%gw-btc peer]
+      !>  ^-  [@tas ship]
+          ?~  pay=(fact-payload (snag 0 notes))  [%$ ~zod]
+          ;;([dom=@tas =ship] u.pay)
+    ::  and NEVER a %verdict.  A snub is permanent on every transport, so
+    ::  spending one on a chain event would need an operator to undo.
+    (expect !>(!(lien out |=(c=card:agent:gall =(`%verdict (fact-mark c))))))
+    ::  all four stores are cleared: the index, the confidential
+    ::  registry, the attested tip, and the verification slot -- which
+    ::  would otherwise land on a point that no longer exists.
+    ::
+    ::  (/x/urb-state hides CONFIDENTIAL points, so a peer visible in it
+    ::  is a peer that is no longer in the registry; absent from it means
+    ::  absent from .unv-ids too.)
+    (expect !>(!(~(has by unv-ids.index) peer)))
+    (expect-eq !>(*(map ship sont:ord)) !>(;;((map ship sont:ord) (peek-noun (~(on-peek agent bowl0) /x/attested)))))
+    (expect-eq !>(*(set ship)) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/inflight)))))
+  ==
+::
+::  +orphaned-points is the SELECTOR the reorg path is missing, and the
+::  only thing it is missing: given the orphaned hashes it names exactly
+::  the points to hand +forget-points.
+::
+++  test-orphaned-points-selects-by-block
+  =/  fresh   (ok-point-at anew-pass `0xb.10c2)
+  =/  stale   (ok-point-at anew-pass `0xb.10c1)
+  =/  legacy  (ok-point-at anew-pass ~)
+  =/  st=state:urb
+    :*  [0xdead.beef 961.100]  *sont-map:ord  *insc-ids:ord
+        (malt ~[[~wes fresh] [~des stale] [~lex legacy]])
+    ==
+  ;:  weld
+    ::  the point whose evidence is in an orphaned block is taken and the
+    ::  one in a surviving block is not.  The HASHLESS one is taken as
+    ::  well, always: it predates the field, cannot be filtered, and
+    ::  forgetting is the conservative default.  That is self-limiting --
+    ::  re-observing a point gives it a hash -- so the population this
+    ::  clause reaches only ever shrinks.
+    %+  expect-eq
+      !>  (silt ~[`ship`~des ~lex])
+      !>  (orphaned-points:uc st (silt ~[`@ux`0xb.10c1]))
+    ::  a reorg that orphans a block none of our points came from still
+    ::  takes the hashless one, and nothing else
+    %+  expect-eq
+      !>  (silt ~[`ship`~lex])
+      !>  (orphaned-points:uc st (silt ~[`@ux`0xdead.dead]))
+    ::  a reorg that orphans nothing we hold still forgets the hashless
+    %+  expect-eq
+      !>  (silt ~[`ship`~lex])
+      !>  (orphaned-points:uc st *(set @ux))
+    ::  and orphaning everything takes everything
+    %+  expect-eq
+      !>  (silt ~[`ship`~wes ~des ~lex])
+      !>  (orphaned-points:uc st (silt ~[`@ux`0xb.10c1 0xb.10c2]))
+  ==
+::
+::  ---------------------------------------------------------------------
+::  MIGRATION: a point written before provenance existed
+::  ---------------------------------------------------------------------
+::
+::  $gw-state-13 is the current twelve fields around a TWO-field point.
+::  .seen is a tail field, so it discriminates on its own: a -13 point
+::  offered to the current mold puts [rift life pass sponsor escape fief]
+::  where [net seen] is expected, and the six-tuple $net mold then has to
+::  read the bare @ud .rift, which bails.
+::
+::  The lift must be honest rather than convenient: .seen becomes ~, which
+::  says "we have no provenance for this point", and NOT some stand-in
+::  hash that a reorg would then filter against and get wrong.
+::
+++  test-on-load-lifts-a-pre-provenance-point
+  =/  agent  gw-btc
+  =^  cards  agent  (~(on-load agent bowl0) !>(legacy-13-state))
+  =/  got  ;;(point:urb (peek-noun (~(on-peek agent bowl0) /x/point/~wes)))
+  ;:  weld
+    ::  the point survived, in full ...
+    (expect-eq !>(`sont:ord`[0xf00d.cafe 0 0]) !>(sont.own.got))
+    (expect-eq !>(`life`1) !>(life.net.got))
+    (expect-eq !>(`[has=? who=@p]`[%.y ~marzod]) !>(sponsor.net.got))
+    ::  ... with no provenance, which is the truth about it
+    (expect-eq !>(`(unit @ux)`~) !>((seen-of got)))
+    ::  the fields around it did not shift
+    %+  expect-eq
+      !>  `id:block:bitcoin`[0xdead.beef 961.100]
+      !>  ;;(id:block:bitcoin (peek-noun (~(on-peek agent bowl0) /x/block-id)))
+    (expect-eq !>((silt ~[~wes])) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/declined)))))
+    %+  expect-eq
+      !>  [synced=%.y tip=`961.100 indexing=%.y halt=~]
+      !>  ;;([? (unit @ud) ? (unit *)] (peek-noun (~(on-peek agent bowl0) /x/ready)))
+    ::  a -13 state already had /is-synced; do not re-subscribe
+    (expect !>(!(lien (app-cards cards) |=(c=card:agent:gall =(c synced-watch)))))
+  ==
+::
+::  ... and a hashless point is EXACTLY what the reorg selector treats as
+::  unfilterable.  This is the migration question answered end to end: an
+::  upgraded ship's old points are forgotten on the first reorg, once, and
+::  re-attesting gives them provenance so it does not recur.
+::
+++  test-a-lifted-point-is-unfilterable
+  =/  agent  gw-btc
+  =^  *  agent  (~(on-load agent bowl0) !>(legacy-13-state))
+  =/  index  ;;(state:urb (peek-noun (~(on-peek agent bowl0) /x/urb-state)))
+  %+  expect-eq
+    !>  (silt ~[`ship`~wes])
+    !>  (orphaned-points:uc index *(set @ux))
 --

@@ -76,6 +76,11 @@
   ^-  [(list [id:block:bitcoin effect:urb]) state:urb]
   =/  oc   (abed:urb-core:ul st)
   =/  fbr  (find-block-reveals:oc block)
+  ::  exactly what +get-blocks does, and it matters: .hax is the block
+  ::  under scan, and ++update-comet stamps it onto the point it moves as
+  ::  provenance.  (++handle-block advances .num itself.)
+  ::
+  =.  oc   oc(hax.block-id.state hax.block)
   =/  ub   (apply-prevouts-and-urbify:oc +.fbr -.fbr)
   abet:(handle-block:oc ub)
 ::  a fresh index whose cursor sits just below .h
@@ -180,7 +185,7 @@
 ::
 ++  tracked-point
   ^-  point:urb
-  [[[move-id 0 0] ~] 0 1 (pass-of 0) [%.n who] ~ ~]
+  [[[move-id 0 0] ~] [0 1 (pass-of 0) [%.n who] ~ ~] `0xb.10c1]
 ++  tracked-state
   ^-  state:urb
   :*  [0xb.10c2 701]
@@ -203,7 +208,7 @@
 ++  verify
   |=  [sat=self-attestation:sa start=tx:bitcoin txl=(list tx:bitcoin)]
   ^-  result:sa
-  (run-checks:lsa sat start txl `%.y ~ *(set ship))
+  (run-checks:lsa sat start txl `%.y ~ *(set ship) ~)
 ++  got-check
   |=  [v=verdict:sa name=cord]
   ^-  ?
@@ -399,18 +404,29 @@
   ::  ordinal tracker is the scanner's own job and is untouched by any of
   ::  this; the point it moves is one the VERIFIER installed.
   ::
+  ::  the point as the verifier left it: last observed in the SPAWN block.
+  ::
+  =/  before=point:urb
+    [[[spawn-id 0 0] ~] [0 1 (pass-of 0) [%.n who] ~ ~] `0xb.10c1]
   =/  seeded=state:urb
     :*  [0xb.10c1 700]
         (put-com:si:ol *sont-map:ord spawn-id 0 0 9.500 who)
         *insc-ids:ord
-        %+  ~(put by *unv-ids:urb)  who
-        `point:urb`[[[spawn-id 0 0] ~] 0 1 (pass-of 0) [%.n who] ~ ~]
+        (~(put by *unv-ids:urb) who before)
     ==
   =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]
     (scan seeded move-block)
   =/  pt  (need (~(get by unv-ids.st) who))
   ;:  weld
     (expect-eq !>([move-id 0 0]) !>(sont.own.pt))
+    ::  A CUSTODY MOVE IS AN OBSERVATION, so it REFRESHES the provenance:
+    ::  .seen was the spawn block (0xb.10c1) and is now the block this
+    ::  move was found in (0xb.10c2, +move-block).  It is the most recent
+    ::  evidence for the point, not its origin -- which is the whole
+    ::  distinction, because it is what a reorg of THIS block invalidates.
+    ::
+    (expect-eq !>(`(unit @ux)``0xb.10c1) !>(seen.before))
+    (expect-eq !>(`(unit @ux)``0xb.10c2) !>(seen.pt))
     ::  the old sat entry no longer names the comet
     ::
     (expect-eq !>(~) !>((get-com:si:ol sont-map.st spawn-id 0 0)))

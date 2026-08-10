@@ -99,16 +99,21 @@
 ::    was rescanned, facts indexed out of orphaned blocks stayed forever,
 ::    and facts unique to the winning chain were never seen.
 ::
-::    Undoing the orphaned facts is not possible with what we store: a point
-::    in .unv-ids does not record the height it was indexed at, so there is
-::    no way to tell which entries came from the losing chain.  Rewinding
-::    the cursor and rescanning would therefore replay the winning chain ON
-::    TOP of a corrupted index, not instead of it.
+::    Undoing the orphaned facts still is not possible, but the reason has
+::    HALVED.  A point now records the block it was last observed in
+::    (.seen, sur/urb), so given a list of the orphaned block hashes the
+::    index could be filtered against it -- +orphaned-points selects, and
+::    +forget-points forgets.  What is missing is the LIST:
+::    %reorg-rollback carries the block the chain rolled back TO
+::    (sur/light-client), which is the new best block and not the orphaned
+::    set, so there is still nothing to filter against.
 ::
 ::    So the scanner STOPS, loudly, and waits for an operator.  A halted
 ::    index is a liveness failure that announces itself; a silently forked
 ::    one is a correctness failure that does not.  %gw-reorg-resume decides
-::    what to do about it (see +on-poke).
+::    what to do about it (see +on-poke).  When the light client reports
+::    the orphaned blocks, this whole halt is replaced by the forget path
+::    of decisions addendum section 11b -- and forgetting is never a snub.
 ::
 ::    Confidential verification deliberately keeps running: it reads the
 ::    chain through the light client, which does its own reorg handling, and
@@ -183,17 +188,33 @@
       synced=?
       reorg-halt=(unit reorg-stop)
   ==
-::  $gw-state-12 / -11 / -10: the three earlier shapes
+::  $gw-state-13 / -12 / -11 / -10: the four earlier shapes
 ::
-::    -12 is the state before .publicizing was removed; -11 is -12 without
-::    .synced and .reorg-halt; -10 is -11 without .own.  +on-load
-::    discriminates on them; ;; is strict about arity (it bails on both a
-::    missing and an extra tail), so trying the current mold first and
-::    falling back is exact, not a guess.
+::    -13 is the state before a $point carried provenance; -12 is -13 with
+::    .publicizing still present; -11 is -12 without .synced and
+::    .reorg-halt; -10 is -11 without .own.  +on-load discriminates on
+::    them; ;; is strict about arity (it bails on both a missing and an
+::    extra tail), so trying the current mold first and falling back is
+::    exact, not a guess.
+::
+::    ALL FOUR CARRY $point-13, not the current $point.  They describe
+::    nouns written by revisions that predate .seen, so naming the current
+::    $point in them would demand a field those nouns cannot have -- and
+::    the -12/-11/-10 branches would then never match anything with a
+::    point in it.  The urb-state mold is the ONLY thing that differs
+::    between -13 and the current shape.
+::
+::    .seen is a TAIL field on $point, so it discriminates by itself: a
+::    -13 point offered to the current mold puts [rift life pass sponsor
+::    escape fief] where [net seen] is expected, so the 6-tuple $net mold
+::    has to read the bare @ud .rift, which bails.  A state whose .unv-ids
+::    is EMPTY is genuinely ambiguous -- and does not care, because there
+::    is nothing to convert; the current mold takes it and the conversion
+::    would have been the identity.
 ::
 ::    .publicizing was a MIDDLE field, so dropping it shifts everything
 ::    after it and arity alone would not discriminate -- except that the
-::    TAIL still does, unconditionally.  A -12 noun offered to the current
+::    TAIL still does, unconditionally.  A -12 noun offered to the -13
 ::    mold puts [synced reorg-halt] where (unit reorg-stop) is expected:
 ::    the pair is a cell, so `synced` has to read as the unit's ~ head
 ::    (only true when synced=%.y), and then `reorg-halt` -- either ~ or
@@ -204,8 +225,46 @@
 ::    Nothing else inside these molds changed, which is why they can keep
 ::    naming the current $inflight-writ.
 ::
++$  point-13
+  $:  $=  own
+      $:  =sont:ord
+          mang=(unit mang:urb)
+      ==
+  ::
+      $=  net
+      $:  rift=@ud
+          =life
+          =pass
+          sponsor=[has=? who=@p]
+          escape=(unit @p)
+          fief=(unit fief:urb)
+      ==
+  ==
+::
++$  urb-state-13
+  $:  block-id=id:block:bc
+      sont-map=sont-map:ord
+      insc-ids=insc-ids:ord
+      unv-ids=(map @p point-13)
+  ==
+::
++$  gw-state-13
+  $:  urb-state=urb-state-13
+      indexing=?
+      best=(unit id:block:bc)
+      inflight=(map ship inflight-writ)
+      confidential=(set ship)
+      attested=(map ship sont:ord)
+      next-job=@ud
+      sponsees=(map ship sponsee)
+      declined=(set ship)
+      own=own-custody
+      synced=?
+      reorg-halt=(unit reorg-stop)
+  ==
+::
 +$  gw-state-12
-  $:  urb-state=state:urb
+  $:  urb-state=urb-state-13
       indexing=?
       best=(unit id:block:bc)
       inflight=(map ship inflight-writ)
@@ -221,7 +280,7 @@
   ==
 ::
 +$  gw-state-11
-  $:  urb-state=state:urb
+  $:  urb-state=urb-state-13
       indexing=?
       best=(unit id:block:bc)
       inflight=(map ship inflight-writ)
@@ -235,7 +294,7 @@
   ==
 ::
 +$  gw-state-10
-  $:  urb-state=state:urb
+  $:  urb-state=urb-state-13
       indexing=?
       best=(unit id:block:bc)
       inflight=(map ship inflight-writ)
@@ -306,6 +365,22 @@
   ::
   =/  cur  (mole |.(;;(gw-state nou)))
   ?^  cur  `this(state u.cur)
+  ::  A -13 state's points carry no .seen (sur/urb): they were indexed
+  ::  before a $point recorded which block it was last observed in.  They
+  ::  are lifted with .seen=~, which is not a placeholder -- it is the
+  ::  honest statement that we have no provenance for them and cannot
+  ::  filter them against a reorg's orphan list.  See +orphaned-points.
+  ::
+  =/  o13  (mole |.(;;(gw-state-13 nou)))
+  ?^  o13
+    =/  ext=gw-state
+      :*  (lift-urb-state urb-state.u.o13)
+          indexing.u.o13  best.u.o13  inflight.u.o13
+          confidential.u.o13  attested.u.o13
+          next-job.u.o13  sponsees.u.o13  declined.u.o13  own.u.o13
+          synced.u.o13  reorg-halt.u.o13
+      ==
+    `this(state ext)
   ::  A -12 state carries .publicizing, which no longer exists: the block
   ::  scanner does not index a publication any more, it hands it to the
   ::  same verifier a packet goes to, so there is no public-spawn replay
@@ -315,7 +390,8 @@
   =/  o12  (mole |.(;;(gw-state-12 nou)))
   ?^  o12
     =/  ext=gw-state
-      :*  urb-state.u.o12  indexing.u.o12  best.u.o12  inflight.u.o12
+      :*  (lift-urb-state urb-state.u.o12)
+          indexing.u.o12  best.u.o12  inflight.u.o12
           confidential.u.o12  attested.u.o12
           next-job.u.o12  sponsees.u.o12  declined.u.o12  own.u.o12
           synced.u.o12  reorg-halt.u.o12
@@ -324,7 +400,8 @@
   =/  o11  (mole |.(;;(gw-state-11 nou)))
   ?^  o11
     =/  ext=gw-state
-      :*  urb-state.u.o11  indexing.u.o11  best.u.o11  inflight.u.o11
+      :*  (lift-urb-state urb-state.u.o11)
+          indexing.u.o11  best.u.o11  inflight.u.o11
           confidential.u.o11  attested.u.o11
           next-job.u.o11  sponsees.u.o11  declined.u.o11  own.u.o11
           %.n  ~
@@ -333,7 +410,8 @@
     ~[(watch-synced our.bowl)]
   =/  o  ;;(gw-state-10 nou)
   =/  ext=gw-state
-    :*  urb-state.o  indexing.o  best.o  inflight.o  confidential.o
+    :*  (lift-urb-state urb-state.o)
+        indexing.o  best.o  inflight.o  confidential.o
         attested.o  next-job.o  sponsees.o  declined.o
         *own-custody  %.n  ~
     ==
@@ -1390,13 +1468,19 @@
       ::  (which demotes the peer to an alien, never a snub) so the
       ::  owner's next attestation re-verifies from scratch.
       =/  gone-stale=(set ship)  (detect-stale new-urb-state confidential attested)
-      =.  confidential  (~(dif in confidential) gone-stale)
-      =.  attested      (drop-attested attested gone-stale)
-      =.  inflight      (drop-inflight inflight gone-stale)
-      =.  urb-state     (drop-private-insertions new-urb-state gone-stale)
-      =/  stale-cards=(list card)
-        %+  turn  ~(tap in gone-stale)
-        |=(=ship (stale-card dap.bowl ship))
+      ::  the ONE way this agent un-knows an identity (+forget-points).
+      ::  A reorg that orphans a point's evidence takes the same route,
+      ::  once the light client tells us which blocks were orphaned.
+      ::
+      =/  forgot
+        %:  forget-points
+            new-urb-state  confidential  attested  inflight  gone-stale
+        ==
+      =.  urb-state     index.forgot
+      =.  confidential  confidential.forgot
+      =.  attested      attested.forgot
+      =.  inflight      inflight.forgot
+      =/  stale-cards=(list card)  (forget-cards dap.bowl gone-stale)
       :_  this
       %+  welp  cards.cj
       %+  welp  stale-cards
@@ -1503,11 +1587,25 @@
       ::
       ::    rollback AT OR BELOW our cursor -- our index contains facts
       ::    derived from blocks that no longer exist, and we cannot tell
-      ::    WHICH: a $point does not record the height it was indexed at.
-      ::    Rewinding and rescanning would replay the winning chain on top
-      ::    of the corrupted index rather than instead of it, so it is not a
-      ::    fix, it is a second bug.  Stop the scanner and say so.  See
-      ::    $reorg-stop and %gw-reorg-resume.
+      ::    WHICH.  Rewinding and rescanning would replay the winning chain
+      ::    on top of the corrupted index rather than instead of it, so it
+      ::    is not a fix, it is a second bug.  Stop the scanner and say so.
+      ::    See $reorg-stop and %gw-reorg-resume.
+      ::
+      ::  THE REPLACEMENT IS ONE FIELD AWAY, and it is worth naming exactly
+      ::  where it goes.  A $point now records the block it was last
+      ::  observed in, so the index CAN be filtered -- what is missing is
+      ::  the orphaned set.  $best-block's %reorg-rollback carries
+      ::  [block-height block-hash] of the NEW BEST block; when it also
+      ::  carries the list of orphaned hashes, this branch becomes:
+      ::
+      ::    =/  gone  (orphaned-points urb-state (silt orphans.upd))
+      ::    =/  forgot
+      ::      (forget-points urb-state confidential attested inflight gone)
+      ::    ... install the four stores, rewind .block-id to block-height,
+      ::    and emit (forget-cards dap.bowl gone) -- no halt, no snub.
+      ::
+      ::  Everything but that one substitution is already here.
       ::
       ?:  (gth block-height.upd num.block-id.urb-state)
         %-  %-  slog
@@ -1520,8 +1618,9 @@
       %-  %-  slog
           :~  leaf+"%gw-btc: CHAIN REORG TO {<block-height.upd>} -- BLOCK SCANNER HALTED"
               leaf+"  our scan cursor was {<num.block-id.urb-state>}, so this index may contain facts"
-              leaf+"  derived from orphaned blocks, and we cannot tell which: a $point does not"
-              leaf+"  record the height it was indexed at.  The scanner will not advance."
+              leaf+"  derived from orphaned blocks, and we cannot tell which: the light client"
+              leaf+"  reports the block rolled back TO, not the blocks orphaned, so there is"
+              leaf+"  nothing to filter our points against.  The scanner will not advance."
               leaf+"  Confidential verification is UNAFFECTED (it reads the light client directly)."
               leaf+"  Operator: `:gw-btc &gw-reorg-resume ~` resumes from the current cursor and"
               leaf+"  accepts the risk; `:gw-btc &gw-reorg-resume [~ height]` rewinds the cursor"
@@ -2016,6 +2115,64 @@
   ==
 ::
 ::  ----------------------------------------------------------------
+::  FORGETTING A POINT: the one way this agent un-knows an identity
+::  ----------------------------------------------------------------
+::
+::  Two things reach it.  A moved identity sat (+detect-stale, above) is
+::  one; a chain REORGANISATION that orphans the block a point was last
+::  observed in is the other (+orphaned-points:uc, in lib/urb-core).
+::  Neither is fraud, so both take the same route and neither may ever
+::  emit a %verdict:
+::
+::    - our own indexes lose the point (+forget-points), so nothing we
+::      hold still claims to know this identity's state;
+::    - jael is told (+forget-cards -> +stale-card), which drops ITS point
+::      and demotes the peer to a fresh %alien.  The peer keeps our lane,
+::      re-attests of its own accord through the ordinary %sybl/%writ
+::      path, and a positive verdict promotes it again.
+::
+::  A snub would do the opposite of all of that: it is permanent on every
+::  transport (b0a8e962ff) and it blocks the very packet that would
+::  correct us.  Spending one on a chain event would need an operator to
+::  undo.  A reorg is not fraud.
+::
+++  forget-cards
+  |=  [dom=@tas ships=(set ship)]
+  ^-  (list card)
+  %+  turn  ~(tap in ships)
+  |=(=ship (stale-card dom ship))
+::
+::  +forget-points: drop every index entry these ships own
+::
+::    The four stores that together constitute "we know this identity":
+::    the public/private point index and its sat index (.urb-state), the
+::    confidential registry, the tip each peer last attested to, and any
+::    verification job in flight for it (which would otherwise land on a
+::    slot describing a point that no longer exists).
+::
+++  forget-points
+  |=  $:  st=state:urb
+          conf=(set ship)
+          ats=(map ship sont:ord)
+          jobs=(map ship inflight-writ)
+          ships=(set ship)
+      ==
+  ^-  $:  index=state:urb
+          confidential=(set ship)
+          attested=(map ship sont:ord)
+          inflight=(map ship inflight-writ)
+      ==
+  :^    (drop-private-insertions st ships)
+      (~(dif in conf) ships)
+    (drop-attested ats ships)
+  (drop-inflight jobs ships)
+::
+::  Which points a reorg took the evidence for is +orphaned-points:uc, in
+::  lib/urb-core: it is a pure query over the index and belongs beside the
+::  rest of the index arithmetic.  Nothing calls it yet -- see there, and
+::  see the %reorg-rollback branch of +on-agent, for what is missing.
+::
+::  ----------------------------------------------------------------
 ::  %anew: extending OUR OWN custody log, in band
 ::  ----------------------------------------------------------------
 ::
@@ -2436,7 +2593,17 @@
   ::  If the block branch moved (including the same move seen by both), its
   ::  indexes are authoritative. Otherwise a verifier-only move is grafted.
   ?:  |(scan-moved !live-moved)
-    =/  point=point:urb  u.current(sont.own scan-tip)
+    ::  PROVENANCE FOLLOWS THE OBSERVATION THAT SUPPLIED THE SATPOINT.
+    ::  When the scanner moved the sat, this block is the most recent
+    ::  evidence and .seen comes with the tip.  When NOTHING moved, the
+    ::  scanner observed nothing about this comet in this batch, and its
+    ::  copy of the point is the one it started from -- taking .seen from
+    ::  there would REGRESS the provenance past an attestation that landed
+    ::  while the batch was running.
+    ::
+    =/  point=point:urb
+      ?.  scan-moved  u.current
+      u.current(sont.own scan-tip, seen seen.u.scanned)
     =/  used  (use-scanned-private out who point)
     ?~  used  ~
     $(ships t.ships, out u.used)
@@ -2478,6 +2645,23 @@
     (del-com:si:ol sont-map.st [txid vout off]:at)
   =.  unv-ids.st  (~(del by unv-ids.st) who)
   $(entries t.entries)
+::
+::  +lift-urb-state: a pre-provenance index, lifted into the current mold
+::
+::    Every point gains .seen=~.  That is not a placeholder for a hash we
+::    could have worked out: nothing in the old state records which block
+::    a point came from, which is exactly why this field was added.  ~ is
+::    the truthful value, and +orphaned-points is where it is decided what
+::    a reorg does about one.
+::
+++  lift-urb-state
+  |=  old=urb-state-13
+  ^-  state:urb
+  :^    block-id.old
+      sont-map.old
+    insc-ids.old
+  %-  ~(run by unv-ids.old)
+  |=(pt=point-13 `point:urb`[own.pt net.pt ~])
 ::
 ::  Strip confidential identities from snapshots and public scries.  Their
 ::  points propagate only through self-attestation, never through the classic

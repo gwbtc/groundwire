@@ -191,13 +191,21 @@
 ++  anchor-at
   |=  [pas=pass tip=sont:ord lyf=@ud]
   ^-  (unit anchor:sa)
-  =/  pt=point:urb  [[tip ~] 0 lyf pas [%.n who] ~ ~]
+  =/  pt=point:urb  [[tip ~] [0 lyf pas [%.n who] ~ ~] ~]
   `[pt tip]
+::  +tip-hax: the block the tip transaction was confirmed in
+::
+::    The provenance +verify-lc resolves from the light client and hands
+::    ++run-checks, which stamps it onto the point as .seen (sur/urb).
+::    Nothing is checked against it; it exists to be filtered against a
+::    reorg's orphan list.
+::
+++  tip-hax  ^-(hax:block:bitcoin 0xb10c.b10c)
 ::
 ++  run
   |=  [sat=self-attestation:sa txl=(list tx:bc) tracked=(unit anchor:sa)]
   ^-  result:sa
-  (run-checks:sal sat start-tx txl `%.y tracked no-points)
+  (run-checks:sal sat start-tx txl `%.y tracked no-points `tip-hax)
 ::
 ::  ---------------------------------------------------------------------
 ::  diagnostics (test 6.7): the operator-facing reports
@@ -312,7 +320,7 @@
     (expect !>(ok.verdict.res))
     (expect-eq !>(9.000) !>(tip-value.res))
     %+  expect-eq
-      !>  `(unit point:urb)``[[[c1-id 0 0] ~] 0 1 carried-pass [%.n who] ~ ~]
+      !>  `(unit point:urb)``[[[c1-id 0 0] ~] [0 1 carried-pass [%.n who] ~ ~] `tip-hax]
       !>  point.res
   ==
 ::
@@ -375,11 +383,11 @@
   ;:  weld
     ::  tip spent -> not ok
     ::
-    =/  spent  (run-checks:sal good-sat start-tx ~[c0-tx c1-tx] `%.n ~ no-points)
+    =/  spent  (run-checks:sal good-sat start-tx ~[c0-tx c1-tx] `%.n ~ no-points ~)
     (expect !>(!ok.verdict.spent))
     ::  tip status unknown (~) -> fails closed
     ::
-    =/  unk  (run-checks:sal good-sat start-tx ~[c0-tx c1-tx] ~ ~ no-points)
+    =/  unk  (run-checks:sal good-sat start-tx ~[c0-tx c1-tx] ~ ~ no-points ~)
     (expect !>(!ok.verdict.unk))
   ==
 ::
@@ -432,11 +440,11 @@
   =/  sat  ^-(self-attestation:sa [who sp-pass sp-chain])
   ::  unknown sponsor -> fail
   ::
-  =/  res-no   (run-checks:sal sat start-tx ~[sp-c0 c1-tx] `%.y ~ no-points)
+  =/  res-no   (run-checks:sal sat start-tx ~[sp-c0 c1-tx] `%.y ~ no-points ~)
   ::  sponsor in known-public -> the sponsor-known check passes
   ::
   =/  res-yes
-    (run-checks:sal sat start-tx ~[sp-c0 c1-tx] `%.y ~ (silt ~[~zod]))
+    (run-checks:sal sat start-tx ~[sp-c0 c1-tx] `%.y ~ (silt ~[~zod]) ~)
   ;:  weld
     (expect !>(!ok.verdict.res-no))
     (expect !>(!(got-check verdict.res-no 'sponsor-known')))
@@ -448,7 +456,7 @@
   ::
   =/  big=custody-log:sa  (reap 1.025 [c1-id 101 ~])
   =/  sat  ^-(self-attestation:sa [who carried-pass big])
-  =/  res  (run-checks:sal sat start-tx (reap 1.025 c1-tx) `%.y ~ no-points)
+  =/  res  (run-checks:sal sat start-tx (reap 1.025 c1-tx) `%.y ~ no-points ~)
   ;:  weld
     (expect !>(!ok.verdict.res))
     (expect !>(!(got-check verdict.res 'chain-bounded')))
@@ -456,7 +464,7 @@
 ::
 ++  test-run-empty-chain
   =/  sat  ^-(self-attestation:sa [who carried-pass ~])
-  =/  res  (run-checks:sal sat start-tx ~ `%.y ~ no-points)
+  =/  res  (run-checks:sal sat start-tx ~ `%.y ~ no-points ~)
   ;:  weld
     (expect !>(!ok.verdict.res))
     (expect !>(!(got-check verdict.res 'chain-nonempty')))
@@ -481,7 +489,7 @@
   =/  old-pass
     pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam old-chain))
   =/  old-point=point:urb
-    [[[c0-id 0 0] ~] 0 1 old-pass [%.n who] ~ ~]
+    [[[c0-id 0 0] ~] [0 1 old-pass [%.n who] ~ ~] ~]
   =/  res  (run good-sat ~[c0-tx c1-tx] `[old-point [c0-id 0 0]])
   (expect !>(ok.verdict.res))
 ::
@@ -538,7 +546,7 @@
   ==
 ::
 ::  ---------------------------------------------------------------------
-::  BUG 1: an older copy of OUR OWN log is a lag, and one is forgiven
+::  BUG 1: an older copy of OUR OWN log is a lag, and a lag is never fraud
 ::  ---------------------------------------------------------------------
 ::
 ::  OPERATIONS.md section 6: a refreshed pass is not written back to the
@@ -548,10 +556,13 @@
 ::  three stale-class checks in the verdict said "old copy" and
 ::  tracked-prefix overruled all three with fraud.
 ::
-::  The rule: behind by exactly ONE entry is forgiven, behind by more is
-::  not.  The unit is a custody-log entry -- one spend of the identity sat
-::  -- because that is the one thing our own ingestion path advances by
-::  exactly one (+extend-log, one %anew round-trip, one packet in flight).
+::  The rule: ANY lag is staleness (team decision, 2026-08-10).  An
+::  attestation packet is a bearer token, so a third party who kept an old
+::  one can re-send it; a replay is always a PREFIX and never a fork, so
+::  %behind is exactly the relation an attacker can manufacture.  Classing
+::  a deep lag as fraud therefore handed any observer a way to get an
+::  honest comet permanently snubbed.  The depth is still reported
+::  (tracked-lag) -- it is just not a condemnation.
 ::
 ++  test-run-tracked-one-behind-is-stale-not-fraud
   =/  tracked  (anchor-at pass3 [c2-id 0 0] 1)
@@ -585,10 +596,10 @@
   ::  with the anchor, and its tip proven spent
   ::
   =/  both
-    (run-checks:sal good-sat start-tx ~[c0-tx c1-tx] `%.n tracked no-points)
+    (run-checks:sal good-sat start-tx ~[c0-tx c1-tx] `%.n tracked no-points ~)
   ::  and with the anchor gone -- the state the demotion leaves us in
   ::
-  =/  bare  (run-checks:sal good-sat start-tx ~[c0-tx c1-tx] `%.n ~ no-points)
+  =/  bare  (run-checks:sal good-sat start-tx ~[c0-tx c1-tx] `%.n ~ no-points ~)
   ;:  weld
     (expect !>(!ok.verdict.both))
     (expect !>(!(got-check verdict.both 'tip-unspent')))
@@ -602,23 +613,82 @@
     (expect-eq !>(%stale) !>((classify:sal verdict.bare)))
   ==
 ::
-++  test-run-tracked-two-behind-is-fraud
-  ::  the other side of the boundary.  Two missing entries is not a lag
-  ::  anybody's normal operation produces, and an unbounded rewind would
-  ::  let a peer re-present any historical state it liked -- an old key,
-  ::  an old sponsor -- and have it read as merely out of date.
+++  test-run-tracked-two-behind-is-stale-not-fraud
+  ::  what used to be the other side of a boundary.  Two missing entries
+  ::  was fraud until 2026-08-10; it is staleness now, for the same reason
+  ::  one entry always was, and the depth is reported rather than judged.
   ::
   =/  tracked  (anchor-at pass3 [c2-id 0 0] 1)
   =/  res  (run sat1 ~[c0-tx] tracked)
   ;:  weld
     (expect !>(!ok.verdict.res))
-    (expect !>(!(got-check verdict.res 'tracked-prefix')))
-    ::  it IS a lag, and the report says so -- it is just too big to
-    ::  forgive, which is tracked-prefix's answer and not this one's.
+    (expect !>((got-check verdict.res 'tracked-prefix')))
+    ::  it IS a lag, and the report still says so.
     (expect !>((has-check verdict.res 'tracked-lag')))
     (expect !>(!(got-check verdict.res 'tracked-lag')))
-    (expect-eq !>(%fraud) !>((classify:sal verdict.res)))
-    (expect !>(!(stale-verdict:sal verdict.res)))
+    (expect-eq !>(%stale) !>((classify:sal verdict.res)))
+    (expect !>((stale-verdict:sal verdict.res)))
+    (expect !>(?=(~ point.res)))
+  ==
+::  ---------------------------------------------------------------------
+::  A DEEP LAG IS STALE, AND A REPLAY IS THE REASON
+::  ---------------------------------------------------------------------
+::
+::  The regression this pins: `%behind =(1 by.rel)' in +anchor-ok made a
+::  log behind by more than one FRAUD, i.e. a permanent ames snub of the
+::  comet.  Ames has already proved the packet's pass hashes to the
+::  claimed @p and that its signature is good, so nobody can forge one --
+::  but anybody who saw one can RE-SEND it, and a replay of a comet's own
+::  earlier log is a strict prefix, never a fork.  So %behind is precisely
+::  the relation an attacker can reach, at any depth, and reading depth as
+::  guilt let a third party sever two honest ships permanently.
+::
+::  Behind by FIVE: well past the old one-entry tolerance, from a peer we
+::  really do track, and it must come out %stale -- which demotes to a
+::  fresh %alien and lets the replacement packet through.
+::
+++  test-run-tracked-five-behind-is-stale-not-fraud
+  ::  the anchor's pass carries a SIX-entry log: entry 0 is the same spawn
+  ::  (so the two logs are comparable at all), then five plain custody
+  ::  moves.  Only the incoming log's transactions are fetched, so the
+  ::  extra hops need no chain fixtures -- +compare-log reads hop identity
+  ::  out of the anchor's pass and nothing else.
+  ::
+  =/  deep=custody-log:sa
+    :~  [c0-id 100 `open0]
+        [c1-id 101 ~]
+        [c2-id 102 ~]
+        [0xa1a1.a1a1 103 ~]
+        [0xb2b2.b2b2 104 ~]
+        [0xc3c3.c3c3 105 ~]
+    ==
+  =/  deep-pass
+    pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam deep))
+  =/  tracked  (anchor-at deep-pass [0xc3c3.c3c3 0 0] 1)
+  ::  sat1 is the one-entry log: behind by five.
+  ::
+  =/  res  (run sat1 ~[c0-tx] tracked)
+  ;:  weld
+    ::  the relation really is a five-deep lag, and not a fork
+    %+  expect-eq
+      !>  `log-relation:sal`[%behind 5]
+      !>  (compare-log:sal deep chain1)
+    ::  ... which +anchor-ok forgives on its own
+    (expect !>((anchor-ok:sal [%behind 5] ~ [c0-id 0 0])))
+    ::  the verdict is negative -- a shorter log ends before the tracked
+    ::  tip, so `tracked-tip' cannot pass and no point is installed ...
+    (expect !>(!ok.verdict.res))
+    (expect !>(!(got-check verdict.res 'tracked-tip')))
+    (expect !>(?=(~ point.res)))
+    ::  ... but the fraud-class check passes, so it is not a snub
+    (expect !>((got-check verdict.res 'tracked-prefix')))
+    ::  the lag is reported, at its real depth, in the stale class
+    (expect !>((has-check verdict.res 'tracked-lag')))
+    (expect !>(!(got-check verdict.res 'tracked-lag')))
+    (expect-eq !>(%stale) !>((check-class:sal 'tracked-lag')))
+    ::  THE property: stale, never fraud.
+    (expect-eq !>(%stale) !>((classify:sal verdict.res)))
+    (expect !>((stale-verdict:sal verdict.res)))
   ==
 ::
 ++  test-run-tracked-zero-behind-is-valid
@@ -725,20 +795,24 @@
     (expect-eq !>(`log-relation:sal`[%fork 0]) !>((compare-log:sal ~[e0 e1] ~[e0n e1])))
   ==
 ::
-++  test-anchor-ok-forgives-exactly-one-entry
+++  test-anchor-ok-forgives-every-lag-and-no-fork
   =/  tip  ^-(sont:ord [c1-id 0 0])
   =/  hit  `(unit sont:ord)``tip
   =/  mis  `(unit sont:ord)``[0xdead.beef 0 0]
   ;:  weld
-    ::  THE RULE, stated once: one is forgiven, two is not.
+    ::  THE RULE, stated once: a lag is forgiven at ANY depth, because a
+    ::  lag is what a replayed packet looks like and a replay says nothing
+    ::  about the comet.
     (expect !>((anchor-ok:sal [%behind 1] hit tip)))
-    (expect !>(!(anchor-ok:sal [%behind 2] hit tip)))
-    (expect !>(!(anchor-ok:sal [%behind 3] hit tip)))
-    (expect !>(!(anchor-ok:sal [%behind 99] hit tip)))
+    (expect !>((anchor-ok:sal [%behind 2] hit tip)))
+    (expect !>((anchor-ok:sal [%behind 3] hit tip)))
+    (expect !>((anchor-ok:sal [%behind 99] hit tip)))
     ::  a forgiven lag does not consult the boundary at all -- it cannot,
     ::  because the packet never reaches the position we anchored at.
     (expect !>((anchor-ok:sal [%behind 1] ~ tip)))
     (expect !>((anchor-ok:sal [%behind 1] mis tip)))
+    (expect !>((anchor-ok:sal [%behind 99] ~ tip)))
+    (expect !>((anchor-ok:sal [%behind 99] mis tip)))
     ::  a fork is never forgiven, at any position, boundary or no.
     (expect !>(!(anchor-ok:sal [%fork 0] hit tip)))
     (expect !>(!(anchor-ok:sal [%fork 1] hit tip)))
@@ -756,7 +830,7 @@
   ::  the new snapshot life may not regress below the tracked point's
   ::
   =/  anchored=point:urb
-    [[[c0-id 0 0] ~] 0 5 carried-pass [%.n who] ~ ~]
+    [[[c0-id 0 0] ~] [0 5 carried-pass [%.n who] ~ ~] ~]
   =/  res  (run good-sat ~[c0-tx c1-tx] `[anchored [c0-id 0 0]])
   ;:  weld
     (expect !>(!ok.verdict.res))
@@ -778,7 +852,7 @@
 ::  the same fixtures.
 ::
 ++  test-stale-verdict-spent-tip-is-not-fraud
-  =/  spent  (run-checks:sal good-sat start-tx ~[c0-tx c1-tx] `%.n ~ no-points)
+  =/  spent  (run-checks:sal good-sat start-tx ~[c0-tx c1-tx] `%.n ~ no-points ~)
   ;:  weld
     (expect !>(!ok.verdict.spent))
     (expect !>(!(got-check verdict.spent 'tip-unspent')))
@@ -798,7 +872,7 @@
   ::  failing.  Collapsing the two was how "we could not look" became "we
   ::  looked and it is gone".
   ::
-  =/  unk  (run-checks:sal good-sat start-tx ~[c0-tx c1-tx] ~ ~ no-points)
+  =/  unk  (run-checks:sal good-sat start-tx ~[c0-tx c1-tx] ~ ~ no-points ~)
   ;:  weld
     (expect !>(!ok.verdict.unk))
     (expect !>(!(got-check verdict.unk 'tip-scanned')))
@@ -829,9 +903,9 @@
     pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam sp-chain))
   =/  sat  ^-(self-attestation:sa [who sp-pass sp-chain])
   ::  the sponsor is invisible to us, and everything else is perfect
-  =/  res  (run-checks:sal sat start-tx ~[sp-c0 c1-tx] `%.y ~ no-points)
+  =/  res  (run-checks:sal sat start-tx ~[sp-c0 c1-tx] `%.y ~ no-points ~)
   ::  ... and unknowable-AND-stale is still merely unknowable
-  =/  both  (run-checks:sal sat start-tx ~[sp-c0 c1-tx] `%.n ~ no-points)
+  =/  both  (run-checks:sal sat start-tx ~[sp-c0 c1-tx] `%.n ~ no-points ~)
   ;:  weld
     (expect !>(!ok.verdict.res))
     (expect !>(!(got-check verdict.res 'sponsor-known')))
@@ -853,7 +927,7 @@
   =/  sp-pass
     pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam sp-chain))
   =/  sat  ^-(self-attestation:sa [who sp-pass sp-chain])
-  =/  res  (run-checks:sal sat start-tx ~[c0-tx c1-tx] `%.y ~ no-points)
+  =/  res  (run-checks:sal sat start-tx ~[c0-tx c1-tx] `%.y ~ no-points ~)
   ;:  weld
     (expect !>(!ok.verdict.res))
     (expect !>(!(got-check verdict.res 'entry-0-commitment')))
@@ -892,7 +966,7 @@
   =/  broken  (mk-tx c1-id ~[(mk-input c0-id 1 keypath-wit)] ~[tip-out])
   =/  broken-hop  (run good-sat ~[c0-tx broken] ~)
   ::
-  =/  empty  (run-checks:sal [who carried-pass ~] start-tx ~ `%.y ~ no-points)
+  =/  empty  (run-checks:sal [who carried-pass ~] start-tx ~ `%.y ~ no-points ~)
   ::  and a PASSING verdict is never stale
   ::
   =/  good  (run good-sat ~[c0-tx c1-tx] ~)
@@ -913,7 +987,7 @@
   =/  bad-pass
     pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam bad-chain))
   =/  res
-    (run-checks:sal [who bad-pass bad-chain] start-tx ~[c0-tx c1-tx] `%.n ~ no-points)
+    (run-checks:sal [who bad-pass bad-chain] start-tx ~[c0-tx c1-tx] `%.n ~ no-points ~)
   ;:  weld
     (expect !>(!ok.verdict.res))
     (expect !>(!(got-check verdict.res 'tip-unspent')))
@@ -935,12 +1009,12 @@
   ::  we hold a HIGHER life than the packet proves -- an old copy.
   ::
   =/  higher-life=point:urb
-    [[[c0-id 0 0] ~] 0 5 old-pass [%.n who] ~ ~]
+    [[[c0-id 0 0] ~] [0 5 old-pass [%.n who] ~ ~] ~]
   =/  older  (run good-sat ~[c0-tx c1-tx] `[higher-life [c0-id 0 0]])
   ::  our tracker has the sat somewhere this log never reaches.
   ::
   =/  ahead=point:urb
-    [[[0xfeed 0 0] ~] 0 1 old-pass [%.n who] ~ ~]
+    [[[0xfeed 0 0] ~] [0 1 old-pass [%.n who] ~ ~] ~]
   =/  moved  (run good-sat ~[c0-tx c1-tx] `[ahead [c0-id 0 0]])
   ::  but a log that DIVERGES from the one we verified is a fork, not an
   ::  old copy -- that stays fraud.  (Pinned with a different transaction

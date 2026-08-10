@@ -461,11 +461,27 @@ now a closed union, `$log-relation` (`%same` / `%extends by=n` / `%behind by=n`
 / `%fork at=i`), judged in `+anchor-ok`:
 
 - a **fork at any position** is fraud, regardless of length;
-- **behind by exactly one** custody entry is **forgiven** — we may simply be the
-  one who is out of date, and a one-entry gap is exactly the gap our own
-  ingestion path opens. The verdict comes out `%stale`, which demotes to a fresh
-  `%alien` and lets the replacement packet through;
-- **behind by two or more** is fraud.
+- **behind by any number of entries is forgiven** (team decision, 2026-08-10;
+  it was "behind by exactly one" until then). The verdict comes out `%stale`,
+  which demotes to a fresh `%alien` and lets the replacement packet through.
+
+**Why a deep lag stopped being fraud.** An attestation packet is a bearer
+token: ames has already verified that the pass hashes to the claimed `@p` and
+that the signature is good, so a third party cannot *fabricate* one — but it
+can *replay* a genuine old one. A replay of a comet's own earlier log is always
+a **prefix**, never a fork, so `%behind` is precisely the class an attacker can
+reach, at any depth. Reading the depth as guilt therefore handed any observer a
+way to get an honest comet **permanently snubbed** by re-sending one stale
+packet. A lag proves somebody kept an old packet; it does not say the comet did
+anything, and from the verifier the two are indistinguishable. `%fork` stays
+fraud because it requires the comet to have *signed* two conflicting histories,
+which is attributable and not replayable.
+
+This is an **interim** fix. It downgrades a permanent severance to recoverable
+churn; it does not close the replay itself, which is future work. `tracked-lag`
+still fires on every `%behind`, so the lag and its depth stay in the report —
+what changed is that neither is a condemnation, and `tracked-tip` still fails
+on every shorter log, so the verdict stays negative either way.
 
 `.by` / `.at` are counted in custody-log **entries**, not lives and not blocks.
 The comparison keys on hop *identity* (`+hop-id` / `+spawn-id`, which strip
@@ -947,13 +963,19 @@ through the light client, which does its own reorg handling (and re-checks tip
 liveness at apply time, §8); its answers do not come from this index at all.
 Only the public index is frozen.
 
-**Why a halt and not a repair.** The index cannot be rewound, because a
-`$point` records no provenance: not the height, not the block it was indexed
-out of. There is therefore no way to tell which entries of `.unv-ids` came from
-the losing chain, and rewinding the cursor to rescan would replay the winning
-chain *on top of* a corrupted index rather than instead of it — a second bug,
-not a fix. A halted index is a liveness failure that announces itself; a
-silently forked one is a correctness failure that does not.
+**Why a halt and not a repair.** The index cannot be rewound, because there is
+no way to tell which entries of `.unv-ids` came from the losing chain, and
+rewinding the cursor to rescan would replay the winning chain *on top of* a
+corrupted index rather than instead of it — a second bug, not a fix. A halted
+index is a liveness failure that announces itself; a silently forked one is a
+correctness failure that does not.
+
+**Half of that reason is now gone.** A `$point` records provenance as of
+2026-08-10 (§11b, below): `seen`, the block it was most recently observed in.
+What is still missing is the *orphaned set* — `%reorg-rollback` carries
+`[block-height block-hash]` of the **new best** block (`sur/light-client.hoon`),
+not the blocks that were orphaned — so there is still nothing to filter
+against, and the halt is still the honest answer.
 
 `%gw-reorg-resume` (`app/gw-btc.hoon:530-569`, `our`-only) therefore does not
 claim to repair anything. It exists so an operator chooses deliberately and on
@@ -970,26 +992,45 @@ the record, rather than having the agent guess:
 Neither is a repair. The only true repair is to rebootstrap the public index,
 which needs a nuke — `%urb-start-indexing` is one-shot by design.
 
-### 11b. The agreed replacement (team decision 2026-08-10) — NOT IMPLEMENTED
+### 11b. The agreed replacement (team decision 2026-08-10) — PARTLY IMPLEMENTED
 
-Recorded here as the accepted design. None of it is in the code; §11a is what
-runs.
+Everything that does not need the orphaned-block list has landed. §11a still
+runs, because the list is what is missing.
 
-- **`$point` gains a block hash** in our userspace point type, **refreshed on
-  every observation** — attestation, rotation and so on — rather than fixed at
-  index time. That is a refinement on the original proposal: the hash tracks
-  the most recent evidence for a point rather than its origin.
-- **Robin supplies the list of orphaned blocks** on a reorg, so the index can
-  be *filtered* against those hashes instead of being nuked or frozen.
-- **An orphaned point is forgotten, not snubbed.** The peer drops to `%alien`
-  and is asked to re-attest via `%sybl`; it still knows where to find us. This
-  is the same shape as `%stale` (§3) and right for the same reason: **a reorg
-  is not fraud**, and a snub is permanent on every transport (`b0a8e962ff`), so
-  spending one on a chain event would be unrecoverable without an operator.
-- **Migration.** Every point already in `unv-ids` carries no hash, so on the
-  first reorg after the upgrade they cannot be filtered. "Forget and go
-  `%alien`" is a safe default for them — conservative, and the peer re-attests
-  — so this may need no special handling at all; that should be confirmed as
-  the intent rather than discovered.
+- **`$point` gains a block hash.** LANDED: `seen=(unit hax:block:bitcoin)` in
+  `sur/urb.hoon`, **refreshed on every observation** rather than fixed at index
+  time — a verified attestation stamps the block its tip transaction was
+  confirmed in (`+run-checks` takes it from `+fetch-tx-at`, which is the layer
+  that resolves it); a custody move the scanner walks stamps the block under
+  scan (`+update-comet:urb-core`). The hash therefore tracks the most recent
+  evidence for a point rather than its origin, which is the quantity a reorg
+  takes away. `~` means *no provenance recorded* and is a real answer, not a
+  placeholder.
+- **Robin supplies the list of orphaned blocks.** NOT LANDED, and it is the
+  only thing missing. `$best-block`'s `%reorg-rollback` carries the new best
+  block, so there is nothing to filter against.
+- **An orphaned point is forgotten, not snubbed.** The selector is
+  `+orphaned-points:urb-core` (which points does the orphan set take?) and the
+  action is `+forget-points` / `+forget-cards` in `%gw-btc`. Both are LANDED,
+  and the action arms are the ones the existing `%stale` path already uses, so
+  the two roads out of "we no longer know this identity" are one road. Nothing
+  calls the selector yet. When the list arrives, the `%reorg-rollback` branch
+  of `+on-agent` becomes: select, forget, rewind the cursor, emit the
+  `%stale-notice`s — no halt, no snub. **A reorg is not fraud**, and a snub is
+  permanent on every transport (`b0a8e962ff`).
+- **Migration.** LANDED as `$gw-state-13` (the current fields around a
+  two-field point); every lifted point gets `seen=~`. `+orphaned-points`
+  selects a hashless point on *any* reorg, which is the agreed conservative
+  default, and it is **self-limiting rather than recurring**: a re-observed
+  point acquires a hash, so the hashless population only ever shrinks and a
+  given point is forgotten this way at most once. **One caveat, unresolved:**
+  `unv-ids` holds PUBLIC points as well as confidential ones, and "the peer
+  re-attests" is only true of the confidential ones. A forgotten public point
+  is re-derived only by rescanning the range it was indexed from, which
+  rewinding to the rollback height does not necessarily cover — so for public
+  points this default is a silent index loss rather than recoverable churn.
+  Decide that before wiring the selector up.
 - **Future work:** two peers both reorged and unable to find each other. It
-  may already be covered by public sponsor fallback.
+  may already be covered by public sponsor fallback. And the replay problem
+  behind §3's `%behind` rule, which this section's "not fraud" reasoning
+  shares.

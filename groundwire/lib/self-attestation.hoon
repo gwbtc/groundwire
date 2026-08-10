@@ -882,23 +882,38 @@
 ::
 ::    The tracked-prefix judgement, and the one place a lag is forgiven.
 ::
-::    A peer serving an out-of-date copy of ITS OWN log is judged by HOW
-::    FAR BEHIND it is:
+::    A peer serving an out-of-date copy of ITS OWN log is FORGIVEN, at
+::    any depth.  ANY LAG IS STALENESS AND NEVER FRAUD (team decision,
+::    2026-08-10), and the reason is that a lag is the one thing an
+::    attacker can manufacture:
 ::
-::      behind by exactly one entry -> FORGIVEN.  We may simply be the one
-::      who is out of date, and a one-entry gap is indistinguishable from
-::      our own scanner lag: it is exactly the gap our own ingestion path
-::      opens (one +extend-log, one %anew round-trip, one packet in
-::      flight).  It is also reachable with no attacker at all --
-::      OPERATIONS.md section 6 records that a refreshed pass is not
-::      written back to the boot keyfile, so a comet that rekeys and then
-::      reboots serves precisely this log, forever.
+::      An attestation packet is a BEARER TOKEN.  Ames has already checked
+::      that the pass hashes to the claimed @p and that the packet's
+::      signature is good, so a third party cannot FABRICATE one -- but it
+::      can REPLAY a genuine old one it saw.  A replay of a comet's own
+::      earlier log is a strict PREFIX of the current one, never a
+::      divergence, so %behind is the only relation a replay can reach.
 ::
-::      behind by more than one -> FRAUD.  Two or more missing entries is
-::      no longer a lag anybody's normal operation produces, and forgiving
-::      an unbounded rewind would let a peer re-present any historical
-::      state it liked -- an old key, an old sponsor -- and have it read
-::      as merely out of date.
+::      Classing "behind by two or more" as fraud therefore handed any
+::      observer a way to get an honest comet PERMANENTLY SNUBBED -- a
+::      snub is sticky on every transport (b0a8e962ff) -- by holding one
+::      stale packet and re-sending it.  The depth of the lag is no help:
+::      it proves somebody kept an old packet, not that the comet did
+::      anything, and we cannot tell those two apart from here.
+::
+::      Honest operation reaches it too.  OPERATIONS.md section 6 records
+::      that a refreshed pass is not written back to the boot keyfile, so
+::      a comet that rekeys twice and then reboots serves a log behind by
+::      two, forever, with no attacker anywhere.
+::
+::    This is an INTERIM fix.  It downgrades a permanent severance to
+::    recoverable churn; it does not stop the replay itself, which is
+::    future work (the packet carries nothing that binds it to now).
+::
+::    %fork stays fraud, and the asymmetry is the whole point: a fork
+::    requires the comet to have SIGNED two conflicting histories of its
+::    own identity.  That is attributable to the comet and cannot be
+::    produced by replaying anything it ever sent.
 ::
 ::    Forgiving cannot fail open, and the reason is structural rather
 ::    than a matter of trust: a strictly shorter log ends at a satpoint
@@ -924,7 +939,9 @@
 ::    Nothing here needed inventing: `tip-unspent', `tracked-tip' and
 ::    `life-monotonic' already said "old copy" in the same verdict, in the
 ::    stale class, and were overruled by this one check saying fraud.  The
-::    fix is to stop overruling them.
+::    fix is to stop overruling them.  `tracked-lag' still fires on EVERY
+::    %behind, so the lag and its depth remain in the report -- what
+::    changed is only that neither is a condemnation.
 ::
 ::    One more property, and it is the one that makes forgiveness safe
 ::    even AFTER the demotion drops our anchor.  A shorter log is shorter
@@ -944,9 +961,11 @@
     ::  this comet's.  Never a lag, whatever its length.
     ::
       %fork     %.n
-    ::  an older copy of our own log.  One entry is forgiven, more is not.
+    ::  an older copy of our own log, at ANY depth.  A lag is the one
+    ::  relation a replay can reach, so it can never be evidence about
+    ::  the comet.  .by is still reported, by `tracked-lag'.
     ::
-      %behind   =(1 by.rel)
+      %behind   %.y
     ::  they are at or past where we left them, so the anchor must still
     ::  be reachable: re-deriving the satpoint at the boundary -- the
     ::  position our own log ended at -- must land on the tip we recorded.
@@ -1036,6 +1055,14 @@
 ::  check that silently degrades when an input is empty or degenerate is
 ::  the bug class this file exists to prevent: it produces a verdict, and
 ::  a negative verdict is a snub.
+::
+::  `tip-hash` is the ONLY argument here that is not evidence and is not
+::  checked: it is the hash of the block the LAST fetched transaction was
+::  confirmed in, which the fetch layer resolved and verified on the way
+::  (+fetch-tx-at:lc-attestation), and it becomes .seen on the point this
+::  arm builds -- the provenance a chain reorganisation is filtered
+::  against.  ~ builds a point with no provenance, which is legal and
+::  means exactly that.
 ++  run-checks
   |=  $:  sat=self-attestation:sa
           start=tx:bc
@@ -1043,6 +1070,7 @@
           tip-unspent=(unit ?)
           tracked=(unit anchor:sa)
           known-public=(set ship)
+          tip-hash=(unit hax:block:bitcoin)
       ==
   ^-  result:sa
   =*  who  who.sat
@@ -1186,17 +1214,21 @@
       ?.  &(ok ?=(^ latest))  ~
       =*  snap  snap.u.latest
       :-  ~
-      :*  own=[current ~]
-          rift=rift.snap
-          life=life.snap
-          pass=pass.sat
-          ^=  sponsor
-          ?~  sponsor.snap
-            [%.n who]
-          [%.y u.sponsor.snap]
-          escape=~
-          fief=fief.snap
-      ==
+      ^-  point:urb
+      :+  [current ~]
+        :*  rift.snap
+            life.snap
+            pass.sat
+            ?~  sponsor.snap
+              [%.n who]
+            [%.y u.sponsor.snap]
+            ~
+            fief.snap
+        ==
+      ::  provenance: the block the tip transaction was confirmed in, which
+      ::  is the most recent evidence this whole walk rests on.
+      ::
+      tip-hash
     :+  [who ok checks]
       point
     ?.  ok  0
