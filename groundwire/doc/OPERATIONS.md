@@ -759,11 +759,20 @@ record of anything.
 ### 5.9 Supervisor
 
 *`ops/gwsup.sh` is the campaign supervisor, for droplets laid out under
-`/opt/gw`. `causeway/public/boot.sh` writes its own `gwsup.sh` into the
-install directory for user-space installs: same algorithm and same three
-triggers, but portable to macOS and free of the `/opt/gw` layout and the
-`gwharness` Python dependency, neither of which exists in a release
-artifact. **Two implementations of one algorithm — change both.***
+`/opt/gw`. User-space installs get their own: `gwsup.sh` and its helper
+library `gwlib.sh` ship in `groundwire-<platform>.tar.gz` (source:
+`gwbtc/urbit` `automation/installer/`), and `causeway/public/boot.sh`
+installs and starts them. Same algorithm and same three triggers, but
+portable to macOS and free of the `/opt/gw` layout and the `gwharness`
+Python dependency, neither of which exists in a release artifact.
+**Two implementations of one algorithm — change both.***
+
+*Until `gwbtc/urbit` #67 the installer carried both files inline, as
+heredocs it wrote to disk — 463 of `boot.sh`'s 1,521 lines, because a
+`curl … | bash` script has no file for the supervisor to re-exec. They are
+in the tarball now, under the release `SHA256SUMS`, and `boot.sh` refuses a
+release that lacks them rather than half-installing a ship with no
+supervisor.*
 
 Both vere and the sidecar die under load. Over one ~5h40m three-droplet
 session: 1 vere SIGSEGV (`loom: external fault`), 24 sidecar SIGSEGVs. Run
@@ -1278,11 +1287,15 @@ still cannot do, and why:
   spawn confirming and the boot, and the installer has no way to tell an
   xtr-baked feed from a raw one — the difference is invisible until a peer
   fails to verify you (§6). It says so in `--help` and stops there.
-- **It cannot verify what it downloads.** There is no `SHA256SUMS` and no
-  signature in the releases; the only authentication is GitHub's TLS. It
-  prints the digest it got and accepts one you supply out of band
-  (`--sha256`), and it will use a `SHA256SUMS` automatically if one ever
-  appears. Publishing one is the fix, and it is not in this repo.
+- **It cannot prove the release is the one CI built.** From `gwbtc/urbit`
+  #67 the release publishes a `SHA256SUMS`, and the installer fetches it,
+  matches the line for its own platform exactly, and deletes the download on
+  a mismatch — so a corrupted or truncated fetch is now caught, and there is
+  one digest to pin or to compare against a mirror. That is the whole of it:
+  the digests come down the same TLS connection as the tarball and nothing
+  is signed, so none of it survives a compromised GitHub. `--sha256 <hex>`
+  pins a digest you got from somewhere you trust more. **Signing the
+  release is the remaining gap** and is not done.
 - **It cannot install the `%node` and `%tcp-sidecar` desks from source.**
   Both come from the pill; before #67 there is nothing for it to install and
   it says so rather than pretending (§3.3).

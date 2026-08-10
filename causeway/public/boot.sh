@@ -10,7 +10,8 @@
 # This script takes it from there and does the whole bring-up:
 #
 #   1. detect the platform and refuse the ones CI does not build
-#   2. fetch and unpack the release tarball from gwbtc/urbit
+#   2. fetch the release tarball from gwbtc/urbit, check it against the
+#      release's SHA256SUMS, and unpack it
 #   3. boot the ship from the pill, with -w and -G given TOGETHER, and
 #      prove afterwards that the @p that came up is the @p you asked for
 #   4. start the tcp-sidecar -- the light client's only Bitcoin transport
@@ -28,11 +29,15 @@
 # its install directory, and never overwrites an existing pier. Where it is
 # not sure what you meant, it stops and says so rather than guessing.
 #
-# WHAT IS NOT VERIFIED: gwbtc/urbit publishes no SHA256SUMS and no signatures
-# with its releases. The only authentication on the download is GitHub's TLS.
-# This script prints the SHA-256 of what it fetched and can enforce one you
-# supply out of band (--sha256), but on its own it cannot tell you that the
-# tarball is the one CI built. That gap is real; see the report in --help.
+# WHAT IS AND IS NOT VERIFIED: from gwbtc/urbit#67 the release publishes a
+# SHA256SUMS, and this script fetches it and checks the tarball against it
+# before unpacking anything, deleting the download on a mismatch. That catches
+# a corrupted or truncated fetch and gives you one digest to compare against a
+# mirror. It is NOT a defence against a compromised GitHub: those digests
+# arrive over the same TLS connection as the tarball, and nothing in the
+# release is signed. Pass --sha256 <hex> to pin a digest you got from
+# somewhere you trust more. Releases older than #67 publish no SHA256SUMS and
+# this script says so rather than pretending otherwise.
 #
 # WHAT HAS ACTUALLY BEEN RUN, as of 2026-08-07, on macos-aarch64 against
 # release groundwire-daily-2026.8.7 and a locally mined throwaway comet:
@@ -57,10 +62,18 @@
 # unix-socket path over the 104-byte macOS limit (the ship looked hung when
 # it was idle and up), and a @p regex that stopped at a comet's double
 # hyphen, which would have made the identity check reject every comet.
+#
+# CHANGED SINCE, AND NOT RE-RUN AGAINST A LIVE SHIP: gwlib.sh and gwsup.sh
+# moved out of this file into the release tarball (same bytes, different
+# delivery), and the SHA256SUMS path in +verify_release went from dead
+# future-proofing to a check that runs -- including a fix for a case that
+# would have deleted a perfectly good download on any machine with no
+# sha256sum, shasum or openssl on it. Both were exercised against a tarball
+# built by hand; neither has been through a real install.
 
 set -euo pipefail
 
-BOOT_SH_VERSION="2026.8.7"
+BOOT_SH_VERSION="2026.8.10"
 REPO="${GROUNDWIRE_REPO:-gwbtc/urbit}"
 
 # How to tell the user to invoke us again. Under `curl | bash` there is no
@@ -123,9 +136,9 @@ OPTIONS
                      fief: the fief names an exact IP:port and the ship has
                      to actually be reachable there.
   --version <tag>    pin a release tag (default: the latest release)
-  --sha256 <hex>     require the tarball to have this SHA-256. Use it if you
-                     got the digest from somewhere you trust; there is no
-                     SHA256SUMS in the releases to check against.
+  --sha256 <hex>     require the tarball to have this SHA-256. The release's
+                     own SHA256SUMS is fetched and checked without this; pass
+                     it to pin a digest you got somewhere you trust more.
   --loom <n>         vere loom exponent (default 32 = 4 GB address space)
   --proof <file>     a comet.proof.json from Desktop Causeway. Saved next to
                      the pier. The runtime does not consume it yet.
@@ -408,7 +421,7 @@ fetch_release() {
 }
 
 verify_release() {
-  local got sums url
+  local got sums url want
   got="$(sha256_of "$TARBALL")"
   if [ -z "$got" ]; then
     warn "no sha256sum/shasum/openssl on this machine: cannot even hash the download"
@@ -424,23 +437,43 @@ verify_release() {
     fi
     good "sha256 matches the digest you supplied"
   else
-    # Future-proofing: if the release ever grows a SHA256SUMS, use it.
+    # Releases from gwbtc/urbit#67 onward publish a SHA256SUMS. Be clear about
+    # what checking it buys: the digests come down the same TLS connection as
+    # the tarball and nothing is signed, so this is no defence against a
+    # compromised GitHub. It does catch a corrupted or truncated download, and
+    # it gives you one line to compare against a copy somebody else mirrored.
     url="https://github.com/${REPO}/releases/download/${TAG}/SHA256SUMS"
-    if sums="$(curl -fsSL "$url" 2>/dev/null)" && [ -n "$sums" ]; then
-      local want
+    if sums="$(curl -fsSL --max-time 30 "$url" 2>/dev/null)" && [ -n "$sums" ]; then
+      # sha256sum's format is "<hex>  <name>", with a '*' before the name in
+      # binary mode. Match the name EXACTLY: a substring or regex match lets
+      # the line for one platform answer for another, which is a check that
+      # passes while verifying nothing.
       want="$(printf '%s\n' "$sums" | awk -v a="groundwire-${PLATFORM}.tar.gz" \
-              '$2 ~ a {print $1}' | head -1)"
-      if [ -n "$want" ] && [ "$want" = "$got" ]; then
+              '{n=$2; sub(/^\*/,"",n)} n==a {print $1; exit}')"
+      if [ -z "$want" ]; then
+        warn "this release's SHA256SUMS has no line for
+    groundwire-${PLATFORM}.tar.gz, so the download is not verified. That is a
+    fault in the release rather than on this machine; please report it."
+      elif [ -z "$got" ]; then
+        # Do not delete the tarball here. An empty $got means this machine has
+        # no sha256sum, shasum or openssl -- not that the download is bad.
+        warn "this release publishes a SHA256SUMS, but nothing on this machine
+    can compute a SHA-256, so the download has not been verified."
+      elif [ "$want" = "$got" ]; then
         good "sha256 matches the release's SHA256SUMS"
-      elif [ -n "$want" ]; then
+      else
         rm -f "$TARBALL"
-        die "sha256 does NOT match the release's SHA256SUMS. Download deleted."
+        die "sha256 does NOT match the release's SHA256SUMS.
+    expected  $want
+    got       $got
+    The download has been deleted. Try once more; if it happens again, do not
+    install this and say so at https://github.com/${REPO}/issues."
       fi
     else
       warn "this release publishes no SHA256SUMS and no signature, so the only
-    thing authenticating this download is GitHub's TLS certificate. The
-    tarball has not been verified against anything CI published. If you have
-    a digest from a source you trust, re-run with --sha256 <hex>."
+    thing authenticating this download is GitHub's TLS certificate. Releases
+    from gwbtc/urbit#67 onward do publish one. If you have a digest from a
+    source you trust, re-run with --sha256 <hex>."
     fi
   fi
 
@@ -489,6 +522,11 @@ install_release() {
   done
   mv -f "$stage/gw-base.pill" "$GW_DIR/pills/gw-base.pill"
   [ -f "$stage/requirements.txt" ] && mv -f "$stage/requirements.txt" "$GW_DIR/var/requirements.txt"
+  # The installer's own two scripts. Absent from releases older than
+  # gwbtc/urbit#67; install_helpers is where that is refused, so that the
+  # message can name the release rather than a missing file.
+  [ -f "$stage/gwlib.sh" ] && mv -f "$stage/gwlib.sh" "$GW_DIR/lib/gwlib.sh"
+  [ -f "$stage/gwsup.sh" ] && mv -f "$stage/gwsup.sh" "$GW_DIR/bin/gwsup.sh"
   rm -rf "$stage"
 
   [ -x "$VERE" ] || die "gw-vere did not install as executable"
@@ -507,515 +545,41 @@ install_release() {
 }
 
 # ============================================================ ship helpers ==
-# gwlib.sh is written to disk rather than kept in this script because the
-# supervisor needs exactly the same helpers, and this script may have been
-# piped in from curl -- there is no file for the supervisor to re-exec.
-# One implementation, two users, and both are auditable after the fact.
-write_helpers() {
-  mkdir -p "$GW_DIR/lib" "$GW_DIR/bin"
-  cat > "$GW_DIR/lib/gwlib.sh" <<'GWLIB'
-#!/usr/bin/env bash
-# gwlib.sh -- shared helpers for the Groundwire installer and its supervisor.
-# Written by causeway/public/boot.sh; edit that, not this.
+# gwlib.sh (the shared helpers) and gwsup.sh (the per-ship supervisor) ride in
+# the release tarball next to gw-vere and tcp-sidecar, and install_release put
+# them on disk a moment ago. Their source is gwbtc/urbit, automation/installer.
 #
-# Expects, from the caller: GW_DIR GW_NAME GW_PIER GW_VERE GW_LOG GW_SC_LOG
-#                           GW_SIDECAR GW_AMES_PORT GW_LOOM SOCK_TOOL DNS_TOOL
-
-gwl_have() { command -v "$1" >/dev/null 2>&1; }
-
-gwl_pick_sock_tool() {
-  if [ -n "${SOCK_TOOL:-}" ]; then return 0; fi
-  if gwl_have python3 && python3 -c 'print(1)' >/dev/null 2>&1; then SOCK_TOOL=python3
-  elif gwl_have nc && nc -h 2>&1 | grep -q 'W recvlimit'; then SOCK_TOOL=nc-W
-  elif gwl_have nc; then SOCK_TOOL=nc
-  elif gwl_have socat; then SOCK_TOOL=socat
-  else SOCK_TOOL=""; fi
-}
-
-# stdin: request bytes.  stdout: reply bytes.  $1: seconds to wait for the
-# FIRST byte of the reply.  A ship chewing through filter-header batches has
-# been measured taking 120-380 s to answer (OPERATIONS.md 5.7), so this has to
-# be generous; once bytes start arriving the reply completes immediately.
-# NB the connection is made from INSIDE the pier, by relative path. A unix
-# socket address is capped at 104 bytes on macOS (108 on Linux), and
-# <pier>/.urb/conn.sock with a 56-character comet name in it goes straight
-# through that ceiling for any pier more than a couple of directories deep:
-# python reports "AF_UNIX path too long", nc reports nothing at all, and the
-# ship looks hung when it is in fact up and idle. Measured on a real boot.
-# vere itself is unaffected -- it binds the socket from within the pier.
-gwl_sock() {
-  local first="${1:-60}" sock=".urb/conn.sock"
-  cd "$GW_PIER" 2>/dev/null || return 1
-  case "${SOCK_TOOL:-}" in
-    python3) python3 -c '
-import socket, sys
-sock, first = sys.argv[1], float(sys.argv[2])
-data = sys.stdin.buffer.read()
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.settimeout(first)
-try:
-    s.connect(sock)
-    s.sendall(data)
-    out = []
-    while True:
-        try:
-            b = s.recv(65536)
-        except socket.timeout:
-            break
-        if not b:
-            break
-        out.append(b)
-        s.settimeout(0.4)          # reply started; drain and go
-    sys.stdout.buffer.write(b"".join(out))
-except OSError as e:
-    print("gwlib: control socket: %s" % e, file=sys.stderr)
-finally:
-    s.close()
-' "$sock" "$first" ;;
-    nc-W)  nc -U -W 3 -w "$first" "$sock" ;;
-    nc)    nc -U -w 5 "$sock" ;;
-    socat) socat -T5 - "UNIX-CONNECT:$sock" ;;
-    *)     return 1 ;;
-  esac
-}
-
-# Wrap a strand body (on stdin) in the khan FYRD envelope.  The body and the
-# ''' delimiters must share an indentation column, so we indent both here.
-gwl_thread() {
-  printf '%s\n' \
-    ':*  0' \
-    '    %fyrd' \
-    '    %base' \
-    '    %khan-eval' \
-    '    %noun' \
-    '    %ted-eval' \
-    '    :_  :~  /sur/spider/hoon' \
-    '            /lib/strandio/hoon' \
-    '        ==' \
-    "    '''" \
-    '    =/  m  (strand ,vase)' \
-    '    ^-  form:m' \
-    '    ;<  our=@p   bind:m  get-our' \
-    '    ;<  now=@da  bind:m  get-time'
-  sed 's/^/    /'
-  printf '%s\n' "    '''" '=='
-}
-
-# Run a strand body (stdin) on the ship; print the decoded reply.
-# $1: seconds to wait for the first byte (default 60).
-# NB every pipeline in this file ends in `|| true`. gwlib.sh is sourced by a
-# script running `set -eo pipefail`, where one grep that matches nothing
-# would otherwise take the whole installer down -- and "no [%headers N] in
-# the log yet" is the normal state for the first minute of every sync.
-gwl_eval() {
-  # gwl_sock cd's into the pier; it is inside a pipeline, so that cd happens
-  # in a subshell and cannot leak into the caller.
-  gwl_thread | "$GW_VERE" eval -jn 2>/dev/null | gwl_sock "${1:-60}" \
-    | "$GW_VERE" eval -cn 2>/dev/null || true
-}
-
-# $1 agent  $2 mark  $3 vase expression  [$4 timeout]
-gwl_poke() {
-  printf ';<  ~  bind:m  (poke-our %%%s %%%s %s)\n(pure:m !>(%%ok))\n' "$1" "$2" "$3" \
-    | gwl_eval "${4:-60}"
-}
-
-gwl_our() {
-  # A comet @p has a DOUBLE hyphen in the middle: four syllable pairs, '--',
-  # four more. A '-'-only pattern matches the first half and stops, and the
-  # identity check then rejects every comet ever minted. Measured on a real
-  # boot: ~raclep-habfus-sogwer-tilrep for ~raclep-...-mipdeb.
-  printf '(pure:m !>((scot %%p our)))\n' | gwl_eval "${1:-120}" \
-    | grep -oE '~[a-z]{6}(-{1,2}[a-z]{6})+' | head -1 || true
-}
-
-# /x/ready, but ONLY if %gw-btc is actually running.  A `%gx` scry into an
-# agent gall is not running -- or into a path that agent's +on-peek does not
-# handle -- is not a soft miss.  It bails, and the bail takes %spider with it:
+# They used to be heredocs in this script -- 463 of its 1,521 lines, written
+# out and executed later -- because a script piped in from curl has no file
+# for the supervisor to re-exec. That reason was true and the price was worse:
+# a third of a curl-pipe-to-bash installer that you had to audit before you
+# could believe the other two thirds, on something that runs as you and
+# installs a daemon mediating all your Bitcoin traffic. What is left here is
+# about 250 lines of "does this fetch and exec the right thing", which you can
+# finish before pressing return. The two files are covered instead by the
+# release SHA256SUMS, which +verify_release checks above, and by being in git.
 #
-#   peek bad result
-#   "unexpected scry into %urb-watcher on path /x/ready"
-#   spider crashed, killing all strands: %arvo-response
-#
-# "all strands" includes kiln's OTA sync strands, one per desk carrying a
-# desk.ship, and each one logs its own death:
-#
-#   kiln: activation failed into %groundwire from ~watwyd-.../%groundwire; retrying sync
-#
-# That line is about the OTA sync, not about the desk, and the desk stays
-# live either way -- but it reads like an activation failure, and a --status
-# run against a release whose pill predates %gw-btc printed one per desk and
-# sent an afternoon chasing a bug that was not there.  Measured on a fresh
-# comet booted from groundwire-daily-2026.8.7.
-#
-# `mule` does not help: the bail is in gall's peek, not in our nock, so it is
-# not ours to catch.  The only safe guard is not to send the scry.  This is
-# the same hazard the +gwl_agent_installed comment below describes; that one
-# was written about %gu and the rule is general.
-gwl_ready() {
-  if ! gwl_agent_installed gw-btc; then return 0; fi
-  printf '%s\n' \
-    '=/  r  .^(* %gx /(scot %p our)/gw-btc/(scot %da now)/ready/noun)' \
-    '(pure:m !>(r))' | gwl_eval "${1:-120}"
-}
+# Both land with gwbtc/urbit#67. A release older than that ships neither, and
+# this refuses rather than half-installing a ship with no supervisor.
+install_helpers() {
+  local missing=""
+  [ -f "$GW_DIR/lib/gwlib.sh" ] || missing="gwlib.sh"
+  [ -f "$GW_DIR/bin/gwsup.sh" ] || missing="${missing:+$missing and }gwsup.sh"
+  if [ -n "$missing" ]; then
+    die "release $TAG ships no $missing.
 
-gwl_desks() {
-  printf '%s\n' \
-    ';<  dez=(set desk)  bind:m  (scry (set desk) %cd %$ /)' \
-    "(pure:m !>((crip (tape (join ' ' ~(tap in dez))))))" | gwl_eval "${1:-120}"
-}
+    That is the installer's helper library and its per-ship supervisor. They
+    were carried inside this script until gwbtc/urbit#67 and are in the
+    release tarball from #67 onward, so a release built before it cannot be
+    installed by this version of the script.
 
-# Has a gall agent been installed?  Read it out of the ship's log, not with a
-# scry.  `.^(? %gu ...)` is the dojo idiom for this and it does NOT survive
-# being run inside a khan thread: measured on a live ship it returns
-# [%thread-fail %cancelled] even for %dojo, which is definitely running.  A
-# scry a vane declines is worse than useless here -- it can bail the strand
-# and take every OTHER in-flight strand on the ship down with it, including a
-# running verification (see the warning in ops/gwctl.py cmd_pass).
-gwl_agent_installed() {
-  grep -q "gall: installing %$1\b" "$GW_LOG" 2>/dev/null
-}
-
-# -------------------------------------------------------------- processes --
-# Matched exactly, never by pgrep -f prefix: p4c1 prefix-matches p4c1b, and
-# killing the wrong pier is worse than killing none (OPERATIONS.md 5.9).
-gwl_king_pid() {
-  ps -eo pid=,args= 2>/dev/null | awk -v p="$GW_PIER" '
-    /gw-vere/ && !/--snap-dir/ { for (i=2;i<=NF;i++) if ($i==p) { print $1; break } }'
-}
-gwl_serf_pid() {
-  ps -eo pid=,args= 2>/dev/null | awk -v p="$GW_PIER" '
-    /snap-dir/ { for (i=1;i<=NF;i++) if ($i=="--snap-dir" && $(i+1)==p) print $1 }'
-}
-gwl_proc_cwd() {
-  if [ -r "/proc/$1/cwd" ]; then
-    readlink "/proc/$1/cwd" 2>/dev/null
-  elif gwl_have lsof; then
-    lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1
+    Use a newer release -- omit --version to take the latest, or pick one:
+      https://github.com/${REPO}/releases
+    Nothing has been booted and no pier has been touched."
   fi
-}
-# The sidecar has no port and no distinctive argv: its pier is its cwd.
-gwl_sidecar_pids() {
-  local pid
-  for pid in $(pgrep -f 'tcp-sidecar' 2>/dev/null || true); do
-    [ "$(gwl_proc_cwd "$pid")" = "$GW_PIER" ] && echo "$pid"
-  done
-  return 0
-}
-
-gwl_mtime() {
-  if stat -c %Y "$1" >/dev/null 2>&1; then stat -c %Y "$1"
-  else stat -f %m "$1" 2>/dev/null; fi
-}
-
-# Liveness is the newest mtime across <pier>/.urb/log/*/data.mdb.  The
-# .urb/log DIRECTORY is a dirent that LMDB never touches -- measured 21 h
-# stale on a ship demonstrably processing events (OPERATIONS.md 5.9).  Piers
-# roll epochs, so glob the epoch dirs rather than assuming 0i0.
-gwl_evt_age() {
-  local f newest="" t now
-  for f in "$GW_PIER"/.urb/log/*/data.mdb; do
-    [ -f "$f" ] || continue
-    t="$(gwl_mtime "$f")"
-    [ -n "$t" ] || continue
-    if [ -z "$newest" ] || [ "$t" -gt "$newest" ]; then newest="$t"; fi
-  done
-  if [ -z "$newest" ]; then echo 99999; return; fi
-  now="$(date +%s)"
-  echo $(( now - newest ))
-}
-
-gwl_start_sidecar() {
-  [ -x "${GW_SIDECAR:-}" ] || return 1
-  local cert=""
-  for cert in /etc/ssl/certs/ca-certificates.crt /etc/ssl/cert.pem \
-              /etc/pki/tls/certs/ca-bundle.crt ""; do
-    [ -n "$cert" ] && [ -f "$cert" ] && break
-  done
-  # main.c:618 sets SSL_VERIFY_PEER with the default verify paths; a host that
-  # keeps its roots somewhere unusual needs SSL_CERT_FILE pointing at them.
-  ( cd "$GW_PIER" || exit 1
-    if [ -n "$cert" ]; then export SSL_CERT_FILE="$cert"; fi
-    if gwl_have setsid; then
-      setsid nohup "$GW_SIDECAR" . >> "$GW_SC_LOG" 2>&1 </dev/null &
-    else
-      nohup "$GW_SIDECAR" . >> "$GW_SC_LOG" 2>&1 </dev/null &
-    fi ) >/dev/null 2>&1
-  sleep 3
-  [ -n "$(gwl_sidecar_pids)" ]
-}
-
-gwl_start_vere_restart() {
-  # The restart form: no -c, -w, -G or -B; the pier is the trailing argument.
-  rm -f "$GW_PIER/.vere.lock"
-  local args="-t --loom $GW_LOOM"
-  [ -n "${GW_AMES_PORT:-}" ] && args="$args -p $GW_AMES_PORT"
-  if gwl_have setsid; then
-    # shellcheck disable=SC2086
-    setsid nohup "$GW_VERE" $args "$GW_PIER" >> "$GW_LOG" 2>&1 </dev/null &
-  else
-    # shellcheck disable=SC2086
-    nohup "$GW_VERE" $args "$GW_PIER" >> "$GW_LOG" 2>&1 </dev/null &
-  fi
-}
-
-# ------------------------------------------------------------- peer pool ---
-# Filter headers are only servable by peers advertising NODE_COMPACT_FILTERS.
-# %bitcoin-client makes it a REQUIRED service, so a pool from unfiltered DNS
-# seeds leaves filter sync at height 1 forever -- the single biggest time sink
-# in the procedure, and what killed the Phase 4 run (OPERATIONS.md 5.6).
-# x49 = NODE_NETWORK(1) | NODE_WITNESS(8) | NODE_COMPACT_FILTERS(64).
-GWL_SEEDS="seed.bitcoin.sipa.be dnsseed.bluematt.me seed.bitcoinstats.com
-seed.bitcoin.jonasschnelli.ch dnsseed.emzy.de seed.bitcoin.wiz.biz
-seed.btc.petertodd.net seed.bitcoin.sprovoost.nl seed.mainnet.achownodes.xyz
-dnsseed.bitcoin.dashjr-list-of-p2p-nodes.us"
-
-gwl_resolve_a() {
-  case "${DNS_TOOL:-}" in
-    dig)  dig +short +time=3 +tries=1 A "$1" 2>/dev/null ;;
-    host) host -W 3 -t A "$1" 2>/dev/null | awk '/has address/ {print $NF}' ;;
-    getent) getent ahostsv4 "$1" 2>/dev/null | awk '{print $1}' ;;
-    python3) python3 -c '
-import socket, sys
-try:
-    for r in socket.getaddrinfo(sys.argv[1], 8333, socket.AF_INET):
-        print(r[4][0])
-except Exception:
-    pass
-' "$1" ;;
-    *) return 1 ;;
-  esac
-}
-
-# Each seed returns a small random slice per query, so ask repeatedly.
-gwl_pool_fill() {
-  local rounds="${1:-6}" pool="$GW_DIR/var/peerpool.txt" s i before after
-  touch "$pool"
-  before="$(wc -l < "$pool" | tr -d ' ')"
-  i=0
-  while [ "$i" -lt "$rounds" ]; do
-    for s in $GWL_SEEDS; do
-      gwl_resolve_a "x49.$s"
-    done
-    i=$(( i + 1 ))
-  done | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
-       | grep -vE '^(0\.|10\.|127\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)' \
-       | sort -u >> "$pool" || true
-  sort -u "$pool" -o "$pool"
-  after="$(wc -l < "$pool" | tr -d ' ')"
-  echo "$(( after - before ))"
-}
-
-gwl_pool_left() {
-  local pool="$GW_DIR/var/peerpool.txt" used="$GW_DIR/var/used-$GW_NAME.txt"
-  touch "$pool" "$used"
-  grep -vxF -f "$used" "$pool" 2>/dev/null | grep -c . || echo 0
-}
-
-# An IP handed to the same ship twice is wasted: %bitcoin-client's blacklist
-# expiry is ~d3, so a burned seed stays burned for three days.
-gwl_take_peers() {
-  local n="$1" pool="$GW_DIR/var/peerpool.txt" used="$GW_DIR/var/used-$GW_NAME.txt" ips
-  touch "$pool" "$used"
-  ips="$(grep -vxF -f "$used" "$pool" 2>/dev/null | head -n "$n" || true)"
-  [ -n "$ips" ] && printf '%s\n' "$ips" >> "$used"
-  printf '%s' "$ips"
-}
-
-# A Hoon @ux literal is dot-grouped every four hex digits from the right, and
-# the leading group carries no padding zeros.
-gwl_hoonhex() {
-  local h="$1" out=""
-  while [ "${#h}" -gt 4 ]; do
-    out=".${h: -4}$out"
-    h="${h:0:${#h}-4}"
-  done
-  h="$(printf '%s' "$h" | sed 's/^0*//')"
-  [ -z "$h" ] && h=0
-  printf '0x%s%s' "$h" "$out"
-}
-
-gwl_ip_hoon() {
-  local a b c d
-  IFS=. read -r a b c d <<EOF
-$1
-EOF
-  gwl_hoonhex "$(printf '%x' $(( (a << 24) | (b << 16) | (c << 8) | d )))"
-}
-
-# One strand for the whole batch.  ~25 at a time: adding 200-300 at once
-# reliably SIGSEGVs the sidecar, after which live-earth-peers goes to 0 and
-# sync stalls (gwbtc/node#1, OPERATIONS.md 5.6).
-gwl_add_peers() {
-  local ip vals=""
-  for ip in $1; do
-    vals="$vals $(gwl_ip_hoon "$ip")"
-  done
-  [ -n "$vals" ] || return 1
-  # shellcheck disable=SC2016  # $(ips t.ips) is Hoon recursion, not shell
-  { printf '=/  ips=(list @ux)  ~[%s]\n' "$vals"
-    printf '|-  ^-  form:m\n'
-    printf "?~  ips  (pure:m !>('done'))\n"
-    printf ';<  ~  bind:m  (poke-our %%bitcoin-client %%add-earth-peer !>([%%ipv4 i.ips 8.333]))\n'
-    printf '$(ips t.ips)\n'
-  } | gwl_eval 300
-}
-
-# %bitcoin-client's ++peek is literally ~ for every path
-# (bitcoin-client.hoon:181-184), so status cannot be scried: &log-info dumps
-# it into the ship's log and we read it back out of there.
-gwl_log_info() { gwl_poke bitcoin-client log-info '!>(~)' 30 >/dev/null 2>&1 || true; }
-
-# $1 key, e.g. %headers.  Prints the last value seen, dots stripped.
-gwl_log_last() {
-  tail -n 4000 "$GW_LOG" 2>/dev/null \
-    | grep -oE "\[%$1 [0-9.]+\]" | tail -1 \
-    | grep -oE '[0-9.]+' | tr -d '.' || true
-}
-gwl_log_synced() {
-  tail -n 4000 "$GW_LOG" 2>/dev/null \
-    | grep -oE '\[%is-synced %\.[yn]\]' | tail -1 || true
-}
-GWLIB
-  chmod +x "$GW_DIR/lib/gwlib.sh"
-  write_supervisor
-}
-
-# The supervisor.  ops/gwsup.sh is the campaign's version of this and it is
-# NOT reused verbatim, for three reasons: it hardcodes the droplet layout
-# (/opt/gw/piers/<name>, /opt/gw/bin, /opt/gw/*.log) which does not exist in a
-# user-space install; it is Linux-only (flock(1), stat -c, /proc/<pid>/cwd,
-# ss) and this installer supports macOS; and it shells out to four Python
-# tools that expect the gwharness package importable from /opt/gw, which is
-# not in any release artifact. The ALGORITHM is reused unchanged, trap for
-# trap -- singleton, data.mdb liveness, exact process matching, and the
-# kill-peer-connections-plus-reseed that makes a sidecar restart actually
-# recover. Keep the two in sync when either changes.
-write_supervisor() {
-  cat > "$GW_DIR/bin/gwsup.sh" <<'GWSUP'
-#!/usr/bin/env bash
-# gwsup.sh <name> -- supervisor for one Groundwire ship.
-# Written by causeway/public/boot.sh. Derived from ops/gwsup.sh; see the note
-# in that script for why this is a separate implementation.
-#
-# Filed against gwbtc/node#1: the tcp-sidecar SIGSEGVs, %bitcoin-client goes
-# on believing its peers are live, every send returns "no such connection"
-# forever, and the ship stops following the chain while looking healthy. It
-# does not self-heal, and restarting the sidecar alone does NOT fix it -- the
-# agent's peer table has to be cleared with &kill-peer-connections and
-# re-seeded. A plain Restart=always unit gets the process back and leaves the
-# ship wedged.
-set -u
-
-GW_NAME="${1:?usage: gwsup.sh <name>}"
-GW_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-[ -f "$GW_DIR/var/$GW_NAME.env" ] || { echo "no $GW_DIR/var/$GW_NAME.env" >&2; exit 1; }
-# shellcheck disable=SC1090
-. "$GW_DIR/var/$GW_NAME.env"
-# shellcheck disable=SC1091
-. "$GW_DIR/lib/gwlib.sh"
-gwl_pick_sock_tool
-
-SUPLOG="$GW_DIR/var/sup-$GW_NAME.log"
-STALE=300      # seconds with no event-log write => WEDGED
-POLL=30
-COOLDOWN=300   # minimum seconds between recoveries
-
-# SINGLETON. Two supervisors on one pier both see VERE-DOWN, both relaunch,
-# and the loser's ship dies on "mesa: bind: address already in use", which
-# reads exactly like a crash loop. In one cleanroom run all three droplets
-# were found running two supervisors per pier, which is also why ships that
-# had been deliberately stopped came back. flock(1) is Linux-only, so this is
-# a mkdir lock -- atomic everywhere -- with a liveness check so a supervisor
-# killed with SIGKILL does not lock the pier out forever.
-LOCK="$GW_DIR/var/sup-$GW_NAME.lock"
-if ! mkdir "$LOCK" 2>/dev/null; then
-  oldpid="$(cat "$LOCK/pid" 2>/dev/null || echo)"
-  if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null &&
-     ps -o args= -p "$oldpid" 2>/dev/null | grep -q gwsup.sh; then
-    echo "gwsup.sh: a supervisor for $GW_NAME is already running (pid $oldpid); refusing"
-    exit 0
-  fi
-  rm -rf "$LOCK"
-  mkdir "$LOCK" 2>/dev/null || { echo "gwsup.sh: lost the lock race; refusing"; exit 0; }
-fi
-echo $$ > "$LOCK/pid"
-trap 'rm -rf "$LOCK"' EXIT INT TERM
-sleep 1
-[ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] || { echo "gwsup.sh: lost the lock race; refusing"; exit 0; }
-
-log() { echo "$(date -u +%FT%TZ) [$GW_NAME] $*" >> "$SUPLOG"; }
-
-# Counters are re-derived from the log so "how often did this fire" stays a
-# true cumulative number across supervisor restarts. NB `grep -c` prints 0 AND
-# exits 1 when there is no match, which in the original cost a ship: the
-# arithmetic that followed became a syntax error and the watchdog killed
-# itself at the moment it was first needed.
-_count() { local n; n="$(grep -c "$1" "$SUPLOG" 2>/dev/null | head -1)"; echo "${n:-0}"; }
-N_WEDGE="$(_count 'WEDGE (recover')"
-N_VERE="$(_count 'VERE-DOWN')"
-N_SIDE="$(_count 'SIDECAR-DOWN')"
-LAST_RECOVER=0
-
-recover() {
-  N_WEDGE=$(( N_WEDGE + 1 ))
-  log "INTERVENTION #$(( N_WEDGE + N_VERE + N_SIDE )) WEDGE (recover #$N_WEDGE): $1"
-  [ -n "$(gwl_sidecar_pids)" ] || gwl_start_sidecar
-  sleep 3
-  if gwl_poke bitcoin-client kill-peer-connections '!>(~)' 150 >/dev/null 2>&1; then
-    log "  kill-peer-connections ok"
-  else
-    log "  kill-peer-connections FAILED (control socket unresponsive)"
-  fi
-  sleep 5
-  left="$(gwl_pool_left)"
-  [ "${left:-0}" -lt 20 ] && log "  pool refill: +$(gwl_pool_fill 4)"
-  ip="$(gwl_take_peers 1)"
-  # One peer, then let getaddr gossip refill: header sync asks ONE peer for
-  # 2000 headers and waits, so extra peers buy resilience, not speed.
-  if [ -n "$ip" ] && gwl_add_peers "$ip" >/dev/null 2>&1; then
-    log "  re-seeded 1 peer: $ip"
-  else
-    log "  re-seed FAILED ($ip)"
-  fi
-  LAST_RECOVER="$(date +%s)"
-}
-
-log "supervisor start (pier=$GW_PIER stale=${STALE}s poll=${POLL}s sidecar=${GW_SIDECAR:-none})"
-
-while true; do
-  # 1. runtime alive?
-  if [ -z "$(gwl_king_pid)" ] && [ -z "$(gwl_serf_pid)" ]; then
-    N_VERE=$(( N_VERE + 1 ))
-    log "INTERVENTION #$(( N_WEDGE + N_VERE + N_SIDE )) VERE-DOWN (restart #$N_VERE)"
-    gwl_start_vere_restart
-    sleep 60
-    continue
-  fi
-
-  # 2. sidecar alive?  A dead sidecar IS the wedge trigger, so do not wait out
-  #    the staleness window for it.
-  if [ -x "${GW_SIDECAR:-}" ] && [ -z "$(gwl_sidecar_pids)" ]; then
-    N_SIDE=$(( N_SIDE + 1 ))
-    log "INTERVENTION #$(( N_WEDGE + N_VERE + N_SIDE )) SIDECAR-DOWN (restart #$N_SIDE)"
-    gwl_start_sidecar
-    now="$(date +%s)"
-    if [ $(( now - LAST_RECOVER )) -ge $COOLDOWN ]; then recover "sidecar had died"; fi
-    sleep $POLL
-    continue
-  fi
-
-  # 3. event-log progress
-  AGE="$(gwl_evt_age)"
-  if [ "$AGE" -gt "$STALE" ]; then
-    now="$(date +%s)"
-    if [ $(( now - LAST_RECOVER )) -ge $COOLDOWN ]; then recover "event log stale ${AGE}s"; fi
-  fi
-
-  sleep $POLL
-done
-GWSUP
-  chmod +x "$GW_DIR/bin/gwsup.sh"
+  chmod +x "$GW_DIR/lib/gwlib.sh" "$GW_DIR/bin/gwsup.sh"
+  info "helpers       $GW_DIR/lib/gwlib.sh"
+  info "supervisor    $GW_DIR/bin/gwsup.sh"
 }
 
 # ==================================================================== boot ==
@@ -1504,7 +1068,7 @@ cmd_install() {
   resolve_tag
   fetch_release
   install_release
-  write_helpers
+  install_helpers
   locate_pier
   # shellcheck source=/dev/null
   . "$GW_DIR/lib/gwlib.sh"
