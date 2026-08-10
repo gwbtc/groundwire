@@ -7,7 +7,7 @@
 ::  must not be snubbed.
 ::
 /-  urb, sa=self-attestation, ord, bitcoin, lc=light-client
-/+  *test, cc=gw-btc-pass
+/+  *test, cc=gw-btc-pass, lsa=self-attestation
 /=  gw-btc  /app/gw-btc
 =>
 |%
@@ -152,6 +152,28 @@
       ~                                           :: declined
       [stored `[0 cand anew-pass]]                :: own
   ==
+::  the state shape BEFORE .publicizing was dropped (13 fields), for the
+::  migration.  Deliberately the AMBIGUOUS case: .publicizing, .next-job
+::  and .sponsees are all ~/0, so if the tail did not discriminate the
+::  whole tuple would shift by one and still look plausible.  .declined
+::  is non-empty precisely so a shift would be visible.
+::
+++  legacy-12-state
+  ^-  *
+  :*  `state:urb`[[0xdead.beef 961.100] ~ ~ ~]  :: urb-state
+      %.y                                        :: indexing
+      `[0xdead.beef 961.100]                     :: best
+      ~                                          :: inflight
+      ~                                          :: confidential
+      ~                                          :: attested
+      ~                                          :: publicizing (dropped)
+      0                                          :: next-job
+      ~                                          :: sponsees
+      (silt ~[~wes])                             :: declined
+      [`custody-log:sa`~ ~]                      :: own
+      %.y                                        :: synced
+      ~                                          :: reorg-halt
+  ==
 ::  the state shape BEFORE .own existed (10 fields), for the migration
 ::
 ++  legacy-10-state
@@ -295,6 +317,47 @@
 ::  the wire a finished verification for .peer (job 0) arrives on
 ::
 ++  verify-wire  /verify/(scot %p peer)/0
+::  the wire an ON-CHAIN publication's verification (job 0) arrives on.
+::  Same job, same slot, same +verify-lc -- a different wire is the ONLY
+::  thing that distinguishes it, and it is what decides whether an answer
+::  is worth a verdict or only a log line.
+::
+++  claim-wire  /claim/(scot %p peer)/0
+::  ---------------------------------------------------------------------
+::  block-scanner fixtures: a batch that found an OP_RETURN publication
+::  ---------------------------------------------------------------------
+::
+::  a pass whose custody log has one entry, and the ship it names
+::
+++  claim-pass  (logged-pass ~[entry0])
+++  claimer     (fig-of claim-pass)
+::  a synced state at the tip, with nothing else going on
+::
+++  synced-state
+  ^-  *
+  :*  `state:urb`[[0xdead.beef 961.100] ~ ~ ~]  :: urb-state
+      %.y                                        :: indexing
+      `[0xdead.beef 961.100]                     :: best
+      ~                                          :: inflight
+      ~                                          :: confidential
+      ~                                          :: attested
+      0                                          :: next-job
+      ~                                          :: sponsees
+      ~                                          :: declined
+      [`custody-log:sa`~ ~]                      :: own
+      %.y                                        :: synced
+      ~                                          :: reorg-halt
+  ==
+::  the khan sign +get-blocks delivers: [base [fx result]]
+::
+++  blocks-sign
+  |=  fx=(list [id:block:bitcoin effect:urb])
+  ^-  sign-arvo
+  :^  %khan  %arow  %.y
+  :-  %noun
+  !>  ^-  [state:urb [(list [id:block:bitcoin effect:urb]) state:urb]]
+  =/  st  `state:urb`[[0xdead.beef 961.100] ~ ~ ~]
+  [st [fx st]]
 --
 |%
 ::  Operator declines sponsorship: the ship is recorded in `declined`,
@@ -689,6 +752,44 @@
 ::  empty custody log rather than crashing -- an agent that will not load
 ::  answers no attestation at all.
 ::
+::  +on-load drops .publicizing, which was a MIDDLE field.  Nothing
+::  reads it any more: a publication is no longer indexed by the block
+::  scanner, it is handed to the same verifier a packet goes to, so
+::  there is no public-spawn replay to guard and .inflight is the only
+::  single-flight left.
+::
+::  The migration is only safe because the TAIL discriminates: a -12
+::  noun offered to the current mold puts [synced reorg-halt] where
+::  (unit reorg-stop) is expected, and neither shape of that pair can
+::  read as one.  Prove it on a state where every field the shift would
+::  land on is ~/0 -- i.e. the case where arity alone would NOT have
+::  told them apart -- and check that a value AFTER the removed field
+::  still arrives where it belongs.
+::
+++  test-on-load-drops-the-publicizing-field
+  =/  agent  gw-btc
+  =^  cards  agent  (~(on-load agent bowl0) !>(legacy-12-state))
+  ;:  weld
+    ::  urb-state came through
+    ::
+    %+  expect-eq
+      !>  `id:block:bitcoin`[0xdead.beef 961.100]
+      !>  ;;(id:block:bitcoin (peek-noun (~(on-peek agent bowl0) /x/block-id)))
+    ::  .declined sits three fields PAST the one we removed; if the tail
+    ::  had shifted it would be empty (or the cast would have taken the
+    ::  wrong branch entirely)
+    ::
+    (expect-eq !>((silt ~[~wes])) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/declined)))))
+    ::  .synced and .reorg-halt are the tail that did the discriminating
+    ::
+    %+  expect-eq
+      !>  [synced=%.y tip=`961.100 indexing=%.y halt=~]
+      !>  ;;([? (unit @ud) ? (unit *)] (peek-noun (~(on-peek agent bowl0) /x/ready)))
+    ::  a -12 state already had /is-synced; do not re-subscribe
+    ::
+    (expect-eq !>(~) !>((app-cards cards)))
+  ==
+::
 ++  test-on-load-migrates-the-pre-anew-state
   =/  agent  gw-btc
   =^  cards  agent  (~(on-load agent bowl0) !>(legacy-10-state))
@@ -976,6 +1077,139 @@
 ::  swapped -- the ship in the verdict, the point, the point's pass, or
 ::  the sat index -- so the silence it asserts is caused by that
 ::  ingredient and nothing else.
+::
+::  A %claim effect out of the block scanner launches a verification, on
+::  the /claim wire, in the SAME single-flight slot a %jael-writ takes.
+::  Nothing is indexed by the scan itself: the point appears only when the
+::  light client has walked the log.
+::
+++  test-claim-effect-launches-a-verification
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>(synced-state))
+  =^  cards  agent
+    %-  ~(on-arvo agent bowl0)
+    :-  /blocks
+    (blocks-sign ~[[[0xb.10c1 961.100] [%claim claimer claim-pass]]])
+  =/  cs  (app-cards cards)
+  =/  wires
+    %+  murn  cs
+    |=(c=card:agent:gall ?.(?=([%pass *] c) ~ `p.c))
+  ;:  weld
+    ::  the job, and its leak guard, both on claim wires naming the ship
+    ::
+    (expect !>((lien wires |=(=path =(path /claim/(scot %p claimer)/0)))))
+    (expect !>((lien wires |=(=path =(path /claim-stuck/(scot %p claimer)/0)))))
+    ::  it holds the single-flight slot
+    ::
+    %+  expect-eq
+      !>((silt ~[claimer]))
+      !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/inflight))))
+    ::  and NOTHING was indexed: the scanner asserts nothing about a
+    ::  publication, it only forwards it
+    ::
+    ::  /x/point/<ship> answers [~ ~] for a ship it holds no point for
+    ::
+    (expect !>(?=([~ ~] (~(on-peek agent bowl0) /x/point/(scot %p claimer)))))
+  ==
+::
+::  ... and a second publication for the same ship while that job runs is
+::  dropped, out loud.  The on-chain road has no separate latch: .inflight
+::  is the only single-flight there is.
+::
+++  test-second-claim-while-one-is-in-flight-is-dropped
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>(synced-state))
+  =^  *      agent
+    %-  ~(on-arvo agent bowl0)
+    :-  /blocks
+    (blocks-sign ~[[[0xb.10c1 961.100] [%claim claimer claim-pass]]])
+  =^  cards  agent
+    %-  ~(on-arvo agent bowl0)
+    :-  /blocks
+    (blocks-sign ~[[[0xb.10c2 961.101] [%claim claimer claim-pass]]])
+  =/  wires
+    %+  murn  (app-cards cards)
+    |=(c=card:agent:gall ?.(?=([%pass *] c) ~ `p.c))
+  ::  no job 1 was launched
+  (expect !>(!(lien wires |=(=path =(path /claim/(scot %p claimer)/1)))))
+::
+::  ---------------------------------------------------------------------
+::  THE ON-CHAIN ROAD: a publication verified through the same +verify-lc
+::
+::  A publication is the comet's whole attestation packet, so it takes the
+::  same job in the same single-flight slot as a %jael-writ.  Three things
+::  must differ, and all three are about the fact that NOBODY ASKED US:
+::  no verdict ever, no sponsorship decision, and the ship comes out
+::  PUBLIC rather than confidential.
+::  ---------------------------------------------------------------------
+::
+::  A publication that verifies installs the point and declassifies -- and
+::  emits NO %verdict, because there is no writ to answer.
+::
+++  test-claim-that-verifies-installs-a-public-point
+  =/  agent  gw-btc
+  ::  the ship starts CONFIDENTIAL, which is the interesting case: the
+  ::  publication is the owner's own consent to declassify
+  ::
+  =^  *      agent
+    (~(on-load agent bowl0) !>((verify-state (silt ~[peer]) ~ ~)))
+  =^  cards  agent
+    (~(on-arvo agent bowl0) claim-wire (ok-sign peer `(ok-point anew-pass)))
+  =/  cs    (app-cards cards)
+  =/  conf  ;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/confidential)))
+  =/  ats   ;;((map ship sont:ord) (peek-noun (~(on-peek agent bowl0) /x/attested)))
+  ;:  weld
+    ::  NOT confidential any more -- and that does not undo
+    ::
+    (expect-eq !>(*(set ship)) !>(conf))
+    (expect-eq !>(`tip-sont) !>((~(get by ats) peer)))
+    ::  the point is in the PUBLIC snapshot now
+    ::
+    %+  expect-eq
+      !>(`@ud`1)
+      !>  =/  pt  ;;(point:urb (peek-noun (~(on-peek agent bowl0) /x/point/(scot %p peer))))
+          life.net.pt
+    ::  and not one card is a %verdict: a broadcast is not a writ
+    ::
+    %+  expect-eq
+      !>(~)
+      !>  %+  skim  cs
+          |=(c=card:agent:gall ?=(^ (fact-mark c)))
+    ::  the slot is released
+    ::
+    (expect-eq !>(*(set ship)) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/inflight)))))
+  ==
+::
+::  A publication that does NOT verify is a log line and nothing else.
+::  On the writ road the same failing checks are fraud-class and snub;
+::  here they cannot, because we were never asked.
+::
+++  test-claim-that-fails-emits-no-verdict-and-never-snubs
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  =^  cards  agent
+    (~(on-arvo agent bowl0) claim-wire (failed-sign peer ~['entry-0-commitment']))
+  ;:  weld
+    ::  'entry-0-commitment' is fraud-class: on /verify this is a SNUB
+    ::
+    (expect-eq !>(%fraud) !>((classify:lsa [peer %.n ~[['entry-0-commitment' %.n]]])))
+    ::  ... and on /claim it is nothing at all
+    ::
+    (expect-eq !>(~) !>((app-cards cards)))
+    ::  the slot is still released, so a later publication can retry
+    ::
+    (expect-eq !>(*(set ship)) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/inflight)))))
+  ==
+::
+::  A stale-class failure is the same: no %stale-notice either.  Nobody
+::  told us this comet was talking to us, so we have nothing to demote.
+::
+++  test-claim-that-is-stale-emits-nothing
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  =^  cards  agent
+    (~(on-arvo agent bowl0) claim-wire (failed-sign peer ~['tip-unspent']))
+  (expect-eq !>(~) !>((app-cards cards)))
 ::
 ++  test-passing-verdict-is-installed-control
   =/  agent  gw-btc

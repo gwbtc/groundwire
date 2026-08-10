@@ -753,12 +753,16 @@ def cmd_publish(label, artifact_n, fee_rate=4, fund=False, sat_target=None):
     What the chain sees: input 0 spends the comet's currently tracked identity
     satpoint (the ownership proof -- only its holder can), output 0 commits a
     snapshot whose life STRICTLY exceeds the one peers hold, output 1 is the
-    OP_RETURN.  +process-publication routes any ship already in .unv-ids to
-    +apply-state, which is why this works for a tracked comet and is refused
-    for a stranger ("state-update publication for a comet we do not track").
+    OP_RETURN.  Since 2026-08-10 the payload is the comet's WHOLE attestation
+    packet -- the pass a peer receives over ames, custody log in its xtr, plus
+    the opening for the hop this transaction performs -- so a STRANGER accepts
+    it too: +process-publication completes the log with this transaction and
+    hands it to the same +verify-lc a packet gets.  See
+    doc/opret-revision/04-decisions-addendum.md section 0.
 
-    The blind-opening is included and must stay consistent with the dat: a
-    present-but-wrong one is refused outright.
+    NOTE: this builder still publishes the comet's BOOT pass (empty xtr), which
+    only verifies for a spawn.  To publish late, pass a pass carrying the
+    custody log (C.pass_with_xtr(pass_atom, C.build_xtr_atom(log))).
 
     --fund adds a funding input from the ops wallet AFTER input 0, so the
     identity output is topped up rather than shrunk by the fee.  The verifier
@@ -899,8 +903,12 @@ def cmd_publish(label, artifact_n, fee_rate=4, fund=False, sat_target=None):
     chk("OP_RETURN envelope 6a 03 'urb' 01 09",
         pub_spk.startswith("6a03757262" + "0109"), pub_spk[:16])
     chk("OP_RETURN value is 0", dec["vout"][1]["value"] == 0)
-    # 512-byte payload + 7-byte envelope + up to a 3-byte PUSHDATA2 header.
-    chk("publication <= 512 bytes", len(bytes.fromhex(pub_spk)) <= 512 + 10,
+    # MAX_PUBLICATION payload + 7-byte envelope + up to a 3-byte PUSHDATA2
+    # header.  The cap is C.MAX_PUBLICATION (1024 since 2026-08-10) and must be
+    # read from there, never restated: it lives in three implementations that
+    # have to agree byte for byte.
+    chk(f"publication <= {C.MAX_PUBLICATION} bytes",
+        len(bytes.fromhex(pub_spk)) <= C.MAX_PUBLICATION + 10,
         f"{len(bytes.fromhex(pub_spk))} bytes")
 
     # Core 29 rejects our OP_RETURN by policy, so testmempoolaccept on the real

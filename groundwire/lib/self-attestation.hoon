@@ -293,13 +293,12 @@
   |=  drop=writ-drop:sa
   ^-  writ-fate:sa
   ?-    -.drop
-    ::  Our own bookkeeping, all four.  None is a finding about the peer.
+    ::  Our own bookkeeping, all three.  None is a finding about the peer.
     ::  %drop rather than %hold because none of them clears by our own
-    ::  chain view catching up: the block job resolves, the in-flight
-    ::  verification finishes, an operator clears the refusal, a public
-    ::  point makes the question moot.
+    ::  chain view catching up: the in-flight verification finishes, an
+    ::  operator clears the refusal, a public point makes the question
+    ::  moot.
     ::
-      %publicizing     %drop
       %in-flight       %drop
       %declined        %drop
       %already-public  %drop
@@ -373,7 +372,7 @@
 ::    STICKY SNUB without a word.
 ::
 ::    Being a ?- over the same closed union as +writ-drop-fate is the
-::    fix, not the twelve strings: a thirteenth disposition does not
+::    fix, not the eleven strings: a twelfth disposition does not
 ::    compile until it has a line.
 ::
 ::    Every headline is "writ from <ship> <verb>: <reason>", with the verb
@@ -399,9 +398,6 @@
         leaf+"  (inspect with .^(/snubbed) and undo with %snub %deny %del)"
     ==
   ?-    -.drop
-      %publicizing
-    ~[leaf+"{hed}a public-spawn replay is in progress"]
-  ::
       %in-flight
     ~[leaf+"{hed}a verification is already in flight"]
   ::

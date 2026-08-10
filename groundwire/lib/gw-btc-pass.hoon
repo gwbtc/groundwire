@@ -191,19 +191,57 @@
 ::  transactions carry no publication output at all).
 ::
 ::      scriptPubKey = OP_RETURN PUSH3 'urb' PUSH1 <kelvin> <payload>
+::      payload      = (jam [pass opening])
 ::
-::  For a public spawn the payload is (jam [pass spawn-sont blind]) as
-::  a byte string, opening the dat commitment so the name is publicly
-::  verifiable and indexable with no packet exchange.
+::  The payload is the FULL ATTESTATION PACKET: .pass is byte-for-byte
+::  the pass a comet hands a peer over ames, custody log and all, and
+::  .opening is the one hop the packet cannot contain -- the one this
+::  very transaction performs, whose txid does not exist until the
+::  transaction is signed.  A watcher completes the log with
+::  [txid height opening] from the block it is reading and hands the
+::  result to the same +verify-lc a mailed attestation goes through.
 ::
-++  max-publication  512
+::  +max-publication: the byte cap on that payload
+::
+::    1.024 bytes, and the number is not arbitrary: it is THE PACKET
+::    BOUND.  Decisions addendum section 6 fixes a complete jammed
+::    first-contact attestation at one Mesa fragment (~1 KiB), and a
+::    publication carries that same packet.  A payload this codec would
+::    accept but ames could never carry would describe an identity that
+::    can be published and then never attest -- so the two bounds are
+::    one bound, stated once.
+::
+::    What it buys and costs, since an OP_RETURN is all non-witness data
+::    and payload bytes convert ~1:1 into vbytes:
+::
+::      - a pass core is ~108 B, entry 0's opening ~120 B and the
+::        terminal opening ~100 B, so the floor is ~330 B and each
+::        further custody hop adds ~40 B.  1.024 B is therefore ~17
+::        hops, against the four that 512 allowed.
+::      - ~1.024 payload bytes is a ~1.160 vB transaction: ~2.320 sats
+::        at 2 sat/vB.  Payable only because a state update may take a
+::        funding input (c534cba); before that the fee came out of the
+::        identity sat and a comet could be priced out of its own name.
+::      - it bounds what a stranger can make every watcher on the
+::        network do for one transaction fee: ~17 light-client fetches
+::        plus a one-block filter scan, single-flighted per ship.
+::
+::    The hard ceiling is MAX_SCRIPT_SIZE (10.000); OP_PUSHDATA2 has
+::    reached it since 194e56d, so raising this later is a constant,
+::    not a format change.  THE SAME NUMBER LIVES IN THREE PLACES --
+::    here, causeway/desktop/causeway.py and
+::    causeway/src/spawn/publication.ts -- and they must agree byte for
+::    byte or an encoder writes a script the others refuse.
+::
+++  max-publication  1.024
 ::  +push-data: the minimal Bitcoin push opcode(s) for a byte string
 ::
 ::    A direct push (opcode = length) reaches 75.  OP_PUSHDATA1 (0x4c)
 ::    carries ONE length byte and therefore stops at 255 -- which is
-::    below this codec's own 512-byte cap, so a fief-carrying
-::    publication (265-269 bytes in practice) needs OP_PUSHDATA2
-::    (0x4d) and its TWO-byte LITTLE-ENDIAN length.
+::    far below this codec's own 1.024-byte cap, so a fief-carrying
+::    publication (265-269 bytes in practice) already needs
+::    OP_PUSHDATA2 (0x4d) and its TWO-byte LITTLE-ENDIAN length, and a
+::    full-packet one is never anything else.
 ::
 ::    Every arm here is total or crashes: a width this encoding cannot
 ::    express, or a `dat` too wide for its declared `wid`, is an %exit

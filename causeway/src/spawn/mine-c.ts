@@ -125,6 +125,34 @@ export function buildPassAtom(
   return w.toInt();
 }
 
+// The same suite-%c PASS carrying a different xtr tail.
+//
+//     'c'(8 bits) | ugn(256) | cry(256) | mat(dat) | xtr
+//
+// with xtr riding at its exact bit length and OMITTED entirely when 0. ugn,
+// cry and dat are copied verbatim, so `fig` — the comet's @p — is unchanged by
+// construction: xtr is outside the key tweak.
+//
+// This is what makes a publication the comet's WHOLE attestation packet: the
+// pass in the OP_RETURN is the pass a peer receives, custody log and all.
+// Mirrors +with-xtr:gw-btc-pass and pass_with_xtr() in
+// causeway/desktop/causeway.py; pinned by the `full-packet` golden vector.
+export function passWithXtr(passAtom: bigint, xtr: bigint): bigint {
+  if ((passAtom & 0xffn) !== 0x63n) throw new Error("passWithXtr: not a suite-C pass");
+  const bod = passAtom >> 8n;
+  const mask = (1n << 256n) - 1n;
+  const ugn = bod & mask;
+  const cry = (bod >> 256n) & mask;
+  const { q: dat } = rub(512, bod);
+  const w = new BitWriter();
+  w.write(8, 0x63); // 'c'
+  w.write(256, ugn);
+  w.write(256, cry);
+  w.writeMat(dat);
+  if (xtr !== 0n) w.write(xtr.toString(2).length, xtr);
+  return w.toInt();
+}
+
 // Rebuild a miner-fresh (xtr-less) ring with a reveal log appended. The
 // @p is unchanged — the name commits to ugn+dat only — but the booted
 // ship's pass.ames-state then carries its own attestation (spec §2.5).

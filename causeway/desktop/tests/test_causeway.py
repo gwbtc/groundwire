@@ -41,6 +41,7 @@ _VECS = {v["name"]: v for v in _V["vectors"]}
 BASIC = _VECS["basic"]
 SKP = _VECS["state-key-pin"]
 PD2 = _VECS["pushdata2-fief"]
+FULL = _VECS["full-packet"]
 
 # Byte convention (pinned by the JSON + the compiled Hoon lib gw-btc-pass.hoon
 # and its passing test, the real authority): a jammed noun enters a tagged-hash
@@ -462,7 +463,7 @@ def test_publication_small_payload_uses_direct_push():
 # OP_PUSHDATA2 — the publication that does not fit in one length byte.
 #
 # PUSHDATA1 (0x4c) carries a SINGLE length byte and so stops at 255, but
-# MAX_PUBLICATION is 512 and every fief-carrying publication measures 265–269.
+# MAX_PUBLICATION is 1024 and every fief-carrying publication measures 265–269.
 # This used to raise here ("bytes must be in range(0, 256)") and, worse,
 # silently emit a corrupt script on the Hoon side.  The vector below is the
 # shared cross-language pin: Hoon's +make-publication produces these exact
@@ -517,10 +518,89 @@ def test_golden_pushdata2_publication_script():
     assert script[10:] == payload
 
 
+# ---------------------------------------------------------------------------
+# THE FULL-PACKET PUBLICATION.
+#
+# A kelvin-9 publication is the comet's whole attestation packet: the pass a
+# peer receives over ames, custody log and all, plus the opening for the hop
+# the carrying transaction performs.  Two things have to agree across the three
+# implementations for that to work at all — the xtr re-encoding (pass_with_xtr,
+# +with-xtr:gw-btc-pass, passWithXtr) and the script — and a realistic seven-hop
+# packet lands at 588 payload bytes, which is why the 512-byte cap could not
+# survive the change.
+# ---------------------------------------------------------------------------
+
+
+def _full_snapshot(s: dict) -> dict:
+    sponsor = s.get("sponsor")
+    if sponsor == "zod":
+        sponsor = 0
+    f = s.get("fief")
+    return {"life": s["life"], "rift": s["rift"], "key": int(s["key"], 16),
+            "sponsor": sponsor, "fief": None if f is None else f["noun"]}
+
+
+def _full_opening(o: dict) -> dict:
+    bo = o.get("blind_opening")
+    out = {"internal_key": int(o["internal_key"], 16),
+           "snapshot": _full_snapshot(o["snapshot"]),
+           "blind_opening": None}
+    if bo is not None:
+        sp = bo["spawn_sont"]
+        out["blind_opening"] = {
+            "spawn": {"txid_hex": sp["txid"], "vout": sp["vout"], "off": sp["off"]},
+            "start_height": bo["start_height"],
+            "blind": bytes.fromhex(bo["blind"]),
+        }
+    return out
+
+
+def _full_log() -> list:
+    return [{"txid_hex": e["txid"], "height": e["height"],
+             "opening": None if e["opening"] is None else _full_opening(e["opening"])}
+            for e in FULL["custody_log"]]
+
+
+def test_golden_full_packet_xtr_and_pass():
+    """The custody log jams to the vector's xtr, and re-encoding the 108-byte
+    pass around it reproduces the full pass byte for byte."""
+    xtr = cw.build_xtr_atom(_full_log())
+    assert xtr.to_bytes((xtr.bit_length() + 7) // 8, "little").hex() == FULL["jam_xtr_le"]
+
+    empty = int(FULL["pass_empty"], 16)
+    assert (empty.bit_length() + 7) // 8 == FULL["pass_empty_bytes"] == 108
+    full = cw.pass_with_xtr(empty, xtr)
+    assert format(full, "x").rjust(FULL["pass_full_bytes"] * 2, "0") == FULL["pass_full"]
+    assert (full.bit_length() + 7) // 8 == FULL["pass_full_bytes"] == 500
+    # xtr rides outside the key tweak: 'c', ugn, cry and dat are untouched
+    assert full & ((1 << (8 + 256 + 256)) - 1) == empty & ((1 << (8 + 256 + 256)) - 1)
+
+
+def test_golden_full_packet_publication_script():
+    """Byte-identical to Hoon and TS for a 588-byte payload — over the OLD cap."""
+    pass_full = int(FULL["pass_full"], 16)
+    opening = _full_opening(FULL["terminal_opening"])
+    payload = cw.jam_bytes(cw.publication_noun(pass_full, opening))
+    assert payload.hex() == FULL["jam_publication_le"]
+    assert len(payload) == FULL["payload_bytes"] == 588
+    assert len(payload) > 512, "this is the packet the old cap could not carry"
+
+    script = cw.make_publication_script(pass_full, opening)
+    assert script.hex() == FULL["op_return_script"]
+    assert len(script) == FULL["op_return_script_bytes"] == 598
+    assert script[7:10].hex() == FULL["pushdata"] == "4d4c02"
+    assert script[8] | (script[9] << 8) == 588
+
+
+def test_max_publication_is_the_agreed_cap():
+    assert cw.MAX_PUBLICATION == FULL["max_publication"] == 1024
+
+
 @pytest.mark.parametrize("n,head", [
     (3, "03"), (75, "4b"),                      # direct push: opcode IS the length
     (76, "4c4c"), (254, "4cfe"), (255, "4cff"),  # PUSHDATA1, one length byte
     (256, "4d0001"), (269, "4d0d01"), (512, "4d0002"),  # PUSHDATA2, LE length
+    (588, "4d4c02"), (1024, "4d0004"),
 ])
 def test_push_data_boundaries(n, head):
     assert cw.push_data(b"\xab" * n).hex() == head
@@ -533,12 +613,15 @@ def test_push_data_refuses_what_it_cannot_express():
 
 
 def test_publication_script_refuses_over_cap():
-    big = {"internal_key": int("ab" * 250, 16),
-           "snapshot": {"life": 1, "rift": 0, "key": int("cd" * 250, 16),
+    """The encoder is LOUD: over the cap it raises, it never emits a script."""
+    big = {"internal_key": int("ab" * 500, 16),
+           "snapshot": {"life": 1, "rift": 0, "key": int("cd" * 500, 16),
                         "sponsor": None, "fief": None},
            "blind_opening": None}
+    over = int("ef" * 400, 16)
+    assert len(cw.jam_bytes(cw.publication_noun(over, big))) > cw.MAX_PUBLICATION
     with pytest.raises(ValueError, match="publication payload"):
-        cw.make_publication_script(int("ef" * 200, 16), big)
+        cw.make_publication_script(over, big)
 
 
 def test_golden_xtr_jam():
@@ -1416,7 +1499,8 @@ def test_zig_out_bin_names_every_path_it_looked_at(tmp_path, monkeypatch):
 # The verifier imposes no input-count constraint: self-attestation.hoon:674
 # reads `(snag-input 0 this)` and :678-680 checks only that input 0 is the
 # tracked satpoint; :683-689 reads input 0's prevout for the key-path check;
-# urb-core.hoon's +apply-state compares `[txid vout]:cur` against `i.inputs`.
+# The verifier's `continuity` check compares input 0's outpoint against the
+# satpoint the log has reached.
 # The functions below mirror the Hoon that actually decides where the sat
 # lands, so these tests exercise the real rule rather than a paraphrase.
 # ---------------------------------------------------------------------------

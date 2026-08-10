@@ -12,21 +12,44 @@
 //     opening      = [internal-key snapshot blind-opening]
 //     blind-opening = (unit [spawn-sont start-height blind])
 //
-// The publication is the on-chain twin of a confidential xtr entry: `pass`
-// binds the name (who = fig(pass)) and `opening` reveals the state committed in
-// the transaction's sat-carrying output. A PRESENT blind-opening marks a spawn
-// (and opens the hiding `dat` commitment); an ABSENT one marks a state update
-// (rekey/breach) of an already-tracked comet.
+// The payload is the comet's FULL ATTESTATION PACKET. `pass` is byte-for-byte
+// the pass it hands a peer over ames — name, hiding `dat` commitment, and the
+// whole custody log in its xtr (see passWithXtr in ./mine-c.ts) — and a watcher
+// runs it through the same verification a mailed attestation gets.
 //
-// Golden vectors: groundwire/vectors/gw-kelvin-9.json ("basic".publication) +
-// tests/kelvin9.spec.ts.
+// `opening` is the one hop the packet cannot contain: a publication rides the
+// comet's own custody transaction, whose txid does not exist until it is
+// signed, so the log in xtr ends at the satpoint this transaction SPENDS and
+// `opening` reveals the state it commits. The watcher is reading the block, so
+// it completes the log itself with [txid height opening].
+//
+// A spawn publication is the degenerate case, not a special one: xtr is empty
+// and the completed log is the single entry whose blind-opening opens `dat`.
+//
+// Golden vectors: groundwire/vectors/gw-kelvin-9.json ("basic".publication,
+// "full-packet") + tests/kelvin9.spec.ts.
 
 import { jam, type Noun } from "../protocol/jam.js";
 import { concatBytes } from "../protocol/tagged-hash.js";
 import { spawnNoun, type SpawnSont, KELVIN } from "./dat.js";
 import { snapshotToNoun, type Snapshot } from "./snapshot.js";
 
-export const MAX_PUBLICATION = 512;
+// The byte cap on a publication payload.  1024, and the number is not
+// arbitrary: it is THE PACKET BOUND.  Decisions addendum §6 fixes a complete
+// jammed first-contact attestation at one Mesa fragment (~1 KiB), and a
+// publication carries that same packet — a payload this codec would accept but
+// ames could never carry would describe an identity that can be published and
+// then never attest.
+//
+// A pass core is ~108 B, entry 0's opening ~120 B and the terminal opening
+// ~100 B, so the floor is ~330 B and each further custody hop adds ~40 B: 1024
+// is ~17 hops, against the four that 512 allowed.  An OP_RETURN is all
+// non-witness data, so payload bytes convert ~1:1 into vbytes — ~1160 vB,
+// ~2320 sats at 2 sat/vB.  The hard ceiling is MAX_SCRIPT_SIZE (10000).
+//
+// MUST equal +max-publication:gw-btc-pass and MAX_PUBLICATION in
+// causeway/desktop/causeway.py, byte for byte.
+export const MAX_PUBLICATION = 1024;
 
 export interface BlindOpening {
   spawnSont: SpawnSont;
@@ -56,9 +79,10 @@ export function publicationNoun(pass: bigint, o: Opening): Noun {
 // The minimal Bitcoin push opcode(s) for `payload`.
 //
 // A direct push (opcode = length) reaches 75. PUSHDATA1 (0x4c) carries ONE
-// length byte and so stops at 255 — below this codec's own 512-byte cap, so a
-// fief-carrying publication (265–269 bytes in practice) needs PUSHDATA2 (0x4d)
-// and its TWO-byte LITTLE-ENDIAN length. Byte-for-byte identical to
+// length byte and so stops at 255 — far below this codec's own 1024-byte cap,
+// so a fief-carrying publication (265–269 bytes in practice) already needs
+// PUSHDATA2 (0x4d) and its TWO-byte LITTLE-ENDIAN length, and a full-packet one
+// is never anything else. Byte-for-byte identical to
 // +push-data:gw-btc-pass and push_data() in causeway/desktop/causeway.py.
 //
 // Note Uint8Array.of(0x4c, n) SILENTLY takes n mod 256 — which is exactly how a

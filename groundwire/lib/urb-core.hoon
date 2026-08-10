@@ -213,17 +213,40 @@
       value.cb-tx    (add value.cb-tx (sub new-val sum-out))
     ==
     ::
-    ::  XX For all failures in this arm figure out when 
+    ::  XX For all failures in this arm figure out when
     ::  to loop and when to quit. Do we ever need to rewind?
-    ::  Process this transaction's OP_RETURN publication, if any.  A
-    ::  public %gw-btc comet reveals a $publication in a deliberate
-    ::  OP_RETURN output: the pass binds the name (who = fig(pass)) and
-    ::  the opening reveals the state committed in the sat-carrying
-    ::  output.  A present blind-opening is a spawn; an absent one is a
-    ::  state update (rekey/breach) of an already-tracked comet.  All
-    ::  other transactions are pure custody moves handled by
-    ::  ++update-sonts.  Confidential comets never publish, so they
-    ::  never appear here.
+    ::  Process this transaction's OP_RETURN publication, if any.
+    ::
+    ::    A publication is the comet's FULL ATTESTATION PACKET (see
+    ::    $publication in sur/self-attestation): the pass it would hand a
+    ::    peer over ames, custody log and all, plus the opening for the
+    ::    hop this very transaction performs.  So there is nothing here
+    ::    to judge and nothing to infer.  This arm reads the envelope,
+    ::    completes the log with the two facts only a block reader has --
+    ::    this transaction's txid and this block's height -- and emits a
+    ::    %claim.  %gw-btc hands that to the SAME +verify-lc a %jael-writ
+    ::    gets.
+    ::
+    ::    WHAT USED TO BE HERE, AND WHY IT IS GONE.  This arm had three
+    ::    branches -- ++apply-state for a comet we already tracked,
+    ::    ++apply-spawn for a stranger that opened its blind, and a
+    ::    refusal for a stranger that did not -- and between them they
+    ::    reimplemented, weakly, most of ++run-checks: the dat opening,
+    ::    input-0 continuity, the state-key output commitment, the sat
+    ::    landing, the life gate, sat occupancy.  ++apply-spawn also
+    ::    demanded that input 0 BE the spawn satpoint, which is exactly
+    ::    what rejected a late reveal: a comet publishing later in life
+    ::    spends a satpoint further along its chain, and that constraint
+    ::    said the publication was not a spawn -- while the other branch
+    ::    said it was not a state update either, because we had never
+    ::    tracked the comet.  With the custody log present there is
+    ::    nothing left to infer, so the whole three-way distinction, and
+    ::    the second grammar it was written in, dissolve into one emit.
+    ::
+    ::    All other transactions are pure custody moves handled by
+    ::    ++update-sonts.  Confidential comets never publish, so they
+    ::    never appear here.
+    ::
     ++  process-publication
       ^+  cor
       ::  The `?~ pub` filter is the hot one and stays silent: it runs on
@@ -250,44 +273,31 @@
         ~&  >>>  '%urb-core: publication pass is not suite-C, so it is not a comet'
         cor
       =/  who  `@p`fig:ex:cac
-      ::  A comet we ALREADY track publishes a STATE UPDATE, whatever the
-      ::  shape of its opening.  We track its custody position, so input-0
-      ::  continuity from that position is the ownership proof and a
-      ::  blind-opening adds nothing -- but if one is present we check it
-      ::  against dat anyway, because a mismatch means this publication is
-      ::  not that comet's.
+      ::  Decode the carried log.  An EMPTY xtr is the spawn case and is
+      ::  written as a bare 0 (see +with-xtr), never as (jam ~); anything
+      ::  else must be canonical, exactly as +from-xtr demands of a
+      ::  mailed pass, so a re-encoding cannot quietly launder a
+      ::  non-canonical tail into a valid-looking claim.
       ::
-      ::  This is the confidential -> public transition (decisions addendum
-      ::  section 2, "Self-rescue").  A comet we know only because its
-      ::  self-attestation VERIFIED is in unv-ids exactly like a public one;
-      ::  the difference lives in %gw-btc's .confidential set, not here.  So
-      ::  the owner spending the sat we already follow, and revealing the
-      ::  state it lands in, is a complete proof to us -- and only the
-      ::  holder of that sat can build the transaction, which makes it the
-      ::  owner's own consent to declassify.  ++index-point emits %public
-      ::  so the agent can move the ship out of .confidential and start
-      ::  handing jael its udiffs.
-      ::
-      ?^  (~(get by unv-ids) who)
-        ?:  ?&  ?=(^ blind-opening.op)
-                !=(d.u.meta (spawn-commit:cc [spawn blind]:u.blind-opening.op))
-            ==
-          ~&  >>>  ['%urb-core: publication blind-opening does not open dat' who]
-          cor
-        (apply-state who pass op)
-      ?~  blind-opening.op
-        ::  A state update for a comet NOBODY here has ever indexed.  We
-        ::  cannot judge it and must not guess: the opening proves what
-        ::  state this transaction commits, but nothing binds the name to
-        ::  the sat the transaction spends.  That binding lives in the
-        ::  pass's hiding dat commitment and is opened only by a
-        ::  blind-opening -- and even then, a blind-opening names the SPAWN
-        ::  satpoint, so a stranger still has to walk the custody chain
-        ::  from there to here.  See the decisions addendum section 2b.
-        ::
-        ~&  >>>  ['%urb-core: state-update publication for a comet we do not track' who]
+      =/  base=(unit custody-log:sa)
+        ?:  =(0 xtr.u.meta)  `~
+        =/  dec  (mole |.(;;(custody-log:sa (cue xtr.u.meta))))
+        ?~  dec  ~
+        ?.(=(xtr.u.meta (jam u.dec)) ~ dec)
+      ?~  base
+        ~&  >>>  ['%urb-core: publication pass carries an unreadable custody log' who]
         cor
-      (apply-spawn who pass d.u.meta op u.blind-opening.op)
+      ::  The entry this transaction IS.  Its txid is why the publisher
+      ::  could not include it: the OP_RETURN is inside the transaction
+      ::  the entry names.
+      ::
+      =/  full=custody-log:sa
+        (snoc u.base [`txid:ord`id.tx num.block-id `op])
+      ?~  done=(with-xtr:cc pass (jam full))
+        ~&  >>>  ['%urb-core: publication pass could not be re-encoded' who]
+        cor
+      ~&  >  ["%gw-btc: on-chain self-attestation published by" who]
+      (emit [%claim who u.done])
     ::
     ::  Find the first OP_RETURN "urb" publication among a tx's outputs.
     ++  find-publication
@@ -296,111 +306,6 @@
       ?~  outs  ~
       ?^  p=(read-publication:cc script-pubkey.i.outs)  p
       $(outs t.outs)
-    ::
-    ::  The x-only key of a P2TR (OP_1 PUSH32) output script, else ~.
-    ++  p2tr-xonly
-      |=  spk=hexb:bitcoin
-      ^-  (unit @ux)
-      ?.  =(34 wid.spk)  ~
-      ?.  =(0x5120 (rsh [3 32] dat.spk))  ~
-      `(end [3 32] dat.spk)
-    ::
-    ::  A public spawn: one transaction whose input 0 spends the comet's
-    ::  chosen (funding) satpoint and whose sat-carrying output commits
-    ::  the initial snapshot.  Verify the name<->pass<->dat binding, the
-    ::  funding spend, the on-chain state commitment, and that no other
-    ::  comet already holds the landing sat; then index the point.
-    ++  apply-spawn
-      |=  [who=ship =pass d=@ux op=opening:sa bo=blind-opening:sa]
-      ^+  cor
-      ::  Defensive: ++process-publication routes an already-tracked comet
-      ::  to ++apply-state before it gets here, so reaching this means the
-      ::  two disagree.
-      ::
-      ?^  (~(get by unv-ids) who)
-        ~&  >>>  ['%urb-core: spawn publication for a comet already indexed' who]
-        cor
-      ?.  =(d (spawn-commit:cc spawn.bo blind.bo))
-        ~&  >>>  ['%urb-core: spawn blind-opening does not open dat' who]
-        cor
-      ?.  =([txid vout]:spawn.bo [txid pos]:i.inputs)
-        ~&  >>>  ['%urb-core: spawn does not spend its funding satpoint' who]
-        cor
-      ?~  landed=(index-to-sont-with-coinbase off.spawn.bo)
-        ~&  >>>  ['%urb-core: spawn sat did not land in an output' who]
-        cor
-      =/  sont  u.landed
-      =/  out  (snag vout.sont os.tx)
-      ?.  =(`(state-key:cc internal-key.op snapshot.op) (p2tr-xonly script-pubkey.out))
-        ~&  >>>  "%urb-core: spawn state commitment mismatch"  cor
-      ?.  (can-put-com:si:ol sont-map txid.sont vout.sont off.sont who)
-        ~&  >>>  ['%urb-core: spawn sat already occupied' sont]  cor
-      ~&  >  ["%gw-btc found public comet: " who]
-      (index-point who pass snapshot.op sont value.out %.y)
-    ::
-    ::  A public state update: the comet spends its tracked sat through
-    ::  input 0, committing a new snapshot in the sat-carrying output.
-    ::  life must advance.  ++update-sonts relocates sont.own; here we
-    ::  only refresh the networking fields.
-    ++  apply-state
-      |=  [who=ship =pass op=opening:sa]
-      ^+  cor
-      ?~  pt=(~(get by unv-ids) who)
-        ~&  >>>  ['%urb-core: state-update publication for an unindexed comet' who]
-        cor
-      =/  cur  sont.own.u.pt
-      ?.  =([txid vout]:cur [txid pos]:i.inputs)
-        ~&  >>>  ['%urb-core: state update does not spend our tracked tip' who cur]
-        cor
-      ?~  landed=(index-to-sont-with-coinbase off.cur)
-        ~&  >>>  ['%urb-core: state-update sat did not land in an output' who]
-        cor
-      =/  sont  u.landed
-      =/  out  (snag vout.sont os.tx)
-      ?.  =(`(state-key:cc internal-key.op snapshot.op) (p2tr-xonly script-pubkey.out))
-        ~&  >>>  "%urb-core: state commitment mismatch"  cor
-      ?.  (gth life.snapshot.op life.net.u.pt)
-        ~&  >>>
-        :*  '%urb-core: state update does not advance life'
-            who  published=life.snapshot.op  held=life.net.u.pt
-        ==
-        cor
-      (index-point who pass snapshot.op cur value.out %.n)
-    ::
-    ::  Write a point from a snapshot and emit the jael udiffs.  On a
-    ::  spawn we seed sont-map at the landing and emit %owner; on a
-    ::  state update we leave sont.own for ++update-sonts to relocate
-    ::  and only change the net fields.
-    ++  index-point
-      |=  [who=ship =pass snap=snapshot:sa =sont:ord out-value=@ud spawn=?]
-      ^+  cor
-      =/  spo=[has=? who=@p]  ?~(sponsor.snap [| who] [& u.sponsor.snap])
-      =/  old  (~(get by unv-ids) who)
-      =/  =point:urb
-        ?:  |(spawn ?=(~ old))
-          [[sont ~] rift.snap life.snap pass spo ~ fief.snap]
-        %=  u.old
-          pass.net     pass
-          life.net     life.snap
-          rift.net     rift.snap
-          sponsor.net  spo
-          fief.net     fief.snap
-        ==
-      =?  sont-map  spawn
-        (put-com:si:ol sont-map txid.sont vout.sont off.sont out-value who)
-      =.  unv-ids  (~(put by unv-ids) who point)
-      %-  emil
-      %+  weld
-        ^-  (list effect:urb)
-        ?.  spawn  ~
-        ~[[%point who %owner sont]]
-      ^-  (list effect:urb)
-      :~  [%point who %public ~]
-          [%point who %sponsor ?~(sponsor.snap `who `u.sponsor.snap)]
-          [%point who %keys life.snap pass]
-          [%point who %rift rift.snap]
-          [%point who %fief fief.snap]
-      ==
     ::
     ::  Given the transaction input that's currently in
     ::  ++handle-tx's context, get every sont we're tracking

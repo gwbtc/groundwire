@@ -232,13 +232,12 @@
 ::
 ::  every member of $writ-drop, with distinguishable numbers where the
 ::  case carries any.  Pinned against the MOLD by
-::  +test-writ-drop-union-has-not-drifted, so a thirteenth disposition
+::  +test-writ-drop-union-has-not-drifted, so a twelfth disposition
 ::  cannot be added without visiting this list.
 ::
 ++  all-writ-drops
   ^-  (list writ-drop:sa)
-  :~  [%publicizing ~]
-      [%in-flight ~]
+  :~  [%in-flight ~]
       [%declined ~]
       [%already-public ~]
       [%onboarding ~]
@@ -1219,7 +1218,7 @@
     (expect !>((levy reports all-leaves)))
     ::  every headline names the ship the decision is about
     (expect !>((levy heads |=(h=tape (has-sub "~wes" h)))))
-    ::  ... and says WHY: twelve dispositions, twelve distinct headlines
+    ::  ... and says WHY: eleven dispositions, eleven distinct headlines
     (expect-eq !>((lent heads)) !>(~(wyt in (silt heads))))
   ==
 ::
@@ -1266,7 +1265,7 @@
     (gth (lent (writ-drop-report:sal peer d)) 2)
   ==
 ::
-::  The property, not the twelve strings: a thirteenth disposition does
+::  The property, not the eleven strings: a twelfth disposition does
 ::  not compile until it has been given a line AND a fate.  Both
 ::  consumers are ?- over the closed union, so this test fails the moment
 ::  the mold and the switches drift in either direction -- which is also
@@ -1278,19 +1277,19 @@
   =/  ar=type  -:!>([a=*anew-refusal:sa])
   =/  wd-full
     ;:  weld
-      "?-(-.a %publicizing 0, %in-flight 0, %declined 0, %already-public 0, "
+      "?-(-.a %in-flight 0, %declined 0, %already-public 0, "
       "%onboarding 0, %foreign-kelvin 0, %undecodable 0, %empty-log 0, "
       "%log-too-long 0, %no-tip 0, %unsynced 0, %tip-below-log 0)"
     ==
   =/  wd-short
     ;:  weld
-      "?-(-.a %publicizing 0, %in-flight 0, %declined 0, %already-public 0, "
+      "?-(-.a %in-flight 0, %declined 0, %already-public 0, "
       "%onboarding 0, %foreign-kelvin 0, %undecodable 0, %empty-log 0, "
       "%log-too-long 0, %no-tip 0, %unsynced 0)"
     ==
   =/  wd-extra
     ;:  weld
-      "?-(-.a %publicizing 0, %in-flight 0, %declined 0, %already-public 0, "
+      "?-(-.a %in-flight 0, %declined 0, %already-public 0, "
       "%onboarding 0, %foreign-kelvin 0, %undecodable 0, %empty-log 0, "
       "%log-too-long 0, %no-tip 0, %unsynced 0, %tip-below-log 0, "
       "%brand-new 0)"

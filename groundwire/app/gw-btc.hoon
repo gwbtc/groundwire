@@ -168,7 +168,6 @@
       inflight=(map ship inflight-writ)
       confidential=(set ship)
       attested=(map ship sont:ord)
-      publicizing=(set ship)
       next-job=@ud
       sponsees=(map ship sponsee)
       declined=(set ship)
@@ -184,15 +183,42 @@
       synced=?
       reorg-halt=(unit reorg-stop)
   ==
-::  $gw-state-11 / $gw-state-10: the two earlier shapes
+::  $gw-state-12 / -11 / -10: the three earlier shapes
 ::
-::    -11 is the state before .synced and .reorg-halt; -10 is the state
-::    before .own as well.  +on-load discriminates on them; ;; is strict
-::    about arity (it bails on both a missing and an extra tail), so trying
-::    the current mold first and falling back is exact, not a guess.
+::    -12 is the state before .publicizing was removed; -11 is -12 without
+::    .synced and .reorg-halt; -10 is -11 without .own.  +on-load
+::    discriminates on them; ;; is strict about arity (it bails on both a
+::    missing and an extra tail), so trying the current mold first and
+::    falling back is exact, not a guess.
 ::
-::    Nothing inside these molds changed, only the tail they are missing,
-::    which is why they can keep naming the current $inflight-writ.
+::    .publicizing was a MIDDLE field, so dropping it shifts everything
+::    after it and arity alone would not discriminate -- except that the
+::    TAIL still does, unconditionally.  A -12 noun offered to the current
+::    mold puts [synced reorg-halt] where (unit reorg-stop) is expected:
+::    the pair is a cell, so `synced` has to read as the unit's ~ head
+::    (only true when synced=%.y), and then `reorg-halt` -- either ~ or
+::    [~ [at cursor since]] -- has to read as a bare $reorg-stop, which is
+::    a three-atom cell.  Neither shape can, so the cast always fails and
+::    the -12 branch is always the one that takes it.
+::
+::    Nothing else inside these molds changed, which is why they can keep
+::    naming the current $inflight-writ.
+::
++$  gw-state-12
+  $:  urb-state=state:urb
+      indexing=?
+      best=(unit id:block:bc)
+      inflight=(map ship inflight-writ)
+      confidential=(set ship)
+      attested=(map ship sont:ord)
+      publicizing=(set ship)
+      next-job=@ud
+      sponsees=(map ship sponsee)
+      declined=(set ship)
+      own=own-custody
+      synced=?
+      reorg-halt=(unit reorg-stop)
+  ==
 ::
 +$  gw-state-11
   $:  urb-state=state:urb
@@ -280,11 +306,26 @@
   ::
   =/  cur  (mole |.(;;(gw-state nou)))
   ?^  cur  `this(state u.cur)
+  ::  A -12 state carries .publicizing, which no longer exists: the block
+  ::  scanner does not index a publication any more, it hands it to the
+  ::  same verifier a packet goes to, so there is no public-spawn replay
+  ::  to guard against and .inflight is the only single-flight left.
+  ::  Dropping it needs no other work -- its readers are gone.
+  ::
+  =/  o12  (mole |.(;;(gw-state-12 nou)))
+  ?^  o12
+    =/  ext=gw-state
+      :*  urb-state.u.o12  indexing.u.o12  best.u.o12  inflight.u.o12
+          confidential.u.o12  attested.u.o12
+          next-job.u.o12  sponsees.u.o12  declined.u.o12  own.u.o12
+          synced.u.o12  reorg-halt.u.o12
+      ==
+    `this(state ext)
   =/  o11  (mole |.(;;(gw-state-11 nou)))
   ?^  o11
     =/  ext=gw-state
       :*  urb-state.u.o11  indexing.u.o11  best.u.o11  inflight.u.o11
-          confidential.u.o11  attested.u.o11  publicizing.u.o11
+          confidential.u.o11  attested.u.o11
           next-job.u.o11  sponsees.u.o11  declined.u.o11  own.u.o11
           %.n  ~
       ==
@@ -293,7 +334,7 @@
   =/  o  ;;(gw-state-10 nou)
   =/  ext=gw-state
     :*  urb-state.o  indexing.o  best.o  inflight.o  confidential.o
-        attested.o  publicizing.o  next-job.o  sponsees.o  declined.o
+        attested.o  next-job.o  sponsees.o  declined.o
         *own-custody  %.n  ~
     ==
   :_  this(state ext)
@@ -334,37 +375,34 @@
     =/  poke  ;;(jael-poke:urb q.vase)
     ?-    -.poke
         %jael-writ
-      ::  A prior block result has already proved this is a public spawn and
-      ::  an exact sanitized replay is in progress.  Ignore reinsertion until
-      ::  that block job resolves.
       ::  EVERY drop below is announced, and now that is TRUE.  Phase 5b's
-      ::  finding 9 was that %jael-writ has twelve distinct pre-verification
+      ::  finding 9 was that %jael-writ has eleven distinct pre-verification
       ::  exits which from outside look identical to "nobody is talking to
       ::  this ship".  Phase 6.2 then paid for it for real: a runtime fault
       ::  stranded the single-flight slot and the two retries that would
       ::  have diagnosed it were swallowed without a word.  bf90840
-      ::  announced nine of the twelve and this comment claimed all of
+      ::  announced nine of them and this comment claimed all of
       ::  them; the clean-room run (6.7) found the other three still mute
       ::  -- and all three of THOSE emit a sticky snub.
       ::
       ::  So every exit goes through +drop-writ, which takes a $writ-drop
       ::  and derives BOTH the log line (+writ-drop-report:lsa) and the
       ::  cards (+writ-drop-fate:lsa) from it.  Neither can be omitted and
-      ::  the two cannot disagree; a thirteenth disposition does not
+      ::  the two cannot disagree; a twelfth disposition does not
       ::  compile until it has a line and a fate.
       ::
       ::  These lines are one-per-dropped-writ, so they are also the rate
       ::  at which a peer is retrying, which is itself the thing you want
       ::  to know.
       ::
-      ?:  (~(has in publicizing) who.poke)
-        :_  this
-        (drop-writ our.bowl dom.poke who.poke %publicizing ~)
-      ::  Single-flight per ship: at most one verification job.  A
-      ::  duplicate or replacement writ while one is in flight is
-      ::  dropped -- the peer's retries re-enter after the verdict, and
-      ::  the on-chain cost of minting states is the rate limit.  No
-      ::  queue, no slot economy.
+      ::  Single-flight per ship: at most one verification job, and that
+      ::  is now the ONLY single-flight there is -- an on-chain
+      ::  publication takes the same slot, because it is the same
+      ::  self-attestation arriving by a different road.  A duplicate or
+      ::  replacement writ while one is in flight is dropped -- the
+      ::  peer's retries re-enter after the verdict, and the on-chain
+      ::  cost of minting states is the rate limit.  No queue, no slot
+      ::  economy.
       ?:  (~(has by inflight) who.poke)
         :_  this
         (drop-writ our.bowl dom.poke who.poke %in-flight ~)
@@ -470,7 +508,7 @@
       =/  req=inflight-writ  [dom.poke pass.poke u.sat job]
       =.  inflight  (~(put by inflight) who.poke req)
       :_  this
-      (verify-cards q.byk.bowl now.bowl who.poke req num.u.best)
+      (verify-cards %verify q.byk.bowl now.bowl who.poke req num.u.best)
     ::
         %jael-anew
       ::  Our own comet asking for a fresh self-attestation.
@@ -690,15 +728,12 @@
     ``noun+!>(chain.own)
     ::  The single-flight bookkeeping, exposed because it is otherwise
     ::  invisible and a stuck slot silences a ship forever.  %jael-writ
-    ::  has nine distinct silent-drop returns; .inflight and .publicizing
-    ::  are two of them and could not be told apart from outside at all
-    ::  (Phase 5b, finding 9).
+    ::  has eight distinct silent-drop returns and .inflight is one of
+    ::  them, indistinguishable from outside (Phase 5b, finding 9).  It
+    ::  now also holds on-chain publication jobs, which take the same slot.
     ::
       [%x %inflight ~]
     ``noun+!>(~(key by inflight))
-    ::
-      [%x %publicizing ~]
-    ``noun+!>(publicizing)
     ::  The %anew single-flight slot.  Same argument as /x/inflight: a
     ::  stranded one silences our OWN pass refresh forever and had no
     ::  witness at all (Phase 7.2 spent an hour eliminating the other six
@@ -846,8 +881,10 @@
     ~[(watch-synced our.bowl)]
   ::
       ::  (%verify-timeout is the pre-rename wire; accepted so a timer set
-      ::  by an older revision cannot crash the agent on upgrade.)
-      [?(%stuck-job %verify-timeout) ship=@ job=@ ~]
+      ::  by an older revision cannot crash the agent on upgrade.
+      ::  %claim-stuck is the same guard for an on-chain publication: same
+      ::  slot, same release, so the same arm serves both.)
+      [?(%stuck-job %verify-timeout %claim-stuck) ship=@ job=@ ~]
     ?.  ?=([%behn %wake *] sign-arvo)
       (on-arvo:def wire sign-arvo)
     =/  who  (slav %p i.t.wire)
@@ -1160,6 +1197,96 @@
       ~[(verdict-card dom.req who `(urb-point-to-jael u.verified who))]
     ==
   ::
+      ::  An ON-CHAIN self-attestation finished verifying.
+      ::
+      ::    Same evidence, same +verify-lc, same single-flight slot as a
+      ::    %jael-writ -- and three deliberate differences, all of which
+      ::    come from the fact that NOBODY ASKED US:
+      ::
+      ::      - no verdict, ever.  A publication that does not verify is a
+      ::        log line.  Jael has no writ outstanding for this ship, and
+      ::        a %fail here would snub a peer on the strength of a
+      ::        transaction anyone can pay to put in a block.
+      ::      - no sponsorship decision.  Sponsorship is requested by
+      ::        attesting TO the sponsor; a broadcast is not addressed to
+      ::        anyone, so it cannot request anything.
+      ::      - the ship comes out PUBLIC.  Building this transaction
+      ::        needed the identity sat, so the publication IS the owner's
+      ::        consent to declassify -- and it is irreversible.
+      ::
+      [%claim ship=@ job=@ ~]
+    =/  who  (slav %p i.t.wire)
+    =/  job  (slav %ud i.t.t.wire)
+    =/  active  (~(get by inflight) who)
+    ?~  active
+      %-  %-  slog
+          :~  leaf+"%gw-btc: discarding a publication result for {(scow %p who)} (job {<job>}): it holds no slot"
+              leaf+"  (released by the ~h2 leak guard, or dropped by the block scanner;"
+              leaf+"   nothing is installed, and a later publication re-runs it)"
+          ==
+      `this
+    ?.  =(job job.u.active)
+      %-  %-  slog
+          :~  leaf+"%gw-btc: discarding a publication result for {(scow %p who)} (job {<job>}): job {<job.u.active>} holds the slot"
+          ==
+      `this
+    =/  req=inflight-writ  u.active
+    =.  inflight  (~(del by inflight) who)
+    ?+    sign-arvo  (on-arvo:def wire sign-arvo)
+        [%khan %arow *]
+      ?.  -.p.sign-arvo
+        ?>  ?=([%khan %arow %.n *] sign-arvo)
+        %-  %-  slog
+            %:  strand-death-report:lsa
+                [%peer who job]
+                -.p.p.sign-arvo
+              +.p.p.sign-arvo
+            ==
+        `this
+      ?>  ?=([%khan %arow %.y %noun *] sign-arvo)
+      =/  [%khan %arow %.y %noun =vase]  sign-arvo
+      =/  [res=result:sa tip-spk=hexb:bc]
+        !<([result:sa hexb:bc] vase)
+      %-  (slog (report:lsa verdict.res))
+      =/  refused=(unit refusal:sa)  (local-refusal who req res)
+      =/  verified=(unit point:urb)
+        ?.  &(ok.verdict.res ?=(~ refused))  ~
+        ?~  point.res  ~
+        `u.point.res(pass.net pass.req)
+      ?~  verified
+        %-  %-  slog
+            :~  leaf+"%gw-btc: the on-chain publication by {(scow %p who)} did not verify"
+                ?^  refused
+                  leaf+"  (it passed, and we refused it locally: {<u.refused>})"
+                leaf+"  (see the checks above; no verdict is emitted and nobody is snubbed)"
+            ==
+        `this
+      =/  applied  (apply-verified who u.verified tip-value.res)
+      =.  urb-state  -.applied
+      ::  +apply-verified files every verified identity as confidential,
+      ::  which is right for a packet and exactly wrong for a broadcast.
+      ::
+      =.  confidential  (~(del in +.applied) who)
+      =.  attested  (~(put by attested) who sont.own.u.verified)
+      %-  %-  slog
+          :~  leaf+"%gw-btc: {(scow %p who)} published a verified self-attestation on chain"
+              leaf+"  (it is PUBLIC from here on -- that is what publishing means, and it does not undo)"
+          ==
+      %-  (slog (unroutable-point who verified))
+      :_  this
+      ::  Jael only receives udiffs for ships it has subscribed to; for
+      ::  the rest, ask it to subscribe and answer the resulting /ship
+      ::  watch from the index we just wrote (+on-watch).
+      ::
+      ?.  (~(has in (subs-to-ships sup.bowl)) who)
+        ~[(listen-to-urb (silt ~[who]) [%| dap.bowl])]
+      %-  jael-update
+      %+  murn  (state-to-udiffs urb-state)
+      |=  [=ship =udiff:point:jael]
+      ^-  (unit [^ship udiff:point:jael])
+      ?.(=(ship who) ~ `[ship udiff])
+    ==
+  ::
   ::  Our +get-blocks thread returned. Update
   ::  urb-state, emit udiffs to Jael and full
   ::  urb-state snapshots to /urb-state watchers,
@@ -1202,38 +1329,25 @@
       =/  tracked-ships=(set ship)
         (subs-to-ships sup.bowl)
       ::
-      ::  A point absent from the block thread's base but introduced by an
-      ::  on-chain %owner effect is a genuine public spawn.  This narrowly
-      ::  resolves the race where asynchronous verification inserted the same
-      ::  ship while the block thread was running.  Existing confidential
-      ::  points never declassify merely because a later block names them:
-      ::  effects lack the input provenance required to make that inference.
-      =/  public-new
-        (public-spawns base-state +.fx-and-state -.fx-and-state)
-      ::  A confidential comet that PUBLISHED itself in this batch has
-      ::  declassified, on purpose and irreversibly: +index-point:urb-core
-      ::  emits %public only for an OP_RETURN publication that spent the
-      ::  identity sat we already track, which nobody but the owner can
-      ::  build.  This is the second, deliberate way out of .confidential
-      ::  (the first, +public-spawns, is a race resolution) and it is what
-      ::  makes decisions-addendum section 2's "publication" self-rescue
-      ::  actually happen: while the ship stays confidential its udiffs are
-      ::  suppressed by +filtered-udiffs and +detect-stale deletes its point
-      ::  the instant the publication's own sat move is seen, so the rescue
-      ::  leaves it strictly worse off than before.
+      ::  The publications this batch found.  The scanner does not judge
+      ::  them and cannot: a custody log names transactions in blocks it
+      ::  has already streamed past.  Each one is a complete
+      ::  self-attestation (+process-publication:urb-core completed the
+      ::  log with the carrying transaction), so it takes the SAME
+      ::  +verify-lc job a %jael-writ takes, in the same single-flight
+      ::  slot.  Nothing is indexed here and no ship declassifies here;
+      ::  that happens when the verification answers, on /claim.
       ::
-      =/  declassified  (published-comets confidential -.fx-and-state)
-      =/  gone-public  (~(uni in public-new) declassified)
-      =/  new-confidential  (~(dif in confidential) gone-public)
-      =/  new-attested  (drop-attested attested gone-public)
-      %-  (slog (declassify-report declassified))
+      =/  cj  (start-claims q.byk.bowl now.bowl -.fx-and-state)
+      =.  inflight  jobs.cj
+      =.  next-job  nxt.cj
       ::
       ::  Three-way merge block-derived custody with any verifier result that
       ::  landed since `base-state`.  A divergent double move is ambiguous;
       ::  discard the whole batch and rerun from the unchanged cursor rather
       ::  than mixing two incompatible histories.
       =/  merged
-        (reconcile-block base-state urb-state.state +.fx-and-state new-confidential)
+        (reconcile-block base-state urb-state.state +.fx-and-state confidential)
       ?~  merged
         ::  NB: the tang MUST be a list.  This read `(slog leaf+"...")` --
         ::  a bare tank -- which +slog walks as if it were the list,
@@ -1243,24 +1357,17 @@
         ::  silence: the agent looks alive and simply never indexes again.
         %-  %-  slog
             :~  leaf+"%gw-btc: concurrent custody conflict; retrying batch"
-                leaf+"  cursor={<num.block-id.urb-state>} public-new={<public-new>}"
-                leaf+"  confidential={<new-confidential>}"
+                leaf+"  cursor={<num.block-id.urb-state>}"
+                leaf+"  confidential={<confidential>}"
             ==
-        ::  If this rejected batch also proved a public spawn that raced a
-        ::  verifier-only insertion, remove just that private insertion before
-        ::  retrying.  Otherwise the duplicate spawn would be suppressed on
-        ::  replay and could never produce another %owner effect.
-        =/  retry-state  (drop-private-insertions urb-state public-new)
-        :_  %=  this
-              urb-state     retry-state
-              confidential  new-confidential
-              attested     new-attested
-              publicizing  (~(uni in publicizing) public-new)
-              inflight     (drop-inflight inflight public-new)
-            ==
-        ::  Schedule the sanitized snapshot for immediate retry. The publicizing
-        ::  guard keeps this exact base stable while Behn schedules the retry,
-        ::  and also across any transient block-thread failure.
+        ::  Schedule the batch for immediate retry from an UNCHANGED
+        ::  cursor.  The claim jobs launched above are not retried with
+        ::  it: they are self-attestations, judged against the chain by
+        ::  the light client, and owe nothing to this index.
+        ::
+        :_  this
+        %+  weld  cards.cj
+        ^-  (list card)
         :~  [%pass /timer %arvo %b %wait now.bowl]
         ==
       =/  filtered-udiffs=udiffs:point:jael
@@ -1271,7 +1378,7 @@
         ::  Ignore ships Jael has not subscribed to and all confidential
         ::  points. Declassification is deliberately not inferred per block.
         ?.  ?&  (~(has in tracked-ships) ship)
-                !(~(has in new-confidential) ship)
+                !(~(has in confidential) ship)
             ==
           ~
         `[ship udiff]
@@ -1282,20 +1389,16 @@
       ::  is unknown until it re-attests.  Drop our trust and tell Jael
       ::  (which demotes the peer to an alien, never a snub) so the
       ::  owner's next attestation re-verifies from scratch.
-      =/  gone-stale=(set ship)  (detect-stale new-urb-state new-confidential attested)
-      =.  confidential  (~(dif in new-confidential) gone-stale)
-      =.  attested      (drop-attested new-attested gone-stale)
+      =/  gone-stale=(set ship)  (detect-stale new-urb-state confidential attested)
+      =.  confidential  (~(dif in confidential) gone-stale)
+      =.  attested      (drop-attested attested gone-stale)
       =.  inflight      (drop-inflight inflight gone-stale)
       =.  urb-state     (drop-private-insertions new-urb-state gone-stale)
-      =.  publicizing   ~
       =/  stale-cards=(list card)
         %+  turn  ~(tap in gone-stale)
         |=(=ship (stale-card dap.bowl ship))
-      ::  A PUBLIC comet just indexed with neither a sponsor nor a fief
-      ::  is unreachable in exactly the same way; hand-rolled spawns that
-      ::  never touched Causeway show up here.
-      %-  (slog (unroutable-points urb-state gone-public))
       :_  this
+      %+  welp  cards.cj
       %+  welp  stale-cards
       %+  welp
         ?.  =(~ fx-ships)
@@ -1530,7 +1633,7 @@
 ::    from the SAME $writ-drop: +writ-drop-report:lsa says what happened
 ::    and +writ-drop-fate:lsa says what it costs.  Neither can be skipped
 ::    and the two cannot contradict each other, and both are ?- over a
-::    closed union, so a thirteenth disposition is a compile error rather
+::    closed union, so a twelfth disposition is a compile error rather
 ::    than a silent drop.  (Same shape as +report / +check-class for the
 ::    post-verification outcomes.)
 ::
@@ -1756,11 +1859,24 @@
 ::  state supplies the previously tracked tip and the set of known-public
 ::  ships used for the sponsor-existence check; .best-height is the chain
 ::  tip our own /best-block subscription last reported.
+::    .kin says which road the attestation arrived by, and is the ONLY
+::    difference between the two: %verify for a %jael-writ, %claim for an
+::    OP_RETURN publication.  It picks the answer wire, and the answer
+::    wire picks the arm in +on-arvo that decides what an answer is worth
+::    -- a verdict, or a log line.  The work itself is identical.
+::
 ++  verify-cards
-  |=  [byk=desk now=@da who=ship req=inflight-writ best-height=@ud]
+  |=  $:  kin=?(%verify %claim)
+          byk=desk
+          now=@da
+          who=ship
+          req=inflight-writ
+          best-height=@ud
+      ==
   ^-  (list card)
   =/  wir  /(scot %p who)/(scot %ud job.req)
-  :~  :*  %pass  [%verify wir]  %arvo  %k
+  =/  gud=@tas  ?:(?=(%verify kin) %stuck-job %claim-stuck)
+  :~  :*  %pass  [kin wir]  %arvo  %k
           %lard  byk
           %+  (set-timeout:strandio ,vase)  stuck-job-guard
           %:  verify-lc:lca
@@ -1770,9 +1886,70 @@
               best-height
           ==
       ==
-      :*  %pass  [%stuck-job wir]
+      :*  %pass  [gud wir]
           %arvo  %b  %wait  (add now stuck-job-guard)
       ==
+  ==
+::  +start-claims: launch a verification for each publication in a batch
+::
+::    The %claim effects a block batch produced, turned into jobs.  Every
+::    refusal here is announced for the same reason every %jael-writ
+::    refusal is: an operator paid a miner to put this on chain and will
+::    otherwise never learn why their comet did not appear.
+::
+::    .best-height is the height of the block the publication was FOUND
+::    in, not the chain tip.  That makes +scan-liveness examine exactly
+::    one block -- the publication's own -- which is the honest question
+::    to ask here: everything above that block is the scanner's own job,
+::    and it will see the sat move itself.  Handing it the real tip would
+::    make every publication found during a historical backfill trigger a
+::    filter scan across every block since.
+::
+++  start-claims
+  |=  [byk=desk now=@da fx=(list [id:block:bc effect:urb])]
+  ^-  [cards=(list card) jobs=(map ship inflight-writ) nxt=@ud]
+  =/  jobs  inflight
+  =/  nxt   next-job
+  =|  cards=(list card)
+  |-
+  ^-  [(list card) (map ship inflight-writ) @ud]
+  ?~  fx  [cards jobs nxt]
+  =*  eu  +.i.fx
+  ?.  ?=([%claim *] eu)
+    $(fx t.fx)
+  =/  who=ship  who.eu
+  =/  height=@ud  num.-.i.fx
+  =*  skip  $(fx t.fx)
+  ?:  (~(has by jobs) who)
+    %-  %-  slog
+        :~  leaf+"%gw-btc: publication by {(scow %p who)} dropped: a verification already holds its slot"
+        ==
+    skip
+  ?~  sat=(pass-attestation domain:cc who pass.eu)
+    %-  %-  slog
+        :~  leaf+"%gw-btc: publication by {(scow %p who)} dropped: its completed pass does not decode"
+        ==
+    skip
+  ?~  chain.u.sat
+    %-  (slog leaf+"%gw-btc: publication by {(scow %p who)} dropped: empty custody log" ~)
+    skip
+  ?:  (gth (lent chain.u.sat) max-custody-log)
+    %-  %-  slog
+        :~  leaf+"%gw-btc: publication by {(scow %p who)} dropped: custody log of {<(lent chain.u.sat)>} exceeds {<max-custody-log>}"
+        ==
+    skip
+  ?.  synced
+    %-  %-  slog
+        :~  leaf+"%gw-btc: publication by {(scow %p who)} held: the light client is not synced"
+            leaf+"  (nothing is judged from a chain we have not seen; rescan to retry)"
+        ==
+    skip
+  =/  req=inflight-writ  [domain:cc pass.eu u.sat nxt]
+  %=  $
+    fx     t.fx
+    jobs   (~(put by jobs) who req)
+    nxt    +(nxt)
+    cards  (weld cards (verify-cards %claim byk now who req height))
   ==
 ::
 ::  A verifier result may carry a pass reconstructed from the latest
@@ -2266,66 +2443,6 @@
   =/  graft  (graft-private out live who u.current)
   ?~  graft  ~
   $(ships t.ships, out u.graft)
-::
-::  Find public spawns introduced by this block batch.  %owner is emitted only
-::  by a successful on-chain spawn; later point effects are not sufficient to
-::  declassify an existing confidential identity.
-++  public-spawns
-  |=  $:  base=state:urb
-          result=state:urb
-          fx=(list [id:block:bitcoin effect:urb])
-      ==
-  ^-  (set ship)
-  =|  out=(set ship)
-  |-
-  ?~  fx  out
-  =/  eu=effect:urb  +.i.fx
-  ?.  ?=([%point * %owner *] eu)
-    $(fx t.fx)
-  =/  [%point who=ship %owner *]  eu
-  ?.  ?&  !(~(has by unv-ids.base) who)
-          (~(has by unv-ids.result) who)
-      ==
-    $(fx t.fx)
-  $(fx t.fx, out (~(put in out) who))
-::
-::  +published-comets: confidential comets that declassified in this batch
-::
-::    %public is emitted by +index-point:urb-core for every accepted
-::    OP_RETURN publication.  Reaching +index-point at all requires either
-::    spending the comet's funding satpoint (a spawn) or spending the
-::    identity sat we are already tracking (a state update) -- neither of
-::    which anyone but the owner can do.  So a %public effect naming a ship
-::    we hold as CONFIDENTIAL is that owner's own, on-chain, permanent
-::    decision to become public.
-::
-::    We only report ships that were confidential: %public for a comet that
-::    was already public is a no-op, and %gw-btc must never infer
-::    declassification from anything weaker than this.
-::
-++  published-comets
-  |=  [conf=(set ship) fx=(list [id:block:bitcoin effect:urb])]
-  ^-  (set ship)
-  =|  out=(set ship)
-  |-
-  ?~  fx  out
-  =/  eu=effect:urb  +.i.fx
-  ?.  ?=([%point * %public ~] eu)
-    $(fx t.fx)
-  =/  [%point who=ship %public ~]  eu
-  ?.  (~(has in conf) who)
-    $(fx t.fx)
-  $(fx t.fx, out (~(put in out) who))
-::
-::  Operator record of an irreversible privacy change.
-++  declassify-report
-  |=  ships=(set ship)
-  ^-  tang
-  %+  turn  ~(tap in ships)
-  |=  who=ship
-  ^-  tank
-  :-  %leaf
-  "%gw-btc: {(scow %p who)} published itself on chain; now PUBLIC, permanently"
 ::
 ++  drop-attested
   |=  [ats=(map ship sont:ord) ships=(set ship)]

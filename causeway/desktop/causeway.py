@@ -868,16 +868,58 @@ def publication_noun(pass_atom: int, opening: dict) -> tuple:
     return (pass_atom, opening_noun(opening))
 
 
-MAX_PUBLICATION = 512
+def pass_with_xtr(pass_atom: int, xtr: int) -> int:
+    """The same suite-%c pass carrying a different xtr tail.
+
+    Layout, exactly what +pub:ex:cric writes and +nol/+com read:
+
+        'c'(8 bits) | ugn(256) | cry(256) | mat(dat) | xtr
+
+    with xtr riding at its exact bit length and OMITTED entirely when 0.
+    ugn, cry and dat are copied verbatim, so `fig` — the comet's @p — is
+    unchanged by construction: xtr is outside the key tweak.
+
+    This is what makes a publication the comet's WHOLE attestation packet:
+    the pass in the OP_RETURN is the pass a peer receives, custody log and
+    all.  Mirrors +with-xtr:gw-btc-pass and passWithXtr() in
+    causeway/src/spawn/mine-c.ts; pinned by the `full-packet` golden
+    vector."""
+    if pass_atom & 0xFF != ord("c"):
+        raise ValueError("pass_with_xtr: not a suite-C pass")
+    bod = pass_atom >> 8
+    ugn = bod & ((1 << 256) - 1)
+    cry = (bod >> 256) & ((1 << 256) - 1)
+    _p, dat = _hoon_rub(512, bod)
+    w = BitWriter()
+    w.write(8, ord("c"))
+    w.write(256, ugn)
+    w.write(256, cry)
+    w.write_mat(dat)
+    if xtr:
+        w.write(xtr.bit_length(), xtr)
+    return w.to_int()
+
+
+#  The byte cap on a publication payload.  1024, and the number is not
+#  arbitrary: it is the PACKET bound (decisions addendum §6 fixes a complete
+#  jammed attestation at one Mesa fragment, ~1 KiB), and a publication carries
+#  that same packet.  A pass core is ~108 B, entry 0's opening ~120 B and the
+#  terminal opening ~100 B, so the floor is ~330 B and each further custody hop
+#  adds ~40 B — 1024 is ~17 hops, against the four that 512 allowed.  An
+#  OP_RETURN is all non-witness data, so that is a ~1160 vB transaction:
+#  ~2320 sats at 2 sat/vB.  MUST equal +max-publication:gw-btc-pass and
+#  MAX_PUBLICATION in causeway/src/spawn/publication.ts, byte for byte.
+MAX_PUBLICATION = 1024
 
 
 def push_data(payload: bytes) -> bytes:
     """The minimal Bitcoin push opcode(s) for `payload`.
 
     A direct push (opcode = length) reaches 75.  PUSHDATA1 (0x4c) carries ONE
-    length byte and so stops at 255 — below this codec's own 512-byte cap, so a
-    fief-carrying publication (265–269 bytes in practice) needs PUSHDATA2
-    (0x4d) and its TWO-byte LITTLE-ENDIAN length.  Byte-for-byte identical to
+    length byte and so stops at 255 — far below this codec's own 1024-byte cap,
+    so a fief-carrying publication (265–269 bytes in practice) already needs
+    PUSHDATA2 (0x4d) and its TWO-byte LITTLE-ENDIAN length, and a full-packet
+    one is never anything else.  Byte-for-byte identical to
     +push-data:gw-btc-pass and pushData() in causeway/src/spawn/publication.ts.
     """
     n = len(payload)
@@ -896,8 +938,13 @@ def make_publication_script(pass_atom: int, opening: dict) -> bytes:
         OP_RETURN PUSH3 'urb' PUSH1 <kelvin> <pushdata payload>
         payload = (jam [pass opening])
 
+    `pass_atom` is the comet's FULL attestation pass (custody log in its
+    xtr — see pass_with_xtr) and `opening` is the hop this transaction
+    performs; a watcher completes the log with this transaction's own
+    [txid height opening].
+
     Payloads over 75 bytes use PUSHDATA1 (0x4c len), over 255 PUSHDATA2
-    (0x4d len-lo len-hi); cap 512 bytes."""
+    (0x4d len-lo len-hi); cap MAX_PUBLICATION bytes."""
     payload = jam_bytes(publication_noun(pass_atom, opening))
     if len(payload) > MAX_PUBLICATION:
         raise ValueError(f"publication payload {len(payload)} > {MAX_PUBLICATION}")
@@ -1712,9 +1759,8 @@ def assert_identity_input_zero(tx, prior_txid: str, prior_vout: int) -> None:
       * ownership — the verifier reads only input 0.  self-attestation.hoon:674
         takes `(snag-input 0 this)` and :678-680 requires its outpoint to equal
         the tracked satpoint (`input-zero`, `continuity`); :683-689 derives the
-        key-path check from input 0's prevout alone.  urb-core.hoon's
-        +apply-state compares `[txid vout]:cur` against `i.inputs`.  An identity
-        input anywhere else is simply not seen.
+        key-path check from input 0's prevout alone.  An identity input
+        anywhere else is simply not seen.
 
       * ordinals — sats are assigned to outputs in input order, so the tracked
         sat's transaction-wide index equals its offset within input 0's prevout
@@ -3480,19 +3526,29 @@ def _spawn_publication_opening(internal_xonly: bytes, snapshot: dict, utxo: dict
     """The opening a PUBLIC spawn publishes on-chain: reveals the snapshot and
     opens the hiding dat commitment via the spawn blind-opening.
 
-    start_height is 0 here BY DESIGN and stays 0 on-chain. The publication is
-    built and broadcast in the same transaction it describes, so at write time
-    nothing knows what block it will land in. A published spawn does not need
-    it: the scanner learns the height from the block it finds the publication
-    in, whereas a packet-borne blind-opening must carry it because the verifier
-    has no block to start from. See doc/opret-revision/04-decisions-addendum.md.
+    start_height is the FUNDING transaction's block, and it is REQUIRED.  It
+    used to be written as 0 on the theory that a spawn publication rides the
+    transaction it describes and so cannot know its own block — but
+    start-height names the funding tx, which is a confirmed PARENT of this
+    transaction and is therefore known at build time.  It matters now because a
+    publication is a complete attestation packet: a watcher fetches that
+    transaction by [height txid] before it can walk anything, and the light
+    client has no lookup by bare txid.  A 0 here is a comet nobody can verify,
+    failing hours later on somebody else's machine.
     """
+    height = utxo.get("height")
+    if not height:
+        raise ValueError(
+            "publish: the funding UTXO has no confirmed block height, so the "
+            "spawn's start-height is unknown; wait for it to confirm (or spawn "
+            "confidentially and publish later)"
+        )
     return {
         "internal_key": int.from_bytes(b"\x02" + internal_xonly, "big"),
         "snapshot": snapshot,
         "blind_opening": {
             "spawn": {"txid_hex": utxo["txid"], "vout": utxo["vout"], "off": 0},
-            "start_height": 0,   # unknowable pre-broadcast; see docstring
+            "start_height": int(height),
             "blind": blind,
         },
     }

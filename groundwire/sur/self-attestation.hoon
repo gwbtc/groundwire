@@ -99,15 +99,37 @@
       =pass
       chain=custody-log
   ==
-::  $publication: the payload a PUBLIC comet reveals in a deliberate
-::  OP_RETURN output (kelvin 9).  Same evidence a confidential comet
-::  hands a peer in an xtr entry, but published on-chain so scanners
-::  can follow public identities with no packet exchange.  The pass
-::  binds the name (who = fig(pass)); the opening reveals the state
-::  committed in the transaction's sat-carrying output.  A present
-::  blind-opening marks a spawn (it also opens the hiding dat
-::  commitment); an absent one marks a state update (rekey/breach) of
-::  an already-tracked comet.
+::  $publication: the FULL ATTESTATION PACKET, published on chain
+::
+::    A public comet reveals this in a deliberate OP_RETURN output
+::    (kelvin 9).  It is not a second format and it gets no second
+::    verification path: .pass is byte-for-byte the pass this comet
+::    hands a peer over ames -- name, hiding dat commitment, and the
+::    whole custody log in xtr -- and a watcher runs it through the
+::    same +verify-lc / ++run-checks walk a mailed attestation gets.
+::
+::    .opening is the one hop the packet cannot contain.  A publication
+::    rides the comet's own custody transaction, and that transaction's
+::    txid does not exist until it is signed, so the log in xtr ends at
+::    the satpoint this transaction SPENDS and .opening reveals the
+::    state it commits.  The watcher is reading the block, so it knows
+::    the two facts the publisher could not write down -- the txid and
+::    the height -- and completes the log itself:
+::
+::        chain = (snoc <log from xtr>) [id.tx height `opening]
+::
+::    Riding the custody transaction is load-bearing twice over.  It is
+::    what makes the publication the OWNER'S consent to declassify:
+::    only the holder of the identity sat can build the transaction, so
+::    a third party cannot publish somebody else's packet and strip
+::    their confidentiality.  And it is what lets a comet publish LATE
+::    -- the log proves custody from the spawn to here, so nothing has
+::    to be inferred from the transaction in hand and a stranger walks
+::    the same chain a peer would.
+::
+::    A spawn publication is the degenerate case, not a special one:
+::    xtr is empty, and the completed log is the single entry whose
+::    blind-opening opens the dat commitment.
 ::
 +$  publication  [=pass =opening]
 ::
@@ -186,8 +208,7 @@
 ::    a pure function of the drop and can be tested without the agent.
 ::
 +$  writ-drop
-  $%  [%publicizing ~]              ::  a public-spawn replay is in progress
-      [%in-flight ~]                ::  single-flight: one job per ship
+  $%  [%in-flight ~]                ::  single-flight: one job per ship
       [%declined ~]                 ::  operator declined this sponsorship
       [%already-public ~]           ::  we already hold a public point
       [%onboarding ~]               ::  the public onboarding packet, no xtr

@@ -97,6 +97,23 @@
   $%  diff
       [%xfer from=sont:ord to=sont:ord]
       [%insc =insc:ord sont=$@(~ sont:ord) =mail:ord]
+      ::  %claim: an OP_RETURN publication was found in this block.
+      ::
+      ::    .pass is the publication's own pass with the custody log
+      ::    COMPLETED -- +process-publication:urb-core appended the entry
+      ::    for the transaction that carried it, which is the one entry
+      ::    the publisher could not write down.  So this is an ordinary
+      ::    self-attestation that happens to have arrived by chain
+      ::    instead of by ames, and it carries no judgement whatsoever:
+      ::    the scanner cannot walk a custody log (the evidence is in
+      ::    blocks it has already streamed past), so %gw-btc hands it to
+      ::    the SAME +verify-lc a %jael-writ gets.
+      ::
+      ::    It produces no jael udiff (+fx-to-udiffs drops it) and it can
+      ::    never produce a verdict: nobody asked us to judge this comet,
+      ::    so a failed publication is a log line and nothing else.
+      ::
+      [%claim who=ship =pass]
   ==
 +$  diff
   $%  [%dns domains=(list @t)]

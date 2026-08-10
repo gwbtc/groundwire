@@ -10,6 +10,142 @@ rather than mechanical DOS resistance. Urbit as a whole is not DOS-resistant;
 piecemeal hardening here buys little and costs complexity. A kernel-wide DOS
 pass is a separate, later effort.
 
+## 0. The publication IS the attestation packet (adopted 2026-08-10)
+
+**This supersedes every publication-specific design in this document** — §4's
+"on-chain twin of a confidential `xtr` entry", §4b's `start-height = 0`, and
+§2b's two tiers. Read those for the history; read this for what is true.
+
+**Decision.** Put the full attestation packet — literally the one a comet would
+otherwise send confidentially over Ames — into the `OP_RETURN`. Watchers verify
+it *exactly* as they verify an attestation packet. Jael populates the full
+`(map life pass)`.
+
+It is better than the alternatives (hop heights, endpoints-plus-scan, hybrid)
+because it **removes a distinction rather than optimising one**: no
+publication-specific format, no publication-specific verification path, no
+second grammar to keep in sync with the packet grammar. The stranger case stops
+being special — a watcher walks the same custody log through the same
+`+verify-lc`.
+
+### 0.1 The payload
+
+The mold does not change (`$publication = [=pass =opening]`, `sur/self-attestation`),
+but both fields mean something stronger:
+
+- **`pass`** is byte-for-byte the pass this comet hands a peer over Ames — name,
+  hiding `dat` commitment, and the **whole custody log in its `xtr`**.
+- **`opening`** is the one hop the packet cannot contain. A publication rides
+  the comet's own custody transaction, and that transaction's txid does not
+  exist until it is signed, so the log in `xtr` ends at the satpoint this
+  transaction *spends* and `opening` reveals the state it commits.
+
+The watcher is reading the block, so it knows the two facts the publisher could
+not write down, and completes the log itself:
+
+```
+chain = (snoc <log from xtr>) [id.tx <this height> `opening]
+```
+
+then hands `[who pass chain]` to `+run-checks`. A spawn publication is the
+degenerate case, not a special one: `xtr` is empty and the completed log is the
+single entry whose `blind-opening` opens `dat`.
+
+**Riding the custody transaction is load-bearing twice over.** It is what makes
+a publication the *owner's* consent to declassify — only the holder of the
+identity sat can build the transaction, so a third party cannot publish somebody
+else's packet and strip their confidentiality. And it is what lets a comet
+publish **late**: the log proves custody from the spawn to here, so nothing has
+to be inferred from the transaction in hand.
+
+### 0.2 What this dissolved
+
+`+process-publication:urb-core` had three branches — `+apply-state` for a comet
+we already tracked, `+apply-spawn` for a stranger that opened its blind, and a
+refusal for a stranger that did not. Between them they reimplemented, weakly,
+most of `+run-checks`: the `dat` opening, input-0 continuity, the `state-key`
+output commitment, the sat landing, the life gate, sat occupancy.
+
+`+apply-spawn` also demanded that **input 0 be the spawn satpoint**, and that is
+precisely what rejected a late reveal: a comet publishing later in life spends a
+satpoint further along its chain, so that gate said "not a spawn" while the other
+branch said "not a state update either, because we have never tracked you".
+Nothing in a publication could bridge that gap, because the bridge is the custody
+log — and the custody log is now in the payload.
+
+So all three branches, `+index-point`, and the second grammar they were written
+in are **deleted**. `+process-publication` reads the envelope, completes the log,
+and emits one `[%claim who pass]` effect. `%gw-btc` turns that into the same
+`+verify-lc` job a `%jael-writ` gets, in the same single-flight slot, and
+`+apply-verified` installs the result — with the ship coming out **public**
+rather than confidential, and with **no verdict, ever**: nobody asked us to judge
+this comet, so a publication that fails to verify is a log line and nothing else.
+
+`.publicizing`, `+public-spawns` and `+published-comets` went with them: they
+existed to resolve a race between the block scanner indexing a publication and
+the verifier inserting the same ship, and publications now go *through* the
+verifier, so the race does not exist. `/x/publicizing` is gone; `/x/inflight`
+covers both roads.
+
+### 0.3 The cap: 1,024 bytes
+
+`MAX_PUBLICATION` rises from 512 to **1,024**, in all three implementations
+(`groundwire/lib/gw-btc-pass.hoon`, `causeway/desktop/causeway.py`,
+`causeway/src/spawn/publication.ts`) and in the round-trip boundary tests, which
+move from 511/512/513 to 1023/1024/1025.
+
+The number is not arbitrary: **it is the packet bound.** §6 fixes a complete
+jammed first-contact attestation at one Mesa fragment (~1 KiB), and a publication
+carries that same packet. A payload this codec would accept but Ames could never
+carry would describe an identity that can be published and then never attest, so
+the two bounds are one bound, stated once.
+
+Measured, not asserted (the `full-packet` golden vector): a pass core is ~108 B,
+entry 0's opening ~120 B and the terminal opening ~100 B, so the floor is ~330 B
+and each further custody hop adds ~40 B. A realistic **seven-hop packet is a
+588-byte payload / 598-byte script** — past 512, comfortably inside 1,024, which
+is ~17 hops against the four that 512 allowed.
+
+Cost: an `OP_RETURN` is all non-witness data, so payload bytes convert ~1:1 into
+vbytes and therefore into sats per sat/vB (measured: a 269-byte payload made a
+401 vB transaction costing 802 sats at 2 sat/vB). 1,024 bytes is ~1,160 vB,
+~2,320 sats at 2 sat/vB — payable only because `c534cba` let a state update take
+a funding input; before that the fee came out of the identity sat and a comet
+could be priced out of its own identity.
+
+A cap well below `MAX_SCRIPT_SIZE` (10,000, and `OP_PUSHDATA2` has reached it
+since `194e56d`) is still worth having: every watcher pays to parse and then to
+*fetch* whatever is published, so the cap bounds what a stranger can make the
+network do for one transaction fee — ~17 light-client fetches plus a one-block
+filter scan, single-flighted per ship. Raising it later is a constant, not a
+format change.
+
+### 0.4 `start-height` is now REQUIRED on a published spawn
+
+§4b said a published spawn carries `start-height = 0` permanently, on the
+grounds that the publication is built inside the transaction it describes. That
+reasoning conflated two blocks. `start-height` names the **funding** transaction
+— a confirmed *parent* of the spawn transaction — which is known at build time
+and always was.
+
+It matters now because the watcher runs the packet path: `+verify-lc` fetches the
+funding transaction by `[height txid]` before it can walk anything, and the light
+client has no lookup by bare txid. A `0` is a comet nobody can verify, failing
+hours later on somebody else's machine. Both Causeway front ends now refuse to
+build a published spawn without it rather than defaulting.
+
+### 0.5 Cross-language agreement
+
+Three implementations encode publications — Hoon, the Python desktop client, the
+TypeScript web SPA — and they have silently diverged before (the `PUSHDATA1` bug
+had Hoon *and* TypeScript emitting corrupt scripts while only Python raised).
+The `full-packet` vector in `vectors/gw-kelvin-9.json` pins a realistic
+seven-hop publication, and all three assert the same bytes for it: the jammed
+custody log (392 B), the `xtr` re-encoding of the pass (`+with-xtr` /
+`pass_with_xtr` / `passWithXtr`, 500 B), the payload (588 B) and the script
+(598 B). All three also stay **loud**: over the cap they crash/raise/throw with a
+named reason rather than emit a malformed script.
+
 ## 1. Protocol version: a Kelvin number in `dat`
 
 The domain `dat` carries an explicit protocol version, Kelvin-style
@@ -165,8 +301,8 @@ This delivers the rescue for every peer that has ever verified the comet, which
 is the population §2's self-rescue was written for: a comet becomes unreachable
 precisely because peers that *did* know it dropped its point.
 
-**Tier 2 — publication as an on-chain self-attestation (specified, NOT
-implemented).** A stranger scanner still cannot admit a state-update
+**Tier 2 — publication as an on-chain self-attestation (IMPLEMENTED
+2026-08-10; see §0, which also retires tier 1 as a separate case).** A stranger scanner still cannot admit a state-update
 publication, and must not: the `pass`↔`dat` binding names the **spawn**
 satpoint, and nothing in a single publication connects that satpoint to the one
 this transaction spends. Walking that custody chain is the confidential
@@ -185,10 +321,10 @@ Consequences to pin when this lands:
   than a packet attestation's: the scanner is reading the block that contains
   the tip transaction, so the BIP-158 tip scan — the dominant cost (§9) — is
   ~zero blocks wide.
-- The 512-byte payload cap (§4) bounds the log: pass ≈ 108 B plus opening
-  ≈ 120 B leaves room for roughly seven `[txid height]` entries. A comet that
-  has moved its sat more often than that cannot publish, and that is a real
-  limitation, stated rather than discovered.
+- The payload cap bounds the log. At 512 that was roughly four hops, which is
+  why the cap moved to 1,024 (~17 hops) when this landed — see §0.3. A comet
+  that has moved its sat more often than that still cannot publish, and that is
+  a real limitation, stated rather than discovered.
 - §4b needs one refinement. `blind-opening.start-height` is unfillable only
   when the publication rides the spawn transaction itself. A **late**
   publication can and MUST carry a true `start-height`: the funding
@@ -513,6 +649,12 @@ publication  = [=pass =opening]        :: sur/self-attestation
 opening      = [internal-key=@ux snapshot blind-opening=(unit [spawn blind])]
 ```
 
+> **SUPERSEDED by §0 (2026-08-10).** The paragraph below describes the
+> publication as a *twin* of one `xtr` entry, with the spawn/state-update
+> distinction carried by the presence of a `blind-opening`. It is now the whole
+> packet: `pass` carries the full custody log in its `xtr`, and the
+> spawn/state-update distinction does not exist at the watcher at all.
+
 The publication is the on-chain twin of a confidential `xtr` entry: the
 `pass` binds the name (`who = fig(pass)`) and the `opening` reveals the
 state committed in the transaction's sat-carrying output. A **present**
@@ -520,8 +662,8 @@ state committed in the transaction's sat-carrying output. A **present**
 commitment); an **absent** one marks a **state update** (rekey/breach)
 of an already-tracked comet.
 
-Maximum payload size: **512 bytes**. Confidential custody transactions
-carry no publication output at all. Reachability-restoration and
+Maximum payload size: **1,024 bytes** (was 512; see §0.3). Confidential
+custody transactions carry no publication output at all. Reachability-restoration and
 advertisement payloads (01 §6.2–6.3) are deferred (§7).
 
 ### 4a. Byte order of the payload
@@ -536,6 +678,13 @@ way once, so this is now pinned by a test that decodes a real mainnet
 OP_RETURN.
 
 ### 4b. A published spawn's `start-height` is `0`, on purpose
+
+> **WRONG, and reversed by §0.4 (2026-08-10).** `start-height` names the
+> FUNDING transaction, which is a confirmed parent of the spawn transaction and
+> is known at build time; the argument below conflates it with the block the
+> spawn transaction lands in. A published spawn now MUST carry a true
+> `start-height`, because the watcher fetches that transaction by
+> `[height txid]` before it can verify anything.
 
 `blind-opening` carries `start-height`, defined as the block containing
 the transaction that **created** the spawn satpoint (i.e. the funding

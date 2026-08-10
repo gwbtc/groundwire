@@ -33,7 +33,14 @@ export interface AssembleArgs {
   keys: KeySource;
   feeRate?: number;               // default 2 sat/vB
   publish?: boolean;              // PUBLIC spawn (add OP_RETURN); default confidential
-  startHeight?: number;           // blind-opening height for a public spawn (default 0)
+  // The FUNDING tx's block — the blind-opening's start-height. REQUIRED when
+  // publishing: a publication is a complete attestation packet, and a watcher
+  // fetches the funding transaction by [height txid] before it can walk
+  // anything (the light client has no lookup by bare txid).  0 used to be
+  // written here on the theory that a spawn publication rides the transaction
+  // it describes and so cannot know its own block — but start-height names the
+  // FUNDING tx, which is a confirmed parent and is known at build time.
+  startHeight?: number;
   sponsor?: bigint | null;        // sponsor @p committed in the initial snapshot
   noRoute?: boolean;              // deliberately mint an UNROUTABLE comet (no sponsor, no fief)
   dom?: string;
@@ -91,12 +98,22 @@ export function assembleSpawn(args: AssembleArgs): AssembledSpawn {
   // Public spawn: reveal the opening (pass + snapshot + blind-opening) on chain.
   let publicationScript: Uint8Array | undefined;
   if (args.publish) {
+    // Never a silent 0: a published spawn whose blind-opening claims height 0
+    // cannot be verified by anybody, and the failure is a fetch error on the
+    // watcher's side, hours later, with nothing to point at.
+    if (!args.startHeight || args.startHeight <= 0) {
+      throw new Error(
+        "publish: the funding transaction's block height is required "
+        + "(it is the blind-opening's start-height; a watcher fetches that "
+        + "transaction by [height txid] before it can verify anything)",
+      );
+    }
     const opening: Opening = {
       internalKey: bytesToAtomBE(internalKey33),
       snapshot,
       blindOpening: {
         spawnSont,
-        startHeight: args.startHeight ?? 0,
+        startHeight: args.startHeight,
         blind: bytesToAtomBE(mined.blind),
       },
     };

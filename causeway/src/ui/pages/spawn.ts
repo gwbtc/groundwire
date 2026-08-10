@@ -239,6 +239,7 @@ export function renderSpawn(root: HTMLElement): void {
     try {
       assembled = assembleSpawn({
         mined, picked, keys, feeRate: 2, publish: isPublic, sponsor, noRoute,
+        ...(picked.blockHeight ? { startHeight: picked.blockHeight } : {}),
       });
     } catch (err: any) {
       status.innerHTML = "";

@@ -931,9 +931,8 @@ All are care `%x`, so `%gx` with a trailing mark. Confirmed against
 | path | mark | value |
 |---|---|---|
 | `/x/ready` | `noun` | `[synced=? tip=(unit @ud) indexing=? reorg-halt=(unit [at cursor since])]` |
-| `/x/inflight` | `noun` | `(set ship)` — peers with a verification running |
+| `/x/inflight` | `noun` | `(set ship)` — ships with a verification running, from a packet OR from an on-chain publication (same slot) |
 | `/x/pending-own` | `noun` | `(unit @ud)` — the `%anew` self-validation slot |
-| `/x/publicizing` | `noun` | `(set ship)` |
 | `/x/custody` | `noun` | our own verified custody log (the xtr we serve) |
 | `/x/attested` | `noun` | `(map ship sont)` — tip each confidential peer last attested to |
 | `/x/confidential` | `noun` | `(set ship)` — identities held confidentially |
@@ -1210,49 +1209,48 @@ this, your pill predates the fix.
 
 ### What *is* repairable, contrary to earlier drafts
 
-**A confidential comet CAN become public.** This section used to assert the
-opposite, as a permanent design property, on the grounds that `+apply-spawn`
-is the only writer of the public index and requires spending the original
-funding satpoint. Both halves are wrong:
+**A confidential comet CAN become public, and since 2026-08-10 so can a
+STRANGER's comet** — the case that had never once worked. This section used to
+assert the opposite, as a permanent design property, on the grounds that
+`+apply-spawn` is the only writer of the public index and requires spending the
+original funding satpoint. That gate is gone, along with `+apply-spawn`,
+`+apply-state` and `+index-point`: see
+`doc/opret-revision/04-decisions-addendum.md` §0.
 
-- `+apply-spawn` is **not** the only writer. `+apply-state` writes the index
-  through `+index-point` (`lib/urb-core.hoon:353` → `:376`), and the
-  confidential verifier writes it directly (`app/gw-btc.hoon:1919`) — which is
-  precisely why a confidential comet is *in* `unv-ids` at all.
-- The funding-satpoint guard (`lib/urb-core.hoon:311`) is real but belongs to
-  `+apply-spawn`, which a tracked comet never reaches:
-  `+process-publication` (`lib/urb-core.hoon:256-262`) routes any ship already
-  in `unv-ids` to `+apply-state` first.
-
-This is **Tier 1** in `doc/opret-revision/04-decisions-addendum.md:154`: a
-publication whose subject the scanner already tracks is a *state update*,
-whatever the shape of its opening. Input-0 continuity from the sat we already
-follow is the ownership proof. It shipped in `d63e28a`; the runbook commit
-landed after it and reproduced the superseded Phase-5b conclusion.
+**A publication is now the comet's whole attestation packet.** The `pass` in the
+`OP_RETURN` is byte-for-byte the pass a peer receives over Ames, custody log and
+all; the `opening` beside it is the hop the carrying transaction performs, which
+the payload cannot name because that transaction's txid does not exist until it
+is signed. `+process-publication` completes the log with `[id.tx <this height>
+opening]` and emits `[%claim who pass]`; `%gw-btc` hands that to the **same**
+`+verify-lc` a `%jael-writ` gets, in the same single-flight slot, and installs
+the result public.
 
 The transaction is one input and (at least) two outputs: input 0 spends the
-comet's currently tracked identity satpoint; the sat-carrying output commits a
-snapshot whose `life` **strictly** exceeds the life peers hold; and an
-OP_RETURN carries `[pass opening]` jammed behind `6a 03 'urb' 01 09`, ≤512
-bytes. Every peer that has ever verified this comet accepts it, emits
-`[%point who %public ~]`, drops it from `.confidential`, and logs
-`published itself on chain; now PUBLIC, permanently`.
+comet's **current** identity satpoint (whatever hop that is — it no longer has to
+be the spawn); the sat-carrying output commits the snapshot the `opening`
+reveals; and an `OP_RETURN` carries `[pass opening]` jammed behind
+`6a 03 'urb' 01 09`, **≤1,024 bytes** (raised from 512; a seven-hop packet is
+~588). Any scanner accepts it, including one that has never heard of the comet.
 
-Two caveats the test plan does not state:
+Three things to know when reading the logs:
 
-- **Only peers that already track the comet.** A scanner that has never
-  verified it is a stranger and refuses at `lib/urb-core.hoon:273`
-  (`state-update publication for a comet we do not track`). Admitting a
-  publication from a stranger is Tier 2, which is specified and **not
-  implemented**.
-- **Causeway cannot build it.** There is no `publish` subcommand and no
-  `--publish` on `rekey`; `build_rekey_psbt` accepts
-  `publication_pass_atom`/`publication_opening` but every caller passes
-  neither. Use `ops/gwmint.py`.
+- **No verdict, ever.** Nobody asked us to judge a broadcast, so a publication
+  that fails to verify prints `the on-chain publication by ~xxx did not verify`
+  and emits no cards. It cannot snub.
+- **Verification is asynchronous.** The block scanner emits the claim; the
+  answer arrives on the `/claim/<ship>/<job>` wire, minutes later, after the
+  light client has fetched every hop. `/x/inflight` holds the ship meanwhile.
+- **Causeway cannot build a late publication.** There is no `publish`
+  subcommand and no `--publish` on `rekey`; `build_rekey_psbt` accepts
+  `publication_pass_atom`/`publication_opening` but every caller passes neither.
+  Use `ops/gwmint.py`. A published *spawn* works, and now requires the funding
+  transaction's block height (Causeway refuses rather than writing 0).
 
-Watch `/x/confidential` for the ship leaving the set — **not**
-`/x/publicizing`, which is an unrelated re-entrancy latch for the public-spawn
-replay race and never mentions declassification.
+Watch `/x/confidential` for the ship leaving the set. (`/x/publicizing` is
+gone: it latched a race between the scanner indexing a publication and the
+verifier inserting the same ship, and publications now go *through* the
+verifier.)
 
 ---
 
@@ -1333,7 +1331,7 @@ the code.
 | `causeway` has a `mine` subcommand | folklore | it does not. Mining happens inside `spawn generate`/`spawn connect` via the external `comet_miner` binary (`--miner`). |
 | the pier liveness signal is `<PIER>/.urb/log` mtime | early briefs | inert; measured 21 h stale on a live ship. Use `<PIER>/.urb/log/*/data.mdb`. |
 | "there is no local pill build" | **this runbook**, §3.2 and §11 | false, and false when written: every campaign has run on a locally built solid pill. `+pill/solid` the *generator* is broken; `fyrd`-ing the `solid:pill` *gate* is not. Rebuilt from `hd/cc-kernel@de3222d36a` in ~6 min on 2026-08-06. §3.2 rewritten. |
-| "a confidential comet cannot become public" | **this runbook**, §10 and §5.2 | false since `d63e28a`. `+apply-state` and `+apply-verified` both write the index; `+process-publication` routes a tracked comet to `+apply-state` and never reaches the funding-satpoint guard. §10 rewritten. |
+| "a confidential comet cannot become public" | **this runbook**, §10 and §5.2 | false since `d63e28a`, and since 2026-08-10 a STRANGER's publication is admitted too: the payload is the whole attestation packet and goes to the same `+verify-lc` a packet does. `+apply-spawn`/`+apply-state`/`+index-point` and the funding-satpoint gate are deleted. §10 rewritten twice. |
 | boot into tmux and drive the dojo | **this runbook**, §5.3 | no live ship has ever run that way. Campaign ships run `-t` under a supervisor and are driven over `conn.sock`; the `>` lines are notation for a khan-eval. §5.3 rewritten, `ops/gwctl.py` added. |
 | — (nothing said) | **this runbook**, everywhere | there was **no shutdown procedure at all**, and stopping a supervised ship without stopping its supervisor first is a no-op. Directly caused an incident in which three running ships were handed over as "stopped". Added as §5.10. |
 | naming a **confidential** comet as a sponsor makes the sponsee permanently UNDETERMINED | **this runbook**, §5.2 (added 2026-08-06) | false, measured live 2026-08-07. `+verify-cards` hands `+run-checks` the **raw** `~(key by unv-ids.urb-state)`, which includes confidentially-verified comets, while `+known-public:gw-btc` — same name, same agent, two arms away — subtracts `.confidential`. A confidential sponsor satisfies `sponsor-known`. And UNDETERMINED is never permanent: it clears the moment the verifier learns the sponsor. §5.2 rewritten; the two definitions still need reconciling. |

@@ -1,5 +1,12 @@
 # Implications for the current implementation, and TODOs
 
+> **Partly superseded, 2026-08-10.** A publication is now the comet's whole
+> attestation packet and takes the same `+verify-lc` job a `%jael-writ` does,
+> so `+apply-spawn`, `+apply-state`, `+index-point`, `+public-spawns`,
+> `+published-comets` and the `publicizing` guard are **deleted**, and
+> `MAX_PUBLICATION` is 1,024. See `04-decisions-addendum.md` §0. The sections
+> below still name them; read them as a record of the plan, not of the code.
+
 Baseline: `agent/gw-btc-adversarial` (PR #127 head), i.e. the adversarially
 hardened tree. Each item is tagged with where the work lands:
 `[hoon]` this desk, `[kernel]` gwbtc/urbit, `[cw]` Causeway, `[py]`
@@ -107,8 +114,8 @@ onboarding/comet-miner, `[spec]` decision needed first.
   `[txid off]`→`[txid vout]` deletion-keying bugfix from PR #127 is retained
   (the map survives, smaller).
 - `[hoon]` `app/gw-btc`: scanner-side simplifications flow through
-  (`public-spawns` unchanged in shape; `apply-verified` loses inscription
-  handling). The RPC full-block path remains the public indexer's transport
+  (`public-spawns` is since deleted outright; `apply-verified` loses
+  inscription handling). The RPC full-block path remains the public indexer's transport
   for now; its reorg/checkpoint model remains the known deferred gap from
   PR #127 pending `%light-client` integration.
 

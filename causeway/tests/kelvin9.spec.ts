@@ -36,6 +36,7 @@ import {
   type Opening,
 } from "../src/spawn/publication.js";
 import { buildXtrAtom, type XtrEntry } from "../src/spawn/reveal-log.js";
+import { passWithXtr } from "../src/spawn/mine-c.js";
 import { jam } from "../src/protocol/jam.js";
 import { minimalLEBytes, bytesToHex, hexToBytes, bytesToAtomBE } from "../src/protocol/tagged-hash.js";
 import { patpToAtom } from "../src/protocol/patp.js";
@@ -47,6 +48,7 @@ const VEC = JSON.parse(readFileSync(
 const basic = VEC.vectors.find((v: any) => v.name === "basic");
 const skp = VEC.vectors.find((v: any) => v.name === "state-key-pin");
 const pd2 = VEC.vectors.find((v: any) => v.name === "pushdata2-fief");
+const full = VEC.vectors.find((v: any) => v.name === "full-packet");
 
 const jamHex = (n: any): string => bytesToHex(jam(n));
 const atomHexLE = (a: bigint): string => bytesToHex(minimalLEBytes(a));
@@ -178,7 +180,7 @@ describe("kelvin-9 publication", () => {
 // OP_PUSHDATA2 — the publication that does not fit in one length byte.
 //
 // PUSHDATA1 (0x4c) carries a SINGLE length byte and so stops at 255, but
-// MAX_PUBLICATION is 512 and every fief-carrying publication measures 265–269.
+// MAX_PUBLICATION is 1024 and every fief-carrying publication measures 265–269.
 // Uint8Array.of(0x4c, n) silently takes n mod 256, so this used to emit a
 // corrupt script here with no error at all. The vector is the cross-language
 // pin: the Hoon desk (+make-publication) and the Python desktop tool
@@ -247,6 +249,7 @@ describe("pushData boundaries", () => {
     [3, "03"], [75, "4b"],                          // direct push: opcode IS length
     [76, "4c4c"], [254, "4cfe"], [255, "4cff"],     // PUSHDATA1, one length byte
     [256, "4d0001"], [269, "4d0d01"], [512, "4d0002"], // PUSHDATA2, LE length
+    [588, "4d4c02"], [1024, "4d0004"],
   ];
   for (const [n, head] of cases) {
     it(`${n} bytes -> ${head}`, () => {
@@ -258,7 +261,8 @@ describe("pushData boundaries", () => {
     expect(() => pushData(new Uint8Array(0x10000))).toThrow(/OP_PUSHDATA2/);
   });
   it("MAX_PUBLICATION is inside PUSHDATA2's range", () => {
-    expect(MAX_PUBLICATION).toBe(512);
+    expect(MAX_PUBLICATION).toBe(1024);
+    expect(MAX_PUBLICATION).toBe(full.max_publication);
     expect(MAX_PUBLICATION).toBeLessThanOrEqual(0xffff);
   });
 });
@@ -279,5 +283,93 @@ describe("kelvin-9 xtr custody log", () => {
       { txidHex: "feedface", blockHeight: 778010 }, // bare custody transfer
     ];
     expect(atomHexLE(buildXtrAtom(entries))).toBe(basic.xtr.jam_xtr_le);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE FULL-PACKET PUBLICATION (full-packet vector).
+//
+// A kelvin-9 publication is the comet's whole attestation packet: the pass a
+// peer receives over ames, custody log and all, plus the opening for the hop
+// the carrying transaction performs. Two surfaces have to agree across the
+// three implementations for that to work — the xtr re-encoding (passWithXtr,
+// +with-xtr:gw-btc-pass, pass_with_xtr) and the script — and a realistic
+// seven-hop packet lands at 588 payload bytes, which is exactly why the
+// 512-byte cap could not survive the change.
+// ---------------------------------------------------------------------------
+function fullSnap(s: any): Snapshot {
+  return {
+    life: s.life,
+    rift: s.rift,
+    key: BigInt("0x" + s.key),
+    sponsor: s.sponsor == null ? null : patpToAtom("~" + s.sponsor),
+    fief: s.fief == null ? null : { type: s.fief.type, ip: s.fief.ip_atom, port: s.fief.port },
+  };
+}
+
+function fullOpening(o: any): Opening {
+  const bo = o.blind_opening;
+  return {
+    internalKey: BigInt("0x" + o.internal_key),
+    snapshot: fullSnap(o.snapshot),
+    blindOpening: bo == null ? null : {
+      spawnSont: { txidHex: bo.spawn_sont.txid, vout: bo.spawn_sont.vout, off: bo.spawn_sont.off },
+      startHeight: bo.start_height,
+      blind: BigInt("0x" + bo.blind),
+    },
+  };
+}
+
+describe("kelvin-9 full-packet publication", () => {
+  const entries: XtrEntry[] = full.custody_log.map((e: any) => ({
+    txidHex: e.txid,
+    blockHeight: e.height,
+    opening: e.opening == null ? null : fullOpening(e.opening),
+  }));
+  const passEmpty = BigInt("0x" + full.pass_empty);
+  const terminal = fullOpening(full.terminal_opening);
+
+  it("the six-hop custody log jams to the vector's xtr", () => {
+    expect(atomHexLE(buildXtrAtom(entries))).toBe(full.jam_xtr_le);
+    expect(minimalLEBytes(buildXtrAtom(entries)).length).toBe(full.xtr_bytes);
+  });
+
+  it("passWithXtr reproduces the full pass and never changes the name", () => {
+    const passFull = passWithXtr(passEmpty, buildXtrAtom(entries));
+    expect(passFull.toString(16).padStart(full.pass_full_bytes * 2, "0")).toBe(full.pass_full);
+    expect(minimalLEBytes(passFull).length).toBe(full.pass_full_bytes);
+    // ugn, cry and dat are copied verbatim: xtr is outside the key tweak
+    const head = (1n << 520n) - 1n;
+    expect(passFull & head).toBe(passEmpty & head);
+  });
+
+  it("the publication payload is 588 bytes — over the OLD 512 cap", () => {
+    const passFull = BigInt("0x" + full.pass_full);
+    const payload = jam(publicationNoun(passFull, terminal));
+    expect(bytesToHex(payload)).toBe(full.jam_publication_le);
+    expect(payload.length).toBe(full.payload_bytes);
+    expect(payload.length).toBe(588);
+    expect(payload.length).toBeGreaterThan(512);
+    expect(payload.length).toBeLessThanOrEqual(MAX_PUBLICATION);
+  });
+
+  it("the script is byte-identical to Hoon and Python", () => {
+    const passFull = BigInt("0x" + full.pass_full);
+    const script = buildPublicationScript(passFull, terminal);
+    expect(bytesToHex(script)).toBe(full.op_return_script);
+    expect(script.length).toBe(full.op_return_script_bytes);
+    expect(bytesToHex(script.slice(7, 10))).toBe(full.pushdata);
+    expect(script[8]! | (script[9]! << 8)).toBe(588);
+  });
+
+  it("stays LOUD over the cap: it throws, it does not emit a script", () => {
+    const huge: Opening = {
+      internalKey: (1n << 4000n) - 1n,
+      snapshot: { life: 1, rift: 0, key: (1n << 4000n) - 3n, sponsor: null, fief: null },
+      blindOpening: null,
+    };
+    const bigPass = (1n << 4000n) - 5n;
+    expect(jam(publicationNoun(bigPass, huge)).length).toBeGreaterThan(MAX_PUBLICATION);
+    expect(() => buildPublicationScript(bigPass, huge)).toThrow(/payload/);
   });
 });

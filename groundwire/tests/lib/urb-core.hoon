@@ -1,14 +1,29 @@
 ::  tests/lib/urb-core.hoon
 ::
 ::  Current-protocol (kelvin-9) vectors for the OP_RETURN scanner in
-::  lib/urb-core: +find-block-reveals discovers public identities by
+::  lib/urb-core.  +find-block-reveals discovers public identities by
 ::  grepping outputs for the OP_RETURN "urb" publication (and follows
-::  tracked-sat spends); +process-publication's +apply-spawn indexes a
-::  public comet and +apply-state advances its snapshot under a life
-::  gate; +update-sonts follows sat movement.  Real secp via cric/taproot.
+::  tracked-sat spends); +process-publication turns each publication into
+::  a %claim -- the comet's own attestation packet, with the log
+::  completed by the transaction that carried it -- and +update-sonts
+::  follows sat movement.  Real secp via cric/taproot.
+::
+::  The scanner NO LONGER JUDGES a publication and no longer indexes one.
+::  It cannot: a custody log names transactions in blocks it has already
+::  streamed past.  So the tests here prove two things and hand the third
+::  to ++run-checks, which is the whole point of the change:
+::
+::    1. what the scanner emits (one %claim, whatever it already knows
+::       about the comet, and nothing written to the index), and
+::    2. that the completed log is exactly the packet a peer would get,
+::       so that
+::    3. ++run-checks -- the SAME arm a mailed attestation goes through,
+::       driven here at the same pure boundary +verify-lc drives --
+::       accepts it, INCLUDING the late reveal that the old
+::       ++apply-spawn gate made impossible.
 ::
 /-  ord, urb, bitcoin, sa=self-attestation
-/+  *test, ul=urb-core, ol=ord, cc=gw-btc-pass, tr=taproot
+/+  *test, ul=urb-core, ol=ord, cc=gw-btc-pass, tr=taproot, lsa=self-attestation
 =>
 |%
 ++  secp  secp256k1:secp:crypto
@@ -24,22 +39,37 @@
   |=  [ikey=@ux snap=snapshot:sa]
   ^-  hexb:bitcoin
   (p2tr-spk (state-key:cc ikey snap))
+::  a one-item 64-byte witness: the shape a taproot key-path spend has
+::
+++  keypath-wit  `(list hexb:bitcoin)`~[[64 0x0]]
 ++  mk-inputw
-  |=  [=txid:ord pos=@ud]
+  |=  [=txid:ord pos=@ud wit=(list hexb:bitcoin)]
   ^-  inputw:tx:bitcoin
-  [~ txid pos [4 0xffff.ffff] ~ ~]
+  [wit txid pos [4 0xffff.ffff] ~ ~]
 ++  mk-tx
   |=  [id=@ux is=(list inputw:tx:bitcoin) os=(list output:tx:bitcoin)]
   ^-  tx:bitcoin
   [id is os 0 1 ~]
 ++  coinbase
   ^-  tx:bitcoin
-  (mk-tx 0xc0.1bba ~[(mk-inputw 0x0 4.294.967.295)] ~[[[25 0x76.a914.88ac] 50.000.000]])
+  (mk-tx 0xc0.1bba ~[(mk-inputw 0x0 4.294.967.295 ~)] ~[[[25 0x76.a914.88ac] 50.000.000]])
 ++  effs
   |=  fx=(list [id:block:bitcoin effect:urb])
   ^-  (list effect:urb)
   (turn fx |=([* e=effect:urb] e))
-::  run one block through the full scanner pipeline
+::  +claims: the %claim effects a scan produced
+::
+++  claims
+  |=  fx=(list [id:block:bitcoin effect:urb])
+  ^-  (list [who=ship =pass])
+  %+  murn  (effs fx)
+  |=  e=effect:urb
+  ^-  (unit [ship pass])
+  ?.(?=([%claim *] e) ~ `[who.e pass.e])
+::  run one block through the full scanner pipeline.  .st's cursor must
+::  sit one below the block's height: ++handle-block increments it, and
+::  that incremented value is the height a %claim's completed entry
+::  carries.
 ::
 ++  scan
   |=  [st=state:urb =block:bitcoin]
@@ -48,6 +78,12 @@
   =/  fbr  (find-block-reveals:oc block)
   =/  ub   (apply-prevouts-and-urbify:oc +.fbr -.fbr)
   abet:(handle-block:oc ub)
+::  a fresh index whose cursor sits just below .h
+::
+++  st-below
+  |=  h=@ud
+  ^-  state:urb
+  [[0xb.10c0 (dec h)] *sont-map:ord *insc-ids:ord *unv-ids:urb]
 ::  ---- identity ------------------------------------------------------
 ++  seed   'urb-core-comet'
 ++  fund   ^-(sont:ord [0xf00d 0 0])
@@ -66,93 +102,116 @@
   =/  cic  (com:nu:cric:crypto (pass-of 0))
   ?>  ?=(%c suite.+<.cic)
   `@`cry.pub.+<.cic
-::  ---- fixtures ------------------------------------------------------
+::  ---- the chain this comet actually walked ---------------------------
+::
+::  699  fund-tx     an ordinary wallet UTXO; output 0 carries the sat
+::  700  spawn-tx    entry 0: spends it, commits snap0, PUBLISHES
+::  701  move-tx     entry 1: a silent key-path custody move
+::  702  late-tx     entry 2: spends the moved sat, commits snap1, and
+::                   PUBLISHES -- long after the spawn, from a satpoint
+::                   that is nowhere near the funding one
+::
 ++  snap0     ^-(snapshot:sa [life=1 rift=0 key=cry sponsor=~ fief=~])
+++  snap1     ^-(snapshot:sa [life=2 rift=0 key=cry sponsor=~ fief=~])
 ++  ikey0     (mk-ikey 11)
-++  opening0  ^-(opening:sa [ikey0 snap0 `[fund start-height=700 blind]])
-++  pub0      ^-(publication:sa [(pass-of 0) opening0])
+++  ikey1     (mk-ikey 13)
+++  ikey2     (mk-ikey 17)
+++  spawn-open  ^-(blind-opening:sa [fund start-height=699 blind])
+++  opening0  ^-(opening:sa [ikey0 snap0 `spawn-open])
+++  opening2  ^-(opening:sa [ikey2 snap1 ~])
+::
+++  fund-id   0xf00d
 ++  spawn-id  0x5.9a17
+++  move-id   0x3.0edd
+++  late-id   0x1a.7e00
+::
+++  fund-tx
+  ^-  tx:bitcoin
+  (mk-tx fund-id ~[(mk-inputw 0x9999 0 ~)] ~[[(p2tr-spk (mk-ikey 5)) 10.000]])
+::  the spawn publication: an EMPTY custody log (this transaction is
+::  entry 0), plus the opening for the hop it performs.
+::
+++  spawn-pub  ^-(publication:sa [(pass-of 0) opening0])
 ++  spawn-tx
   ^-  tx:bitcoin
   %:  mk-tx  spawn-id
-    ~[(mk-inputw 0xf00d 0)]
-    ~[[(state-spk ikey0 snap0) 9.500] [(make-publication:cc pub0) 0]]
+    ~[(mk-inputw fund-id 0 ~)]
+    ~[[(state-spk ikey0 snap0) 9.500] [(make-publication:cc spawn-pub) 0]]
   ==
 ++  spawn-block  ^-(block:bitcoin [0xb.10c1 0 700 ~[coinbase spawn-tx]])
 ::  a spawn whose sat-carrying output commits a DIFFERENT internal key
-::  than the opening reveals: the state-key reconstruction must not match.
+::  than the opening reveals.  The scanner still emits the claim -- it
+::  does not check commitments any more -- and ++run-checks refuses it.
 ::
 ++  bad-spawn-tx
   ^-  tx:bitcoin
   %:  mk-tx  spawn-id
-    ~[(mk-inputw 0xf00d 0)]
-    ~[[(state-spk (mk-ikey 99) snap0) 9.500] [(make-publication:cc pub0) 0]]
+    ~[(mk-inputw fund-id 0 ~)]
+    ~[[(state-spk (mk-ikey 99) snap0) 9.500] [(make-publication:cc spawn-pub) 0]]
   ==
 ++  bad-spawn-block  ^-(block:bitcoin [0xb.10c1 0 700 ~[coinbase bad-spawn-tx]])
-::  a public state update: input 0 spends the comet's tracked sat, output
-::  0 commits snap1 (life 2), and the publication carries no blind-opening.
+::  entry 1: a silent custody move.  No publication, so nothing on chain
+::  connects this transaction to the comet except the custody log.
 ::
-++  snap1     ^-(snapshot:sa [life=2 rift=0 key=cry sponsor=~ fief=~])
-++  ikey1     (mk-ikey 13)
-++  opening1  ^-(opening:sa [ikey1 snap1 ~])
-++  pub1      ^-(publication:sa [(pass-of 1) opening1])
-++  state-id  0x5.7a7e
-++  state-tx
-  ^-  tx:bitcoin
-  %:  mk-tx  state-id
-    ~[(mk-inputw spawn-id 0)]
-    ~[[(state-spk ikey1 snap1) 9.000] [(make-publication:cc pub1) 0]]
-  ==
-++  state-block  ^-(block:bitcoin [0xb.10c2 0 701 ~[coinbase state-tx]])
-::  a state update that does NOT advance life (life stays 1): rejected.
-::
-++  snap-noadv  ^-(snapshot:sa [life=1 rift=1 key=cry sponsor=~ fief=~])
-++  opening-noadv  ^-(opening:sa [ikey1 snap-noadv ~])
-++  pub-noadv   ^-(publication:sa [(pass-of 1) opening-noadv])
-++  noadv-tx
-  ^-  tx:bitcoin
-  %:  mk-tx  state-id
-    ~[(mk-inputw spawn-id 0)]
-    ~[[(state-spk ikey1 snap-noadv) 9.000] [(make-publication:cc pub-noadv) 0]]
-  ==
-++  noadv-block  ^-(block:bitcoin [0xb.10c2 0 701 ~[coinbase noadv-tx]])
-::  a plain custody move (no publication) spending the tracked sat.
-::
-++  move-id  0x3.0edd
 ++  move-tx
   ^-  tx:bitcoin
-  (mk-tx move-id ~[(mk-inputw spawn-id 0)] ~[[(p2tr-spk (mk-ikey 21)) 9.400]])
+  %:  mk-tx  move-id
+    ~[(mk-inputw spawn-id 0 keypath-wit)]
+    ~[[(p2tr-spk (output-pubkey:tr ikey1 ~)) 9.400]]
+  ==
 ++  move-block  ^-(block:bitcoin [0xb.10c2 0 701 ~[coinbase move-tx]])
-::  The state a verified CONFIDENTIAL attestation leaves behind
+::  the LATE publication.  Its pass carries the log for entries 0 and 1;
+::  entry 2 is this transaction, which the payload cannot name.
+::
+++  carried-log
+  ^-  custody-log:sa
+  ~[[spawn-id 700 `opening0] [move-id 701 ~]]
+++  late-pub  ^-(publication:sa [(pass-of (jam carried-log)) opening2])
+++  late-tx
+  ^-  tx:bitcoin
+  %:  mk-tx  late-id
+    ~[(mk-inputw move-id 0 keypath-wit)]
+    ~[[(state-spk ikey2 snap1) 9.300] [(make-publication:cc late-pub) 0]]
+  ==
+++  late-block  ^-(block:bitcoin [0xb.10c3 0 702 ~[coinbase late-tx]])
+::  the state a verified CONFIDENTIAL attestation leaves behind
 ::  (+apply-verified in app/gw-btc.hoon): the comet is in unv-ids and its
-::  identity sat is tracked in sont-map, but no spawn was ever indexed
-::  from a block.  This is the starting point for the confidential ->
-::  public transition of decisions addendum section 2.
+::  identity sat is tracked in sont-map.
 ::
 ++  tracked-point
   ^-  point:urb
-  [[[spawn-id 0 0] ~] 0 1 (pass-of 0) [%.n who] ~ ~]
-++  confidential-state
+  [[[move-id 0 0] ~] 0 1 (pass-of 0) [%.n who] ~ ~]
+++  tracked-state
   ^-  state:urb
-  :*  [0xb.10c1 700]
-      (put-com:si:ol *sont-map:ord spawn-id 0 0 9.500 who)
+  :*  [0xb.10c2 701]
+      (put-com:si:ol *sont-map:ord move-id 0 0 9.400 who)
       *insc-ids:ord
       (~(put by *unv-ids:urb) who tracked-point)
   ==
-::  the same rescue publication, but carrying a blind-opening as well.
-::  A comet whose custody we already follow publishes a STATE UPDATE
-::  whatever the shape of its opening: continuity from the sat we track
-::  is the proof, and the blind-opening is only checked for consistency.
+::  ---- helpers -------------------------------------------------------
 ::
-++  opening1b  ^-(opening:sa [ikey1 snap1 `[fund start-height=700 blind]])
-++  pub1b      ^-(publication:sa [(pass-of 1) opening1b])
-++  state-b-tx
-  ^-  tx:bitcoin
-  %:  mk-tx  state-id
-    ~[(mk-inputw spawn-id 0)]
-    ~[[(state-spk ikey1 snap1) 9.000] [(make-publication:cc pub1b) 0]]
-  ==
-++  state-b-block  ^-(block:bitcoin [0xb.10c2 0 701 ~[coinbase state-b-tx]])
+::  decode a claimed pass back into the self-attestation a peer would get
+::
+++  claimed-sat
+  |=  fx=(list [id:block:bitcoin effect:urb])
+  ^-  (unit self-attestation:sa)
+  =/  cs  (claims fx)
+  ?~  cs  ~
+  (from-xtr:lsa who.i.cs pass.i.cs)
+::  run the SAME pure verifier a mailed attestation goes through
+::
+++  verify
+  |=  [sat=self-attestation:sa start=tx:bitcoin txl=(list tx:bitcoin)]
+  ^-  result:sa
+  (run-checks:lsa sat start txl `%.y ~ *(set ship))
+++  got-check
+  |=  [v=verdict:sa name=cord]
+  ^-  ?
+  =/  cs  checks.v
+  |-
+  ?~  cs  %.n
+  ?:  =(name.i.cs name)  ok.i.cs
+  $(cs t.cs)
 --
 |%
 ::  ---- find-block-reveals -------------------------------------------
@@ -184,136 +243,178 @@
     (expect !>(?=(^ -.fbr)))
     (expect-eq !>(2) !>((lent txs.+.fbr)))
   ==
-::  ---- apply-spawn --------------------------------------------------
-++  test-apply-spawn-indexes-public-comet
+::  ---- what a publication now produces -------------------------------
+::
+::  ONE %claim, and NOTHING in the index.  The scanner used to write a
+::  point here, from checks it reimplemented itself; it now hands the
+::  packet to the verifier and touches nothing.
+::
+++  test-publication-emits-a-claim-and-indexes-nothing
   =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]
-    (scan *state:urb spawn-block)
-  =/  pt  (~(get by unv-ids.st) who)
+    (scan (st-below 700) spawn-block)
   ;:  weld
-    ::  the comet is indexed at its landing satpoint
+    (expect-eq !>(1) !>((lent (claims fx))))
+    (expect-eq !>(`who) !>(?~(cs=(claims fx) ~ `who.i.cs)))
+    ::  no point, no sat association: the scanner asserts nothing
+    ::
+    (expect !>(?=(~ (~(get by unv-ids.st) who))))
+    (expect-eq !>(~) !>((get-com:si:ol sont-map.st spawn-id 0 0)))
+  ==
+::
+::  The claim carries the packet, completed with the carrying
+::  transaction.  This is the one thing the payload could not say and
+::  the block reader can.
+::
+++  test-claim-completes-the-log-with-its-own-transaction
+  =/  [fx=(list [id:block:bitcoin effect:urb]) *]
+    (scan (st-below 700) spawn-block)
+  =/  sat  (claimed-sat fx)
+  ;:  weld
+    (expect !>(?=(^ sat)))
+    %+  expect-eq
+      !>  ^-  custody-log:sa
+          ~[[spawn-id 700 `opening0]]
+      !>  ?~(sat ~ chain.u.sat)
+    ::  the name is untouched by the completion: xtr is outside the tweak
+    ::
+    (expect-eq !>(who) !>(?~(sat *@p who.u.sat)))
+  ==
+::
+::  A publication for a comet the scanner ALREADY TRACKS produces the
+::  same claim as one for a stranger.  There is no tracked/untracked
+::  distinction left to make -- that was the three-way branch.
+::
+++  test-tracked-and-stranger-produce-the-same-claim
+  =/  [stranger=(list [id:block:bitcoin effect:urb]) *]
+    (scan (st-below 702) late-block)
+  =/  [tracked=(list [id:block:bitcoin effect:urb]) *]
+    (scan tracked-state late-block)
+  (expect-eq !>((claims stranger)) !>((claims tracked)))
+::
+::  A pass whose xtr is not a canonical custody log is refused outright:
+::  re-encoding it would launder a non-canonical tail into a claim that
+::  looks well-formed.
+::
+++  test-uncueable-xtr-emits-no-claim
+  =/  junk-pub  ^-(publication:sa [(pass-of 0xdead.beef.dead.beef) opening0])
+  =/  junk-tx
+    ^-  tx:bitcoin
+    %:  mk-tx  spawn-id
+      ~[(mk-inputw fund-id 0 ~)]
+      ~[[(state-spk ikey0 snap0) 9.500] [(make-publication:cc junk-pub) 0]]
+    ==
+  =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]
+    (scan (st-below 700) [0xb.10c1 0 700 ~[coinbase junk-tx]])
+  ;:  weld
+    (expect-eq !>(~) !>((claims fx)))
+    (expect !>(?=(~ (~(get by unv-ids.st) who))))
+  ==
+::  ---- the claim, verified the way a packet is verified ---------------
+::
+++  test-spawn-publication-verifies
+  =/  [fx=(list [id:block:bitcoin effect:urb]) *]
+    (scan (st-below 700) spawn-block)
+  =/  sat  (claimed-sat fx)
+  ?~  sat  (expect !>(%.n))
+  =/  res  (verify u.sat fund-tx ~[spawn-tx])
+  ;:  weld
+    (expect !>(ok.verdict.res))
+    (expect !>((got-check verdict.res 'spawn-commit')))
+    (expect !>((got-check verdict.res 'entry-0-commitment')))
+    (expect !>(?=(^ point.res)))
+  ==
+::
+::  THE LATE REVEAL.  A comet the watcher has NEVER tracked, whose sat
+::  has moved since the spawn, publishes -- and is accepted.
+::
+::  This never once worked.  ++process-publication used to route it to
+::  ++apply-spawn (it carries a blind-opening and we track no point for
+::  it), and ++apply-spawn demanded that input 0 BE the spawn satpoint.
+::  It is not: this transaction spends the sat's CURRENT home, two hops
+::  along.  The other branch refused it too, because a stranger has no
+::  tracked tip to check continuity against.  Nothing in a publication
+::  could bridge that gap, because the bridge is the custody log -- and
+::  the custody log is now in the payload.
+::
+++  test-late-reveal-from-a-stranger-verifies
+  =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]
+    (scan (st-below 702) late-block)
+  ::  the watcher has never heard of this comet
+  ::
+  =/  never-tracked  ?=(~ (~(get by unv-ids.st) who))
+  =/  sat  (claimed-sat fx)
+  ?~  sat  (expect !>(%.n))
+  =/  res  (verify u.sat fund-tx ~[spawn-tx move-tx late-tx])
+  ;:  weld
+    (expect !>(never-tracked))
+    ::  three hops: the two the payload carried, and this transaction
+    ::
+    (expect-eq !>(3) !>((lent chain.u.sat)))
+    (expect !>(ok.verdict.res))
+    ::  the dat commitment still binds the name to the SPAWN satpoint,
+    ::  which is where the walk starts
+    ::
+    (expect !>((got-check verdict.res 'spawn-commit')))
+    ::  and every hop between there and here checked out
+    ::
+    (expect !>((got-check verdict.res 'entry-1-continuity')))
+    (expect !>((got-check verdict.res 'entry-2-continuity')))
+    (expect !>((got-check verdict.res 'entry-2-commitment')))
+    ::  the point is built at the tip this transaction created
     ::
     %+  expect-eq
-      !>  `[[[spawn-id 0 0] ~] 0 1 (pass-of 0) [%.n who] ~ ~]
-      !>  pt
-    ::  the sat is recorded as owned by the comet
-    ::
-    (expect-eq !>(`who) !>((get-com:si:ol sont-map.st spawn-id 0 0)))
-    ::  the jael udiffs are emitted, owner first
-    ::
-    %+  expect-eq
-      !>  ^-  (list effect:urb)
-          :~  [%point who %owner [spawn-id 0 0]]
-              [%point who %public ~]
-              [%point who %sponsor `who]
-              [%point who %keys 1 (pass-of 0)]
-              [%point who %rift 0]
-              [%point who %fief ~]
-          ==
-      !>  (effs fx)
+      !>(`[late-id 0 0])
+      !>(?~(point.res ~ `sont.own.u.point.res))
+    (expect-eq !>(`2) !>(?~(point.res ~ `life.net.u.point.res)))
   ==
 ::
-++  test-apply-spawn-rejects-bad-state-key
-  ::  the sat output commits a state-key the opening did not; not indexed
-  ::
-  =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]
-    (scan *state:urb bad-spawn-block)
-  ;:  weld
-    (expect !>(?=(~ (~(get by unv-ids.st) who))))
-    (expect !>(?=(~ (effs fx))))
-  ==
-::  ---- apply-state --------------------------------------------------
-++  test-apply-state-advances-life
-  =/  [* st1=state:urb]  (scan *state:urb spawn-block)
-  =/  [* st2=state:urb]  (scan st1 state-block)
-  =/  pt  (need (~(get by unv-ids.st2) who))
-  ;:  weld
-    ::  networking fields advanced to snap1
-    ::
-    (expect-eq !>(2) !>(life.net.pt))
-    (expect-eq !>((pass-of 1)) !>(pass.net.pt))
-    ::  update-sonts moved the comet's owned sat to the new tx
-    ::
-    (expect-eq !>([state-id 0 0]) !>(sont.own.pt))
-  ==
+::  ... and the constraint that used to reject it really was violated:
+::  input 0 of the late transaction is nowhere near the spawn satpoint.
 ::
-++  test-apply-state-life-gate-rejects
-  ::  a publication that does not advance life leaves the networking
-  ::  state untouched (life stays 1), even though the sat still moves.
-  ::
-  =/  [* st1=state:urb]  (scan *state:urb spawn-block)
-  =/  [* st2=state:urb]  (scan st1 noadv-block)
-  =/  pt  (need (~(get by unv-ids.st2) who))
-  ;:  weld
-    (expect-eq !>(1) !>(life.net.pt))
-    (expect-eq !>((pass-of 0)) !>(pass.net.pt))
-  ==
-::  ---- confidential -> public (decisions addendum section 2) --------
+++  test-late-reveal-does-not-spend-the-spawn-satpoint
+  =/  ltx=tx:bitcoin  late-tx
+  =/  fnd=sont:ord    fund
+  =/  in0  (snag 0 is.ltx)
+  (expect !>(!=([txid vout]:fnd [txid pos]:in0)))
 ::
-::  A CONFIDENTIAL comet -- one we hold only because its self-attestation
-::  verified -- publishes a state update to become publicly routable.
-::  This is the "publication" self-rescue.  It cost a real mainnet
-::  transaction to discover that it did not work, in two places: the
-::  scanner has to accept the publication at all, and it has to say so
-::  loudly enough that %gw-btc can move the ship out of .confidential.
-::  Without the second half the point is updated and then immediately
-::  deleted, because the publication's own sat move looks like staleness.
+::  A publication whose committed output does not match the opening is
+::  emitted as a claim -- the scanner does not judge -- and then REFUSED
+::  by the same ++run-checks, on the named check.
 ::
-++  test-apply-state-declassifies-confidential-comet
-  =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]
-    (scan confidential-state state-block)
-  =/  pt  (need (~(get by unv-ids.st) who))
+++  test-mismatched-commitment-is-refused-by-run-checks
+  =/  [fx=(list [id:block:bitcoin effect:urb]) *]
+    (scan (st-below 700) bad-spawn-block)
+  =/  sat  (claimed-sat fx)
+  ?~  sat  (expect !>(%.n))
+  =/  res  (verify u.sat fund-tx ~[bad-spawn-tx])
   ;:  weld
-    ::  the published snapshot is adopted
-    ::
-    (expect-eq !>(2) !>(life.net.pt))
-    (expect-eq !>((pass-of 1)) !>(pass.net.pt))
-    (expect-eq !>([state-id 0 0]) !>(sont.own.pt))
-    ::  and the declassification is announced, which is the half that
-    ::  was missing: %gw-btc keys +published-comets off this effect.
-    ::
-    (expect !>((lien (effs fx) |=(e=effect:urb =(e [%point who %public ~])))))
-  ==
-::
-++  test-apply-state-declassifies-with-a-blind-opening-too
-  ::  a comet we already track publishes a state update whose opening
-  ::  ALSO carries a blind-opening.  Continuity from the tracked sat is
-  ::  the proof, so this is a state update, not a (refused) re-spawn.
-  ::
-  =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]
-    (scan confidential-state state-b-block)
-  =/  pt  (need (~(get by unv-ids.st) who))
-  ;:  weld
-    (expect-eq !>(2) !>(life.net.pt))
-    (expect-eq !>([state-id 0 0]) !>(sont.own.pt))
-    (expect !>((lien (effs fx) |=(e=effect:urb =(e [%point who %public ~])))))
-  ==
-::
-++  test-apply-state-untracked-comet-is-refused
-  ::  a STRANGER scanner, which has never indexed or verified this comet,
-  ::  still cannot admit a bare state-update publication: nothing binds
-  ::  the name to the sat the transaction spends.  It must refuse -- but
-  ::  loudly (the ~& in +apply-state), never silently.
-  ::
-  =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]
-    (scan *state:urb state-block)
-  ;:  weld
-    (expect !>(?=(~ (~(get by unv-ids.st) who))))
-    (expect !>(?=(~ (effs fx))))
+    (expect-eq !>(1) !>((lent (claims fx))))
+    (expect !>(!ok.verdict.res))
+    (expect !>(!(got-check verdict.res 'entry-0-commitment')))
+    (expect !>(?=(~ point.res)))
   ==
 ::  ---- update-sonts -------------------------------------------------
 ++  test-update-sonts-follows-sat
-  ::  a plain move relocates the comet's sat and emits %xfer; no publication
+  ::  a plain move relocates a tracked comet's sat and emits %xfer.  The
+  ::  ordinal tracker is the scanner's own job and is untouched by any of
+  ::  this; the point it moves is one the VERIFIER installed.
   ::
-  =/  [* st1=state:urb]     (scan *state:urb spawn-block)
-  =/  [fx=(list [id:block:bitcoin effect:urb]) st2=state:urb]
-    (scan st1 move-block)
-  =/  pt  (need (~(get by unv-ids.st2) who))
+  =/  seeded=state:urb
+    :*  [0xb.10c1 700]
+        (put-com:si:ol *sont-map:ord spawn-id 0 0 9.500 who)
+        *insc-ids:ord
+        %+  ~(put by *unv-ids:urb)  who
+        `point:urb`[[[spawn-id 0 0] ~] 0 1 (pass-of 0) [%.n who] ~ ~]
+    ==
+  =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]
+    (scan seeded move-block)
+  =/  pt  (need (~(get by unv-ids.st) who))
   ;:  weld
     (expect-eq !>([move-id 0 0]) !>(sont.own.pt))
     ::  the old sat entry no longer names the comet
     ::
-    (expect-eq !>(~) !>((get-com:si:ol sont-map.st2 spawn-id 0 0)))
-    (expect-eq !>(`who) !>((get-com:si:ol sont-map.st2 move-id 0 0)))
+    (expect-eq !>(~) !>((get-com:si:ol sont-map.st spawn-id 0 0)))
+    (expect-eq !>(`who) !>((get-com:si:ol sont-map.st move-id 0 0)))
     ::  a %xfer effect from the old to the new satpoint was emitted
     ::
     (expect !>((lien (effs fx) |=(e=effect:urb =(e [%xfer [spawn-id 0 0] [move-id 0 0]])))))

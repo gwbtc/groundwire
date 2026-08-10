@@ -195,7 +195,7 @@
 ::  OP_PUSHDATA2 -- the publication that does not fit in one length byte
 ::
 ::  OP_PUSHDATA1 (0x4c) carries a SINGLE length byte and therefore stops
-::  at 255, but +max-publication is 512 and every fief-carrying
+::  at 255, but +max-publication is 1.024 and every fief-carrying
 ::  publication measures 265-269 bytes.  Before +push-data learned
 ::  OP_PUSHDATA2 (0x4d, TWO length bytes, LITTLE-ENDIAN), `[1 wid]` with
 ::  wid > 255 packed to wid mod 256 and this lib emitted a silently
@@ -226,12 +226,13 @@
     (expect-eq !>(0x4d.0001) !>((push-hdr 256)))
     (expect-eq !>(0x4d.0d01) !>((push-hdr 269)))
     (expect-eq !>(0x4d.0002) !>((push-hdr 512)))
+    (expect-eq !>(0x4d.0004) !>((push-hdr 1.024)))
   ==
 ::
 ::  encode -> parse -> compare, across the 255/256 boundary the bug lived on
 ++  test-publication-roundtrip-boundaries
   %-  zing
-  %+  turn  `(list @ud)`~[1 75 76 77 254 255 256 269 511 512]
+  %+  turn  `(list @ud)`~[1 75 76 77 254 255 256 269 511 512 1.023 1.024]
   |=  n=@ud
   ^-  tang
   =/  payload=hexb:btc  [n (fil 3 n 0xab)]
@@ -244,7 +245,7 @@
   ;:  weld
     ::  one byte over the spec's cap
     %-  expect-fail  |.
-    (publication-script:cc [513 (fil 3 513 0xab)])
+    (publication-script:cc [1.025 (fil 3 1.025 0xab)])
     ::  wider than OP_PUSHDATA2 can name
     %-  expect-fail  |.
     (push-data:cc [65.536 (fil 3 65.536 0xab)])
@@ -388,6 +389,151 @@
           94c5.6d67.d1f0.a667.0bcb.3c41.94ec.d436.ae94.bc76.ad05.e3b2.
           cba9.717b.c303
     !>  (make-publication:cc pub)
+::
+::  ------------------------------------------------------------------
+::  Golden vector "full-packet" (/vectors/gw-kelvin-9.json).
+::
+::  THE VECTOR THAT MOVED THE CAP.  A kelvin-9 publication is the
+::  comet's whole attestation packet -- the pass it hands a peer over
+::  ames, custody log and all -- plus the opening for the hop the
+::  carrying transaction performs, which the payload cannot name
+::  because that transaction's txid does not exist until it is signed.
+::
+::  Six carried hops (the same 108-byte suite-%c pass as pushdata2-fief,
+::  re-encoded around them) jam to 392 bytes of xtr, a 500-byte pass and
+::  a 588-byte payload.  That is past the old 512-byte cap and inside
+::  the new 1.024 -- which is the whole argument for the change,
+::  measured rather than asserted.  Causeway desktop (Python) and
+::  Causeway web (TS) pin these same bytes from this same JSON.
+::  ------------------------------------------------------------------
+++  fp-key
+  ^-  @
+  0x7e56.62ba.9c7b.4134.3cda.615d.3389.92f0.
+    0959.6ab8.a289.1208.4bff.d793.abd0.2bae
+::
+++  fp-ikey
+  ^-  @ux
+  0x2.79be.667e.f9dc.bbac.55a0.6295.ce87.0b07.
+    029b.fcdb.2dce.28d9.59f2.815b.16f8.1798
+::
+++  fp-spawn
+  ^-  sont:ord
+  :+  txid=0xa1b2.c3d4.e5f6.0718.293a.4b5c.6d7e.8f90.
+              a1b2.c3d4.e5f6.0718.293a.4b5c.6d7e.8f90
+    vout=1
+  off=0
+::
+++  fp-blind
+  ^-  @ux
+  0x345b.c3c5.fc0e.b35b.ee8d.ce5d.e886.b130.
+    6e79.67e4.e111.b009.ab9e.13d2.2850.6127
+::
+++  fp-snap0
+  ^-  snapshot:sa
+  [life=1 rift=0 key=fp-key sponsor=~ fief=`[%if .64.227.13.22 35.353]]
+++  fp-snap6
+  ^-  snapshot:sa
+  [life=4 rift=1 key=fp-key sponsor=`~zod fief=`[%if .64.227.13.22 35.353]]
+::  entry 0 opens the hiding dat commitment; the terminal opening -- the
+::  hop this transaction performs -- never may.
+::
+++  fp-open0
+  ^-  opening:sa
+  [fp-ikey fp-snap0 `[fp-spawn start-height=961.055 fp-blind]]
+++  fp-open6  ^-(opening:sa [fp-ikey fp-snap6 ~])
+::
+++  fp-log
+  ^-  custody-log:sa
+  :~  [0x1111.1111.1111.1111.1111.1111.1111.1111.1111.1111.1111.1111.1111.1111.1111.1111 961.059 `fp-open0]
+      [0x2222.2222.2222.2222.2222.2222.2222.2222.2222.2222.2222.2222.2222.2222.2222.2222 961.104 ~]
+      [0x3333.3333.3333.3333.3333.3333.3333.3333.3333.3333.3333.3333.3333.3333.3333.3333 961.240 ~]
+      [0x4444.4444.4444.4444.4444.4444.4444.4444.4444.4444.4444.4444.4444.4444.4444.4444 961.388 ~]
+      [0x5555.5555.5555.5555.5555.5555.5555.5555.5555.5555.5555.5555.5555.5555.5555.5555 961.512 ~]
+      [0x6666.6666.6666.6666.6666.6666.6666.6666.6666.6666.6666.6666.6666.6666.6666.6666 961.744 ~]
+  ==
+::  the 108-byte pass BEFORE the log rides in it (pushdata2-fief's pass)
+::
+++  fp-pass-empty
+  ^-  pass
+  0x2aac.0e0b.79f6.b4fc.f9da.c3f6.cf75.f5ba.fdb4.c907.33ed.a811.
+    7d62.eeb8.9440.e15a.4918.dd18.8b5d.d9df.0112.007e.5662.ba9c.
+    7b41.343c.da61.5d33.8992.f009.596a.b8a2.8912.084b.ffd7.93ab.
+    d02b.ae4d.45ed.4517.a917.38d2.eeab.1876.aded.7707.3533.e061.
+    c872.748e.b161.1c02.e4a6.4063
+::
+++  fp-script
+  ^-  hexb:btc
+  :-  598
+  0x6a03.7572.6201.094d.4c02.0180.991f.0332.2517.e008.8b75.a493.
+    430e.039f.a939.b86b.6fb5.c358.7597.c6b9.48bd.286a.2f6a.725d.
+    815e.9dbc.fe5f.4290.4814.c555.cb4a.8097.4c9c.e90a.d3e6.a109.
+    dae3.d415.b3f2.0390.08f8.ceee.5ac4.e8c6.48d2.0a07.a2c4.7517.
+    eb8b.406d.9f39.48a6.edd7.adaf.7bb6.1fd6.cee7.a7b5.cf5b.7060.
+    550b.c07e.4444.4444.4444.4444.4444.4444.4444.4444.4444.4444.
+    4444.4444.4444.4444.4444.440c.4823.aa9e.0150.00f3.02df.622b.
+    503e.2b1b.c5b9.659b.7f53.e060.e1d0.b952.0cb4.8a75.973b.dfcf.
+    cc37.cfe2.0cc0.bfeb.0af4.eae4.f5ff.1282.44a2.28ae.5a56.02bc.
+    64e2.4c57.9836.0f4d.d01e.a7ae.9895.3f33.f069.e680.6fd1.300e.
+    0442.8662.1600.0120.1ffd.dab8.9674.5230.0eec.cba9.8765.4321.
+    1ffd.dab8.9674.5230.0eec.cba9.8765.4363.03d2.87aa.03e8.3f09.
+    8342.919e.f05c.4d80.8d08.273f.cb73.8389.3544.ef72.6e74.df9a.
+    75e0.2f1e.dea2.0b40.bf88.8888.8888.8888.8888.8888.8888.8888.
+    8888.8888.8888.8888.8888.8888.8888.8888.1890.a054.dd02.d03f.
+    3333.3333.3333.3333.3333.3333.3333.3333.3333.3333.3333.3333.
+    3333.3333.3333.3307.246c.55b7.00fc.1311.1111.1111.1111.1111.
+    1111.1111.1111.1111.1111.1111.1111.1111.1111.1111.1111.0312.
+    dbaa.5b00.feab.aaaa.aaaa.aaaa.aaaa.aaaa.aaaa.aaaa.aaaa.aaaa.
+    aaaa.aaaa.aaaa.aaaa.aaaa.aaaa.aa01.097d.d52d.00ff.6666.6666.
+    6666.6666.6666.6666.6666.6666.6666.6666.6666.6666.6666.6666.
+    6666.66e6.8004.cdea.1a00.0530.2ff0.2db6.02e5.b3b2.519c.5bb6.
+    f937.050e.160e.9d2b.c540.ab58.77b9.f3fd.cc7c.f32c.cc38.00ff.
+    ae2b.d0ab.93d7.ff4b.0812.89a2.b86a.5909.f092.8933.5d61.da3c.
+    3441.7b9c.ba62.56fe.d20c.7c9a.39e0.5b34.8c03.8190.a128
+::
+::  A seven-hop packet, published on chain, byte for byte.
+::
+++  test-golden-full-packet-publication
+  =/  xtr  (jam fp-log)
+  =/  full  (need (with-xtr:cc fp-pass-empty xtr))
+  =/  pub   `publication:sa`[full fp-open6]
+  =/  payload  (jam-octs:cc pub)
+  =/  script   (make-publication:cc pub)
+  ;:  weld
+    ::  the measurements the cap argument rests on
+    ::
+    (expect-eq !>(392) !>((met 3 xtr)))
+    (expect-eq !>(108) !>((met 3 fp-pass-empty)))
+    (expect-eq !>(500) !>((met 3 full)))
+    (expect-eq !>(588) !>(wid.payload))
+    ::  ... which is exactly what 512 could not carry, and 1.024 can
+    ::
+    (expect !>((gth wid.payload 512)))
+    (expect !>((lte wid.payload max-publication:cc)))
+    ::  the script, byte for byte, shared with Python and TS
+    ::
+    (expect-eq !>(fp-script) !>(script))
+    ::  it reads back to exactly the publication we encoded
+    ::
+    (expect-eq !>(`(unit publication:sa)``pub) !>((read-publication:cc script)))
+    ::  and the log rode in without touching the NAME: xtr is outside
+    ::  the key tweak, so the comet is the same comet
+    ::
+    %+  expect-eq
+      !>(fig:ex:(com:nu:cric:crypto fp-pass-empty))
+      !>(fig:ex:(com:nu:cric:crypto full))
+    (expect !>((same-key:cc fp-pass-empty full)))
+  ==
+::
+::  The cap is a LOUD refusal, at the new boundary.
+::
+++  test-publication-cap-is-the-packet-bound
+  ;:  weld
+    (expect-eq !>(1.024) !>(max-publication:cc))
+    ::  1.024 exactly is accepted; 1.025 crashes with a named reason
+    ::
+    (expect !>(?=(^ (publication-script:cc [1.024 (fil 3 1.024 0xab)]))))
+    (expect-fail |.((publication-script:cc [1.025 (fil 3 1.025 0xab)])))
+  ==
 ::
 ::  ---------------------------------------------------------------------
 ::  +with-xtr -- the pass a %anew refresh emits
