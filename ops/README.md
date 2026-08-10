@@ -25,7 +25,7 @@ expect `gwharness` importable from `/opt/gw` (`testnet/gwharness/`).
 | `poolfill.py` | refill the peer pool from `x49.`-filtered DNS seeds |
 | `addpeers.py` | `%add-earth-peer` a batch of IPs in one strand |
 | `gwvec.py` | build the Phase-2 adversarial attestation vectors from a comet artifact |
-| `gwsnub.py` | read and clear a ship's ames blocklist — the only recovery from a snub |
+| `gwsnub.py` | read and clear a ship's ames blocklist — one of the two ways to undo a snub |
 
 ## The things that cost hours
 
@@ -66,6 +66,33 @@ tcp-sidecar (`gwbtc/node#1`). Filter headers are only servable by peers
 advertising `NODE_COMPACT_FILTERS`, hence the `x49.` DNS prefix in
 `poolfill.py`; seeding from unfiltered seeds leaves filter sync at height 1
 forever and killed an entire test run.
+
+**A positive verdict lifts a snub — but no transport can deliver one.** The kernel's
+`f68a547b2b` made `+sy-sybl`'s `%full` branch the exact inverse of its `%fail`
+branch — it calls `(sy-snub %deny %del ~[her])` — so a later `%full` really does
+un-snub a ship. That is a **safety net, not self-healing**, because a snubbed
+ship cannot deliver the attestation that would earn the `%full`: classic ames
+`+pe-hear` tests `ships.snub` the moment it has a `$shot`, before it classifies
+the packet at all, and since `b0a8e962ff` mesa's `+pe-heer` gates its `%page`
+branch on `her.name` as well. That branch was the last transport a snubbed comet
+could re-attest over, and it is closed. So the only `%full` that reaches a
+snubbed ship is one an **operator asked for**, by re-poking a `%jael-writ`
+(`gwctl.py writ`) — jael forwards a `%writ` to the domain agent unconditionally,
+so an already-snubbed ship is verified again from scratch and the snub is lifted
+as a *consequence* of the verdict.
+
+Two undos, and they are not equivalent. Prefer `gwctl.py writ` whenever the
+attestation is expected to pass now — the usual case, where the snub was our own
+ignorance and the verifier has since caught up — because it leaves the ship
+un-snubbed **and** verified, with the reason on the record. Reach for
+`gwsnub.py del` when you need packets flowing regardless of what the chain says:
+it sends `%snub %deny %del` straight at ames, edits the blocklist and nothing
+else, and leaves jael's opinion of the ship exactly as it was.
+
+**Snubs never expire**, and that is a decision rather than an omission: a
+per-ship expiry timer is durable state an attacker can make us allocate. Nothing
+decays on its own — a wrong snub is undone by one of the two paths above, or not
+at all.
 
 ## Minting
 
@@ -136,9 +163,11 @@ Three things learned the hard way, all in
   `tracked-lag` too, whenever the log you feed it is a prefix of the one the
   verifier already holds — and any mutation of entry 0 breaks them too, so
   nothing fails for one reason and nothing is readable.
-- **Clear the snub set first.** Several cases emit a sticky snub; if the
-  subject is already snubbed you cannot tell whether this one snubbed it.
-  `gwsnub.py show` / `gwsnub.py del`.
+- **Clear the snub set first.** Several cases emit a snub, and nothing lifts one
+  on its own (above); if the subject is already snubbed you cannot tell whether
+  this case snubbed it. `gwsnub.py show` / `gwsnub.py del` between cases —
+  `del` rather than `gwctl.py writ` here, because you want the blocklist reset
+  without a verdict muddying the next case's reading.
 - **A verification is `O(blocks since the comet last moved its sat)`.** A comet
   dormant for ~250 blocks costs ~5 minutes per case on a 2-vCPU droplet. Two
   *different* subjects run concurrently on one verifier (single-flight is per

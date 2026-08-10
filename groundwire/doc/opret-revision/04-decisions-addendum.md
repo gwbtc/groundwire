@@ -311,6 +311,11 @@ by also being out of date, or by being unknowable. Unknown then beats stale:
 `%stale` is a positive finding about the peer's evidence, and we are not
 entitled to make it while some of our own machinery came back blank.
 
+A failing check name is not the only thing that has to be classified: a
+verification can end before it runs a single check (§3a), and one that passed
+every check can still be declined (§3b). Both resolve into the same three
+classes.
+
 **Staleness is forgiven by degree** (owner decision, 2026-08-07; implemented in
 `cdaf7cf`). `tracked-prefix` used to answer "does this log reconcile with ours"
 with a loobean, and so gave the same `%.n` to a log that *diverges* from ours
@@ -348,6 +353,152 @@ second code path.
   drains through the existing promotion machinery. No new request/response
   API: sat moves are owner-initiated, so the moving ship refreshes its own
   pass (`%anew`, §5) and re-handshakes of its own accord.
+
+### 3a. Early aborts: classifying a verification that ran no checks
+
+The three classes of §3 have three doorways, and only one of them is a check
+name:
+
+- `+verify-lc` (`lib/lc-attestation.hoon`) — the light-client adapter that
+  fetches the evidence and hands it to the pure `++run-checks` — has four
+  early returns that never reach the checker at all. These are `$abort`, and
+  are the subject of this section.
+- `++run-checks` can answer `ok=%.y` and `%gw-btc` still decline to install
+  the point. These are `$refusal` (§3b).
+- and a `%jael-writ` can be disposed of before any verification is launched.
+  These are `$writ-drop`. They resolve through `+writ-drop-fate` to `$writ-fate`
+  rather than to `$verdict-class` — four values, because "declined on purpose"
+  and "could not evaluate it yet" emit identical cards (none) and must not read
+  identically to an operator. Only its `%fail` reaches the same negative verdict
+  the other two doorways can. Not enumerated here, but one of its answers is a
+  **standing open decision**: a custody log over
+  the 1,024-entry cap (`%log-too-long`) is classed fraud, on the ground that
+  walking it is a denial of service and that no amount of catching up changes
+  the answer. That condemns a peer for exceeding a **protocol bound** rather
+  than for anything it forged. The intended remedy is a protocol-version change
+  that raises or removes the bound, not a reclassification, and it has not
+  landed.
+
+Each doorway is a **closed union** switched on with `?-`, so a new member
+cannot reach any branch — least of all the destructive one — until somebody
+has assigned it a class. That property, and not the particular answers below,
+is the requirement.
+
+`$abort` (`sur/self-attestation.hoon`) is classified by `+abort-class`, and
+`+fail-result` will not build a verdict from a name outside the union, so an
+early return cannot be added as a free-form cord belonging to no class. The
+rule that decides them:
+
+> **An abort is fraud when the evidence was fully obtained and it is the
+> peer's claim about that evidence that fails. It is unknown when the failure
+> is about us rather than about them.**
+
+| abort | class | why |
+|---|---|---|
+| `empty-chain` | **fraud** | The pass decodes to an empty custody log. Purely structural — computed from the peer's own `xtr` before the first watch card, so there was no evidence to obtain. A suite-C `%gw-btc` pass asserts a confidential identity and an empty log offers nothing whatever for it |
+| `spawn-opening` | **fraud** | Entry 0 carries no `blind-opening`, so the log never binds itself to the name the pass fingerprints to. Again structural, again reached with no fetch |
+| `derive-tip` | **fraud** | `+derive-tip` could not walk the satpoint from the spawn to the tip. This one sits *after* the fetches and needs the argument below |
+| `tip-vout-range` | **unknown** | The derived tip names an output index outside the last fetched transaction. Unreachable: reaching it means our own arithmetic contradicted itself. The **fourth** unknown-class outcome, and the only one that is not a check name |
+
+A second rule constrains the first two, and is the reason they cannot be
+softened: **aborting early must never be more forgiving than failing late.**
+`++run-checks` has a check for each of those two conditions — `chain-nonempty`
+and `spawn-opening`, the latter under the identical name — and both are
+fraud-class there. If the abort were classed softer, then reaching the same
+condition sooner would be an escape hatch from a judgement that arriving later
+would have earned.
+
+**`derive-tip` is fraud because a fetch failure never gets there.** "A fetch
+went wrong" would be unknown, not fraud, and `+derive-tip` runs after every
+fetch — so the classification turns entirely on what can still be true at that
+point. Every transaction `+derive-tip` sees came through `+fetch-tx-at`, which
+**strand-fails and never returns** if the block-info height disagrees, if the
+txid disagrees, or if the transaction is unknown to the light client; and a
+failed strand emits no verdict at all (§9). So by the time `+derive-tip` runs,
+every transaction in the log is confirmed on the main chain, at the height the
+peer claimed, under the txid the peer claimed. The evidence was fully obtained.
+
+What is left for `+derive-tip` to reject is exactly the peer's claim *about*
+that evidence: a vout that does not exist in the previous transaction, a sat
+offset past the output's value, an input 0 that does not spend the outpoint the
+log says it spends, or a hop that drops the sat into fees. `++run-checks` names
+those same conditions `entry-N-prevout-range` / `-off-range` / `-continuity` /
+`-sat-landed` and calls every one of them fraud. `+derive-tip` is only a
+pre-pass to recover the tip scriptPubKey for the liveness scan, so it adds no
+judgement of its own — it duplicates those checks. Classing it softer than the
+checks it duplicates is exactly the "fail early, be forgiven" escape hatch the
+rule above closes.
+
+(A byzantine light client returning a well-formed but *wrong* transaction could
+make this fire for an honest peer. That is equally true of `entry-N-continuity`
+and of every other fraud verdict this desk emits — the node is the trust root
+for all of them, which is a property of the deployment, not a reason to treat
+this abort differently.)
+
+**`tip-vout-range` is unknown because it accuses us, not the peer.**
+`+derive-tip`'s last step takes the tip vout from `+index-to-sont:urb-core`,
+which only ever returns an index at which an output actually exists, over the
+very output list this bound then re-checks. The bound is kept only because
+`+snag` would crash without it. So if it ever fires, the peer has not been
+caught at anything — our own ordinal arithmetic has contradicted itself — and
+the honest report is that we could not evaluate the attestation. Snubbing a peer
+over a bug in this desk is precisely the outcome the classification exists to
+prevent, and this is the case that makes the point without ambiguity: there is
+no reading of a `tip-vout-range` abort under which the peer did anything.
+
+### 3b. Local refusals: declining a verdict that passed
+
+`++run-checks` can return `ok=%.y` and `%gw-btc` still refuse to install the
+point, for reasons that are about our own state rather than the peer's evidence.
+`+local-refusal` (`app/gw-btc.hoon`) names them, as the closed union `$refusal`;
+`+refusal-class` classes them. **All four are unknown-class**, so a refusal emits
+zero cards: no `%fail`, no `%stale`, silence, and another look on the next
+retransmission.
+
+When there is a refusal, its class **replaces** the verdict's own — the verdict
+passed every check, so it has nothing to say about the peer, and the only
+question left is what the refusal entitles us to. A peer that submitted a
+cryptographically perfect attestation must never be snubbed for any of these.
+
+| refusal | why it is not a finding about the peer |
+|---|---|
+| `who-mismatch` | The verdict names a different ship than the writ did. The peer never supplies `who.verdict`: it is `who.sat`, which `+pass-attestation` set from the ship named in the writ *after* checking that the pass fingerprints to it. A mismatch is our own in-flight bookkeeping |
+| `no-point` | `ok=%.y` with no point. `++run-checks` builds the point whenever `ok` holds (`ok` implies `state-resolve`, which implies a resolved snapshot), so this is a contradiction inside the verifier |
+| `pass-mismatch` | The rebuilt pass's key disagrees with the pass jael forwarded — but those are the same pass: `+pass-attestation` builds the attestation *from* the forwarded pass and `++run-checks` copies it into the point. Another internal contradiction |
+| `tip-owned` | Our sat index already attributes the proven tip satpoint to a **different** comet. The one genuinely reachable refusal; see below |
+
+The first three are internal-consistency guards, unreachable unless this desk
+contradicts itself. If one ever fires it is a bug report, and there is nothing
+in it to attribute to anybody.
+
+**`tip-owned` is a conflict between two views, and we cannot rank them.** Two
+chain-valid custody logs cannot both end at the same satpoint — a satpoint has
+one owner — so a conflict here is never two truths. It is one stale view, and
+the whole question is whose.
+
+The two views are not comparable. Ours is a **forward-only scanner over an
+operator-chosen window**: it begins at whatever height the operator configured,
+it ends wherever the scanner has reached, and what it holds for a satpoint
+reflects only the blocks it has actually processed. It is routinely behind. The
+peer's is a **cryptographic proof against the chain**, hop by hop, which we have
+just verified in full. Neither is authority over the other: a proof does not
+overrule an index by being a proof, and an index that is admittedly behind does
+not overrule a proof by being ours.
+
+So we do neither of the things a decision would license. **We refuse the point
+and we refuse the snub.** We do not overwrite the other comet's attribution of
+that sat on the strength of evidence we cannot rank against our own index, and
+we do not condemn a peer whose attestation passed every check — the conflict may
+be entirely our lag. The outcome is `%unknown`-class: no card at all, the peer
+untouched, and the next retransmission judged against a scanner that has moved
+on.
+
+This is deliberately *not* symmetric with `tracked-prefix`, which compares a
+peer's log against our own index and **can** be fraud. That comparison is
+against a log we verified **for that same comet**, where a divergence is the
+comet contradicting itself. `tip-owned` is a disagreement between two *different*
+peers' claims to one sat, adjudicated by an index that may be behind either of
+them.
 
 ## 4. Publication payload + public scanning (resolves §9 Q4)
 
