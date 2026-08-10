@@ -6,7 +6,7 @@
     gwsnub.py add  <pier> <patp>
 
 A snub is the destructive half of a Groundwire verdict: `%gw-btc` emits a
-negative `%writ-response`, jael turns it into `[%give %sybl %fail ...]`, and
+negative `%verdict`, jael turns it into `[%give %sybl %fail ...]`, and
 `+sy-sybl`'s `%fail` branch adds the ship to `snub`.  Since the kernel's
 `f68a547b2b` the `%full` branch is that branch's exact inverse -- it calls
 `(sy-snub %deny %del ~[her])` -- so a later POSITIVE verdict does lift an

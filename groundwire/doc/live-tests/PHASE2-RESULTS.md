@@ -224,7 +224,7 @@ them nothing verifies at all.
 | id | what I did | expected | actual | verdict |
 |---|---|---|---|---|
 | 2.1a | C1 packet **exactly as `causeway finalize` produced it** (E2E) | VALID | `attestation-tx-not-found [961.055 0x394f3678…]`, **no verdict** (silence) | **FAIL — B3.** The fail-closed behaviour is correct, the packet is not |
-| 2.1 | C1 packet with `start-height` corrected to 961.044 (E2E) | VALID, point installed | `%gw-btc: attestation for ~havnyl-… is VALID`; `WRITWATCH %writ-response … VERDICT=FULL(valid)`; `.^((unit @ud) %j /=lyfe=/~havnyl-…)` → `[~ 1]` | **PASS** (110 s) |
+| 2.1 | C1 packet with `start-height` corrected to 961.044 (E2E) | VALID, point installed | `%gw-btc: attestation for ~havnyl-… is VALID`; `WRITWATCH %verdict … VERDICT=FULL(valid)`; `.^((unit @ud) %j /=lyfe=/~havnyl-…)` → `[~ 1]` | **PASS** (110 s) |
 | 2.1b | same for **C2** (E2E) | VALID | `attestation for ~barpyx-… is VALID`, `VERDICT=FULL(valid)` | **PASS** (100 s) |
 | 2.1c | same for **C3** (the public comet's confidential packet) (E2E) | VALID | `attestation for ~ligdes-… is VALID`, `VERDICT=FULL(valid)` | **PASS** (80 s) |
 | 2.2 | append a real mainnet tx (C2's spawn) as a bogus custody hop (E2E) | INVALID, tip/sont | `INVALID` / `[XX] derive-tip` / `VERDICT=FAIL(negative)` | **PASS** |
@@ -244,10 +244,10 @@ them nothing verifies at all.
 | 2.11 | snapshot names `sponsor=~marzod`, unknown to the verifier (E2E) | `sponsor-known` fails | `INVALID` / `[XX] entry-0-commitment` `[XX] sponsor-known` `[XX] tracked-prefix` | **PASS** (see note) |
 | 2.11b | clean `sponsor-known` with the commitment intact (PURE) | INVALID, only `sponsor-known` | `VERDICT INVALID` / `[XX] sponsor-known` — sole failure | **PASS** |
 | 2.11c | same sponsor, but present in `known-public` (PURE) | VALID | `VERDICT VALID` | **PASS** |
-| 2.12 | `xtr = (jam ~)` — canonically-empty chain (E2E) | negative verdict | `WRITWATCH %writ-response … VERDICT=FAIL(negative)` | **PASS** |
-| 2.13 | `xtr = 0` — public onboarding packet (E2E) | **SILENCE**, no verdict | **no `%writ-response` at all** — the `+public-pass` branch returns `` `this `` | **PASS** — and cleanly distinct from 2.12 |
+| 2.12 | `xtr = (jam ~)` — canonically-empty chain (E2E) | negative verdict | `WRITWATCH %verdict … VERDICT=FAIL(negative)` | **PASS** |
+| 2.13 | `xtr = 0` — public onboarding packet (E2E) | **SILENCE**, no verdict | **no `%verdict` at all** — the `+public-pass` branch returns `` `this `` | **PASS** — and cleanly distinct from 2.12 |
 | 2.14 | malformed non-`mat` `dat` (`dat = 0`) on an otherwise valid suite-C pass | dropped in ames before Jael | ran the exact `+pass-pki-dom:ames` body on each real pass: `nonmatdat` → **`~`**, `genuine` → `[~ [p=59 q=109.351.514.503.015]]` (= `%gw-btc`), `kelvin8` → `%gw-btc` too. `~` ⇒ `+on-hear-open`'s `?: &(?=([%c *] cek) ?=(~ dom)) event-core` drops the packet before creating alien state or passing `%writ`. Poked *directly* into `%gw-btc` (bypassing ames) it yields `VERDICT=FAIL(negative)` | **PASS at the arm + code-path level**; the ames drop itself needs Phase 3 networking |
-| 2.15 | **three** identical C1 writs poked 2 s apart (E2E) | duplicates dropped silently | `~(wyt by inflight)` → `1` while running; exactly **one** `+report` block and **one** `%writ-response VERDICT=FULL(valid)` | **PASS** |
+| 2.15 | **three** identical C1 writs poked 2 s apart (E2E) | duplicates dropped silently | `~(wyt by inflight)` → `1` while running; exactly **one** `+report` block and **one** `%verdict VERDICT=FULL(valid)` | **PASS** |
 | 2.16 | **real same-block spend** — outpoint `5f7203ed…:0` (P2TR, 1149 sat) created *and* spent inside block 961.055 (SCAN) | detected; scan starts at tip height | `[%gw-btc-lc-scan-spent tip=[…5f7203ed… vout=0 off=0] height=961.055]` → `GWSCAN RESULT [~ %.n] = SPENT` | **PASS** |
 | 1.5 | does the public path work from the on-chain OP_RETURN alone? | scanner indexes C3 with no packet | **decoder half FAILS (B4)**; with the byte order corrected everything else is exact — see below | **FAIL (B4) / semantics PASS** |
 

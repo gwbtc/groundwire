@@ -122,7 +122,7 @@ Merged behavior includes:
 - domain extraction from the head of immutable pass tweak data;
 - forwarding unknown/higher-life suite-C attestations from Ames through Jael
   to a same-named registered Gall verifier;
-- asynchronous `%writ-response` facts and `%sybl` gifts;
+- asynchronous `%verdict` facts and `%sybl` gifts;
 - promotion through the ordinary Jael/Ames public-key path on success and
   additive snubbing of failed alien peers;
 - Jael state `%5`, including the `%4` to `%5` migration, domain registry,
@@ -275,7 +275,7 @@ The deleted `pkg/arvo/todo.md` has been fully absorbed as follows.
 |---|---|
 | `%sybl`, `%gost`, `%ghul`, `%bane` tasks | merged in revision 0 |
 | `%hand` registration update | deliberately removed by one-domain/one-agent design |
-| `%writ-response` fact contract | merged in revision 0 |
+| `%verdict` fact contract | merged in revision 0 |
 | Gall liveness affordance | replaced by existing Clay `%tire` for desk liveness; app-nuke semantics remain open |
 | additive `%snub` task | still open; retained in the new TODO |
 | Ames boot `%sybl` subscription | merged in revision 0 |

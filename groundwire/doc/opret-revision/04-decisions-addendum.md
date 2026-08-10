@@ -270,7 +270,7 @@ booted with, so the spent tip arrives in a packet. In the second case the
 spentness is still established by *our own* filter scan against the chain, not
 by anything the peer claimed — it is the same fact, discovered by the inbox
 instead of the scanner, and it MUST take the same route. It did not: `%gw-btc`
-emitted a negative `%writ-response`, and on mainnet 2026-08-05 that snubbed an
+emitted a negative `%verdict`, and on mainnet 2026-08-05 that snubbed an
 honest comet permanently, from its own sponsor, for a correctly formed state
 update — with the snub then blocking the replacement packet exactly as this
 section predicts.

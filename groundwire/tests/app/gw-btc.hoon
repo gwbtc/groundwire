@@ -324,7 +324,7 @@
   ==
 ::  THE security invariant: a %jael-writ for a ship we have declined is
 ::  answered with SILENCE (no cards) -- while the identical bad pass for
-::  a ship we have NOT declined draws a negative %writ-response.  So
+::  a ship we have NOT declined draws a negative %verdict.  So
 ::  declining never turns into the negative verdict that would snub a
 ::  ship whose attestation is perfectly valid.
 ::
@@ -334,7 +334,7 @@
   ::  declined ship -> silence
   ::
   =^  c-dec  agent  (~(on-poke agent bowl0) %noun (writ-vase ~wes))
-  ::  non-declined ship, same bad pass -> a negative writ-response
+  ::  non-declined ship, same bad pass -> a negative verdict
   ::
   =^  c-und  agent  (~(on-poke agent bowl0) %noun (writ-vase ~dev))
   =/  dec  (app-cards c-dec)
@@ -343,12 +343,12 @@
     ::  declined: NO cards at all
     ::
     (expect-eq !>(~) !>(dec))
-    ::  non-declined: exactly one %writ-response fact
+    ::  non-declined: exactly one %verdict fact
     ::
     (expect-eq !>(1) !>((lent und)))
-    (expect-eq !>(`%writ-response) !>((fact-mark (snag 0 und))))
-    ::  and that writ-response is a NEGATIVE verdict (res=~): a %fail,
-    ::  the very verdict the declined path must never produce.
+    (expect-eq !>(`%verdict) !>((fact-mark (snag 0 und))))
+    ::  and that verdict is NEGATIVE (res=~): a %fail, the very
+    ::  outcome the declined path must never produce.
     ::
     %+  expect-eq
       !>  `(unit *)`~
@@ -382,10 +382,10 @@
     ::  foreign kelvin: NO cards at all -- no verdict, no snub
     ::
     (expect-eq !>(~) !>(for))
-    ::  our kelvin, same construction: exactly one NEGATIVE writ-response
+    ::  our kelvin, same construction: exactly one NEGATIVE verdict
     ::
     (expect-eq !>(1) !>((lent own)))
-    (expect-eq !>(`%writ-response) !>((fact-mark (snag 0 own))))
+    (expect-eq !>(`%verdict) !>((fact-mark (snag 0 own))))
     %+  expect-eq
       !>  `(unit *)`~
       !>  ^-  (unit *)
@@ -426,7 +426,7 @@
   ;:  weld
     ::  the untyped poke produced a verdict rather than crashing
     (expect-eq !>(1) !>((lent untyped)))
-    (expect-eq !>(`%writ-response) !>((fact-mark (snag 0 untyped))))
+    (expect-eq !>(`%verdict) !>((fact-mark (snag 0 untyped))))
     ::  and it is the same verdict the typed poke drew
     (expect-eq !>((lent typed)) !>((lent untyped)))
     %+  expect-eq
@@ -637,7 +637,7 @@
   =/  out  (app-cards cards)
   ;:  weld
     (expect-eq !>(1) !>((lent out)))
-    ::  a %stale-notice, NOT a %writ-response: no %fail, so no snub
+    ::  a %stale-notice, NOT a %verdict: no %fail, so no snub
     ::
     (expect-eq !>(`%stale-notice) !>((fact-mark (snag 0 out))))
     %+  expect-eq
@@ -662,7 +662,7 @@
   =/  out  (app-cards cards)
   ;:  weld
     (expect-eq !>(1) !>((lent out)))
-    (expect-eq !>(`%writ-response) !>((fact-mark (snag 0 out))))
+    (expect-eq !>(`%verdict) !>((fact-mark (snag 0 out))))
     ::  res=~ is the %fail
     ::
     %+  expect-eq
@@ -682,7 +682,7 @@
   =/  out  (app-cards cards)
   ;:  weld
     (expect-eq !>(1) !>((lent out)))
-    (expect-eq !>(`%writ-response) !>((fact-mark (snag 0 out))))
+    (expect-eq !>(`%verdict) !>((fact-mark (snag 0 out))))
   ==
 ::
 ::  UPGRADE.  A pre-%anew state (10 fields, no .own) must load with an
@@ -712,7 +712,7 @@
 ::  nothing changed but the scan position.
 ::
 ::  So: a verdict whose failures are all UNEVALUABLE must produce no
-::  cards at all.  Not %writ-response (a snub), not %stale-notice (a
+::  cards at all.  Not %verdict (a snub), not %stale-notice (a
 ::  demotion on a finding we did not make).  Nothing.
 ::
 ::  +on-load must PRESERVE the bootstrap flag.  It did not: .indexing was
@@ -864,7 +864,7 @@
   =/  cs  (app-cards cards)
   ;:  weld
     (expect-eq !>(1) !>((lent cs)))
-    (expect-eq !>(`%writ-response) !>((fact-mark (snag 0 cs))))
+    (expect-eq !>(`%verdict) !>((fact-mark (snag 0 cs))))
   ==
 ::
 ::  A ship that has never heard from its light client answers NOTHING --
@@ -924,7 +924,7 @@
 ++  test-abort-names-route-by-class
   =/  agent  gw-btc
   =^  *  agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
-  ::  one card, and it is the negative %writ-response that becomes a jael
+  ::  one card, and it is the negative %verdict that becomes a jael
   ::  %fail and an ames snub
   ::
   =/  snubs
@@ -933,7 +933,7 @@
     =^  cards  ag  (~(on-arvo ag bowl0) verify-wire (failed-sign peer ~[name]))
     =/  cs  (app-cards cards)
     ?&  =(1 (lent cs))
-        =(`%writ-response (fact-mark (snag 0 cs)))
+        =(`%verdict (fact-mark (snag 0 cs)))
     ==
   ;:  weld
     ::  fraud-class: the peer's own xtr contradicts the identity it claims
@@ -955,7 +955,7 @@
   =^  *      agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
   =^  cards  agent
     (~(on-arvo agent bowl0) verify-wire (failed-sign peer ~['tip-vout-range']))
-  ::  NO cards at all: not a %writ-response (a snub), not even a
+  ::  NO cards at all: not a %verdict (a snub), not even a
   ::  %stale-notice (a demotion)
   (expect-eq !>(~) !>((app-cards cards)))
 ::
@@ -969,7 +969,7 @@
 ::  one had fired and dropped straight through to the negative outcome.
 ::
 ::  THE CONTROL FIRST: the identical sign with nothing objecting really
-::  does install the point and emit a POSITIVE %writ-response.  Without
+::  does install the point and emit a POSITIVE %verdict.  Without
 ::  it, four tests asserting silence prove only that the fixture is inert.
 ::
 ::  Each refusal test below is THIS test with exactly one ingredient
@@ -990,7 +990,7 @@
   =/  ats  (peek-noun (~(on-peek agent bowl0) /x/attested))
   ;:  weld
     (expect-eq !>(1) !>((lent cs)))
-    (expect-eq !>(`%writ-response) !>((fact-mark (snag 0 cs))))
+    (expect-eq !>(`%verdict) !>((fact-mark (snag 0 cs))))
     ::  ... and it is a POSITIVE one: [dom who `point], not [dom who ~]
     (expect !>(?=([@ @ ^] (need (fact-payload (snag 0 cs))))))
     ::  ... and the peer really was installed, at the tip it proved
@@ -1070,8 +1070,8 @@
   =/  cs  (app-cards cards)
   ;:  weld
     (expect-eq !>(1) !>((lent cs)))
-    (expect-eq !>(`%writ-response) !>((fact-mark (snag 0 cs))))
-    ::  a NEGATIVE writ-response: [dom who ~]
+    (expect-eq !>(`%verdict) !>((fact-mark (snag 0 cs))))
+    ::  a NEGATIVE verdict: [dom who ~]
     (expect !>(?=([@ @ ~] (need (fact-payload (snag 0 cs))))))
   ==
 ::  ---------------------------------------------------------------------
@@ -1086,7 +1086,7 @@
 ::  6.1 is what happens when the first of them is wrong: a ship 961,000
 ::  blocks behind judged a real attestation and snubbed the honest comet
 ::  it sponsors.  What must hold now is that neither gate can EVER emit a
-::  writ-response, whatever else it does.
+::  verdict, whatever else it does.
 ::
 ++  test-writ-with-no-chain-tip-emits-no-verdict
   =/  pas    (logged-pass ~[entry0])

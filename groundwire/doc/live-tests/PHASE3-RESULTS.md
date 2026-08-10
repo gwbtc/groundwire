@@ -165,7 +165,7 @@ ames: ~havnyl-…-daplyd: got attestation
   [ok] entry-0-life-order  [ok] state-resolve        [ok] tip-unspent
   [ok] tip-p2tr            [ok] pass-key             [ok] sponsor-known
   [ok] tracked-prefix
-WRITWATCH %writ-response dom=gw-btc who=~havnyl-…-daplyd  VERDICT=FULL(valid)
+WRITWATCH %verdict dom=gw-btc who=~havnyl-…-daplyd  VERDICT=FULL(valid)
 ```
 
 and the point was installed:
@@ -259,7 +259,7 @@ attestation-tx-not-found
 [961.059 0xdede.dede.dede.dede.dede.dede.dede.dede.dede.dede.dede.dede.dede.dede.dede.dede]
 ```
 
-**No `%writ-response` fact at all** — `%writ-watch` stayed silent, so this is
+**No `%verdict` fact at all** — `%writ-watch` stayed silent, so this is
 SILENCE, not a negative verdict, and it is cleanly distinguishable from 3.3.
 The peer is held forever:
 
@@ -284,7 +284,7 @@ on-chain-anchored packet.
 %gw-btc: attestation for ~ligdes-risbur-folmus-mattyp--firpec-lispec-noddyl-daplyd is INVALID
   [XX] spawn-commit
 mesa: ~ligdes-…-daplyd: attestation writ failed; snubbing
-WRITWATCH %writ-response dom=gw-btc who=~ligdes-…-daplyd  VERDICT=FAIL(negative)
+WRITWATCH %verdict dom=gw-btc who=~ligdes-…-daplyd  VERDICT=FAIL(negative)
 ```
 
 Exactly one check failed, and it is the named one. Jael turned it into
@@ -306,7 +306,7 @@ Three independent pieces of evidence, all from live traffic:
    `%writ` → `%g %deal … %poke %noun` arrived at `%gw-btc` (it is the *only* thing
    that pokes that mark from `[our our /jael]`). After the patch the same path
    produced the `+report` block quoted in 3.1.
-2. **`%sybl` fired and Jael stored the point**: `WRITWATCH %writ-response …
+2. **`%sybl` fired and Jael stored the point**: `WRITWATCH %verdict …
    VERDICT=FULL(valid)` is `%gw-btc` giving the fact on `/writs`, the path Jael
    registered for at `%anex`; jael then emitted `[%give %sybl %full …]`, and
    `.^((unit @ud) %j /=lyfe=/~havnyl-…)` on C2 became `[~ 1]`.

@@ -170,7 +170,7 @@ never silently rewritten to self and is not, by itself, cryptographic fraud.
 ### 2.3 Jael domain API
 
 The kernel registry is one agent per domain, keyed by the registering agent's
-own name. The normative table of tasks, the `$writ-response` and
+own name. The normative table of tasks, the `$verdict` and
 `$stale-notice` molds, the `%tire` liveness rules and the `%dome` scry are all
 specified in `pkg/arvo/doc/spec/pluggable-comet-pki.md`; `%gw-btc` uses them
 unchanged and adds nothing to them.

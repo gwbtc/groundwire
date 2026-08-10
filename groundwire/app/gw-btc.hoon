@@ -17,7 +17,7 @@
 ::  (suite-%c) comet self-attests to us, Ames routes the attestation
 ::  here as a %jael-writ poke.  We decode the custody log carried in the
 ::  pass, fetch its transactions asynchronously through %light-client,
-::  and answer with a %writ-response fact; on success
+::  and answer with a %verdict fact; on success
 ::  Jael stores the point and promotes the comet.
 ::
 ::  The other half of that protocol is our OWN identity.  After the owner
@@ -235,7 +235,7 @@
 ++  on-init
   ^-  (quip card _this)
   ::  register as the verifier agent for our own PKI domain (= our
-  ::  agent name).  Jael watches /writs for %writ-response /
+  ::  agent name).  Jael watches /writs for %verdict /
   ::  %anew-response / %azimuth-udiffs facts.
   ::
   ::  .indexing and .synced are pinned here rather than left to the mold's
@@ -752,7 +752,7 @@
   ?+    pole  (on-watch:def pole)
   ::
   ::  Jael's %anex registration watches this path for asynchronous
-  ::  %writ-response and %anew-response facts.
+  ::  %verdict and %anew-response facts.
       [%writs ~]
     ?>  =(our src):bowl
     `this
@@ -1121,7 +1121,7 @@
                   leaf+"   inspect with .^(/snubbed) and undo with %snub %deny %del)"
               ==
           :_  this
-          ~[(writ-card dom.req who ~)]
+          ~[(verdict-card dom.req who ~)]
         ==
       ::  Sponsorship decision point.  A valid attestation whose snapshot
       ::  names US as sponsor IS the sponsorship request -- there is no
@@ -1157,7 +1157,7 @@
       ::  its verdict is unaffected.
       %-  (slog (unroutable-point who verified))
       :_  this
-      ~[(writ-card dom.req who `(urb-point-to-jael u.verified who))]
+      ~[(verdict-card dom.req who `(urb-point-to-jael u.verified who))]
     ==
   ::
   ::  Our +get-blocks thread returned. Update
@@ -1542,7 +1542,7 @@
     %drop     ~
     %hold     ~
     %refresh  (refresh-synced our)
-    %fail     ~[(writ-card dom who ~)]
+    %fail     ~[(verdict-card dom who ~)]
   ==
 ::
 ::  +refuse-anew: decline to refresh OUR OWN pass, out loud
@@ -2055,11 +2055,11 @@
   (unroutable-point who (~(get by unv-ids.st) who))
 ::
 ::  Emit an asynchronous Jael verdict on the path registered by %anex.
-++  writ-card
+++  verdict-card
   |=  [dom=@tas who=ship res=(unit point:jael)]
   ^-  card
   :*  %give  %fact  ~[/writs]
-      %writ-response  !>(`writ-response:jael`[dom who res])
+      %verdict  !>(`verdict:jael`[dom who res])
   ==
 ::
 ::  A ship already indexed publicly may not transition into the confidential

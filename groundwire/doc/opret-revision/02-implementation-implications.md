@@ -115,7 +115,7 @@ onboarding/comet-miner, `[spec]` decision needed first.
 ## 5. Sponsorship / kernel — gwbtc/urbit (`cyc/cc-draft-2`)
 
 - `[kernel]` Remove consent from the writ-verification contract; `%gw-btc`'s
-  `%writ-response` continues to carry a `point`, whose sponsor field is now
+  `%verdict` continues to carry a `point`, whose sponsor field is now
   advisory (wire-derived or self).
 - `[kernel]` Jael/Ames ingestion of signed routing records (`gw/fief`), with
   the `(life, seq)` freshness rule; packet-level sponsor-chain hints and

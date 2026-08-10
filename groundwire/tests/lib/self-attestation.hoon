@@ -783,7 +783,7 @@
   ;:  weld
     (expect !>(!ok.verdict.spent))
     (expect !>(!(got-check verdict.spent 'tip-unspent')))
-    ::  the whole point: this must NOT become a negative %writ-response
+    ::  the whole point: this must NOT become a negative %verdict
     ::
     (expect !>((stale-verdict:sal verdict.spent)))
   ==

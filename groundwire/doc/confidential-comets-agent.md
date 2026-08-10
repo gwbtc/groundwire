@@ -441,7 +441,7 @@ single-shot path remains single-fragment unless separately redesigned.
 
 On initialization `%gw-btc` sends `[%anex /writs]` to Jael and watches the
 local `%light-client` readiness interface. It accepts `%jael-writ` only from the
-local vane path and emits `%writ-response` only for the matching current job.
+local vane path and emits `%verdict` only for the matching current job.
 
 The agent does not need an explicit rename migration or versioned load path.
 The exact duplicate-`%anex` behavior after desk/Gall lifecycle transitions is a

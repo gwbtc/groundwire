@@ -415,7 +415,7 @@ directions" would be wrong.
 
 ## 4.4 / 4.6 — decline is silence
 
-`%gw-sponsor-decline` emits **no `%writ-response` at all**, so ames never sees a
+`%gw-sponsor-decline` emits **no `%verdict` at all**, so ames never sees a
 `%fail` and `+sy-sybl`'s additive snub (`sys/vane/ames.hoon:11226-11234`) is
 never reached. The check that matters is therefore
 `.^([?(%allow %deny) (list @p)] %ax /(scot %p our)//(scot %da now)/snubbed)` on
