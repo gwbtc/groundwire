@@ -2320,3 +2320,363 @@ def test_funded_state_update_fee_estimate_tracks_the_real_vsize():
         f"asked for {fee_rate}")
     assert effective <= fee_rate * 1.15, (
         f"overpaid: {effective:.2f} sat/vB for a requested {fee_rate}")
+
+
+# ---------------------------------------------------------------------------
+# publish — the on-chain declassification, and the four guards on it
+#
+# A publication's payload is the comet's WHOLE attestation packet: the pass a
+# peer would receive over ames, custody log in its xtr, plus the opening for the
+# hop the transaction itself performs. The failure mode these tests exist for is
+# invisible: publishing the BOOT pass instead produces the same OP_RETURN
+# envelope and the same opening, ~200 bytes shorter, and the difference only
+# surfaces when a stranger declines to declassify the comet.
+# ---------------------------------------------------------------------------
+
+from click.testing import CliRunner  # noqa: E402
+
+_PUB_PASS = int(FULL["pass_empty"], 16)          # a real 108-byte suite-C pass
+
+
+def _pub_log(n_bare: int = 0) -> list:
+    """Entry 0 (spawn, with the dat opening) plus `n_bare` plain custody hops."""
+    log = [_full_log()[0]]
+    for i in range(n_bare):
+        log.append({"txid_hex": f"{i + 0xA0:02x}" * 32, "height": 961_100 + i,
+                    "opening": None})
+    return log
+
+
+def _publish_chain(tmp_path, log, *, n_proofs=None, xtr=None, key=None) -> list:
+    """A FINALIZED proof chain: one file per hop, the last carrying the baked
+    `xtr_hex`, and every `commit_txid` taken from the log — so the log ends
+    exactly where the publication's input 0 begins."""
+    n = len(log) if n_proofs is None else n_proofs
+    snap = {"life": 1, "rift": 0,
+            "key": cw.messaging_key_from_pass(_PUB_PASS) if key is None else key,
+            "sponsor": cw.patp_to_int(SPONSOR_PATP), "fief": None}
+    _psbt_obj, base = cw.build_spawn_psbt(**_fake_utxo(), snapshot=snap)
+    paths = []
+    for i in range(n):
+        proof = dict(base)
+        proof["op"] = "spawn" if i == 0 else "rekey"
+        proof["patp"] = "~sampel-palnet"
+        #  the LAST proof always names the log's last hop, so guard 1 is
+        #  satisfied by construction and the other guards can be reached
+        proof["commit_txid"] = (log[-1]["txid_hex"] if i == n - 1
+                                else log[i]["txid_hex"] if i < len(log)
+                                else "ff" * 32)
+        if i == 0:
+            proof["pass_atom_hex"] = hex(_PUB_PASS)
+        if i == n - 1:
+            proof["xtr_hex"] = hex(cw.build_xtr_atom(log) if xtr is None else xtr)
+        path = tmp_path / f"{i:02d}.proof.json"
+        cw.write_proof_json(proof, str(path))
+        paths.append(str(path))
+    return paths
+
+
+def _publish(tmp_path, paths, *extra):
+    return CliRunner().invoke(
+        cw.cli, ["publish", *paths, "--dry-run", "--output-dir", str(tmp_path), *extra])
+
+
+def _op_return_of(result_dir, tmp_path) -> bytes:
+    psbt_files = [p for p in os.listdir(str(tmp_path)) if p.endswith(".psbt")]
+    assert psbt_files, "publish wrote no PSBT"
+    from embit import psbt as _p
+    p = _p.PSBT.from_base64(open(os.path.join(str(tmp_path), psbt_files[0])).read().strip())
+    outs = [bytes(o.script_pubkey.data) for o in p.tx.vout]
+    pubs = [s for s in outs if cw.parse_publication_script(s) is not None]
+    assert len(pubs) == 1
+    return pubs[0]
+
+
+# -- the codec inverses the guards are built out of --------------------------
+
+def test_xtr_of_pass_inverts_pass_with_xtr():
+    """Pinned on the golden full-packet vector: the xtr comes back out of the
+    500-byte pass exactly as it went in, and a boot pass answers 0."""
+    xtr = cw.build_xtr_atom(_full_log())
+    assert cw.xtr_of_pass(cw.pass_with_xtr(_PUB_PASS, xtr)) == xtr
+    assert cw.xtr_of_pass(_PUB_PASS) == 0
+    assert cw.xtr_of_pass(int(FULL["pass_full"], 16)) == xtr
+
+
+def test_xtr_of_pass_refuses_a_pass_that_is_not_suite_c():
+    with pytest.raises(ValueError, match="not a suite-C pass"):
+        cw.xtr_of_pass(0xDEAD_BE00)
+
+
+def test_parse_publication_script_round_trips_the_golden_script():
+    script = bytes.fromhex(FULL["op_return_script"])
+    kelvin, payload = cw.parse_publication_script(script)
+    assert kelvin == cw.KELVIN == 9
+    assert payload.hex() == FULL["jam_publication_le"]
+    pass_atom, _opening = cw.read_publication_script(script)
+    assert pass_atom == int(FULL["pass_full"], 16)
+
+
+@pytest.mark.parametrize("n", [3, 75, 76, 255, 256, 588])
+def test_parse_publication_reads_every_push_form_push_data_emits(n):
+    """Direct push, PUSHDATA1 and PUSHDATA2 all come back out."""
+    body = bytes([0x6A, 0x03, 0x75, 0x72, 0x62, 0x01, cw.KELVIN])
+    payload = bytes(range(256)) * 4
+    payload = payload[:n]
+    got = cw.parse_publication_script(body + cw.push_data(payload) + payload)
+    assert got == (cw.KELVIN, payload)
+
+
+def test_parse_publication_refuses_what_is_not_a_publication():
+    assert cw.parse_publication_script(b"\x6a\x20" + b"\xab" * 32) is None   # a plain OP_RETURN
+    assert cw.parse_publication_script(bytes([0x51, 0x20]) + b"\xab" * 32) is None  # P2TR
+    assert cw.parse_publication_script(b"") is None
+    # a length that does not match the payload actually present
+    assert cw.parse_publication_script(
+        bytes([0x6A, 0x03, 0x75, 0x72, 0x62, 0x01, cw.KELVIN, 0x20]) + b"\xab" * 4) is None
+
+
+def test_read_publication_refuses_a_foreign_kelvin():
+    """A watcher at another protocol version ignores the output rather than
+    mis-parsing it — parse_publication still reports the version it saw."""
+    script = bytearray(bytes.fromhex(FULL["op_return_script"]))
+    script[6] = cw.KELVIN + 1
+    assert cw.parse_publication_script(bytes(script))[0] == cw.KELVIN + 1
+    assert cw.read_publication_script(bytes(script)) is None
+
+
+def test_cue_custody_log_inverts_build_xtr_atom():
+    log = _full_log()
+    got = cw.cue_custody_log(cw.build_xtr_atom(log))
+    assert [e["txid_hex"] for e in got] == [e["txid_hex"] for e in log]
+    assert [e["height"] for e in got] == [e["height"] for e in log]
+    # exactly one entry — entry 0, the spawn — carries an opening
+    assert [e["opening"] is not None for e in got] == [True, False, False, False, False, False]
+    assert cw.cue_custody_log(0) == []
+
+
+# -- GUARD 4: the payload is read back OUT of the script ---------------------
+
+def test_recue_guard_rejects_a_boot_pass_publication():
+    """THE ONE THAT MATTERS. A boot-pass publication is indistinguishable from a
+    packet publication in a transaction decode; it is the shape that put four
+    unverifiable publications on mainnet, and it is caught here."""
+    opening = _full_opening(FULL["terminal_opening"])
+    xtr = cw.build_xtr_atom(_full_log())
+    boot = cw.make_publication_script(_PUB_PASS, opening)
+    packet = cw.make_publication_script(cw.pass_with_xtr(_PUB_PASS, xtr), opening)
+    # ...and the two really are near-identical on the wire, which is the point
+    assert boot[:7] == packet[:7]
+    assert len(packet) - len(boot) == 393
+
+    with pytest.raises(ValueError, match="carries NO custody log"):
+        cw.assert_publication_carries_log(boot, xtr=xtr, entries=6)
+    cw.assert_publication_carries_log(packet, xtr=xtr, entries=6)   # must not raise
+
+
+def test_recue_guard_rejects_a_different_log():
+    opening = _full_opening(FULL["terminal_opening"])
+    mine = cw.build_xtr_atom(_full_log())
+    theirs = cw.build_xtr_atom(_full_log()[:3])
+    script = cw.make_publication_script(cw.pass_with_xtr(_PUB_PASS, theirs), opening)
+    with pytest.raises(ValueError, match="DIFFERENT custody log"):
+        cw.assert_publication_carries_log(script, xtr=mine, entries=6)
+    with pytest.raises(ValueError, match="3 entries, expected 6"):
+        cw.assert_publication_carries_log(script, xtr=theirs, entries=6)
+
+
+def test_recue_guard_rejects_a_script_that_is_not_a_publication():
+    with pytest.raises(ValueError, match="does not read back"):
+        cw.assert_publication_carries_log(bytes([0x51, 0x20]) + b"\xab" * 32, xtr=1, entries=1)
+
+
+# -- the command ------------------------------------------------------------
+
+def test_publish_dry_run_builds_the_whole_packet(tmp_path):
+    log = _pub_log(2)
+    paths = _publish_chain(tmp_path, log)
+    res = _publish(tmp_path, paths)
+    assert res.exit_code == 0, res.output
+    assert "3 entries" in res.output and "every gate passed" in res.output
+
+    script = _op_return_of(res, tmp_path)
+    pass_atom, opening = cw.read_publication_script(script)
+    # the pass carries the log finalize baked, and it is NOT the boot pass
+    assert cw.xtr_of_pass(pass_atom) == cw.build_xtr_atom(log)
+    assert pass_atom != _PUB_PASS
+    # GUARD 2 — the terminal opening's blind-opening unit is ~ (0): the dat
+    # opening may sit on entry 0 only, and entry 0 is inside the xtr.
+    _internal_key, (_snapshot, blind_opening_unit) = opening
+    assert blind_opening_unit == 0
+    # nothing was signed and nothing was broadcast
+    assert not [f for f in os.listdir(str(tmp_path)) if f.endswith(".proof.json")
+                and "publish" in f]
+
+
+def test_publish_state_update_shape(tmp_path):
+    """Input 0 is the identity sat, output 0 re-commits the snapshot at life+1,
+    and the OP_RETURN rides alongside."""
+    log = _pub_log(1)
+    paths = _publish_chain(tmp_path, log)
+    prior = cw.load_proof_json(paths[-1])
+    assert _publish(tmp_path, paths).exit_code == 0
+
+    from embit import psbt as _p
+    p = _p.PSBT.from_base64(
+        open(str(tmp_path / "sampel-palnet-publish.psbt")).read().strip())
+    assert p.tx.vin[0].txid.hex() == prior["commit_txid"]
+    assert p.tx.vin[0].vout == prior["sat_vout"]
+    new_snap = dict(prior["snapshot"], life=prior["snapshot"]["life"] + 1)
+    q = cw.state_output_key(bytes.fromhex(prior["internal_pubkey_hex"]), new_snap)
+    assert bytes(p.tx.vout[0].script_pubkey.data) == bytes([0x51, 0x20]) + q
+    assert p.tx.vout[1].value == 0            # the OP_RETURN carries no value
+
+
+# -- GUARD 1: the log must END where this transaction BEGINS ----------------
+
+def test_publish_refuses_a_log_that_does_not_end_at_the_spent_outpoint(tmp_path):
+    """If the sat has moved since the log was baked, the artifact is short by
+    exactly those hops and the packet fails `N-continuity` on chain — after the
+    fee is paid. Refuse instead of paying for it."""
+    log = _pub_log(2)
+    paths = _publish_chain(tmp_path, log)
+    moved = cw.load_proof_json(paths[-1])
+    moved["commit_txid"] = "de" * 32          # a hop the log does not know about
+    cw.write_proof_json(moved, paths[-1])
+
+    res = _publish(tmp_path, paths)
+    assert res.exit_code != 0
+    assert "N-continuity" in res.output
+    assert "custody log ends at" in res.output
+    assert not [f for f in os.listdir(str(tmp_path)) if f.endswith(".psbt")]
+
+
+def test_publish_refuses_an_entry_count_mismatch(tmp_path):
+    """A log baked from a different set of hops than the proofs handed in."""
+    log = _pub_log(2)
+    paths = _publish_chain(tmp_path, log, n_proofs=2)
+    res = _publish(tmp_path, paths)
+    assert res.exit_code != 0
+    assert "3 entries but 2 proofs" in res.output
+
+
+def test_publish_requires_finalize_to_have_run(tmp_path):
+    log = _pub_log(1)
+    paths = _publish_chain(tmp_path, log)
+    last = cw.load_proof_json(paths[-1])
+    del last["xtr_hex"]
+    cw.write_proof_json(last, paths[-1])
+    res = _publish(tmp_path, paths)
+    assert res.exit_code != 0
+    assert "causeway finalize" in res.output
+
+
+# -- GUARD 3: MAX_PUBLICATION, loudly ---------------------------------------
+
+def test_publish_refuses_an_over_cap_payload(tmp_path):
+    """~17 hops fit in 1024 bytes; past that the packet no longer fits in one
+    transaction and the command says so rather than emitting a bad script."""
+    log = _pub_log(30)
+    paths = _publish_chain(tmp_path, log)
+    res = _publish(tmp_path, paths)
+    assert res.exit_code != 0
+    assert f"over the {cw.MAX_PUBLICATION}-byte cap" in res.output
+    assert "31 custody hops" in res.output
+    assert not [f for f in os.listdir(str(tmp_path)) if f.endswith(".psbt")]
+
+
+def test_publish_reports_the_headroom_it_has_left(tmp_path):
+    paths = _publish_chain(tmp_path, _pub_log(1))
+    res = _publish(tmp_path, paths)
+    assert re.search(r"Payload\s+: \d+ bytes of 1024", res.output)
+
+
+# -- the pass must be the comet's CURRENT one -------------------------------
+
+def test_publish_refuses_a_pass_that_is_not_the_current_one(tmp_path):
+    """A rekey rotates cry. Publishing a stale pass would advertise a key the
+    comet no longer uses — and `pass-key` in +run-checks would catch it, after
+    the fee."""
+    paths = _publish_chain(tmp_path, _pub_log(1), key=0xC0FFEE)
+    res = _publish(tmp_path, paths)
+    assert res.exit_code != 0
+    assert "not the comet's current pass" in res.output
+
+
+def test_publish_refuses_a_pass_that_is_not_suite_c(tmp_path):
+    paths = _publish_chain(tmp_path, _pub_log(1))
+    res = _publish(tmp_path, paths, "--pass-hex", "0xdeadbe00")
+    assert res.exit_code != 0
+    assert "not a suite-C pass" in res.output
+
+
+def test_publish_pass_hex_accepts_both_hex_conventions(tmp_path):
+    """`0x…` is an atom (the proofs' pass_atom_hex); bare hex is a
+    little-endian byte dump (rekey's --new-pass-hex)."""
+    paths = _publish_chain(tmp_path, _pub_log(1))
+    for path in paths:                      # force --pass-hex to be the source
+        proof = cw.load_proof_json(path)
+        proof.pop("pass_atom_hex", None)
+        cw.write_proof_json(proof, path)
+    le_dump = _PUB_PASS.to_bytes((_PUB_PASS.bit_length() + 7) // 8, "little").hex()
+    for spec in (hex(_PUB_PASS), le_dump):
+        assert _publish(tmp_path, paths, "--pass-hex", spec).exit_code == 0
+
+
+def test_publish_says_where_to_get_the_pass_when_no_proof_has_one(tmp_path):
+    paths = _publish_chain(tmp_path, _pub_log(1))
+    for path in paths:
+        proof = cw.load_proof_json(path)
+        proof.pop("pass_atom_hex", None)
+        cw.write_proof_json(proof, path)
+    res = _publish(tmp_path, paths)
+    assert res.exit_code != 0
+    assert "--pass-hex" in res.output
+
+
+# -- funding: a packet publication may cost more than the identity sat holds --
+
+def test_publish_puts_the_funding_input_behind_the_identity_sat(tmp_path, monkeypatch):
+    """Ordinals assign sats in input order, so funding ahead of the identity
+    would move it. It goes at input 1, and the identity output GROWS."""
+    log = _pub_log(1)
+    paths = _publish_chain(tmp_path, log)
+    prior = cw.load_proof_json(paths[-1])
+    monkeypatch.setattr(cw, "_resolve_rekey_funding", lambda **kw: {
+        "funding_inputs": [{
+            "txid": "ee" * 32, "vout": 3, "value": 20_000,
+            "script_pubkey": bytes([0x51, 0x20]) + b"\x22" * 32,
+            "xonly": b"\x22" * 32, "path": "m/86h/0h/0h/0/0",
+            "fingerprint": b"\xaa\xbb\xcc\xdd",
+        }]})
+    res = _publish(tmp_path, paths, "--fund-xpub", "xpub-stub")
+    assert res.exit_code == 0, res.output
+
+    from embit import psbt as _p
+    p = _p.PSBT.from_base64(
+        open(str(tmp_path / "sampel-palnet-publish.psbt")).read().strip())
+    assert p.tx.vin[0].txid.hex() == prior["commit_txid"]      # identity FIRST
+    assert p.tx.vin[1].txid.hex() == "ee" * 32
+    assert p.tx.vout[0].value > prior["sat_value"], "identity sat was not topped up"
+    assert "TOP-UP" in res.output
+
+
+# -- rekey now records the pass it rotates to, so publish can find it --------
+
+def test_rekey_records_the_pass_it_rotates_to(tmp_path, monkeypatch):
+    """Without this the comet's current pass lives only in the ship, and
+    `publish` — which must publish the pass a peer receives — has nowhere to
+    read it from."""
+    captured = {}
+
+    def capture(prior_proof, new_snapshot, fee_rate, network):
+        captured["snap"] = new_snapshot
+        raise RuntimeError("stop before the PSBT")
+
+    monkeypatch.setattr(cw, "build_rekey_psbt", capture)
+    with pytest.raises(RuntimeError):
+        cw._run_rekey_op("~sampel-palnet", _rekey_prior(tmp_path, sponsor=1234),
+                         cw.messaging_key_from_pass(_PUB_PASS), False, 2, "main",
+                         str(tmp_path), "stub", new_pass=_PUB_PASS)
+    assert captured["snap"]["key"] == cw.messaging_key_from_pass(_PUB_PASS)
+    assert cw.messaging_key_from_pass(_PUB_PASS) != _PUB_PASS

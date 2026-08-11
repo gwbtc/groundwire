@@ -38,6 +38,7 @@ causeway-tui              # Textual terminal UI
 | `causeway spawn connect --xpub …` | same, but you sign the PSBT externally |
 | `causeway rekey` | rotate the messaging key on an existing point (the only on-chain management op) |
 | `causeway finalize <proof…>` | bake the `xtr` custody log into the proofs and, with `--feed`, into the boot feed |
+| `causeway publish <proof…>` | declassify: put the comet's whole attestation packet on chain in an OP_RETURN |
 | `causeway proof show <path>` | pretty-print a `proof.json` |
 | `causeway proof verify <path>` | check a `proof.json` for internal consistency and (by default) against its on-chain tx |
 | `causeway-tui` | Textual terminal UI over the same flows |
@@ -169,6 +170,58 @@ This records `block_hash`/`block_height`/`xtr_hex` in the proof(s) and
 prints an updated boot one-liner. Booting with the miner's original feed
 also works — the ship just serves an empty log until an `%anew`
 round-trip (or a re-boot with the finalized feed) supplies it.
+
+## Publish — declassify the comet on chain
+
+`publish` takes exactly what `finalize` takes — every proof for the point,
+oldest first — because the thing it publishes is the custody log `finalize`
+bakes onto the last one. Run `finalize` first.
+
+```bash
+causeway publish spawn.proof.json rekey.proof.json --fee-rate 2
+# see what would go on chain without signing or broadcasting anything:
+causeway publish spawn.proof.json rekey.proof.json --dry-run
+# scripted, and topping the identity sat up instead of shrinking it:
+causeway publish spawn.proof.json --fund-xpub "$XPUB" --fund-utxo TXID:VOUT \
+                 --signed-psbt /tmp/signed.fifo
+```
+
+**Publishing is one way.** The packet names the comet, its spawn satpoint and
+every custody hop since, in public, forever.
+
+What goes on chain is one transaction, and it is a state update: input 0 spends
+the identity sat (only its holder can, so the publication is the *owner's*
+consent to declassify), output 0 re-commits the snapshot at `life+1`, and an
+OP_RETURN carries the comet's **whole attestation packet** — the pass a peer
+would receive over ames, custody log in its `xtr`, plus the opening for the hop
+this very transaction performs. That last opening is the one thing the packet
+cannot contain, because the transaction's txid does not exist until it is
+signed; the watcher completes the log from the block it is reading and runs the
+same `+run-checks` a mailed attestation gets. So a **stranger** can verify it,
+and a comet can publish **late**.
+
+Four things it refuses to do, all before any fee is paid:
+
+* publish a log that does not **end** at the outpoint input 0 spends — the
+  artifact would be short by the hops in between and the packet would fail
+  `N-continuity` on chain;
+* put a blind-opening on the terminal opening — the `dat` opening may sit on
+  entry 0 only (`blind-opening-zero`), and entry 0 is inside the `xtr`;
+* emit a payload over `MAX_PUBLICATION` (1024 bytes, ~17 hops);
+* broadcast a payload whose pass does **not** carry the log. That last check
+  re-reads the payload back out of the script itself, before signing and again
+  after, because a boot-pass publication and a packet publication are
+  indistinguishable in a transaction decode — same envelope, same opening,
+  ~200 bytes shorter — and the difference is only whether anyone can verify it.
+
+A packet publication runs ~400 vB, so ~1,000 sats at 2 sat/vB. An identity sat
+may not cover that; `--fund-xpub` adds a funding input **after** input 0 (sats
+are assigned to outputs in input order, so an input behind the identity cannot
+move it) and the identity output is topped up rather than shrunk.
+
+Once it confirms, run `finalize` again with the publish proof appended: a
+publication is a custody move like any other, and the next hop's log must
+carry it.
 
 ## Inspecting and checking a proof
 

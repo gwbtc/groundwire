@@ -110,8 +110,7 @@ needs:
    compares against causeway's, so a bug in causeway's encoder cannot pass.
 
 It also sets a `fief` and a `sponsor` at spawn, neither of which the causeway
-CLI can do (`--publish` exists only on `spawn`, and `rekey` has no `--fief`;
-`build_rekey_psbt`'s publication parameters are unreachable from any caller).
+CLI can do (`--publish` exists only on `spawn`, and `rekey` has no `--fief`).
 
 ```sh
 gwmint.py mine  <label> <funding-txid> <vout>
@@ -123,8 +122,13 @@ gwmint.py publish <label> <n> [--fee-rate=N] [--fund] [--sat-target=S]
 ```
 
 `publish` is the LATE publication — Tier-1 declassification for a comet that
-is already confidential — and it is the only builder anywhere that produces
-one. Since 2026-08-10 the OP_RETURN payload is the comet's whole attestation
+is already confidential. It was the only builder of one until `causeway
+publish` landed; the two now agree byte for byte, because both call the same
+`causeway` encoders and `gwmint` imports them verbatim. Prefer `causeway
+publish` unless you need gwmint's ops wallet: it takes the whole ordered proof
+chain rather than one artifact, so it can refuse a stale log, and it re-reads
+the payload out of the script both before signing and again before broadcast.
+Since 2026-08-10 the OP_RETURN payload is the comet's whole attestation
 packet, so what goes in it is the pass a **peer** receives: the custody log in
 its `xtr` (`pass_with_xtr`, from the artifact's baked `xtr_hex`), and an
 opening with **no** blind-opening, because the dat opening may sit only on

@@ -900,6 +900,24 @@ def pass_with_xtr(pass_atom: int, xtr: int) -> int:
     return w.to_int()
 
 
+def xtr_of_pass(pass_atom: int) -> int:
+    """The custody log riding a suite-%c pass, as the jammed atom (0 = none).
+
+    The exact inverse of pass_with_xtr, reading the same layout
+    ('c' | ugn(256) | cry(256) | mat(dat) | xtr) and returning everything past
+    the dat mat.  A boot pass answers 0.
+
+    This exists so a publication can be checked against the transaction that
+    carries it rather than against the variable we hope we passed in: the two
+    shapes are indistinguishable in a transaction decode, so the only honest
+    read-back goes through the bytes.  See assert_publication_carries_log."""
+    if pass_atom & 0xFF != ord("c"):
+        raise ValueError("xtr_of_pass: not a suite-C pass")
+    bod = pass_atom >> 8
+    p, _dat = _hoon_rub(512, bod)
+    return bod >> (512 + p)
+
+
 #  The byte cap on a publication payload.  1024, and the number is not
 #  arbitrary: it is the PACKET bound (decisions addendum §6 fixes a complete
 #  jammed attestation at one Mesa fragment, ~1 KiB), and a publication carries
@@ -951,6 +969,119 @@ def make_publication_script(pass_atom: int, opening: dict) -> bytes:
     # 6a 03 'urb' 01 <kelvin> — matches +publication-script:gw-btc-pass.
     return (bytes([0x6A, 0x03, 0x75, 0x72, 0x62, 0x01, KELVIN])
             + push_data(payload) + payload)
+
+
+def parse_publication_script(script: bytes) -> tuple[int, bytes] | None:
+    """(kelvin, payload) from an OP_RETURN publication script, or None.
+
+    The inverse of make_publication_script, and a port of
+    +parse-publication:gw-btc-pass: it reads the three push forms push_data can
+    emit — a direct push (1–75), OP_PUSHDATA1 (0x4c, one length byte) and
+    OP_PUSHDATA2 (0x4d, two LITTLE-endian length bytes) — and refuses anything
+    else rather than reading some other opcode as a length.  The kelvin is
+    RETURNED, not checked, so a caller can say which version it found."""
+    if len(script) < 7:
+        return None
+    if script[:5] != bytes([0x6A, 0x03, 0x75, 0x72, 0x62]) or script[5] != 0x01:
+        return None
+    kelvin = script[6]
+    rest = script[7:]
+    if not rest:
+        return None
+    opc = rest[0]
+    if opc == 0x4C:
+        if len(rest) < 2:
+            return None
+        length, head = rest[1], 2
+    elif opc == 0x4D:
+        if len(rest) < 3:
+            return None
+        length, head = int.from_bytes(rest[1:3], "little"), 3
+    elif opc <= 75:
+        length, head = opc, 1
+    else:
+        return None
+    payload = rest[head:]
+    if len(payload) != length or length > MAX_PUBLICATION:
+        return None
+    return kelvin, payload
+
+
+def read_publication_script(script: bytes) -> tuple[int, tuple] | None:
+    """(pass_atom, opening_noun) read back out of a publication script, or None.
+
+    +read-publication:gw-btc-pass, in Python: parse the envelope, undo
+    jam_bytes' little-endian byte dump, and cue.  A foreign kelvin answers None,
+    exactly as the Hoon does — a watcher at another protocol version ignores
+    this output rather than mis-parsing it."""
+    env = parse_publication_script(script)
+    if env is None:
+        return None
+    kelvin, payload = env
+    if kelvin != KELVIN:
+        return None
+    try:
+        noun = hoon_cue(int.from_bytes(payload, "little"))
+    except Exception:
+        return None
+    if not isinstance(noun, tuple) or len(noun) != 2:
+        return None
+    return noun
+
+
+def assert_publication_carries_log(script: bytes, *, xtr: int, entries: int) -> None:
+    """Read the payload back OUT of the script about to be broadcast and prove
+    the pass inside it carries the custody log.  Raises ValueError if not.
+
+    THIS IS THE CHECK THAT SEPARATES A LATE PUBLICATION FROM A CLAIMED SPAWN,
+    and it has to read the bytes rather than the variable that produced them.
+    A boot-pass publication and a whole-packet publication are INDISTINGUISHABLE
+    in a transaction decode: same OP_RETURN envelope, same terminal opening,
+    roughly 200 bytes shorter.  Nothing about the difference is visible until a
+    stranger declines to declassify the comet — by which time the miner fee is
+    spent and the identity sat has moved.
+
+    Publish a boot pass (xtr empty) and a watcher completes a ONE-ENTRY log
+    whose single entry is this transaction — the degenerate SPAWN shape — so
+    +run-checks requires input 0 to spend the spawn satpoint.  A state update
+    spends the satpoint its LAST hop landed on, so the check fails and the comet
+    never declassifies.  That is measured, not theorised: it is why the four
+    publications already on mainnet do not verify.
+
+    The comparison is against the log baked into the proof by `causeway
+    finalize`, not against the pass we think we built, so a bug anywhere between
+    the two is caught here."""
+    pub = read_publication_script(script)
+    if pub is None:
+        raise ValueError(
+            "the publication output does not read back as a kelvin-"
+            f"{KELVIN} publication — refusing to broadcast a payload no "
+            "watcher will parse"
+        )
+    pass_atom, _opening = pub
+    if not isinstance(pass_atom, int):
+        raise ValueError("published payload's head is not a pass atom")
+    try:
+        got = xtr_of_pass(pass_atom)
+    except ValueError as e:
+        raise ValueError(f"published pass is unreadable: {e}")
+    if got == 0:
+        raise ValueError(
+            "the published pass carries NO custody log — this is the boot "
+            "pass, and a watcher would read it as a claimed spawn whose input "
+            "0 must be the spawn satpoint.  A state update spends a later "
+            "satpoint, so it would never verify."
+        )
+    if got != xtr:
+        raise ValueError(
+            f"the published pass carries a DIFFERENT custody log than the one "
+            f"finalize baked ({(got.bit_length() + 7) // 8} bytes vs "
+            f"{(xtr.bit_length() + 7) // 8})"
+        )
+    n = len(cue_custody_log(got))
+    if n != entries:
+        raise ValueError(
+            f"the published custody log has {n} entries, expected {entries}")
 
 
 def _hoon_unit(rendered: str | None) -> str:
@@ -1081,6 +1212,40 @@ def build_xtr_atom(entries: list[dict]) -> int:
         node = (int(e["txid_hex"], 16), (e["height"], op_unit))
         log = (node, log)
     return hoon_jam(log)
+
+
+def cue_custody_log(xtr: int) -> list[dict]:
+    """A baked xtr atom back into its entries, oldest first — build_xtr_atom's
+    inverse.
+
+    Each entry answers {txid_hex, height, opening}, where `opening` is the raw
+    opening noun or None for a plain custody hop.  `txid_hex` is 64 hex digits,
+    zero-padded, so it compares directly against a proof's `commit_txid`.
+
+    A publication has to read its own log: to prove the last hop is the outpoint
+    input 0 is about to spend (else the packet fails `N-continuity` on chain
+    after the fee is paid), and to prove the payload it signs really carries
+    that log.  Mirrors `;;(custody-log:sa (cue xtr.u.meta))` in
+    +process-publication:urb-core, which likewise refuses a log it cannot
+    read."""
+    if xtr == 0:
+        return []
+    cur = hoon_cue(xtr)
+    out: list[dict] = []
+    while cur != 0:
+        if not isinstance(cur, tuple):
+            raise ValueError("xtr is not a null-terminated custody log")
+        node, cur = cur
+        try:
+            txid, (height, opening) = node
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"xtr entry is not [txid height (unit opening)]: {e}")
+        out.append({
+            "txid_hex": f"{int(txid):064x}",
+            "height": int(height),
+            "opening": None if opening == 0 else opening[1],
+        })
+    return out
 
 
 def append_xtr_to_ring(ring_int: int, xtr: int) -> int:
@@ -2403,6 +2568,25 @@ def load_proof_json(path: str) -> dict:
         return json.load(f)
 
 
+def load_proof_chain(proofs: "tuple[str, ...] | list[str]") -> list[dict]:
+    """Load every proof for a point, OLDEST FIRST, and refuse a broken chain.
+
+    Each proof after the spawn records the one it chained off in
+    `prior_proof.commit_txid`; a mismatch means the files are out of order or
+    one hop is missing.  Both `finalize` and `publish` walk exactly this list —
+    the custody log is only as sound as its ordering, and a gap in it is a gap
+    in the evidence a stranger walks."""
+    chain = [load_proof_json(p) for p in proofs]
+    for i in range(1, len(chain)):
+        prior = chain[i].get("prior_proof") or {}
+        if prior.get("commit_txid") not in (None, "", chain[i - 1].get("commit_txid")):
+            raise click.UsageError(
+                f"{proofs[i]}: prior_proof.commit_txid does not match {proofs[i - 1]} — "
+                "pass the proofs oldest-first, one unbroken chain"
+            )
+    return chain
+
+
 def verify_proof_self(proof: dict) -> tuple[bool, str]:
     """Recompute the sat-carrying output key Q from the proof's internal key and
     snapshot, and check it against the stored scriptPubKey.  Returns (ok, reason).
@@ -2902,7 +3086,8 @@ def cmd_rekey(point, prior_proof, new_pass_hex, breach, fee_rate, network, outpu
     new_key = messaging_key_from_pass(new_pass)
     _run_rekey_op(point, prior_proof, new_key, breach, fee_rate, network, output_dir, mempool_base,
                   sponsor=sponsor, no_route=no_route, signed_psbt=signed_psbt,
-                  fund_xpub=fund_xpub, fund_utxo=fund_utxo, sat_target=sat_target)
+                  fund_xpub=fund_xpub, fund_utxo=fund_utxo, sat_target=sat_target,
+                  new_pass=new_pass)
 
 
 def _resolve_rekey_funding(*, fund_xpub: str | None, fund_utxo: str | None,
@@ -2960,7 +3145,8 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
                   sponsor: str | None = None, no_route: bool = False,
                   signed_psbt: str | None = None,
                   fund_xpub: str | None = None, fund_utxo: str | None = None,
-                  sat_target: int | None = None) -> None:
+                  sat_target: int | None = None,
+                  new_pass: int | None = None) -> None:
     """Spend the point's current sat-carrying output key-path, commit a new
     snapshot (life+1, rift+1 on breach, rotated key), await signed PSBT,
     broadcast, and emit `<patp>-rekey-<txid>.proof.json`.
@@ -3026,6 +3212,12 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
             f"({delta:+d}){'  [TOP-UP]' if delta > 0 else ''}", fg="green"))
     proof["op"] = "rekey"
     proof["patp"] = point
+    #  The pass this rekey rotates TO.  A spawn proof records `pass_atom_hex`
+    #  and nothing used to record it again, so after a rotation the comet's
+    #  current pass lived only in the ship — and `causeway publish`, which must
+    #  publish the pass a peer actually receives, had nowhere to read it from.
+    if new_pass is not None:
+        proof["pass_atom_hex"] = hex(new_pass)
 
     os.makedirs(output_dir, exist_ok=True)
     pier = point.lstrip("~")
@@ -3194,14 +3386,7 @@ def cmd_finalize(proofs, feed, wait, poll_interval, mempool_base):
     this step the ship boots fine but serves an empty log until an %anew
     round-trip refreshes it.
     """
-    chain = [load_proof_json(p) for p in proofs]
-    for i in range(1, len(chain)):
-        prior = chain[i].get("prior_proof") or {}
-        if prior.get("commit_txid") not in (None, "", chain[i - 1].get("commit_txid")):
-            raise click.UsageError(
-                f"{proofs[i]}: prior_proof.commit_txid does not match {proofs[i - 1]} — "
-                "pass the proofs oldest-first, one unbroken chain"
-            )
+    chain = load_proof_chain(proofs)
 
     entries = []
     for idx, (path, proof) in enumerate(zip(proofs, chain)):
@@ -3277,6 +3462,346 @@ def cmd_finalize(proofs, feed, wait, poll_interval, mempool_base):
         patp = chain[-1].get("patp") or chain[0].get("patp") or "<your-comet>"
         print("\n  Boot with the xtr-baked feed:")
         _print_boot_oneliner(patp, new_feed, proofs[-1])
+
+
+# =========================================================================
+#  publish — the on-chain declassification, over finalize's inputs
+# =========================================================================
+
+
+def _resolve_publication_pass(chain: list[dict], proofs, pass_hex: str | None,
+                              prior_snapshot: dict) -> int:
+    """The comet's CURRENT pass atom, for a publication to wrap the log around.
+
+    `--pass-hex` wins; otherwise the newest proof in the chain that recorded one.
+    Two hex conventions exist in this CLI and both are accepted, told apart by
+    the `0x` prefix: proof files store `pass_atom_hex` as a numeric atom
+    (`hex(pass_atom)`), while `rekey --new-pass-hex` takes a little-endian byte
+    dump.  A misread cannot get far — a pass whose low byte is not 'c' is not a
+    suite-C pass and pass_with_xtr refuses it.
+
+    The resolved pass is then checked AGAINST THE CHAIN: its messaging key must
+    be the one the latest snapshot commits.  A rekey rotates cry, so a stale
+    pass here would publish a packet advertising a key the comet no longer
+    uses — verifiable, and wrong, which is the worst combination."""
+    if pass_hex is not None:
+        text = pass_hex.strip()
+        atom = (int(text, 16) if text.lower().startswith("0x")
+                else int.from_bytes(bytes.fromhex(text), "little"))
+        source = "--pass-hex"
+    else:
+        found = [(p, pr) for p, pr in zip(proofs, chain) if pr.get("pass_atom_hex")]
+        if not found:
+            raise click.UsageError(
+                "none of these proofs records `pass_atom_hex`, so the pass to "
+                "publish is unknown — pass it with --pass-hex (it is the "
+                "`pass_atom_hex` a spawn proof records, or the pass whose key "
+                "the last rekey committed)"
+            )
+        path, proof = found[-1]
+        atom = int(proof["pass_atom_hex"], 16)
+        source = os.path.basename(path)
+    if atom & 0xFF != ord("c"):
+        raise click.UsageError(
+            f"the pass from {source} is not a suite-C pass (low byte "
+            f"0x{atom & 0xFF:02x}, expected 0x63 'c') — a comet's pass always "
+            f"is.  If this came from --pass-hex, check the hex convention: "
+            f"`0x…` is read as an atom, bare hex as a little-endian byte dump."
+        )
+    want = prior_snapshot.get("key")
+    if want is not None and messaging_key_from_pass(atom) != int(want):
+        raise click.UsageError(
+            f"the pass from {source} is not the comet's current pass: its "
+            f"messaging key is not the one the latest snapshot commits.  A "
+            f"rekey rotates the key, and the publication must carry the pass a "
+            f"peer would actually receive — pass the current one with "
+            f"--pass-hex."
+        )
+    return atom
+
+
+@cli.command("publish")
+@click.argument("proofs", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--fee-rate", type=int, default=2, show_default=True, help="sat/vbyte")
+@click.option("--network", type=click.Choice(["main", "testnet"]), default="main", show_default=True)
+@click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".",
+              show_default=True, help="Directory to write psbt + proof files")
+@click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
+@click.option("--pass-hex", default=None,
+              help="The comet's current pass atom, if no proof here records one. "
+                   "`0x…` is read as an atom (the proofs' `pass_atom_hex`), bare "
+                   "hex as a little-endian byte dump (rekey's --new-pass-hex).")
+@click.option("--fund-xpub", default=None,
+              help="Taproot xpub / descriptor to take a FUNDING input from, added "
+                   "AFTER the identity sat so the fee tops the identity output up "
+                   "instead of shrinking it. A packet publication runs ~400 vB and "
+                   "an identity sat may not cover it.")
+@click.option("--fund-utxo", default=None, metavar="TXID:VOUT",
+              help="Use this outpoint as the funding input instead of prompting. "
+                   "Must be among the UTXOs the --fund-xpub scan finds.")
+@click.option("--sat-target", type=int, default=None,
+              help="Value the identity output should end up holding. Needs "
+                   "--fund-xpub; the remainder goes to change at m/<account>/1/0, "
+                   "appended LAST so it can never displace output 0.")
+@click.option("--no-route", is_flag=True, default=False,
+              help="Publish even though the snapshot has neither sponsor nor fief.")
+@click.option("--signed-psbt", default=None, metavar="PATH|-",
+              help="Read the signed PSBT from a file (or `-` for stdin) instead of "
+                   "prompting. A named pipe works: the unsigned PSBT is written to "
+                   "<patp>-publish.psbt first.")
+@click.option("--dry-run", is_flag=True, default=False,
+              help="Build the transaction, run every gate and write the unsigned "
+                   "PSBT, then stop. Nothing is signed and nothing is broadcast.")
+def cmd_publish(proofs, fee_rate, network, output_dir, mempool_base, pass_hex,
+                fund_xpub, fund_utxo, sat_target, no_route, signed_psbt, dry_run):
+    """Publish a comet's attestation packet on chain — declassify it.
+
+    Give every proof.json for the point, OLDEST FIRST, exactly as `finalize`
+    takes them, and run `finalize` first: the custody log this publishes is the
+    `xtr_hex` it bakes onto the last proof.
+
+    WHAT GOES ON CHAIN.  One transaction, and it is a state update: input 0
+    spends the comet's identity sat (only its holder can, so the publication is
+    the OWNER'S consent to declassify), output 0 re-commits the snapshot at
+    life+1, and an OP_RETURN carries the comet's WHOLE ATTESTATION PACKET — the
+    pass a peer would receive over ames, custody log and all, plus the opening
+    for the hop this very transaction performs.  That last opening is the one
+    thing the packet cannot contain, because the transaction's txid does not
+    exist until it is signed; the watcher completes the log from the block it is
+    reading and hands the result to the same +run-checks a mailed attestation
+    gets.  So a STRANGER can verify it, and the comet may publish LATE.
+
+    Publishing is one way.  The packet names the comet, its spawn satpoint and
+    every custody hop since, in public, forever.
+    """
+    chain = load_proof_chain(proofs)
+    last, last_path = chain[-1], proofs[-1]
+    point = last.get("patp") or chain[0].get("patp")
+
+    print()
+    print("=" * 60)
+    print(f"  CAUSEWAY — kelvin-9 PUBLICATION"
+          f"{' for ' + patp_to_mnemonym(point) if point else ''}")
+    if point:
+        print(f"  (@p {point})")
+    print("=" * 60)
+
+    #  The log comes from `finalize`, which is the only thing that resolves each
+    #  hop's height on chain.  Without it there is nothing to publish.
+    if not last.get("xtr_hex"):
+        raise click.UsageError(
+            f"{last_path} has no `xtr_hex` — run `causeway finalize "
+            f"{' '.join(proofs)}` first.  It resolves each hop's block height "
+            f"on chain and bakes the custody log onto the last proof; that log "
+            f"IS the publication's payload."
+        )
+    xtr = int(last["xtr_hex"], 16)
+    try:
+        log = cue_custody_log(xtr)
+    except ValueError as e:
+        raise click.UsageError(f"{last_path}: xtr_hex does not read as a custody log ({e})")
+    if not log:
+        raise click.UsageError(f"{last_path}: the custody log is empty; there is nothing to publish")
+
+    prior_txid = (last.get("commit_txid") or last.get("sat_txid") or "").lower()
+    prior_vout = int(last.get("sat_vout", 0))
+    if not prior_txid:
+        raise click.UsageError(f"{last_path} has no commit_txid — was its tx broadcast?")
+
+    #  GUARD 1 — THE LOG MUST END WHERE THIS TRANSACTION BEGINS.  Input 0 spends
+    #  the output the last hop landed on; if the comet has moved its sat since
+    #  the log was baked, the artifact is short by exactly those hops and the
+    #  packet fails `N-continuity` on chain — after the fee is paid and after
+    #  the identity sat has already moved.  Refuse instead.
+    if log[-1]["txid_hex"] != prior_txid:
+        raise click.UsageError(
+            f"the custody log ends at {log[-1]['txid_hex']} @ {log[-1]['height']}, "
+            f"but input 0 spends {prior_txid}:{prior_vout} — the log is missing "
+            f"the hops in between, and the published packet would fail "
+            f"`N-continuity`.  Re-run `causeway finalize` over EVERY proof for "
+            f"this point, including the ones minted since."
+        )
+    if len(log) != len(chain):
+        raise click.UsageError(
+            f"the custody log has {len(log)} entries but {len(chain)} proofs were "
+            f"given — the log was baked from a different set of hops.  Re-run "
+            f"`causeway finalize` over exactly these proofs."
+        )
+
+    prior_snap = last.get("snapshot") or {}
+    pass_atom = _resolve_publication_pass(chain, proofs, pass_hex, prior_snap)
+
+    #  A publication is a state update and nothing more: life+1, everything else
+    #  carried forward.  Rotating a key at the same time would be a rekey, and
+    #  `causeway rekey` is where that lives.
+    new_snapshot = {
+        "life": int(prior_snap.get("life", 0)) + 1,
+        "rift": int(prior_snap.get("rift", 0)),
+        "key": prior_snap.get("key"),
+        "sponsor": prior_snap.get("sponsor"),
+        "fief": prior_snap.get("fief"),
+    }
+    assert_routable(new_snapshot, no_route)
+
+    print(f"\n  Custody log: {len(log)} entr{'y' if len(log) == 1 else 'ies'}, "
+          f"{log[0]['txid_hex'][:12]}… @ {log[0]['height']} → "
+          f"{log[-1]['txid_hex'][:12]}… @ {log[-1]['height']}")
+    print(f"  Spending   : {prior_txid[:16]}…:{prior_vout} "
+          f"= {last.get('sat_value', '?')} sats")
+    print(f"  Life       : {prior_snap.get('life', '?')} → {new_snapshot['life']}")
+
+    #  GUARD 2 — THE TERMINAL OPENING CARRIES NO BLIND-OPENING.  The dat opening
+    #  may sit on entry 0 only (`blind-opening-zero` in +run-checks), and entry 0
+    #  is inside the xtr above, carrying the real start-height finalize recorded.
+    #  This transaction is entry N>0, so its own opening opens nothing.
+    pub_pass = pass_with_xtr(pass_atom, xtr)
+    pub_opening = {
+        "internal_key": int("02" + last["internal_pubkey_hex"], 16),
+        "snapshot": new_snapshot,
+        "blind_opening": None,
+    }
+
+    #  GUARD 3 — THE CAP, CHECKED BEFORE ANYTHING IS BUILT AND SAID OUT LOUD.
+    #  make_publication_script raises over it too, but not until the builder is
+    #  half-way through, and not with the hop count that explains why.
+    payload = jam_bytes(publication_noun(pub_pass, pub_opening))
+    print(f"  Payload    : {len(payload)} bytes of {MAX_PUBLICATION} "
+          f"({MAX_PUBLICATION - len(payload)} to spare, ~40 per further hop)")
+    if len(payload) > MAX_PUBLICATION:
+        raise click.UsageError(
+            f"the publication payload is {len(payload)} bytes, over the "
+            f"{MAX_PUBLICATION}-byte cap, at {len(log)} custody hops.  The cap is "
+            f"the PACKET bound — a publication carries the same packet a peer "
+            f"receives over ames — so this comet's log no longer fits in one "
+            f"transaction and cannot be published as it stands."
+        )
+
+    fund_kwargs = _resolve_rekey_funding(
+        fund_xpub=fund_xpub, fund_utxo=fund_utxo, sat_target=sat_target,
+        network=network, mempool_base=mempool_base,
+    )
+
+    psbt_obj, proof = build_rekey_psbt(
+        prior_proof=last,
+        new_snapshot=new_snapshot,
+        publication_pass_atom=pub_pass,
+        publication_opening=pub_opening,
+        fee_rate=fee_rate,
+        network=network,
+        **fund_kwargs,
+    )
+    proof["op"] = "publish"
+    if point:
+        proof["patp"] = point
+    #  WHICH SHAPE WAS PUBLISHED.  `published` is already set by the builder,
+    #  but a boot-pass publication and a packet publication are
+    #  indistinguishable in a transaction decode, so WHICH one went out has to
+    #  be written down deliberately or the record cannot answer it later.
+    proof["published_pass_hex"] = hex(pub_pass)
+    proof["published_log_entries"] = len(log)
+
+    if proof.get("topped_up_by") is not None:
+        delta = proof["topped_up_by"]
+        click.echo(click.style(
+            f"  Identity output: {last.get('sat_value', '?')} → {proof['sat_value']} sats "
+            f"({delta:+d}){'  [TOP-UP]' if delta > 0 else ''}",
+            fg="green" if delta > 0 else "yellow"))
+    elif int(proof["sat_value"]) < int(last.get("sat_value", 0)):
+        click.echo(click.style(
+            f"  Identity output: {last.get('sat_value')} → {proof['sat_value']} sats "
+            f"(the fee comes out of the identity sat; --fund-xpub tops it up "
+            f"instead)", fg="yellow"))
+
+    #  GUARD 4, FIRST PASS — on the transaction we are about to ask a human to
+    #  sign, so a bad payload is caught before a signer ever sees it.
+    _assert_publication_output(psbt_obj.tx, xtr=xtr, entries=len(log))
+    assert_identity_input_zero(psbt_obj.tx, prior_txid, prior_vout)
+
+    os.makedirs(output_dir, exist_ok=True)
+    pier = (point or "comet").lstrip("~")
+    psbt_path = os.path.join(output_dir, f"{pier}-publish.psbt")
+    unsigned_b64 = psbt_obj.to_base64()
+    with open(psbt_path, "w") as f:
+        f.write(unsigned_b64 + "\n")
+    print(f"\n  Wrote unsigned PSBT: {psbt_path}")
+    click.echo(click.style(
+        "\n  Note: this PSBT's input 0 has PSBT_IN_TAP_MERKLE_ROOT set (= the\n"
+        "  current snapshot's state leaf hash) so your signer can compute the\n"
+        "  taproot key-path tweak. BIP-371 software signers (Sparrow-class,\n"
+        "  Core descriptor wallets) support this.",
+        fg="yellow"))
+
+    if dry_run:
+        click.echo(click.style(
+            f"\n  --dry-run: every gate passed. Nothing signed, nothing "
+            f"broadcast.\n  Publication payload {len(payload)} bytes, "
+            f"{len(log)} custody entries, pass carries the log.\n",
+            fg="green"))
+        return
+
+    click.echo(click.style(
+        "\n  PUBLISHING IS ONE WAY. This names the comet, its spawn satpoint\n"
+        "  and every custody hop since, in public, forever.",
+        fg="red"))
+
+    signed_b64 = _await_signed_psbt(unsigned_b64, signed_psbt)
+    try:
+        commit_txid, tx_hex = _extract_tx_from_psbt(signed_b64)
+    except Exception as e:
+        click.echo(click.style(f"\n  Error extracting signed tx: {e}", fg="red"))
+        sys.exit(1)
+
+    #  GUARD 4, SECOND PASS — on the FINAL bytes, after signing and before the
+    #  broadcast that cannot be taken back.  The signer returned this
+    #  transaction; nothing here trusts that it is the one we handed over.
+    signed_tx = Transaction.parse(bytes.fromhex(tx_hex))
+    try:
+        _assert_publication_output(signed_tx, xtr=xtr, entries=len(log))
+        assert_identity_input_zero(signed_tx, prior_txid, prior_vout)
+    except ValueError as e:
+        click.echo(click.style(
+            f"\n  GATE FAILED — NOT BROADCASTING: {e}\n"
+            f"  Signed tx hex (unbroadcast): {tx_hex}", fg="red"))
+        sys.exit(1)
+
+    proof["commit_txid"] = commit_txid
+    proof_path = os.path.join(output_dir, f"{pier}-publish-{commit_txid[:12]}.proof.json")
+    write_proof_json(proof, proof_path)
+    print(f"  Wrote proof: {proof_path}")
+
+    print("\n  Broadcasting publication...")
+    try:
+        broadcast_id = _broadcast_tx(tx_hex, mempool_base=mempool_base)
+    except Exception as e:
+        click.echo(click.style(
+            f"  Broadcast failed: {e}\n  Signed tx hex: {tx_hex}", fg="red"))
+        sys.exit(1)
+    print(f"  Broadcast: {tx_link(broadcast_id)}")
+
+    print("\n" + "=" * 60)
+    click.echo(click.style(
+        f"  PUBLICATION broadcast{' for ' + patp_to_mnemonym(point) if point else ''}.\n"
+        f"  {len(log)} custody entries went on chain; the watcher completes the\n"
+        f"  log with this transaction and runs the same +run-checks a mailed\n"
+        f"  attestation gets.\n"
+        f"  Once it confirms, run\n"
+        f"    causeway finalize {' '.join(proofs)} {proof_path}\n"
+        f"  so this hop joins the log too — a publication is a custody move like\n"
+        f"  any other, and the next one must carry it.\n",
+        fg="yellow"))
+
+
+def _assert_publication_output(tx, *, xtr: int, entries: int) -> None:
+    """Find the OP_RETURN publication among `tx`'s outputs and put it through
+    assert_publication_carries_log. Raises ValueError if there is not exactly
+    one, or if the one there does not carry the log."""
+    found = [o for o in tx.vout
+             if parse_publication_script(bytes(o.script_pubkey.data)) is not None]
+    if len(found) != 1:
+        raise ValueError(
+            f"expected exactly one OP_RETURN publication output, found {len(found)}")
+    assert_publication_carries_log(
+        bytes(found[0].script_pubkey.data), xtr=xtr, entries=entries)
 
 
 # =========================================================================
