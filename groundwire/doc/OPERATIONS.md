@@ -873,10 +873,15 @@ Expected sequence in the log:
 [%gw-btc-lc-scan-clean tip 0x… vout=0 off=0 from=961.196 to=961.280]
 %gw-btc: attestation for ~<peer> is VALID
   [ok] chain-nonempty   [ok] chain-bounded   [ok] fetch-count
-  … 44 checks …
+  … the rest — 44 lines on the run this was taken from …
   [ok] sponsor-known    [ok] tracked-prefix
 ames: lamp ~<peer> static ip .<a.b.c.d> port <PORT>     ::  if the peer commits a fief
 ```
+
+**Do not read that 44 as a fixed number.** `++run-checks` has 29 distinct check
+*names*, but the `entry-N-…` block repeats once per custody entry and several
+names are emitted only conditionally, so how many lines a healthy verification
+prints is a function of the log in front of it.
 
 - **A verification takes 100–110 s** on a 2-vCPU droplet for a comet
   spawned ~20 blocks back (~11 filter fetches + 2 block downloads), and

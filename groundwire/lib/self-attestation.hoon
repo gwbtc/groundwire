@@ -72,7 +72,7 @@
 ::    sponsor for an honest state update -- permanently, because the snub
 ::    then blocked the refreshed attestation that would have fixed it.)
 ::
-::    So these three names, and only these, classify a FAILED verdict as
+::    So these four names, and only these, classify a FAILED verdict as
 ::    staleness:
 ::
 ::      tip-unspent     our filter scan found the log's tip outpoint spent
@@ -85,18 +85,39 @@
 ::                      already verified for this comet: not a different
 ::                      log, the same log with its last entries missing.
 ::                      See +anchor-ok -- the FACT is recorded here, and
-::                      whether it is forgiven is tracked-prefix's answer.
+::                      whether it is forgiven is tracked-prefix's answer,
+::                      which since 2026-08-10 is always yes.
 ::
 ::    Everything else stays a %fail, because it is evidence that was never
 ::    true rather than evidence that has expired: spawn-commit (the log is
 ::    not bound to this name), entry-N-commitment (a snapshot never
 ::    committed on chain), entry-N-continuity / -key-path / -sat-landed /
 ::    -txid (a custody hop that did not happen), entry-N-life-order (a log
-::    that contradicts itself), tracked-prefix (a log we cannot reconcile
-::    with the one we already verified -- a fork, or a lag too big to be
-::    our own scanner), pass-key, and every structural check.
+::    that contradicts itself), tracked-prefix (see below), pass-key, and
+::    every structural check.
 ::
-::    sponsor-known used to be in that list and is NOT any more; see
+::    tracked-prefix fails when a log does not RECONCILE with the one we
+::    already verified, and since 2026-08-10 that is a %fork -- the two
+::    logs disagree at a position they share, so one of them is not this
+::    comet's -- or an anchor we cannot line up with at all: an anchor
+::    pass we cannot decode, one that opens a DIFFERENT identity sat, or a
+::    log at or past our boundary whose satpoint does not re-derive to the
+::    tip we recorded.
+::
+::    A LAG IS NOT ON THAT LIST, at any depth.  An attestation packet is a
+::    bearer token, so a third party that cannot forge one can still
+::    REPLAY a genuine old one -- and a replay of a comet's own earlier
+::    log is exactly a lag, never a fork.  However deep it runs, it proves
+::    that somebody held an old packet, which is not attributable to the
+::    comet; a fork requires the comet to have SIGNED two conflicting
+::    histories of its own identity, which is.  +anchor-ok is where a lag
+::    is forgiven and carries the full argument.
+::
+::    That forgiveness is INTERIM.  It downgrades a permanent snub to
+::    recoverable churn, and it does not close the replay underneath --
+::    nothing in the packet binds it to now.
+::
+::    sponsor-known used to be in that %fail list and is NOT any more; see
 ::    +unknown-checks below.  It failed for exactly the reason this comment
 ::    disqualifies -- our own view of the chain is behind -- and produced
 ::    the maximally destructive outcome anyway.
@@ -1193,13 +1214,13 @@
       (anchor-ok u.rel boundary tip.u.tracked)
     =.  checks  (snoc checks ['tracked-prefix' prefix-ok])
     ::  A LAG IS A FACT AND MUST BE VISIBLE, whether or not it is forgiven.
-    ::  Emitted for every %behind, not only the forgiven ones, so the
+    ::  Emitted for every %behind, independently of the judgement, so the
     ::  report distinguishes "an older copy of our own log" (this check)
-    ::  from the judgement passed on it (tracked-prefix): behind by one
-    ::  reads [ok] tracked-prefix / [..] tracked-lag, behind by more reads
-    ::  [XX] tracked-prefix / [..] tracked-lag, and a fork -- which is not
-    ::  a lag at all -- never emits this check.  It is stale-class, so it
-    ::  cannot by itself turn any verdict into a snub.
+    ::  from the judgement passed on it (tracked-prefix): a lag of ANY
+    ::  depth now reads [ok] tracked-prefix / [..] tracked-lag, and a fork
+    ::  -- which is not a lag at all -- never emits this check and reads
+    ::  [XX] tracked-prefix alone.  It is stale-class, so it cannot by
+    ::  itself turn any verdict into a snub.
     ::
     =?  checks  ?=([~ %behind *] rel)
       (snoc checks ['tracked-lag' %.n])
