@@ -14,9 +14,13 @@ already been lost locally (only `__pycache__` survived). They are checked in now
 **These run ON a droplet**, not on your laptop — every one of them talks to a
 pier's Lick socket at `<pier>/.urb/conn.sock`, which is a unix socket. They
 expect `gwharness` importable from `/opt/gw` (`testnet/gwharness/`).
+`gwtest.py` is the one exception: it drives a throwaway fakeship through tmux
+and needs nothing but vere, a kernel checkout and a solid pill, so it runs on
+a laptop.
 
 | tool | what it does |
 |---|---|
+| `gwtest.py` | boot a fakeship, commit a desk into it, `-test` it, and tally the result honestly |
 | `gwctl.py` | the operator surface: identity, desks, readiness, peers, verification pokes |
 | `gwmint.py` | mint a comet on mainnet, with an independent pre-broadcast verification gate |
 | `bootcomet.sh` | first boot of a minted comet from a pinned pill |
@@ -93,6 +97,50 @@ else, and leaves jael's opinion of the ship exactly as it was.
 per-ship expiry timer is durable state an attacker can make us allocate. Nothing
 decays on its own — a wrong snub is undone by one of the two paths above, or not
 at all.
+
+## Running the desk's tests
+
+```sh
+gwtest.py boot   /tmp/zod --arvo ~/urbit/pkg/arvo --pill ~/urbit/bin/solid.pill \
+                          --urbit ~/vere/zig-out/*/urbit
+make build                                     # -> dist-groundwire/
+gwtest.py commit /tmp/zod groundwire dist-groundwire
+gwtest.py run    /tmp/zod --desk groundwire    # exits non-zero on any bad result
+gwtest.py tally  /tmp/zod.transcript           # re-tally a saved transcript
+```
+
+There was no test tooling here until 2026-08-10, and the cost of that was
+measured: every agent wrote its own `grep | wc -l` over the `-test` output and
+they all made the same mistake, because `ted/test.hoon` prints **four**
+outcomes and only one of them is `OK`:
+
+    OK      /tests/lib/foo/test-bar     the arm ran and asserted true
+    FAILED  /tests/lib/foo/test-bar     the arm ran and asserted false
+    CRASHED /tests/lib/foo/test-bar     the arm never ran
+    FAILED  /tests/lib/foo (build)      no arm in this FILE ran
+
+A tally that counts only `OK` lines reports a crashing suite as perfectly
+green — and did, as `164 OK / 0 fail`, for a week, while
+`test-real-mainnet-publication-indexes-c3` was crashing against behaviour
+`4ae85b8` had removed. A crash is strictly worse than a failure (the arm never
+ran, so its assertions are untested, not merely false), and a build failure is
+worse still — the file's arms vanish from the denominator, so the transcript
+looks *healthier* the more of it is missing. `gwtest.py` counts the four
+apart, names every non-OK arm, cross-checks its count against the `ok=%.y` the
+thread itself returns, and refuses to call an empty transcript a pass.
+
+Two traps `boot` exists to dodge, both of which cost hours before:
+
+- **`pkg/arvo` is a tree of symlinks into `pkg/base-dev`.** Copy it without
+  dereferencing and you get a ship that boots fine and then silently commits
+  nothing to `%base`. `boot` copies with `-L`.
+- **You cannot `urbit … | tee log`.** A pipe is not a tty, so vere refuses
+  outright; `-t` fixes that and costs you the dojo, which is the only way in
+  without a conn.sock client. `boot` runs vere under tmux and captures with
+  `tmux pipe-pane`. Note `pipe-pane` **toggles** — running it a second time
+  turns the capture off, and a detached capture reads as a clean run to
+  anything that only counts `OK` lines. `run` fails loudly if the transcript
+  stops growing.
 
 ## Minting
 

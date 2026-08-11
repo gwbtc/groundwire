@@ -837,29 +837,62 @@
     ::  block 961.059 is in the fourth halving epoch: 3.125 BTC
     (expect-eq !>(`@ud`312.500.000) !>(reward.blk))
   ==
-::  ---- a REAL on-chain publication indexes a REAL public comet -------
+::  ---- a REAL on-chain publication is CLAIMED, off real bytes --------
 ::
 ::    Phase-1 test 1.5, offline: the identity is learned from the chain
-::    alone, with no packet exchange of any kind.  This is the check that
-::    unblocks sponsorship, because +sponsor-known reads its
-::    `known-public` set out of exactly this index.
+::    alone, with no packet exchange of any kind.
 ::
-++  test-real-mainnet-publication-indexes-c3
+::    This arm used to assert that the scan INDEXED C3 -- a point in
+::    .unv-ids, an owner in the sat index, a %point/%owner effect.  It
+::    does not any more, and 4ae85b8 is why: a publication IS the
+::    comet's whole attestation packet, and the scanner cannot walk a
+::    custody log because the log names transactions in blocks the
+::    scanner has already streamed past.  So +process-publication reads
+::    the envelope, completes the log with the two facts only a block
+::    reader has -- this transaction's txid and this block's height --
+::    and emits a %claim, which %gw-btc hands to the SAME +verify-lc a
+::    mailed %jael-writ gets.  Indexing is that arm's business now.
+::
+::    What is left to pin here is the envelope, and it is worth pinning
+::    off REAL MAINNET BYTES rather than a synthetic vector (which
+::    tests/lib/urb-core.hoon already does at length): one %claim, named
+::    by the fingerprint of C3's own pass, carrying the log completed
+::    with the entry the publisher could not write down -- and an index
+::    that is still empty, because nothing has been judged yet.
+::
+++  test-real-mainnet-publication-claims-c3
   =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]
     (scan-block (empty-at c3-height) c3-block)
-  =/  pt  (~(get by unv-ids.st) c3)
+  =/  cs=(list [who=ship =pass])
+    %+  murn  (effs fx)
+    |=  e=effect:urb
+    ^-  (unit [ship pass])
+    ?.(?=([%claim *] e) ~ `[who.e pass.e])
+  ::  exactly one %claim, and it is the ONLY effect: an unjudged
+  ::  publication tells jael nothing.
+  ?>  ?=([* ~] cs)
+  ::  the claimed pass is a well-formed %gw-btc self-attestation whose
+  ::  fingerprint is the name it was claimed under -- +from-xtr checks
+  ::  the domain, the kelvin, the suite, the @p and the log's canonical
+  ::  jam, so this is not a shape assertion, it is the packet grammar.
+  =/  sat  (from-xtr:lsa who.i.cs pass.i.cs)
+  ?>  ?=(^ sat)
+  ::  C3 published AT SPAWN, so the log it carried was empty and the
+  ::  completed one is a single entry: this transaction, at this block's
+  ::  height, opening the snapshot that output 0 commits.
+  ?>  ?=([* ~] chain.u.sat)
+  =*  ent  i.chain.u.sat
+  ?>  ?=(^ opening.ent)
   ;:  weld
-    ::  C3 is indexed, under the name its own pass fingerprints to
-    (expect !>(?=(^ pt)))
-    ::  at the satpoint its spawn transaction created: output 0, sat 0
-    (expect-eq !>(`sont:ord`[c3-txid 0 0]) !>(sont.own:(need pt)))
-    ::  with the snapshot the OP_RETURN opened
-    (expect-eq !>(`life`1) !>(life.net:(need pt)))
-    (expect-eq !>(`rift`0) !>(rift.net:(need pt)))
-    ::  the sat index records the comet as the owner
-    (expect-eq !>(`c3) !>((get-com:si:ol sont-map.st c3-txid 0 0)))
-    ::  and Jael is told, %owner first
-    (expect !>((lien (effs fx) |=(e=effect:urb =(e [%point c3 %owner [c3-txid 0 0]])))))
+    (expect-eq !>(`@p`c3) !>(who.i.cs))
+    (expect-eq !>(`(list effect:urb)`~[[%claim who.i.cs pass.i.cs]]) !>((effs fx)))
+    (expect-eq !>(`txid:ord`c3-txid) !>(txid.ent))
+    (expect-eq !>(`@ud`c3-height) !>(height.ent))
+    (expect-eq !>(`life`1) !>(life.snapshot.u.opening.ent))
+    (expect-eq !>(`rift`0) !>(rift.snapshot.u.opening.ent))
+    ::  NOTHING is indexed.  The claim is evidence, not a verdict.
+    (expect-eq !>(*unv-ids:urb) !>(unv-ids.st))
+    (expect-eq !>(*(unit @p)) !>((get-com:si:ol sont-map.st c3-txid 0 0)))
     ::  the scanner's cursor advanced onto the block it just read
     (expect-eq !>(`id:block:bitcoin`[c3-block-hash c3-height]) !>(block-id.st))
   ==
