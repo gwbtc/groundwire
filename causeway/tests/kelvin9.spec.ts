@@ -36,7 +36,7 @@ import {
   type Opening,
 } from "../src/spawn/publication.js";
 import { buildXtrAtom, type XtrEntry } from "../src/spawn/reveal-log.js";
-import { passWithXtr } from "../src/spawn/mine-c.js";
+import { passWithXtr, messagingKeyFromPass } from "../src/spawn/mine-c.js";
 import { jam } from "../src/protocol/jam.js";
 import { minimalLEBytes, bytesToHex, hexToBytes, bytesToAtomBE } from "../src/protocol/tagged-hash.js";
 import { patpToAtom } from "../src/protocol/patp.js";
@@ -216,6 +216,36 @@ describe("kelvin-9 publication — OP_PUSHDATA2 (pushdata2-fief vector)", () => 
     expect(bytesToHex(leafHash(stateLeafScript(stateCommit(snap))))).toBe(pd2.state_leaf_hash);
     expect(bytesToHex(stateOutputKey(hexToBytes(pd2.internal_key_compressed), snap)))
       .toBe(pd2.state_output_key_q);
+  });
+
+  // The snapshot's `key` is cry.pub, the 32-byte messaging half — NOT the
+  // 108-byte pass. This vector pins both, so it settles the question: the
+  // rekey page reads the current snapshot off an oracle $point, whose
+  // `net.pass` is the WHOLE pass, and must split it. Feeding the pass in
+  // whole yields a different jam, a different c, and a Q that no verifier —
+  // Hoon, Python or JS — ever reconstructs, which is an unsignable PSBT and
+  // an unmatchable state-key. Same class of bug as a dropped fief.
+  it("the vector's snapshot key IS cry of its 108-byte pass", () => {
+    expect(pass & 0xffn).toBe(0x63n);                       // suite-C
+    expect((pass.toString(2).length + 7) >> 3).toBe(108);    // a real pass
+    expect(messagingKeyFromPass(pass)).toBe(snap.key);
+    expect(snap.key.toString(16).padStart(64, "0")).toBe(pd2.snapshot.key);
+  });
+
+  it("a snapshot built from a $point's net.pass reproduces the vector's Q", () => {
+    // Exactly what ui/pages/op.ts does with `point.net.pass` on the rekey path.
+    const fromPoint: Snapshot = { ...snap, key: messagingKeyFromPass(pass) };
+    expect(bytesToHex(stateOutputKey(hexToBytes(pd2.internal_key_compressed), fromPoint)))
+      .toBe(pd2.state_output_key_q);
+
+    // …and the regression it guards: the un-split pass commits a different Q.
+    const unsplit: Snapshot = { ...snap, key: pass };
+    expect(bytesToHex(stateOutputKey(hexToBytes(pd2.internal_key_compressed), unsplit)))
+      .not.toBe(pd2.state_output_key_q);
+  });
+
+  it("messagingKeyFromPass refuses a non-suite-C atom", () => {
+    expect(() => messagingKeyFromPass(0x62n)).toThrow(/not a suite-C pass/);
   });
 
   it("blind and d match the vector", () => {

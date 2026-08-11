@@ -14,6 +14,7 @@ import { atomToMnemonym, abridgeMnemonym } from "../../protocol/mnemonym.js";
 import { ops } from "../../ops/index.js";
 import type { StateUpdateCtx } from "../../ops/types.js";
 import type { Snapshot } from "../../spawn/snapshot.js";
+import { messagingKeyFromPass } from "../../spawn/mine-c.js";
 import { lookupPoint } from "../../oracle/point.js";
 import { patpToAtom } from "../../protocol/patp.js";
 import { findKeyForScript } from "../../keys/xpub.js";
@@ -241,10 +242,20 @@ export function renderOp(root: HTMLElement, opName: string): void {
       // signer cannot produce a valid key-path signature — and re-commits a
       // state-key with the comet's fief silently erased. `ops.rekey` carries
       // `currentSnapshot.fief` forward verbatim.
+      //
+      // NB3: `key` is the MESSAGING HALF of the pass (cry.pub, 32 bytes), not
+      // the pass. `point.net.pass` is the whole ~108-byte suite-C pass, so it
+      // must be split — the same hazard as NB2 and with the same consequence:
+      // a snapshot whose key is a pass hashes to a `c` no verifier computes,
+      // so the input merkle root is wrong and the output commits a Q nothing
+      // can reconstruct. The Hoon verifier compares precisely
+      // `cry.pub` of the carried pass against `key.snap` (+verify-lc in
+      // lib/self-attestation.hoon), and the desktop tool does the same split
+      // in messaging_key_from_pass().
       const currentSnapshot: Snapshot = {
         life: point.net.life,
         rift: point.net.rift,
-        key: point.net.pass,
+        key: messagingKeyFromPass(point.net.pass),
         sponsor: point.net.sponsor.has ? point.net.sponsor.who : null,
         fief: point.net.fief,
       };

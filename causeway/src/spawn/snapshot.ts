@@ -29,7 +29,12 @@ export const TAP_LEAF_VERSION = 0xc0;
 export interface Snapshot {
   life: number;
   rift: number;
-  key: bigint;              // current messaging key (cry.pub of the suite-C pass)
+  // The messaging key: cry.pub, the 32-byte encryption half of the suite-C
+  // pass — NOT the pass. A $point carries the whole ~108-byte pass in
+  // `net.pass`, so anything sourcing this from a point must split it with
+  // +messagingKeyFromPass (spawn/mine-c.ts). Putting a pass here is the same
+  // hazard as dropping the fief below, with the same consequence.
+  key: bigint;
   sponsor: bigint | null;   // a @p atom, or null (self-sponsorship)
   // (unit fief). The fief rides the snapshot (decisions-addendum §2) and so
   // enters the state commitment: state-key is taken over the JAMMED snapshot,

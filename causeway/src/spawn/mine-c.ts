@@ -153,6 +153,26 @@ export function passWithXtr(passAtom: bigint, xtr: bigint): bigint {
   return w.toInt();
 }
 
+// cry — the suite-%c messaging (encryption) public key, which is the SNAPSHOT'S
+// `key` FIELD. Same layout as above:
+//
+//     'c'(8 bits) | ugn(256) | cry(256) | mat(dat) | xtr
+//
+// The distinction is load-bearing: a $point's `net.pass` (sur/urb.hoon, and
+// oracle/state.ts +decodePoint) is the WHOLE pass — 108 bytes for a suite-C
+// comet — while `Snapshot.key` is only the 32-byte cry half. The Hoon verifier
+// makes exactly this comparison (+verify-lc in lib/self-attestation.hoon:
+// `=(cry.pub.+<.cic key.snap)`), so putting a pass where a key belongs commits
+// a state-key nothing can reconstruct. Mirrors messaging_key_from_pass() in
+// causeway/desktop/causeway.py; pinned by the `pushdata2-fief` golden vector,
+// whose snapshot.key IS cry of its 108-byte pass.
+export function messagingKeyFromPass(passAtom: bigint): bigint {
+  if ((passAtom & 0xffn) !== 0x63n) {
+    throw new Error("messagingKeyFromPass: not a suite-C pass");
+  }
+  return (passAtom >> (8n + 256n)) & ((1n << 256n) - 1n);
+}
+
 // Rebuild a miner-fresh (xtr-less) ring with a reveal log appended. The
 // @p is unchanged — the name commits to ugn+dat only — but the booted
 // ship's pass.ames-state then carries its own attestation (spec §2.5).
