@@ -1273,10 +1273,9 @@ The last is the failure `ops/gwmint.py cmd_publish` was rewired to prevent. So
 k1's declassification is **historical evidence that the path worked as it then
 stood, not a publication a current verifier accepts** — and it is not being
 rebuilt (k1 holds 754 sats against a ~1,000-sat packet publication). The
-rewired `gwmint.py publish` is the only builder that produces a publication a
-current verifier accepts, and it has been checked only offline — replayed
-against k1's artifact and the real chain, 393-byte payload, 34/34 checks
-including `tip-unspent`. None has been broadcast.
+rewired `gwmint.py publish` has been checked only offline — replayed against
+k1's artifact and the real chain, 393-byte payload, 34/34 checks including
+`tip-unspent`. No publication a current verifier accepts has been broadcast.
 
 ---
 
