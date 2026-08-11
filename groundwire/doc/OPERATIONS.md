@@ -1255,6 +1255,29 @@ gone: it latched a race between the scanner indexing a publication and the
 verifier inserting the same ship, and publications now go *through* the
 verifier.)
 
+**Expect a fresh scanner to index none of the four publications already on
+mainnet.** They were built against the pre-2026-08-10 code and re-scanned
+against this verifier on 2026-08-10 (read-only; nothing was signed or
+broadcast). None of them verifies, and each fails for its own reason:
+
+| publication | block | first failing check |
+|---|---|---|
+| C3 spawn `ec5c1fbe…` | 961 059 | `tip-unspent` — structurally sound, but C3 spent that output 70 blocks later. Stale, not wrong. Its `start-height 0` also strand-fails the very first fetch (`doc/opret-revision/04-decisions-addendum.md` §0.4 made that field required). |
+| C3 fief update `8e713009…` | 961 129 | `spawn-opening` — carries no blind-opening at all |
+| C2 declassification `0cca2561…` | 961 217 | `spawn-opening` — same |
+| k1 Tier-1 declassification `08957455…` | 961 353 | `entry-0-continuity` — the blind opens, but an empty `xtr` completes to a one-entry (spawn-shaped) log claiming input 0 spends the spawn satpoint `012f4a40…:1`, when it spends `1653a2ce…:0`, k1's life-1 identity output |
+
+The middle two were built for the deleted `+apply-state` branch, which took a
+tracked comet's word for its own identity and so never needed the `dat` opened.
+The last is the failure `ops/gwmint.py cmd_publish` was rewired to prevent. So
+k1's declassification is **historical evidence that the path worked as it then
+stood, not a publication a current verifier accepts** — and it is not being
+rebuilt (k1 holds 754 sats against a ~1,000-sat packet publication). The
+rewired `gwmint.py publish` is the only builder that produces a publication a
+current verifier accepts, and it has been checked only offline — replayed
+against k1's artifact and the real chain, 393-byte payload, 34/34 checks
+including `tip-unspent`. None has been broadcast.
+
 ---
 
 ## 11. Not automated

@@ -134,6 +134,15 @@ transaction — the degenerate *spawn* shape — so `+run-checks` demands that
 input 0 spend the spawn satpoint, which a state update never does. The build
 refuses if the artifact's log does not end at the outpoint input 0 spends.
 
+That is exactly how the one Tier-1 declassification already on chain was
+built. k1's `08957455…` (block 961 353) verified against the code of the day
+and **does not verify against the current verifier** — `entry-0-continuity`,
+because the empty `xtr` makes the completed log claim input 0 spends the spawn
+satpoint. It is historical evidence, not a live publication, and it is not
+being rebuilt: k1 holds 754 sats and a packet publication costs ~1,000. The
+other three publications on mainnet fail too; see `OPERATIONS.md` §10 for the
+table.
+
 > **A comet naming another comet as its sponsor is only as verifiable as the
 > sponsor is *known*.** `sponsor-ok` (`lib/self-attestation.hoon`) is
 > `(~(has in known-public) u.sponsor...)`, and `known-public` is whatever

@@ -437,8 +437,9 @@ name), `entry-N-commitment` (a snapshot never committed on chain),
 `entry-N-continuity`/`-key-path`/`-sat-landed`/`-txid` (a custody hop that did
 not happen), `entry-N-life-order` (a log that contradicts itself),
 `tracked-prefix` (a log we cannot reconcile with the one we already verified —
-a fork, or a lag too big to be our own scanner), `pass-key`, and every
-structural check.
+a **fork**, and since 2026-08-10 only a fork: a lag of any depth is forgiven
+and never reaches this class, see the staleness-by-degree rule below),
+`pass-key`, and every structural check.
 
 The classes are ordered, not summed: a verdict is `%fail` if **any** failing
 check is fraud-class, otherwise `%unknown` if any is unknown-class, otherwise
