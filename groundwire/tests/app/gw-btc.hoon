@@ -406,7 +406,26 @@
       ~                                            :: declined
       [`custody-log:sa`~ ~]                        :: own
       %.y                                          :: synced
-      ~                                            :: reorg-halt
+  ==
+::  ... and the same state one revision back, when it still carried
+::  .reorg-halt.  $gw-state-14 is the shape every ship that ran the
+::  halting scanner saved; the field is DROPPED on load, not converted.
+::
+++  halted-14-state
+  |=  [ids=unv-ids:urb halt=*]
+  ^-  *
+  :*  `state:urb`[[0xdead.beef 961.100] *sont-map:ord ~ ids]
+      %.y                                          :: indexing
+      `[0xdead.beef 961.100]                       :: best
+      ~                                            :: inflight
+      ~                                            :: confidential
+      ~                                            :: attested
+      1                                            :: next-job
+      ~                                            :: sponsees
+      (silt ~[~wes])                               :: declined
+      [`custody-log:sa`~ ~]                        :: own
+      %.y                                          :: synced
+      halt                                         :: reorg-halt
   ==
 ::  the sat index that names .peer as the owner of .tip-sont
 ::
@@ -474,7 +493,6 @@
       ~                                          :: declined
       [`custody-log:sa`~ ~]                      :: own
       %.y                                        :: synced
-      ~                                          :: reorg-halt
   ==
 ::  the khan sign +get-blocks delivers: [base [fx result]]
 ::
@@ -939,12 +957,12 @@
 ::  single-flight left.
 ::
 ::  The migration is only safe because the TAIL discriminates: a -12
-::  noun offered to the current mold puts [synced reorg-halt] where
-::  (unit reorg-stop) is expected, and neither shape of that pair can
-::  read as one.  Prove it on a state where every field the shift would
-::  land on is ~/0 -- i.e. the case where arity alone would NOT have
-::  told them apart -- and check that a value AFTER the removed field
-::  still arrives where it belongs.
+::  noun offered to the -13 mold puts [synced reorg-halt] where the halt
+::  unit is expected, and neither shape of that pair can read as one.
+::  Prove it on a state where every field the shift would land on is ~/0
+::  -- i.e. the case where arity alone would NOT have told them apart --
+::  and check that a value AFTER the removed field still arrives where it
+::  belongs.
 ::
 ++  test-on-load-drops-the-publicizing-field
   =/  agent  gw-btc
@@ -960,11 +978,12 @@
     ::  wrong branch entirely)
     ::
     (expect-eq !>((silt ~[~wes])) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/declined)))))
-    ::  .synced and .reorg-halt are the tail that did the discriminating
+    ::  .synced and .reorg-halt are the tail that did the discriminating;
+    ::  .reorg-halt is then DROPPED, so /x/ready is three fields
     ::
     %+  expect-eq
-      !>  [synced=%.y tip=`961.100 indexing=%.y halt=~]
-      !>  ;;([? (unit @ud) ? (unit *)] (peek-noun (~(on-peek agent bowl0) /x/ready)))
+      !>  [synced=%.y tip=`961.100 indexing=%.y]
+      !>  ;;([? (unit @ud) ?] (peek-noun (~(on-peek agent bowl0) /x/ready)))
     ::  a -12 state already had /is-synced; do not re-subscribe
     ::
     (expect-eq !>(~) !>((app-cards cards)))
@@ -1029,78 +1048,184 @@
     !>  ;;(id:block:bitcoin (peek-noun (~(on-peek agent bowl0) /x/block-id)))
 ::
 ::  ---------------------------------------------------------------------
-::  CHAIN REORGS  (Phase 6.5)
+::  CHAIN REORGS  (Phase 6.5; repaired rather than halted since
+::  gwbtc/node@063720b9)
 ::  ---------------------------------------------------------------------
 ::
 ::  %bitcoin-client reports a reorg as %reorg-rollback on /best-block, and
-::  this agent handled it byte-identically to %new: only .best moved.  The
-::  scan cursor never rewound, so the orphaned range was never rescanned;
-::  facts indexed out of orphaned blocks stayed in .unv-ids forever; and
-::  facts unique to the winning chain fell in the skipped range.  All
-::  silently.  With block-confirmations = 1 a single-block reorg reaches
-::  it, and those happen several times a month on mainnet.
+::  this agent once handled it byte-identically to %new: only .best moved.
+::  The scan cursor never rewound, so the orphaned range was never
+::  rescanned; facts indexed out of orphaned blocks stayed in .unv-ids
+::  forever; and facts unique to the winning chain fell in the skipped
+::  range.  All silently.  With block-confirmations = 1 a single-block
+::  reorg reaches it, and those happen several times a month on mainnet.
 ::
-::  Undoing the orphaned facts is not possible with what is stored (a
-::  $point does not record the height it was indexed at), so the scanner
-::  STOPS and says so.  A halted index announces itself; a silently forked
-::  one does not.
+::  From 2026-08-06 the scanner HALTED instead, because a $point recorded
+::  no provenance and %reorg-rollback named no losers: there was nothing
+::  to filter and no way to tell a good fact from a bad one.  Both halves
+::  exist now -- .seen on a $point, .stale-branch on the fact -- so the
+::  index is REPAIRED: select the points the orphaned blocks were the
+::  evidence for, forget exactly those, rewind the cursor to the fork
+::  point.  The halt, its poke, its timer and its /x/ready field are gone.
 ::
-++  best-block-sign
-  |=  [rollback=? height=@ud]
+::  .last-common is the FORK POINT, not the new tip; .stale-branch is the
+::  losing chain above it, latest first.
+::
+::  Both signs are written STRUCTURALLY rather than by naming
+::  best-block:update:lc.  What arrives is the node desk's own type, and
+::  all this agent may rely on is that it NESTS -- building the fixture
+::  from our own mold would prove only that our mold equals itself.
+::
+++  rollback-sign
+  |=  [fork=@ud stale=(list [@ud @ux])]
   ^-  sign:agent:gall
   :+  %fact  %best-block
-  ?:  rollback
-    !>(`[%reorg-rollback block-height=@ud block-hash=@ux]`[%reorg-rollback height 0xbeef])
-  !>(`[%new block-height=@ud block-hash=@ux]`[%new height 0xbeef])
+  !>  ^-  $:  %reorg-rollback
+              last-common=[block-height=@ud block-hash=@ux]
+              stale-branch=(list [block-height=@ud block-hash=@ux])
+          ==
+  [%reorg-rollback [fork 0xf0.0000] stale]
 ::
-++  test-reorg-below-the-cursor-halts-the-scanner
+++  new-block-sign
+  |=  height=@ud
+  ^-  sign:agent:gall
+  :+  %fact  %best-block
+  !>(`[%new block-height=@ud block-hash=@ux]`[%new height 0xbeef])
+::  four points, one per case the selector has to tell apart.  .peer is
+::  CONFIDENTIAL (so it also carries an attested tip and an in-flight
+::  job); the rest are public, which is what lets /x/urb-state witness
+::  them.
+::
+::    ~wes  0xb.10c1  in the losing branch  -> forgotten
+::    ~des  0xb.10c1  in the losing branch  -> forgotten
+::    ~nec  0xb.10c9  on the winning chain  -> kept
+::    ~lex  ~         NO PROVENANCE         -> kept, always
+::
+++  reorg-ids
+  ^-  unv-ids:urb
+  %-  malt
+  :~  [peer (ok-point-at anew-pass `0xb.10c1)]
+      [~des (ok-point-at anew-pass `0xb.10c1)]
+      [~nec (ok-point-at anew-pass `0xb.10c9)]
+      [~lex (ok-point-at anew-pass ~)]
+  ==
+::  +live-state's cursor is 961.100, so a fork at 961.098 is BELOW it and
+::  the two blocks above the fork are ones we had already scanned.
+::
+++  reorg-agent
+  ^-  _gw-btc
   =/  agent  gw-btc
-  ::  +verify-state's cursor is 900.100
-  =^  *  agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
+  =^  *  agent
+    %-  ~(on-load agent bowl0)
+    !>  %^  live-state  reorg-ids  *sont-map:ord
+        [(silt ~[peer]) (malt ~[[peer tip-sont]])]
+  agent
+::
+++  orphaned-branch  ^-((list [@ud @ux]) ~[[961.100 0xb.10c2] [961.099 0xb.10c1]])
+++  untouched-branch  ^-((list [@ud @ux]) ~[[961.100 0xbad.0002] [961.099 0xbad.0001]])
+::
+++  indexed-ships
+  |=  agent=_gw-btc
+  ^-  (set ship)
+  =/  st  ;;(state:urb (peek-noun (~(on-peek agent bowl0) /x/urb-state)))
+  ~(key by unv-ids.st)
+::
+::  A reorg whose losing branch holds a point's .seen forgets EXACTLY that
+::  point, by the same road a moved identity sat takes.
+::
+++  test-reorg-forgets-the-points-the-orphaned-blocks-proved
+  =/  agent  reorg-agent
   =^  cards  agent
-    (~(on-agent agent bowl0) /best-block (best-block-sign & 900.050))
-  =/  ready  (peek-noun (~(on-peek agent bowl0) /x/ready))
-  ::  [synced tip indexing reorg-halt]; the halt records [at cursor since]
-  =/  halt  +:+:+:ready
+    (~(on-agent agent bowl0) /best-block (rollback-sign 961.098 orphaned-branch))
+  =/  out    (app-cards cards)
+  =/  notes  (skim out |=(c=card:agent:gall =(`%stale-notice (fact-mark c))))
   ;:  weld
-    ::  the rollback is recorded, with the height and the cursor it caught
-    (expect-eq !>(`*`[~ 900.050 900.100 `@da`~2000.1.1]) !>(`*`halt))
-    ::  and nothing was emitted -- a reorg is not a verdict about anyone
+    ::  ~des was in the losing branch and is gone; ~nec was not and is
+    ::  still here; ~lex has NO provenance and is therefore left alone --
+    ::  ~ means "we cannot tell whether this was orphaned", which is not
+    ::  the claim that it was, and an unevaluable condition never produces
+    ::  a negative outcome.  (~wes is confidential, so /x/urb-state hides
+    ::  it either way; the stores below are what witness it.)
+    ::
+    (expect-eq !>((silt ~[`ship`~nec ~lex])) !>((indexed-ships agent)))
+    ::  the confidential stores that describe ~wes are all cleared
+    (expect-eq !>(*(map ship sont:ord)) !>(;;((map ship sont:ord) (peek-noun (~(on-peek agent bowl0) /x/attested)))))
+    (expect-eq !>(*(set ship)) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/inflight)))))
+    ::  ONE %stale-notice per forgotten point, and nothing else at all
+    (expect-eq !>(2) !>((lent notes)))
+    (expect-eq !>(2) !>((lent out)))
+    ::  ... and NEVER a %verdict.  A snub is permanent on every transport,
+    ::  so spending one on a chain event would need an operator to undo it
+    ::  -- and it would block the re-attestation that corrects us.
+    (expect !>(!(lien out |=(c=card:agent:gall =(`%verdict (fact-mark c))))))
+    ::  the cursor rewound to the FORK POINT, so the scanner walks the
+    ::  winning branch from 961.099 on the next tick
+    %+  expect-eq
+      !>  `id:block:bitcoin`[0xf0.0000 961.098]
+      !>  ;;(id:block:bitcoin (peek-noun (~(on-peek agent bowl0) /x/block-id)))
+  ==
+::
+::  A reorg that orphaned blocks none of our points came from forgets
+::  NOTHING -- including the hashless point, which the old rule would have
+::  taken on any reorg at all.  The cursor still rewinds: those blocks did
+::  not happen, whatever they did or did not contain.
+::
+++  test-reorg-that-misses-our-points-forgets-nothing
+  =/  agent  reorg-agent
+  =^  cards  agent
+    (~(on-agent agent bowl0) /best-block (rollback-sign 961.098 untouched-branch))
+  ;:  weld
+    (expect-eq !>((silt ~[`ship`~des ~nec ~lex])) !>((indexed-ships agent)))
+    ::  ~wes keeps its attested tip and its in-flight job
+    %+  expect-eq
+      !>  (malt ~[[`ship`peer tip-sont]])
+      !>  ;;((map ship sont:ord) (peek-noun (~(on-peek agent bowl0) /x/attested)))
+    (expect-eq !>((silt ~[peer])) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/inflight)))))
+    ::  no cards: nothing was un-known, so nobody is told anything
+    (expect-eq !>(~) !>((app-cards cards)))
+    %+  expect-eq
+      !>  `id:block:bitcoin`[0xf0.0000 961.098]
+      !>  ;;(id:block:bitcoin (peek-noun (~(on-peek agent bowl0) /x/block-id)))
+  ==
+::
+::  A fork point ABOVE the cursor is harmless: every orphaned block is one
+::  the scanner had not reached.  Note it, move .best, touch nothing --
+::  and in particular do NOT drag the cursor forward.
+::
+++  test-reorg-above-the-cursor-changes-nothing
+  =/  agent  reorg-agent
+  =^  cards  agent
+    %-  ~(on-agent agent bowl0)
+    [/best-block (rollback-sign 961.200 ~[[961.202 0xb.10c1]])]
+  =/  ready  (peek-noun (~(on-peek agent bowl0) /x/ready))
+  ;:  weld
+    ::  .best moved to the fork point ...
+    (expect-eq !>(`*`[~ 961.200]) !>(`*`-:+:ready))
+    ::  ... and the cursor did not move, even though 0xb.10c1 is named in
+    ::  the branch: those blocks are above us, so nothing we hold is from
+    ::  them, and a point is not forgotten on a coincidence of hashes we
+    ::  never scanned.
+    %+  expect-eq
+      !>  `id:block:bitcoin`[0xdead.beef 961.100]
+      !>  ;;(id:block:bitcoin (peek-noun (~(on-peek agent bowl0) /x/block-id)))
+    (expect-eq !>((silt ~[`ship`~des ~nec ~lex])) !>((indexed-ships agent)))
     (expect-eq !>(~) !>((app-cards cards)))
   ==
 ::
-::  ... and while halted the block timer refuses to dispatch a scan.  It
-::  keeps re-arming and keeps complaining, because a stopped scanner that
-::  stops mentioning it is indistinguishable from a working one.
+::  ... and the scanner is NOT stopped by any of it.  This is the whole
+::  point of removing the halt: the very next tick dispatches a block
+::  thread, from the rewound cursor.
 ::
-++  test-halted-scanner-does-not-advance
-  =/  agent  gw-btc
-  =^  *  agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
-  =^  *  agent
-    (~(on-agent agent bowl0) /best-block (best-block-sign & 900.050))
+++  test-scanner-advances-after-a-reorg
+  =/  agent  reorg-agent
+  =^  *      agent
+    (~(on-agent agent bowl0) /best-block (rollback-sign 961.098 orphaned-branch))
   =^  cards  agent  (~(on-arvo agent bowl0) /timer [%behn %wake ~])
   =/  cs  (app-cards cards)
   ;:  weld
-    ::  exactly one card, and it is the timer re-arming -- NOT a %lard
-    ::  block thread
     (expect-eq !>(1) !>((lent cs)))
-    (expect !>(?=([[%pass [%timer ~] %arvo %b %wait *] ~] cs)))
-  ==
-::
-::  A rollback ABOVE the cursor is harmless: nothing we hold came out of
-::  the orphaned blocks.  Note it, move .best, carry on.
-::
-++  test-reorg-above-the-cursor-does-not-halt
-  =/  agent  gw-btc
-  =^  *  agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
-  =^  *  agent
-    (~(on-agent agent bowl0) /best-block (best-block-sign & 900.200))
-  =/  ready  (peek-noun (~(on-peek agent bowl0) /x/ready))
-  ;:  weld
-    ::  not halted ...
-    (expect-eq !>(`*`~) !>(`*`+:+:+:ready))
-    ::  ... and .best did move to the rollback height
-    (expect-eq !>(`*`[~ 900.200]) !>(`*`-:+:ready))
+    ::  a %lard block thread, NOT a bare timer re-arm
+    (expect !>(?=([[%pass [%blocks ~] %arvo %k %lard *] ~] cs)))
   ==
 ::
 ::  and a plain %new still just moves the tip.
@@ -1108,12 +1233,52 @@
 ++  test-new-block-moves-the-tip
   =/  agent  gw-btc
   =^  *  agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
-  =^  *  agent
-    (~(on-agent agent bowl0) /best-block (best-block-sign | 900.101))
+  =^  *  agent  (~(on-agent agent bowl0) /best-block (new-block-sign 900.101))
   =/  ready  (peek-noun (~(on-peek agent bowl0) /x/ready))
+  (expect-eq !>(`*`[~ 900.101]) !>(`*`-:+:ready))
+::
+::  UPGRADE FROM THE HALT.  A -14 state carries .reorg-halt; the field is
+::  dropped, not converted, and a ship that was halted comes back
+::  SCANNING.  It cannot repair the index for the reorg that stopped it --
+::  that orphan list is long gone -- so it does exactly what
+::  %gw-reorg-resume ~ did, and the next reorg is repaired properly.
+::
+++  test-on-load-drops-a-reorg-halt
+  =/  agent  gw-btc
+  =^  cards  agent
+    %-  ~(on-load agent bowl0)
+    !>((halted-14-state reorg-ids [~ 961.098 961.100 `@da`~2000.1.1]))
+  =^  ticks  agent  (~(on-arvo agent bowl0) /timer [%behn %wake ~])
   ;:  weld
-    (expect-eq !>(`*`[~ 900.101]) !>(`*`-:+:ready))
-    (expect-eq !>(`*`~) !>(`*`+:+:+:ready))
+    ::  the index survived in full: a halt is not a reason to forget
+    (expect-eq !>((silt ~[`ship`peer ~des ~nec ~lex])) !>((indexed-ships agent)))
+    ::  the cursor is where the halt left it
+    %+  expect-eq
+      !>  `id:block:bitcoin`[0xdead.beef 961.100]
+      !>  ;;(id:block:bitcoin (peek-noun (~(on-peek agent bowl0) /x/block-id)))
+    ::  /x/ready is three fields now; there is no halt to report
+    %+  expect-eq
+      !>  [synced=%.y tip=`961.100 indexing=%.y]
+      !>  ;;([? (unit @ud) ?] (peek-noun (~(on-peek agent bowl0) /x/ready)))
+    ::  a -14 state already had /is-synced; do not re-subscribe
+    (expect-eq !>(~) !>((app-cards cards)))
+    ::  and the scanner runs again
+    (expect !>(?=([[%pass [%blocks ~] %arvo %k %lard *] ~] (app-cards ticks))))
+  ==
+::
+::  A -14 state with NO halt in force takes the same branch and is
+::  likewise indistinguishable afterwards -- the ~ case is the one every
+::  healthy ship actually upgrades from.
+::
+++  test-on-load-takes-an-unhalted-14-state
+  =/  agent  gw-btc
+  =^  cards  agent  (~(on-load agent bowl0) !>((halted-14-state ~ ~)))
+  ;:  weld
+    (expect-eq !>((silt ~[~wes])) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/declined)))))
+    %+  expect-eq
+      !>  [synced=%.y tip=`961.100 indexing=%.y]
+      !>  ;;([? (unit @ud) ?] (peek-noun (~(on-peek agent bowl0) /x/ready)))
+    (expect-eq !>(~) !>((app-cards cards)))
   ==
 ::
 ++  test-unknown-verdict-emits-nothing
@@ -1163,15 +1328,15 @@
 ++  test-fresh-agent-has-no-readiness
   =/  agent  gw-btc
   =^  *  agent  ~(on-init agent bowl0)
-  ::  [synced tip indexing reorg-halt] -- not synced, no tip, not
-  ::  indexing, not halted.  A ship in this state judges nothing.
+  ::  [synced tip indexing] -- not synced, no tip, not indexing.  A ship
+  ::  in this state judges nothing.
   ::
   ::  Both booleans are PINNED by +on-init: the bunt of ? is %.y, so a
   ::  mold-level default would have a fresh agent believe its index was
   ::  bootstrapped and its light client caught up.
   ::
   %+  expect-eq
-    !>  `*`[%.n ~ %.n ~]
+    !>  `*`[%.n ~ %.n]
     !>  `*`(peek-noun (~(on-peek agent bowl0) /x/ready))
 ::
 ::  ... and .synced must SURVIVE an upgrade.  /is-synced answers the
@@ -1189,7 +1354,7 @@
   =^  *  agent  (~(on-load agent bowl0) ~(on-save agent bowl0))
   =/  after   (peek-noun (~(on-peek agent bowl0) /x/ready))
   ;:  weld
-    (expect-eq !>(`*`[%.y ~ %.n ~]) !>(`*`before))
+    (expect-eq !>(`*`[%.y ~ %.n]) !>(`*`before))
     (expect-eq !>(`*`before) !>(`*`after))
   ==
 ::
@@ -1633,9 +1798,9 @@
     (expect-eq !>(*(set ship)) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/inflight)))))
   ==
 ::
-::  +orphaned-points is the SELECTOR the reorg path is missing, and the
-::  only thing it is missing: given the orphaned hashes it names exactly
-::  the points to hand +forget-points.
+::  +orphaned-points is the SELECTOR the reorg path is built on: given the
+::  orphaned hashes it names exactly the points to hand +forget-points,
+::  and nothing else.
 ::
 ++  test-orphaned-points-selects-by-block
   =/  fresh   (ok-point-at anew-pass `0xb.10c2)
@@ -1647,26 +1812,30 @@
     ==
   ;:  weld
     ::  the point whose evidence is in an orphaned block is taken and the
-    ::  one in a surviving block is not.  The HASHLESS one is taken as
-    ::  well, always: it predates the field, cannot be filtered, and
-    ::  forgetting is the conservative default.  That is self-limiting --
-    ::  re-observing a point gives it a hash -- so the population this
-    ::  clause reaches only ever shrinks.
+    ::  one in a surviving block is not.  The HASHLESS one is NEVER taken:
+    ::  .seen=~ says "we cannot determine whether this was orphaned",
+    ::  which is not the claim that it was, and an unevaluable condition
+    ::  must not produce a negative outcome -- forgetting costs the peer
+    ::  its point, and for a PUBLIC point it is a silent, permanent index
+    ::  loss (nobody re-attests a public point; it comes back only by
+    ::  rescanning a range the rewind need not cover).  Keeping one is at
+    ::  worst the status quo the old halt already left in place.
     %+  expect-eq
-      !>  (silt ~[`ship`~des ~lex])
+      !>  (silt ~[`ship`~des])
       !>  (orphaned-points:uc st (silt ~[`@ux`0xb.10c1]))
-    ::  a reorg that orphans a block none of our points came from still
-    ::  takes the hashless one, and nothing else
+    ::  a reorg that orphans a block none of our points came from takes
+    ::  NOTHING -- the case the old rule got wrong, and the common one
     %+  expect-eq
-      !>  (silt ~[`ship`~lex])
+      !>  *(set ship)
       !>  (orphaned-points:uc st (silt ~[`@ux`0xdead.dead]))
-    ::  a reorg that orphans nothing we hold still forgets the hashless
+    ::  ... and an empty orphan set is likewise empty
     %+  expect-eq
-      !>  (silt ~[`ship`~lex])
+      !>  *(set ship)
       !>  (orphaned-points:uc st *(set @ux))
-    ::  and orphaning everything takes everything
+    ::  orphaning every block we have provenance for takes every point we
+    ::  have provenance for, and still not the hashless one
     %+  expect-eq
-      !>  (silt ~[`ship`~wes ~des ~lex])
+      !>  (silt ~[`ship`~wes ~des])
       !>  (orphaned-points:uc st (silt ~[`@ux`0xb.10c1 0xb.10c2]))
   ==
 ::
@@ -1701,22 +1870,32 @@
       !>  ;;(id:block:bitcoin (peek-noun (~(on-peek agent bowl0) /x/block-id)))
     (expect-eq !>((silt ~[~wes])) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/declined)))))
     %+  expect-eq
-      !>  [synced=%.y tip=`961.100 indexing=%.y halt=~]
-      !>  ;;([? (unit @ud) ? (unit *)] (peek-noun (~(on-peek agent bowl0) /x/ready)))
+      !>  [synced=%.y tip=`961.100 indexing=%.y]
+      !>  ;;([? (unit @ud) ?] (peek-noun (~(on-peek agent bowl0) /x/ready)))
     ::  a -13 state already had /is-synced; do not re-subscribe
     (expect !>(!(lien (app-cards cards) |=(c=card:agent:gall =(c synced-watch)))))
   ==
 ::
 ::  ... and a hashless point is EXACTLY what the reorg selector treats as
-::  unfilterable.  This is the migration question answered end to end: an
-::  upgraded ship's old points are forgotten on the first reorg, once, and
-::  re-attesting gives them provenance so it does not recur.
+::  unfilterable, which the selector answers by leaving it alone.  This is
+::  the migration question answered end to end: an upgraded ship's old
+::  points survive every reorg until they are re-observed, at which point
+::  they acquire a hash and become filterable like everything else.  The
+::  worst case is that one of them outlives the block it came from -- the
+::  same exposure the halt left, and strictly better than losing a public
+::  point nobody can re-attest.
 ::
 ++  test-a-lifted-point-is-unfilterable
   =/  agent  gw-btc
   =^  *  agent  (~(on-load agent bowl0) !>(legacy-13-state))
   =/  index  ;;(state:urb (peek-noun (~(on-peek agent bowl0) /x/urb-state)))
-  %+  expect-eq
-    !>  (silt ~[`ship`~wes])
-    !>  (orphaned-points:uc index *(set @ux))
+  ;:  weld
+    ::  it is in the index ...
+    (expect-eq !>((silt ~[`ship`~wes])) !>(~(key by unv-ids.index)))
+    ::  ... and no orphan set reaches it, including one naming every hash
+    (expect-eq !>(*(set ship)) !>((orphaned-points:uc index *(set @ux))))
+    %+  expect-eq
+      !>  *(set ship)
+      !>  (orphaned-points:uc index (silt ~[`@ux`0xb.10c1 0xb.10c2 0xdead.beef]))
+  ==
 --

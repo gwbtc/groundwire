@@ -929,109 +929,125 @@ wrong against a real node:
 
 ## 11. Chain reorganisation
 
-Two different things in this system are reorg-sensitive, and only one of them
-is handled. Attestation *verification* was made reorg-tolerant by `cdaf7cf`
-(§3): the tracked-log comparison keys on hop identity rather than on heights,
-so a custody transaction re-mined one block over is no longer a divergence.
-The **public block index** has no such tolerance. What ships for it today is a
-halt, and this section records it, because the spec has so far described only
-the replacement.
+Two different things in this system are reorg-sensitive, and both are handled
+now. Attestation *verification* was made reorg-tolerant by `cdaf7cf` (§3): the
+tracked-log comparison keys on hop identity rather than on heights, so a
+custody transaction re-mined one block over is no longer a divergence. The
+**public block index** is repaired in place, as of gwbtc/node@`063720b9` — the
+commit that gave `%reorg-rollback` the list of orphaned blocks. This section
+records what ships and what it replaced.
 
-### 11a. What ships today: `$reorg-stop` and `%gw-reorg-resume`
+### 11a. What ships: select, forget, rewind
 
 `%bitcoin-client` reports a reorg as a `%reorg-rollback` on `/best-block`,
-carrying the height and hash the chain rolled back to. `%gw-btc` compares that
-height against its own scan cursor, `num.block-id.urb-state`
-(`app/gw-btc.hoon:1386-1431`), and there are two cases:
+carrying `last-common` — the FORK POINT, the highest block both chains agree
+on, which is not the new tip — and `stale-branch`, every block of the losing
+chain above it, latest first. The winning branch then arrives immediately
+afterwards as ordinary `%new` facts, so `.best` is carried up by the usual
+road; the reorg branch moves it only as far as the fork point.
 
-- **rollback above the cursor.** The orphaned blocks are ones the scanner had
-  not reached, so nothing we hold came from them. The agent slogs a line, moves
-  `.best`, and carries on; the winning chain gets walked normally.
-- **rollback at or below the cursor.** The index may contain facts derived from
-  blocks that no longer exist. **The scanner stops**, and `.reorg-halt` is set
-  to a `$reorg-stop` (`app/gw-btc.hoon:92-121`) recording `at` (the height
-  rolled back to), `cursor` (where we had scanned to), and `since`.
+`%gw-btc` compares `block-height.last-common` against its own scan cursor,
+`num.block-id.urb-state`, and there are two cases:
 
-A halt is not silent, deliberately. It slogs a capitalised block at the moment
-it happens; the `/timer` arm keeps re-arming itself every `~m5` and reprints
-the halt on every poll (`app/gw-btc.hoon:818-827`), on the principle that a
-stopped scanner which stops mentioning it is indistinguishable from a working
-one; and `.reorg-halt` is the fourth field of the `/x/ready` scry, alongside
-`synced`, `tip` and `indexing`, so a monitor sees it without reading logs.
+- **fork point above the cursor.** Every orphaned block is one the scanner had
+  not reached, so nothing we hold came from them. Slog a line, move `.best`,
+  carry on; the winning chain gets walked normally.
+- **fork point at or below the cursor.** Three steps, all in the
+  `%reorg-rollback` branch of `+on-agent`:
+  1. **select** — `+orphaned-points:urb-core` names every point whose `seen`
+     block is in `stale-branch`;
+  2. **forget** — `+forget-points` drops the four stores that constitute
+     "we know this identity" (index, confidential registry, attested tip,
+     in-flight job) and `+forget-cards` emits one `%stale-notice` each;
+  3. **rewind** — `.block-id` is set to `last-common`, so the already-running
+     `/timer` chain resumes at the first block of the winning branch. No card
+     is emitted to hurry it: `+scan-again` re-arms exactly once per tick, so
+     injecting a second `%wait` would fork the chain and double the scan rate
+     forever.
 
-**Confidential verification deliberately keeps running.** It reads the chain
-through the light client, which does its own reorg handling (and re-checks tip
-liveness at apply time, §8); its answers do not come from this index at all.
-Only the public index is frozen.
+**Forgetting is never a snub.** These are the same two arms the `%stale` path
+uses, so the two roads out of "we no longer know this identity" are one road:
+the peer drops to a fresh `%alien`, keeps our lane, and re-attests over
+`%sybl` of its own accord. A reorg is not fraud, and a snub is permanent on
+every transport (`b0a8e962ff`) — it would block the very packet that would
+correct us.
 
-**Why a halt and not a repair.** The index cannot be rewound, because there is
-no way to tell which entries of `.unv-ids` came from the losing chain, and
-rewinding the cursor to rescan would replay the winning chain *on top of* a
-corrupted index rather than instead of it — a second bug, not a fix. A halted
-index is a liveness failure that announces itself; a silently forked one is a
-correctness failure that does not.
+**Confidential verification is unaffected throughout.** It reads the chain
+through the light client, which does its own reorg handling and re-checks tip
+liveness at apply time (§8); its answers never came from this index.
 
-**Half of that reason is now gone.** A `$point` records provenance as of
-2026-08-10 (§11b, below): `seen`, the block it was most recently observed in.
-What is still missing is the *orphaned set* — `%reorg-rollback` carries
-`[block-height block-hash]` of the **new best** block (`sur/light-client.hoon`),
-not the blocks that were orphaned — so there is still nothing to filter
-against, and the halt is still the honest answer.
+### 11b. Hashless points are left alone (resolves the §11b caveat)
 
-`%gw-reorg-resume` (`app/gw-btc.hoon:530-569`, `our`-only) therefore does not
-claim to repair anything. It exists so an operator chooses deliberately and on
-the record, rather than having the agent guess:
+A point with `seen=~` has no provenance: it predates the field
+(`+lift-urb-state`) and has not been observed since. It is **not** selected by
+a reorg, on either the "orphaned" or the "not orphaned" side.
 
-- `~` — resume from the current cursor, accepting that facts from orphaned
-  blocks may still be in `.unv-ids` and that the winning chain's replacements
-  in the skipped range were never seen.
-- `[~ height]` — rewind the cursor first (stored as `height - 1`, since
-  `.block-id` is the *last* block scanned) and then resume, so the winning
-  chain from there is scanned. This **adds** the correct facts; it cannot
-  remove the wrong ones.
+`~` says *we cannot determine whether this was orphaned*, which is not the
+claim *this was orphaned*. Everywhere else in this codebase an unevaluable
+condition is forbidden from producing a negative outcome — a check that could
+not run never draws a `%fail` (§3a), an unscannable tip never demotes a peer —
+and forgetting is a negative outcome: it costs the peer its point.
 
-Neither is a repair. The only true repair is to rebootstrap the public index,
-which needs a nuke — `%urb-start-indexing` is one-shot by design.
+The earlier decision (2026-08-10) was the opposite, on the grounds that
+forgetting is conservative and the peer re-attests, and it recorded one
+unresolved caveat: `unv-ids` holds PUBLIC points as well as confidential ones,
+and "the peer re-attests" is true only of the confidential ones. A forgotten
+public point comes back only by rescanning the range it was indexed from,
+which rewinding to the fork point does not necessarily cover. That caveat
+decides it. The costs are not symmetric:
 
-### 11b. The agreed replacement (team decision 2026-08-10) — PARTLY IMPLEMENTED
+- forget a hashless point: silent, permanent index loss for public points, on
+  a reorg that may have touched nothing of ours at all;
+- keep a hashless point: worst case we retain a point derived from a block
+  that no longer exists — **exactly the status quo under the old halt**, which
+  kept every such point by freezing the scanner.
 
-Everything that does not need the orphaned-block list has landed. §11a still
-runs, because the list is what is missing.
+Bounded and already paid, against unbounded and new. The hashless population
+is self-limiting either way: anything re-observed acquires a hash, so it only
+ever shrinks.
 
-- **`$point` gains a block hash.** LANDED: `seen=(unit hax:block:bitcoin)` in
-  `sur/urb.hoon`, **refreshed on every observation** rather than fixed at index
-  time — a verified attestation stamps the block its tip transaction was
-  confirmed in (`+run-checks` takes it from `+fetch-tx-at`, which is the layer
-  that resolves it); a custody move the scanner walks stamps the block under
-  scan (`+update-comet:urb-core`). The hash therefore tracks the most recent
-  evidence for a point rather than its origin, which is the quantity a reorg
-  takes away. `~` means *no provenance recorded* and is a real answer, not a
-  placeholder.
-- **Robin supplies the list of orphaned blocks.** NOT LANDED, and it is the
-  only thing missing. `$best-block`'s `%reorg-rollback` carries the new best
-  block, so there is nothing to filter against.
-- **An orphaned point is forgotten, not snubbed.** The selector is
-  `+orphaned-points:urb-core` (which points does the orphan set take?) and the
-  action is `+forget-points` / `+forget-cards` in `%gw-btc`. Both are LANDED,
-  and the action arms are the ones the existing `%stale` path already uses, so
-  the two roads out of "we no longer know this identity" are one road. Nothing
-  calls the selector yet. When the list arrives, the `%reorg-rollback` branch
-  of `+on-agent` becomes: select, forget, rewind the cursor, emit the
-  `%stale-notice`s — no halt, no snub. **A reorg is not fraud**, and a snub is
-  permanent on every transport (`b0a8e962ff`).
-- **Migration.** LANDED as `$gw-state-13` (the current fields around a
-  two-field point); every lifted point gets `seen=~`. `+orphaned-points`
-  selects a hashless point on *any* reorg, which is the agreed conservative
-  default, and it is **self-limiting rather than recurring**: a re-observed
-  point acquires a hash, so the hashless population only ever shrinks and a
-  given point is forgotten this way at most once. **One caveat, unresolved:**
-  `unv-ids` holds PUBLIC points as well as confidential ones, and "the peer
-  re-attests" is only true of the confidential ones. A forgotten public point
-  is re-derived only by rescanning the range it was indexed from, which
-  rewinding to the rollback height does not necessarily cover — so for public
-  points this default is a silent index loss rather than recoverable churn.
-  Decide that before wiring the selector up.
+### 11c. What this replaced: `$reorg-stop` and `%gw-reorg-resume`
+
+Until the orphan list existed, a rollback at or below the cursor **stopped the
+scanner**. The index could not be rewound, because there was no way to tell
+which entries of `.unv-ids` came from the losing chain, and rewinding to
+rescan would replay the winning chain *on top of* a corrupted index rather
+than instead of it — a second bug, not a fix. A halted index is a liveness
+failure that announces itself; a silently forked one is a correctness failure
+that does not.
+
+The halt was deliberately loud: a capitalised slog block at the moment it
+happened, a `~m5` re-announce on the `/timer` arm, and `.reorg-halt` as the
+fourth field of `/x/ready`. `%gw-reorg-resume` (`our`-only) let an operator
+choose between resuming from the cursor and rewinding first, neither of which
+was a repair.
+
+**All of it is deleted** — `$reorg-stop`, the state field, the poke, the halt
+slog, the re-announce timer, the `/x/ready` field. It existed only for want of
+the list. `$gw-state-14` is the migration mold for a state that still carries
+`.reorg-halt`; the field is dropped rather than converted, and a ship upgraded
+while halted comes back scanning from wherever its cursor was left. That
+upgrade cannot repair the index for the reorg that caused the halt — its
+orphan list is long gone — so it does the same thing `%gw-reorg-resume ~` did,
+and the next reorg is repaired properly.
+
+### 11d. Prior art, still standing
+
+- **`$point` carries a block hash.** `seen=(unit hax:block:bitcoin)` in
+  `sur/urb.hoon`, **refreshed on every observation** rather than fixed at
+  index time — a verified attestation stamps the block its tip transaction was
+  confirmed in (`+run-checks` takes it from `+fetch-tx-at`), a custody move the
+  scanner walks stamps the block under scan (`+update-comet:urb-core`). The
+  hash tracks the most recent evidence for a point rather than its origin,
+  which is the quantity a reorg takes away.
+- **Migration.** `$gw-state-13` and older lift every point with `seen=~`,
+  which §11b now leaves alone.
 - **Future work:** two peers both reorged and unable to find each other. It
   may already be covered by public sponsor fallback. And the replay problem
   behind §3's `%behind` rule, which this section's "not fraud" reasoning
   shares.
+- **Known gap, unchanged:** `seen` is ONE hash, so it names the last block a
+  point was seen in. A reorg deep enough to orphan an EARLIER hop of a custody
+  log is not caught by this field; it is caught by the re-attestation, which
+  cannot be fetched at a height that no longer holds its txid
+  (`+fetch-tx-at:lc-attestation` strand-fails).

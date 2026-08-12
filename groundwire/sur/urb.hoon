@@ -90,9 +90,11 @@
 ::    ~ means NO PROVENANCE RECORDED: a point that predates this field
 ::    (+on-load's $gw-state-13 migration) and has not been observed
 ::    since.  It cannot be filtered against a list of orphaned blocks,
-::    so a reorg must decide what to do with it without evidence -- see
-::    +orphaned-points in lib/urb-core.hoon.  The population of such
-::    points only ever shrinks: anything re-observed acquires a hash.
+::    and a reorg therefore LEAVES IT ALONE -- ~ is "we cannot tell",
+::    not "orphaned", and an unevaluable condition never produces a
+::    negative outcome here.  See +orphaned-points in lib/urb-core.hoon.
+::    The population of such points only ever shrinks: anything
+::    re-observed acquires a hash.
 ::
 +$  point
   $:  $=  own

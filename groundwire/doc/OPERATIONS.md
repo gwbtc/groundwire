@@ -935,7 +935,7 @@ All are care `%x`, so `%gx` with a trailing mark. Confirmed against
 
 | path | mark | value |
 |---|---|---|
-| `/x/ready` | `noun` | `[synced=? tip=(unit @ud) indexing=? reorg-halt=(unit [at cursor since])]` |
+| `/x/ready` | `noun` | `[synced=? tip=(unit @ud) indexing=?]` |
 | `/x/inflight` | `noun` | `(set ship)` — ships with a verification running, from a packet OR from an on-chain publication (same slot) |
 | `/x/pending-own` | `noun` | `(unit @ud)` — the `%anew` self-validation slot |
 | `/x/custody` | `noun` | our own verified custody log (the xtr we serve) |
@@ -969,8 +969,6 @@ talking to; `/x/ready` is the difference.
 | `:gw-btc &noun [%gw-custody-entry [<txid> <height> <opening>]]` | Causeway ingestion; extends our own log |
 | `:gw-btc &gw-sponsor-decline ~<ship>` | refuse to sponsor; produces silence, never a snub |
 | `:gw-btc &gw-sponsor-clear ~<ship>` | undo the above |
-| `:gw-btc &gw-reorg-resume ~` | resume a reorg-halted scanner from the current cursor |
-| `:gw-btc &gw-reorg-resume [~ <height>]` | rewind the cursor first, then resume |
 | `:gw-btc &gw-index-from <height>` | bootstrap the public index (one-shot) |
 | `:gw-btc &urb-start-indexing ~` | ditto, from the default snapshot |
 
@@ -1170,17 +1168,31 @@ reported an unspent tip identically to a spent one. Current code returns
 `~` (undeterminable) and logs `%gw-btc-lc-scan-degenerate`. Seeing
 `to=0` means the light client believed the tip was genesis.
 
-**`%gw-btc: CHAIN REORG TO N -- BLOCK SCANNER HALTED`.**
-A rollback at or below the scan cursor. Confidential verification is
-unaffected (it reads the light client directly). The public index may
-contain facts derived from orphaned blocks and there is no way to tell
-which. A `$point` *does* record the block it was last observed in (`seen`,
-since 2026-08-10), so the index could be filtered — but the light client
-reports the block the chain rolled back **to**, not the blocks it orphaned,
-so there is nothing to filter against yet.
-`:gw-btc &gw-reorg-resume ~` accepts that; `[~ <height>]` rewinds first and
-rescans, which *adds* correct facts but cannot remove wrong ones. The only
-repair is to rebootstrap the index.
+**`%gw-btc: chain reorg to N, at or below our cursor`.**
+Not an incident. A rollback that reached blocks the scanner had already
+walked, and the agent repaired the index in place: it forgot every point
+whose `seen` block was in the reorg's `stale-branch`, rewound the cursor to
+the fork point, and let the scanner walk the winning chain from there. The
+line says how many blocks were orphaned and how many points were forgotten.
+Confidential verification is unaffected throughout (it reads the light
+client directly).
+
+A forgotten point is **never a snub** — the peer drops to a fresh `%alien`,
+keeps our lane, and re-attests over `%sybl` of its own accord. Expect one
+`%stale-notice` per forgotten point and no `%verdict`s at all.
+
+Points with no provenance (`seen=~`, only ever from a pre-2026-08-10
+upgrade) are **left alone**: `~` means "we cannot tell whether this was
+orphaned", which is not evidence that it was. Worst case one survives a
+reorg it should not have; that is the same exposure the old halt left, and
+that population shrinks on its own as points are re-observed.
+
+Until gwbtc/node@`063720b9` a rollback at or below the cursor **halted the
+scanner** (`%gw-btc: CHAIN REORG TO N -- BLOCK SCANNER HALTED`), because
+`%reorg-rollback` named only the block rolled back to and there was nothing
+to filter against. The `$reorg-stop` state, the `%gw-reorg-resume` poke and
+the `/x/ready` halt field are all gone; a ship upgraded while halted comes
+back scanning from wherever its cursor was left.
 
 **`mesa: bind: address already in use`.**
 A stale ship or an old supervisor is squatting the UDP port. Find it by

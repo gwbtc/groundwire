@@ -42,10 +42,29 @@
   ::
   +$  is-synced  ?
   ::
+  ::  %reorg-rollback names the FORK POINT and the blocks that lost.
+  ::
+  ::    .last-common is the highest block the old and new chains agree on
+  ::    -- not the new tip.  The agent grafts the winning branch on and
+  ::    then emits an ordinary %new for each of its blocks, so the tip
+  ::    arrives immediately afterwards by the usual road.
+  ::
+  ::    .stale-branch is the ORPHANED set: every block of the losing
+  ::    chain above .last-common, LATEST FIRST, and excluding
+  ::    .last-common itself.  It is what %gw-btc filters its points
+  ::    against (+orphaned-points:urb-core).
+  ::
+  ::    Before gwbtc/node@063720b9 this was a flat [block-height
+  ::    block-hash] naming only the fork point, and with no list of
+  ::    losers there was nothing to filter -- which is why %gw-btc used
+  ::    to halt its scanner here instead of repairing the index.
+  ::
   +$  best-block
     $%  [%new =block-height =block-hash]
-        [%reorg-rollback =block-height =block-hash]
-    ==
+    $:  %reorg-rollback
+        last-common=[=block-height =block-hash]
+        stale-branch=(list [=block-height =block-hash])
+    ==  ==
   ::
   +$  block-header-by-hash
     $@  ~

@@ -89,41 +89,6 @@
   $:  chain=custody-log:sa
       pending=(unit anew-job)
   ==
-::  $reorg-stop: the block scanner, halted by a chain reorganisation
-::
-::    %bitcoin-client reports a reorg as a %reorg-rollback on /best-block.
-::    Until 2026-08-06 this agent handled it IDENTICALLY to %new: only .best
-::    moved, while .block-id.urb-state (the scan cursor) and .unv-ids (every
-::    fact derived from the orphaned blocks) were untouched.  Three
-::    consequences, all silent: the cursor sat ABOVE the new tip so nothing
-::    was rescanned, facts indexed out of orphaned blocks stayed forever,
-::    and facts unique to the winning chain were never seen.
-::
-::    Undoing the orphaned facts still is not possible, but the reason has
-::    HALVED.  A point now records the block it was last observed in
-::    (.seen, sur/urb), so given a list of the orphaned block hashes the
-::    index could be filtered against it -- +orphaned-points selects, and
-::    +forget-points forgets.  What is missing is the LIST:
-::    %reorg-rollback carries the block the chain rolled back TO
-::    (sur/light-client), which is the new best block and not the orphaned
-::    set, so there is still nothing to filter against.
-::
-::    So the scanner STOPS, loudly, and waits for an operator.  A halted
-::    index is a liveness failure that announces itself; a silently forked
-::    one is a correctness failure that does not.  %gw-reorg-resume decides
-::    what to do about it (see +on-poke).  When the light client reports
-::    the orphaned blocks, this whole halt is replaced by the forget path
-::    of decisions addendum section 11b -- and forgetting is never a snub.
-::
-::    Confidential verification deliberately keeps running: it reads the
-::    chain through the light client, which does its own reorg handling, and
-::    its answers do not come from this index.
-::
-+$  reorg-stop
-  $:  at=@ud        ::  height the chain rolled back to
-      cursor=@ud    ::  our scan cursor when that happened
-      since=@da
-  ==
 ::  $gw-state
 ::
 ::    .indexing, .best and .synced are the INDEPENDENT readiness signals,
@@ -186,23 +151,32 @@
       ::  every attestation until then.  Fail-closed, but dead.
       ::
       synced=?
-      reorg-halt=(unit reorg-stop)
   ==
-::  $gw-state-13 / -12 / -11 / -10: the four earlier shapes
+::  $gw-state-14 / -13 / -12 / -11 / -10: the five earlier shapes
 ::
-::    -13 is the state before a $point carried provenance; -12 is -13 with
-::    .publicizing still present; -11 is -12 without .synced and
-::    .reorg-halt; -10 is -11 without .own.  +on-load discriminates on
-::    them; ;; is strict about arity (it bails on both a missing and an
-::    extra tail), so trying the current mold first and falling back is
-::    exact, not a guess.
+::    -14 is the state that carried .reorg-halt, the block scanner's
+::    reorg STOP flag; -13 is -14 before a $point carried provenance; -12
+::    is -13 with .publicizing still present; -11 is -12 without .synced
+::    and .reorg-halt; -10 is -11 without .own.  +on-load discriminates
+::    on them; ;; is strict about arity (it bails on both a missing and
+::    an extra tail), so trying the current mold first and falling back
+::    is exact, not a guess.
 ::
-::    ALL FOUR CARRY $point-13, not the current $point.  They describe
-::    nouns written by revisions that predate .seen, so naming the current
-::    $point in them would demand a field those nouns cannot have -- and
-::    the -12/-11/-10 branches would then never match anything with a
-::    point in it.  The urb-state mold is the ONLY thing that differs
-::    between -13 and the current shape.
+::    THE LAST FOUR CARRY $point-13, not the current $point.  They
+::    describe nouns written by revisions that predate .seen, so naming
+::    the current $point in them would demand a field those nouns cannot
+::    have -- and the -12/-11/-10 branches would then never match
+::    anything with a point in it.  -14 is the exception: it is the
+::    current index shape and differs from $gw-state only in the tail.
+::
+::    .reorg-halt held a $reorg-stop, a type this agent no longer has:
+::    the scanner does not halt on a reorg any more, it repairs the index
+::    (see the %reorg-rollback branch of +on-agent).  The mold below
+::    therefore spells the dead field out inline rather than naming a
+::    type, because it is a fossil in a migration and not something
+::    anything may construct.  It discriminates by itself: a -14 noun
+::    offered to $gw-state puts [synced reorg-halt] where a bare ? is
+::    expected, and a cell does not nest under ?(%.y %.n).
 ::
 ::    .seen is a TAIL field on $point, so it discriminates by itself: a
 ::    -13 point offered to the current mold puts [rift life pass sponsor
@@ -215,15 +189,22 @@
 ::    .publicizing was a MIDDLE field, so dropping it shifts everything
 ::    after it and arity alone would not discriminate -- except that the
 ::    TAIL still does, unconditionally.  A -12 noun offered to the -13
-::    mold puts [synced reorg-halt] where (unit reorg-stop) is expected:
-::    the pair is a cell, so `synced` has to read as the unit's ~ head
-::    (only true when synced=%.y), and then `reorg-halt` -- either ~ or
-::    [~ [at cursor since]] -- has to read as a bare $reorg-stop, which is
+::    mold puts [synced reorg-halt] where the halt unit is expected: the
+::    pair is a cell, so `synced` has to read as the unit's ~ head (only
+::    true when synced=%.y), and then `reorg-halt` -- either ~ or [~ [at
+::    cursor since]] -- has to read as a bare [at cursor since], which is
 ::    a three-atom cell.  Neither shape can, so the cast always fails and
 ::    the -12 branch is always the one that takes it.
 ::
 ::    Nothing else inside these molds changed, which is why they can keep
 ::    naming the current $inflight-writ.
+::
+::  the dead .reorg-halt field, spelled out for the three migration molds
+::  that have to describe a noun containing it.  It held a $reorg-stop:
+::  [at=@ud cursor=@ud since=@da], the height rolled back to, our scan
+::  cursor at the time, and when.  Nothing constructs one any more.
+::
++$  dead-halt  (unit [at=@ud cursor=@ud since=@da])
 ::
 +$  point-13
   $:  $=  own
@@ -248,6 +229,21 @@
       unv-ids=(map @p point-13)
   ==
 ::
++$  gw-state-14
+  $:  urb-state=state:urb
+      indexing=?
+      best=(unit id:block:bc)
+      inflight=(map ship inflight-writ)
+      confidential=(set ship)
+      attested=(map ship sont:ord)
+      next-job=@ud
+      sponsees=(map ship sponsee)
+      declined=(set ship)
+      own=own-custody
+      synced=?
+      reorg-halt=dead-halt
+  ==
+::
 +$  gw-state-13
   $:  urb-state=urb-state-13
       indexing=?
@@ -260,7 +256,7 @@
       declined=(set ship)
       own=own-custody
       synced=?
-      reorg-halt=(unit reorg-stop)
+      reorg-halt=dead-halt
   ==
 ::
 +$  gw-state-12
@@ -276,7 +272,7 @@
       declined=(set ship)
       own=own-custody
       synced=?
-      reorg-halt=(unit reorg-stop)
+      reorg-halt=dead-halt
   ==
 ::
 +$  gw-state-11
@@ -351,9 +347,10 @@
   =/  nou=*  q.vase
   =.  nou  ?:(?=([[@ *] *] nou) +.nou nou)
   ::  .own (our own custody log), then .synced and .reorg-halt, were
-  ::  appended later.  ;; is strict about arity, so the current mold
-  ::  succeeding IS the discriminator; a pre-.own state loads with an empty
-  ::  log and re-seeds itself from our pass's xtr on the next %anew.
+  ::  appended later, and .reorg-halt has since been removed again.  ;; is
+  ::  strict about arity, so the current mold succeeding IS the
+  ::  discriminator; a pre-.own state loads with an empty log and re-seeds
+  ::  itself from our pass's xtr on the next %anew.
   ::
   ::  An upgrade from either older shape must also SUBSCRIBE to /is-synced.
   ::  Gall keeps outgoing subscriptions across +on-load, so the existing
@@ -365,6 +362,34 @@
   ::
   =/  cur  (mole |.(;;(gw-state nou)))
   ?^  cur  `this(state u.cur)
+  ::  A -14 state carries .reorg-halt, the scanner's reorg STOP flag.  It
+  ::  is dropped, not converted: the scanner no longer halts on a reorg,
+  ::  it forgets the points the orphaned blocks were evidence for and
+  ::  rewinds (see the %reorg-rollback branch of +on-agent).
+  ::
+  ::  A ship upgrading WHILE HALTED therefore comes back scanning, from
+  ::  wherever its cursor was left.  That is the right outcome and it is
+  ::  the same one %gw-reorg-resume gave an operator who poked `~`:
+  ::  resume from the cursor.  The reorg that caused the halt is over and
+  ::  its orphan list is not recoverable now, so this branch cannot
+  ::  repair the index -- the NEXT reorg is repaired properly, and this
+  ::  one is left exactly where the halt already left it.
+  ::
+  =/  o14  (mole |.(;;(gw-state-14 nou)))
+  ?^  o14
+    =/  ext=gw-state
+      :*  urb-state.u.o14
+          indexing.u.o14  best.u.o14  inflight.u.o14
+          confidential.u.o14  attested.u.o14
+          next-job.u.o14  sponsees.u.o14  declined.u.o14  own.u.o14
+          synced.u.o14
+      ==
+    ?~  reorg-halt.u.o14  `this(state ext)
+    %-  %-  slog
+        :~  leaf+"%gw-btc: clearing a reorg halt from {<since.u.reorg-halt.u.o14>}; the scanner resumes from cursor {<num.block-id.urb-state.u.o14>}"
+            leaf+"  (the halt is gone: a reorg now forgets the points the orphaned blocks proved, and rewinds)"
+        ==
+    `this(state ext)
   ::  A -13 state's points carry no .seen (sur/urb): they were indexed
   ::  before a $point recorded which block it was last observed in.  They
   ::  are lifted with .seen=~, which is not a placeholder -- it is the
@@ -378,7 +403,7 @@
           indexing.u.o13  best.u.o13  inflight.u.o13
           confidential.u.o13  attested.u.o13
           next-job.u.o13  sponsees.u.o13  declined.u.o13  own.u.o13
-          synced.u.o13  reorg-halt.u.o13
+          synced.u.o13
       ==
     `this(state ext)
   ::  A -12 state carries .publicizing, which no longer exists: the block
@@ -394,7 +419,7 @@
           indexing.u.o12  best.u.o12  inflight.u.o12
           confidential.u.o12  attested.u.o12
           next-job.u.o12  sponsees.u.o12  declined.u.o12  own.u.o12
-          synced.u.o12  reorg-halt.u.o12
+          synced.u.o12
       ==
     `this(state ext)
   =/  o11  (mole |.(;;(gw-state-11 nou)))
@@ -404,7 +429,7 @@
           indexing.u.o11  best.u.o11  inflight.u.o11
           confidential.u.o11  attested.u.o11
           next-job.u.o11  sponsees.u.o11  declined.u.o11  own.u.o11
-          %.n  ~
+          %.n
       ==
     :_  this(state ext)
     ~[(watch-synced our.bowl)]
@@ -413,7 +438,7 @@
     :*  (lift-urb-state urb-state.o)
         indexing.o  best.o  inflight.o  confidential.o
         attested.o  next-job.o  sponsees.o  declined.o
-        *own-custody  %.n  ~
+        *own-custody  %.n
     ==
   :_  this(state ext)
   ~[(watch-synced our.bowl)]
@@ -643,47 +668,6 @@
     =/  who  !<(ship vase)
     `this(declined (~(del in declined) who))
   ::
-      ::  Restart a block scanner halted by a reorg (see $reorg-stop).
-      ::
-      ::    ~          resume from the current cursor.  The operator is
-      ::               accepting that facts indexed out of orphaned blocks
-      ::               may still be in .unv-ids and that the winning
-      ::               chain's replacements in the skipped range were
-      ::               never seen.
-      ::    [~ height] rewind the cursor to `height` first, so the winning
-      ::               chain from there is scanned.  This ADDS the correct
-      ::               facts; it cannot remove wrong ones.
-      ::
-      ::  Neither is a repair.  The repair is to rebootstrap the public
-      ::  index, which needs a nuke (see %urb-start-indexing).  This poke
-      ::  exists so an operator can choose, deliberately and on the record,
-      ::  rather than have the agent guess for them.
-      ::
-      %gw-reorg-resume
-    ?>  =(our src):bowl
-    ?~  reorg-halt
-      %-  (slog leaf+"%gw-btc: no reorg halt in force" ~)
-      `this
-    ::  MOLD-CAST the raw noun, never +!<: an operator poking `&noun ~`
-    ::  builds a vase whose type is bare %~, which does not nest under a
-    ::  head-tagged union, and +!< would bail on exactly the invocation the
-    ::  docs above tell them to use.
-    ::
-    =/  to=(unit @ud)  ;;((unit @ud) q.vase)
-    =/  msg=tape
-      ?~  to  "resuming from cursor {<num.block-id.urb-state>}"
-      "rewinding cursor to {<u.to>} and resuming"
-    %-  %-  slog
-        :~  leaf+"%gw-btc: reorg halt cleared by operator; {msg}"
-            leaf+"  (halted at {<since.u.reorg-halt>} by a rollback to {<at.u.reorg-halt>})"
-        ==
-    ::  .block-id is the LAST block scanned, so rewinding to first-scan
-    ::  height h means storing h-1 (the %gw-index-from convention).
-    =?  urb-state  ?=(^ to)
-      urb-state(block-id [0x0 (dec (max 1 u.to))])
-    :_  this(reorg-halt ~)
-    ~[[%pass /timer %arvo %b %wait now.bowl]]
-  ::
       %urb-start-indexing
     ?>  =(our src):bowl
     ::  Bootstrap is one-shot. Replacing the public snapshot while private
@@ -822,14 +806,18 @@
     ::  READINESS, exposed.  `?~ best` used to drop writs with no log line
     ::  and nothing exposed `best`, so a ship quietly refusing every
     ::  attestation looked exactly like a ship nobody was talking to
-    ::  (Phase 6.7).  [synced best-height indexing halted].
+    ::  (Phase 6.7).  [synced best-height indexing].
+    ::
+    ::  A fourth field, .reorg-halt, used to ride here: the scanner could
+    ::  be stopped indefinitely by a reorg and an operator needed to see
+    ::  that without reading logs.  It cannot be stopped that way any
+    ::  more, so there is nothing to expose.
     ::
       [%x %ready ~]
     :^  ~  ~  %noun
     !>  :*  synced=synced
             tip=?~(best ~ `num.u.best)
             indexing=indexing
-            reorg-halt=reorg-halt
         ==
     ::  Which identities this ship holds CONFIDENTIALLY (so their points
     ::  are withheld from /x/points and from jael's udiffs), and the tip
@@ -928,16 +916,6 @@
     ?~  best
       :_  this
       ~[[%pass /timer %arvo %b %wait (add ~s30 now.bowl)]]
-    ::  Halted by a reorg (see the /best-block %reorg-rollback arm).  Keep
-    ::  the timer alive and keep saying so -- a stopped scanner that stops
-    ::  mentioning it is indistinguishable from a working one.
-    ?^  reorg-halt
-      %-  %-  slog
-          :~  leaf+"%gw-btc: block scanner HALTED since {<since.u.reorg-halt>} by a reorg to {<at.u.reorg-halt>}"
-              leaf+"  (cursor {<cursor.u.reorg-halt>}; clear with %gw-reorg-resume)"
-          ==
-      :_  this
-      ~[[%pass /timer %arvo %b %wait (add ~m5 now.bowl)]]
     :_  this
     :~  :*  %pass  /blocks  %arvo  %k
             %lard  q.byk.bowl
@@ -1469,8 +1447,8 @@
       ::  owner's next attestation re-verifies from scratch.
       =/  gone-stale=(set ship)  (detect-stale new-urb-state confidential attested)
       ::  the ONE way this agent un-knows an identity (+forget-points).
-      ::  A reorg that orphans a point's evidence takes the same route,
-      ::  once the light client tells us which blocks were orphaned.
+      ::  A reorg that orphans a point's evidence takes this same route,
+      ::  from the %reorg-rollback branch of +on-agent.
       ::
       =/  forgot
         %:  forget-points
@@ -1563,74 +1541,91 @@
     ::
         %fact
       ::  The node's %bitcoin-client gives /best-block facts under its own
-      ::  fact mark %best-block, carrying best-block:update (a %new / a
-      ::  %reorg-rollback with block-height + block-hash).
+      ::  fact mark %best-block, carrying best-block:update (a %new, or a
+      ::  %reorg-rollback naming the fork point and the losing branch).
       ?.  ?=(%best-block p.cage.sign)
         (on-agent:def wire sign)
       =/  upd  !<(best-block:update:lc q.cage.sign)
       ?:  ?=(%new -.upd)
         `this(best ``id:block:bc`[block-hash.upd block-height.upd])
       ?>  ?=(%reorg-rollback -.upd)
-      =/  new-best=id:block:bc  [block-hash.upd block-height.upd]
       ::  A REORG.  Until 2026-08-06 this arm was byte-identical to %new:
       ::  only .best moved, the scan cursor never rewound, and every fact
       ::  indexed out of an orphaned block stayed in .unv-ids forever while
       ::  the winning chain's replacements were skipped -- all silently.
       ::  With block-confirmations = 1 a single-block reorg, several a month
-      ::  on mainnet, is enough to reach it.
+      ::  on mainnet, is enough to reach it.  From then until now the
+      ::  scanner HALTED here instead, because a $point recorded no
+      ::  provenance and %reorg-rollback named no losers, so there was
+      ::  nothing to filter and no way to tell a good fact from a bad one.
       ::
-      ::  Two cases, and only one of them is a problem:
+      ::  Both halves are here now.  A $point carries .seen, the block it
+      ::  was most recently observed in (sur/urb), and gwbtc/node@063720b9
+      ::  made %reorg-rollback carry .stale-branch, the orphaned blocks.
+      ::  So the index is REPAIRED rather than frozen, and the halt is
+      ::  gone -- it existed only for want of this list.
       ::
-      ::    rollback ABOVE our cursor -- the orphaned blocks are ones we had
-      ::    not scanned.  Nothing we hold came from them.  Note it and carry
-      ::    on; the scanner will walk the winning chain normally.
+      ::  .last-common is the FORK POINT, not the new tip: the light
+      ::  client grafts the winning branch on and then gives an ordinary
+      ::  %new for each of its blocks, which arrive immediately after this
+      ::  and carry .best up.  So .best goes to the fork point here, which
+      ::  is the highest block we know is on the main chain right now.
       ::
-      ::    rollback AT OR BELOW our cursor -- our index contains facts
-      ::    derived from blocks that no longer exist, and we cannot tell
-      ::    WHICH.  Rewinding and rescanning would replay the winning chain
-      ::    on top of the corrupted index rather than instead of it, so it
-      ::    is not a fix, it is a second bug.  Stop the scanner and say so.
-      ::    See $reorg-stop and %gw-reorg-resume.
+      =/  fork=id:block:bc
+        [block-hash.last-common.upd block-height.last-common.upd]
+      ::  Rollback ABOVE our cursor: every orphaned block is one the
+      ::  scanner had not reached, so nothing we hold came from them and
+      ::  there is nothing to forget or rewind.
       ::
-      ::  THE REPLACEMENT IS ONE FIELD AWAY, and it is worth naming exactly
-      ::  where it goes.  A $point now records the block it was last
-      ::  observed in, so the index CAN be filtered -- what is missing is
-      ::  the orphaned set.  $best-block's %reorg-rollback carries
-      ::  [block-height block-hash] of the NEW BEST block; when it also
-      ::  carries the list of orphaned hashes, this branch becomes:
-      ::
-      ::    =/  gone  (orphaned-points urb-state (silt orphans.upd))
-      ::    =/  forgot
-      ::      (forget-points urb-state confidential attested inflight gone)
-      ::    ... install the four stores, rewind .block-id to block-height,
-      ::    and emit (forget-cards dap.bowl gone) -- no halt, no snub.
-      ::
-      ::  Everything but that one substitution is already here.
-      ::
-      ?:  (gth block-height.upd num.block-id.urb-state)
+      ?:  (gth block-height.last-common.upd num.block-id.urb-state)
         %-  %-  slog
-            :~  leaf+"%gw-btc: chain reorg to {<block-height.upd>}, above our cursor {<num.block-id.urb-state>}"
-                leaf+"  (nothing we have indexed came from the orphaned blocks; continuing)"
+            :~  leaf+"%gw-btc: chain reorg to {<block-height.last-common.upd>}, above our cursor {<num.block-id.urb-state>}"
+                leaf+"  ({<(lent stale-branch.upd)>} blocks orphaned; nothing we have indexed came from them, continuing)"
             ==
-        `this(best `new-best)
-      ?^  reorg-halt
-        `this(best `new-best)
+        `this(best `fork)
+      ::  Rollback AT OR BELOW our cursor.  Three things, in order:
+      ::
+      ::    SELECT.  +orphaned-points names the points whose most recent
+      ::    evidence was in a block that did not happen.  A point with no
+      ::    provenance (.seen=~) is NOT among them: ~ means "we cannot
+      ::    tell", which is not "orphaned", and an unevaluable condition
+      ::    never produces a negative outcome here.  See +orphaned-points.
+      ::
+      ::    FORGET.  The same +forget-points / +forget-cards the %stale
+      ::    path uses, so the two roads out of "we no longer know this
+      ::    identity" are one road: the peer drops to a fresh %alien and
+      ::    is asked to re-attest over %sybl, keeping our lane.  NEVER a
+      ::    snub -- a reorg is not fraud, and a snub is permanent on every
+      ::    transport (b0a8e962ff), so it would block the very packet that
+      ::    would correct us.
+      ::
+      ::    REWIND.  .block-id is the LAST block scanned, so setting it to
+      ::    .last-common makes the scanner resume at the first block of
+      ::    the winning branch.  The range is then walked normally, on the
+      ::    timer chain that is already running -- no card is emitted to
+      ::    hurry it.  A /timer re-arms itself exactly once per tick
+      ::    (+scan-again), so injecting a second %wait here would fork the
+      ::    chain in two and leave the scanner running at double rate
+      ::    forever.  The rewind lands on the next tick, within ~s30.
+      ::
+      =/  orphans=(set hax:block:bc)
+        %-  silt
+        %+  turn  stale-branch.upd
+        |=([* haz=@ux] `hax:block:bc`haz)
+      =/  gone=(set ship)  (orphaned-points:uc urb-state orphans)
+      =/  forgot
+        (forget-points urb-state confidential attested inflight gone)
+      =.  urb-state     index.forgot
+      =.  confidential  confidential.forgot
+      =.  attested      attested.forgot
+      =.  inflight      inflight.forgot
+      =.  block-id.urb-state  fork
       %-  %-  slog
-          :~  leaf+"%gw-btc: CHAIN REORG TO {<block-height.upd>} -- BLOCK SCANNER HALTED"
-              leaf+"  our scan cursor was {<num.block-id.urb-state>}, so this index may contain facts"
-              leaf+"  derived from orphaned blocks, and we cannot tell which: the light client"
-              leaf+"  reports the block rolled back TO, not the blocks orphaned, so there is"
-              leaf+"  nothing to filter our points against.  The scanner will not advance."
-              leaf+"  Confidential verification is UNAFFECTED (it reads the light client directly)."
-              leaf+"  Operator: `:gw-btc &gw-reorg-resume ~` resumes from the current cursor and"
-              leaf+"  accepts the risk; `:gw-btc &gw-reorg-resume [~ height]` rewinds the cursor"
-              leaf+"  first.  A correct repair is to rebootstrap the public index."
+          :~  leaf+"%gw-btc: chain reorg to {<block-height.last-common.upd>}, at or below our cursor"
+              leaf+"  ({<(lent stale-branch.upd)>} blocks orphaned; forgot {<~(wyt in gone)>} points, rescanning from {<+(block-height.last-common.upd)>})"
           ==
-      :-  ~
-      %=  this
-        best        `new-best
-        reorg-halt  `[block-height.upd num.block-id.urb-state now.bowl]
-      ==
+      :_  this(best `fork)
+      (forget-cards dap.bowl gone)
     ==
   ==
 ++  on-leave  on-leave:def
@@ -2169,8 +2164,9 @@
 ::
 ::  Which points a reorg took the evidence for is +orphaned-points:uc, in
 ::  lib/urb-core: it is a pure query over the index and belongs beside the
-::  rest of the index arithmetic.  Nothing calls it yet -- see there, and
-::  see the %reorg-rollback branch of +on-agent, for what is missing.
+::  rest of the index arithmetic.  The %reorg-rollback branch of +on-agent
+::  is its one caller, and it hands the result straight to the two arms
+::  above -- which is the whole of the reorg repair.
 ::
 ::  ----------------------------------------------------------------
 ::  %anew: extending OUR OWN custody log, in band
@@ -2651,8 +2647,9 @@
 ::    Every point gains .seen=~.  That is not a placeholder for a hash we
 ::    could have worked out: nothing in the old state records which block
 ::    a point came from, which is exactly why this field was added.  ~ is
-::    the truthful value, and +orphaned-points is where it is decided what
-::    a reorg does about one.
+::    the truthful value, and it is what makes a lifted point unfilterable:
+::    a reorg LEAVES IT ALONE, because "we cannot tell" is not evidence of
+::    anything (+orphaned-points).
 ::
 ++  lift-urb-state
   |=  old=urb-state-13

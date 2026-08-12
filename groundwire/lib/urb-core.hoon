@@ -411,31 +411,35 @@
 ::  +orphaned-points: which points did a reorg take the evidence for?
 ::
 ::    .orphans is the set of block hashes the light client says are no
-::    longer on the main chain.  A point whose .seen names one of them was
+::    longer on the main chain -- the .stale-branch of a %reorg-rollback
+::    on /best-block.  A point whose .seen names one of them was
 ::    last observed in a block that did not happen, so what we hold about
 ::    it is not knowledge any more: %gw-btc forgets it (+forget-points)
 ::    and asks the peer to re-attest (+forget-cards).  Never a snub -- a
 ::    reorg is not fraud, and a snub is permanent.
 ::
-::    A point with NO provenance (.seen=~) is selected too.  It predates
-::    the field (+lift-urb-state in app/gw-btc.hoon), so it cannot be
-::    filtered, and the team decision of 2026-08-10 is that forgetting is
-::    the safe default: conservative, and the peer re-attests.  The rule
-::    is self-limiting rather than recurring -- a re-observed point
-::    acquires a hash, so the hashless population only ever shrinks and a
-::    given point can be forgotten this way at most once.
+::    A point with NO provenance (.seen=~) is LEFT ALONE.  It predates the
+::    field (+lift-urb-state in app/gw-btc.hoon), so it cannot be filtered
+::    -- and ~ says "we cannot determine whether this was orphaned", which
+::    is not the same claim as "this was orphaned".  Everywhere else in
+::    this codebase an unevaluable condition is forbidden from producing a
+::    negative outcome (a check that could not run never draws a %fail,
+::    an unscannable tip never demotes a peer), and forgetting is a
+::    negative outcome: it costs the peer its point.  So only what is
+::    PROVABLY orphaned is selected.
 ::
-::    NOTHING CALLS THIS YET, and one thing about it is unresolved.
-::    $best-block's %reorg-rollback carries the block the chain rolled
-::    back TO (sur/light-client), which is the new best block and not the
-::    orphaned set, so there is nothing to pass as .orphans and the loud
-::    halt of $reorg-stop remains the honest answer.  When the list
-::    arrives, note that .unv-ids holds PUBLIC points as well as
-::    confidential ones, and "the peer re-attests" is only true of the
-::    confidential ones: a forgotten public point is re-derived only by
-::    rescanning the range it was indexed from, which rewinding to the
-::    rollback height does not necessarily cover.  That is a question for
-::    the team, not for this arm.
+::    The cost of that choice is bounded and already paid.  Worst case we
+::    keep a point derived from a block that no longer exists -- exactly
+::    the status quo under the old halt, which kept every such point by
+::    freezing the scanner.  The cost of the other choice was not
+::    bounded: .unv-ids holds PUBLIC points as well as confidential ones,
+::    and "the peer re-attests" is only true of the confidential ones.  A
+::    forgotten public point comes back only by rescanning the range it
+::    was indexed from, which rewinding to the fork point does not
+::    necessarily cover -- so forgetting a hashless public point is a
+::    silent, permanent index loss, and on a reorg that touched nothing
+::    of ours at that.  The hashless population shrinks on its own as
+::    points are re-observed.
 ::
 ++  orphaned-points
   |=  [st=state:urb orphans=(set hax:block:bitcoin)]
@@ -444,7 +448,7 @@
   %+  murn  ~(tap by unv-ids.st)
   |=  [who=@p pt=point:urb]
   ^-  (unit @p)
-  ?~  seen.pt  `who
+  ?~  seen.pt  ~
   ?.((~(has in orphans) u.seen.pt) ~ `who)
 ::
 ::  Take a list of outputs and a sat index across
