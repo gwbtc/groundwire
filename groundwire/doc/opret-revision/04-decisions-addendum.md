@@ -976,7 +976,7 @@ correct us.
 through the light client, which does its own reorg handling and re-checks tip
 liveness at apply time (§8); its answers never came from this index.
 
-### 11b. Hashless points are left alone (resolves the §11b caveat)
+### 11b. Hashless points are left alone (reverses the 2026-08-10 default)
 
 A point with `seen=~` has no provenance: it predates the field
 (`+lift-urb-state`) and has not been observed since. It is **not** selected by
