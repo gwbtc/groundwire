@@ -183,29 +183,76 @@ that an ad-hoc diagnostic scry killed the `%anew` job it was measuring — but
 here it is in the committed operator tool, on the default path, and it is not a
 diagnostic, it is the success check. The scry needs a `mule`/`mole` guard.
 
-**2. Two desk test files do not build, and they crash the whole test thread, so
-`gwtest.py` cannot produce a tally at all.** Against the freeze pill:
+**2. `%gw-btc` crash-loops on every `/best-block` fact from the `%bitcoin-client`
+baked into this pill, and starves the ship.** This is the most serious finding
+here and it was found only on the corrected re-run (see the retraction below).
+
+With the real desk committed (`gall: installing %gw-btc`), the agent goes into
+an unbounded loop:
 
 ```
-clay: no files match /sur/urb-watcher/hoon
-FAILED  /tests/app/urb-watcher/hoon (build)
-…
--need  ?([%escape parent=@p sig=u(@)] …)
--have  [%escape @p]
-nest-fail
-FAILED  /tests/lib/urb-core/hoon (build)
-thread failed: %crash
+! "unexpected subscription update to %gw-btc on wire /best-block"
+! "with mark %bitcoin-client-best-block"
+! take %fact failed, closing subscription
+! /app/gw-btc/hoon:<[1.547 9].[1.547 33]>
+! /sys/vane/gall/hoon:<[1.942 25].[1.942 65]>
+error in %gw-btc
+%fact
 ```
 
-`tests/app/urb-watcher.hoon` imports `/sur/urb-watcher`, which does not exist in
-the desk (`sur/` has no `urb-watcher.hoon`). `tests/lib/urb-core.hoon` fails a
-nest against `$effect:urb`, whose `%escape` gained a `sig=(unit @)` third field
-(`sur/urb.hoon:57`) that the constructed value does not have. `urb-core.hoon`
-was last touched by `8055221` — the `$point.seen` / `+anchor-ok` lag commit — so
-this is plausibly fallout from that change rather than ancient rot. Either way
-it is exactly the failure `gwtest.py` was written to stop hiding: **a whole file
-of assertions vanishes and the surviving lines still all say OK**. The desk test
-suite is currently untallyable.
+`app/gw-btc.hoon:1528` gates the fact on `?. ?=(%best-block p.cage.sign)`, and
+`sur/light-client.hoon:12` documents the mark as `%best-block`. The fact that
+actually arrives carries **`%bitcoin-client-best-block`** — `%node`'s own mark,
+whose name follows its `mar/bitcoin-client/best-block.hoon` path. The test
+fails, the fact falls through to `on-agent:def`, `default-agent` crashes, the
+subscription closes, `:1539` re-issues the watch, and it happens again.
+
+Measured: **136,539 crash iterations and a 191 MB transcript in ~15 minutes**,
+on an idle fake ship. The test thread never got to run — `-test /=groundwire=/tests`
+produced **zero** `built` lines and **zero** OK/FAILED/CRASHED results, because
+the ship is saturated. On a droplet this also fills the disk.
+
+This is exactly the runtime coupling `urbit@c3846ef04e` documented — "the two
+desks compile independently … what fails is the first reorg on a live ship" —
+except it is worse than documented: it fires on the **ordinary** best-block
+path, on every tip update, not just on a reorg. It is invisible to CI for the
+reason that commit gives: nothing in the pill build fails when the two desks
+disagree.
+
+**Consequence: no result in this campaign is backed by our agent actually
+running.** The desk and the pinned `%node` cannot co-run as shipped.
+
+**RETRACTED — the earlier claim that `tests/lib/urb-core.hoon` and
+`tests/app/urb-watcher.hoon` do not build was wrong, and was operator error.**
+The first run invoked `gwtest.py commit … groundwire groundwire`, passing the
+**source** tree where the tool's own help says `src` should be `dist-groundwire`
+(`ops/gwtest.py:352`). The source tree carries `doc/**.md` and a `mar/` missing
+`mime`/`txt`/`hoon`/`noun`/`bill`/`jam`/`kelvin`/`ship`; `make groundwire`
+strips `doc/` (`Makefile:136`) and adds those marks. So clay rejected the commit
+with `[%no-cast-between %mime %md]`, the desk stayed at the revision **the pill
+had baked**, and the suite that ran was **`gwbtc/groundwire@main`'s**.
+
+Both failures reproduce on `main` and neither exists on this branch:
+`origin/main:groundwire/tests/app/urb-watcher.hoon:1` imports `uw=urb-watcher`
+while main's `sur/` has no `urb-watcher.hoon`; and
+`origin/main:groundwire/tests/lib/urb-core.hoon:106-109` is `++ mk-skim-escape`
+→ `[%escape \`@p\`fig:ex:(cut sed)]`, the two-field value the nest-fail named,
+at exactly the lines the trace printed. Our `tests/lib/urb-core.hoon` contains
+no `escape` token at all. **These test files are fine. Do not edit them.**
+
+The tell was on the ship the whole time and was missed: its `desk.bill` scried
+as `'reg-tester' 'urb-watcher' 'urb-snapshot'` — main's — not this branch's
+`[%gw-btc %urb-snapshot]`, and `/tests/app/` contained only `urb-watcher`.
+
+**2b. `gwtest.py`'s commit path reports success while clay rejected the
+commit.** It pokes `|commit`, sleeps, unmounts, and prints
+`committed %groundwire` without checking that the desk revision advanced. Because
+the pill **pre-bakes a `%groundwire` desk from `GROUNDWIRE_BRANCH: main`**
+(`groundwire-build.yml:42`, `:233`, `:479`), a rejected commit does not leave an
+empty or missing desk — it silently leaves **main's code running under the
+expected desk name**, and every subsequent test result describes main. This is
+the same hazard already fixed in `desk-commit.sh`; the fix is the same, verify
+the revision advanced (`%cw`) rather than trusting the poke.
 
 **3. `gwmint.py cmd_build`'s gate fails every published spawn on a hardcoded
 sat cap.** The gate asserts `fee <= 500 sats` immediately after asserting
@@ -307,7 +354,8 @@ and the light clients never synced.
 | 0 | landmine 3 — k1 sidecar unit | **PASS** — disabled after 85,771 restarts |
 | 0 | light-client sync | **FAIL** — peer seeding killed by Finding 1 |
 | 0 | desk install on the three ships | **FAIL** — Finding 1 |
-| — | desk test suite tally | **BLOCKED** — Finding 2; no tally is producible |
+| — | desk test suite tally | **NOT EXERCISED** — first attempt tested `main`'s desk (operator error); corrected re-run produced **zero** results because `%gw-btc` saturates the ship (Finding 2). Our suite has still never run here |
+| — | `%gw-btc` co-runs with the pill's `%node` | **FAIL** — crash-loop on `/best-block`, mark mismatch (Finding 2) |
 | 1.1 | mine three suite-C comets under the kelvin-9 hiding `dat` | **PASS** — 3/3, ring `dat` == computed `dat`, star `~daplyd` |
 | 1.2 | confidential spawns | **NOT RUN** — blocked on the split confirming |
 | 1.3 | public spawn with OP_RETURN publication | **NOT RUN** — built and decoded, never broadcast (Finding 3 blocked the gate) |
@@ -361,6 +409,12 @@ remains previously deployed.
 
 - k1/k2/k3 stopped cleanly; piers and `/opt/gw/feed-k{1,2,3}.txt` preserved and
   checksum-verified. C1/C2/C3 untouched.
+- **No ship in this campaign ever ran our `%gw-btc`.** The droplets' installs
+  died to the `gwctl.py` scry crash (Finding 1), so f1/f2/f3 were running the
+  pill's main-derived `%groundwire`; the local fake ship that *did* get our desk
+  committed then crash-looped (Finding 2). Every "NOT RUN" in the matrix above
+  is therefore backed by nothing of ours having executed, and the one local run
+  that did execute our agent failed immediately.
 - f1/f2/f3 booted, correct `@p`, desks left **mounted** with a crashed spider —
   they should be stopped with `ops/stopship.sh` before reuse, and the mounted
   desk is the documented clay hazard.
@@ -372,10 +426,15 @@ remains previously deployed.
 
 ## What to fix, in order
 
-1. **Guard the scry in `gwctl.py desks`** (Finding 1). Nothing else can be
+1. **Reconcile the best-block mark between `%gw-btc` and the pinned `%node`**
+   (Finding 2). This is a release blocker: as shipped, the agent cannot consume
+   the light client's tip updates and destroys the ship trying. Everything else
+   is downstream of it.
+2. **Guard the scry in `gwctl.py desks`** (Finding 1). Nothing else can be
    tested until an operator can install a desk without killing the ship.
-2. **Fix or quarantine `tests/lib/urb-core.hoon` and
-   `tests/app/urb-watcher.hoon`** (Finding 2) so `gwtest.py` can tally again.
+3. **Make `gwtest.py commit` verify the revision advanced** (Finding 2b), so a
+   rejected commit cannot silently leave main's desk under test. Do **not** edit
+   `tests/lib/urb-core.hoon` or `tests/app/urb-watcher.hoon` — they are fine.
 3. **Replace the `fee <= 500` cap with a rate-and-vsize bound** (Finding 3).
 4. **Wire change through `cmd_build`** (Finding 4), or document the split step.
 5. **Parameterise `bootcomet.sh`** (Finding 5) and fold `stubrpc.py`'s height
