@@ -82,9 +82,16 @@
     ::  Witnesses are no longer parsed: public identity is published in
     ::  outputs (OP_RETURN), and confidential identity never on-chain.
     ::
-    :: XX the coinbase fee is understated for a spawn's untracked
-    :: funding inputs (recorded as value 0); this only affects the
-    :: land-in-fee edge of ++index-to-sont-with-coinbase.
+    ::  The coinbase fee is understated for a spawn's untracked funding
+    ::  inputs, which are recorded as value 0.  That is survivable ONLY
+    ::  because of the input-0 model: every builder in the tree puts the
+    ::  identity sat at input 0 (assert_identity_input_zero refuses
+    ::  otherwise), so nothing tracked ever sits behind an untracked
+    ::  input and .running-value is never consulted for one.  The old
+    ::  note here said it "only affects the land-in-fee edge", which is
+    ::  true because of that invariant and not on its own -- and reading
+    ::  it as unconditional is what made an earlier analysis of the
+    ::  same-block chaining bug below blame the wrong input.
     |=  =block:bitcoin
     =|  reveals=(map [txid:ord vout:ord] [sots=(list raw-sotx:urb) value=(unit @ud)])
     ^+  [reveals block]
@@ -118,7 +125,30 @@
       |-  ^+  reveals
       ?~  ins  reveals
       =/  vout  (get-vout:si:ol sont-map [txid pos]:i.ins)
-      =/  v=@ud  ?~(vout 0 value.u.vout)
+      ::  .sont-map is the index as it stood at the START of this block --
+      ::  +handle-block, its only writer, runs after this whole pipeline --
+      ::  so a satpoint created EARLIER IN THIS SAME BLOCK is not in it.
+      ::  Reading 0 there is not a harmless understatement: +handle-tx sums
+      ::  these into .running-value, so a tracked sat at a LATER input index
+      ::  lands at the wrong offset, and two tracked comets in one
+      ::  transaction land on the SAME satpoint -- .sont-map keeps one and
+      ::  the other's association is destroyed while .unv-ids still points
+      ::  at it.  Verified by running this arm against a same-block chain
+      ::  and a split-block control.
+      ::
+      ::  The parent is in .saved-txs already: that is exactly what
+      ::  +spends-saved matched on to decide this transaction was worth
+      ::  keeping.  Fall back to it.
+      =/  v=@ud
+        ?^  vout  value.u.vout
+        =/  par
+          |-  ^-  (unit tx:bitcoin)
+          ?~  saved-txs  ~
+          ?:  =(id.i.saved-txs txid.i.ins)  `i.saved-txs
+          $(saved-txs t.saved-txs)
+        ?~  par  0
+        ?.  (lth pos.i.ins (lent os.u.par))  0
+        value:(snag pos.i.ins os.u.par)
       $(ins t.ins, reveals (~(put by reveals) [txid pos]:i.ins [~ `v]))
     $(txs t.txs, saved-txs [this saved-txs])
   ::
