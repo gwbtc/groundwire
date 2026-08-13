@@ -448,9 +448,21 @@ def cmd_build(label, publish=False, fief=None, sponsor=None, fee_rate=1,
         and len(dec["witness"][0][0]) // 2 in (64, 65),
         f"{len(dec['witness'][0][0]) // 2} bytes")
 
-    n_expected = 2 if publish else 1
+    #  cmd_build always wires change now, so every spawn carries one more
+    #  output than this used to expect: 2 confidential, 3 published. This
+    #  assertion was left at its pre-change value when change was wired in,
+    #  and it failed EVERY mint -- after all the load-bearing checks had
+    #  passed -- with cmd_broadcast refusing on gate_passed. The gate meant
+    #  to stop a bad transaction stopped every good one instead.
+    n_change = 1
+    n_expected = (2 if publish else 1) + n_change
     chk(f"exactly {n_expected} output(s)", len(dec["vout"]) == n_expected,
         f"got {len(dec['vout'])}")
+    #  ... and check the thing the count was standing in for. A bare count
+    #  says nothing about WHERE the change went; this says it comes home.
+    chk("last output pays the funding address (change)",
+        dec["vout"][-1]["scriptPubKey"] == w["spk"].hex(),
+        dec["vout"][-1]["scriptPubKey"])
 
     # independently recompute Q
     c = C.state_commit(snapshot)
