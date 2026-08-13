@@ -248,6 +248,64 @@
     (expect !>(?=(^ -.fbr)))
     (expect-eq !>(2) !>((lent txs.+.fbr)))
   ==
+::  SAME-BLOCK CHAINING.  +find-block-reveals reads each input's prevout
+::  value out of .sont-map, which is the index as it stood at the START
+::  of the block -- its only writer, +handle-block, runs after the whole
+::  pipeline.  So a satpoint created EARLIER IN THIS SAME BLOCK is not
+::  there, and reading it as 0 is not an understated fee: +handle-tx sums
+::  these into .running-value, so a tracked sat at a LATER input index
+::  lands at the wrong offset.
+::
+::  With two tracked comets in one transaction that is a COLLISION --
+::  both resolve to the same satpoint, .sont-map keeps one, and the
+::  other's association is destroyed while .unv-ids still points at it.
+::
+::  Nothing in the tree can build this: every builder puts the identity
+::  sat at input 0 (assert_identity_input_zero refuses otherwise), and
+::  putting a tracked sat behind another input means spending it, so no
+::  third party can induce it.  That is exactly why no arm caught it --
+::  the eleven here passed before the fix and after it.
+::
+++  test-same-block-chain-does-not-collide-two-comets
+  =/  her=@p    ~nec
+  =/  a-id      0xaa.0001
+  =/  b-id      0xbb.0002
+  ::  two tracked comets, each alone on its own sat
+  =/  seeded=state:urb
+    :*  [0xb.10c0 700]
+        %:  put-com:si:ol
+          (put-com:si:ol *sont-map:ord 0xaaaa 0 0 9.400 who)
+          0xbbbb  0  0  5.000  her
+        ==
+        *insc-ids:ord
+        *unv-ids:urb
+    ==
+  ::  A moves who's sat.  B, IN THE SAME BLOCK, spends A's output at
+  ::  input 0 and her's sat at input 1 -- so her's offset depends
+  ::  entirely on A's output value, which is the value that was read
+  ::  as 0.
+  =/  a-tx
+    %:  mk-tx  a-id
+      ~[(mk-inputw 0xaaaa 0 keypath-wit)]
+      ~[[[25 0x76.a914.88ac] 9.400]]
+    ==
+  =/  b-tx
+    %:  mk-tx  b-id
+      ~[(mk-inputw a-id 0 keypath-wit) (mk-inputw 0xbbbb 0 keypath-wit)]
+      ~[[[25 0x76.a914.88ac] 14.400]]
+    ==
+  =/  chained  ^-(block:bitcoin [0xb.10c1 0 701 ~[coinbase a-tx b-tx]])
+  =/  [* st=state:urb]  (scan seeded chained)
+  ;:  weld
+    ::  who rides input 0 through both transactions and stays at offset 0
+    (expect-eq !>(`who) !>((get-com:si:ol sont-map.st b-id 0 0)))
+    ::  her sits BEHIND it, at A's output value -- not on top of it.
+    ::  Reading A's output as 0 puts her at offset 0 too, and one of the
+    ::  two comets stops existing.
+    (expect-eq !>(`her) !>((get-com:si:ol sont-map.st b-id 0 9.400)))
+    ::  and they really are two distinct sats, not one overwritten twice
+    (expect !>(!=(who her)))
+  ==
 ::  ---- what a publication now produces -------------------------------
 ::
 ::  ONE %claim, and NOTHING in the index.  The scanner used to write a
