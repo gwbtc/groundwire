@@ -145,7 +145,7 @@ reachable ship. So recovery is possible; the question is how peers learn.
 
 | # | Test | Chain? | Property under test |
 |---|---|---|---|
-| 5b.1 | **Pairwise rescue.** C2 *initiates* to C1 and hands over its attestation; C1 verifies and gains a route to C2 from that alone, then reaches C2 unprompted. | no | Recovery that **preserves confidentiality**, but scales terribly — C2 must personally introduce itself to every peer that will ever want to reach it. |
+| 5b.1 | ~~**Pairwise rescue.** C2 *initiates* to C1 and hands over its attestation; C1 verifies and gains a route to C2 from that alone, then reaches C2 unprompted.~~ **DOES NOT WORK — measured 2026-08-13, see below.** | no | Was: recovery preserving confidentiality, scaling terribly. In fact there is no such recovery. |
 | 5b.2 | **Publication rescue.** One C2 state update that BOTH adds a `fief` (or `sponsor`) AND carries an OP_RETURN publication. Scanners on C1/C3 learn C2's route from the chain alone, with no contact; C1 then cold-initiates to C2. | yes, ~200–400 sats | The confidential→public transition (this subsumes **5.7**) as the general-purpose escape hatch. Costs confidentiality permanently. |
 | 5b.3 | **Rerun 5.2 / 5.5 properly** once C2 is routable: C1 rekeys live, C2 **receives** the updated attestation, `%gw-btc` fetches the new custody entry from chain and re-verifies at the new life, and the two keep talking. Then move C1's sat and drive the full `%stale` → re-attest → promote → drain loop through `%anew`. | reuses 5.1/5.3 | The loop Phase 5 only proved **half** of: C1 emitted three attestation blobs on rekey, but C2 logged `got attestation` **0** times all run, so no peer has ever verified a post-rekey attestation. |
 
@@ -154,10 +154,34 @@ C2's *current* snapshot, which has neither `fief` nor `sponsor` — broadcasting
 it would announce C2 to the world and leave it exactly as unreachable. Rebuild
 it as 5b.2 above.
 
-Resulting property, worth stating in the docs: **an unreachable confidential
-comet can always rescue itself, but only by sacrificing either scalability
-(pairwise introductions) or confidentiality (publication).** That is a design
-consequence, not a defect.
+**5b.1 DOES NOT WORK, and the claim that stood here was wrong.** Measured on
+mainnet, 2026-08-13, with dual packet captures agreeing to 400 µs: f1 (no
+fief, no sponsor) sent f2 four packets — an attestation plus two message
+fragments, retried once — and f2 answered with **zero packets across a full
+300 s window**. Both ships held each other at `lyfe=[~ 1] dome=[~ %gw-btc]`
+and neither was snubbed, so this was neither a PKI gap nor a snub.
+
+The mechanism, traced to the line. An absent on-chain sponsor **projects to
+self**, so jael's `sein(f1)` is f1, and `ames.hoon:12630` fires on
+`=(ship (sein ship))` — f2 installs a self-referential `[%& f1]` lane
+("reach f1 by asking f1"). It is marked `direct=%.y`, so `+get-forward-lanes`
+returns it on the main branch and never falls through to `+zar`; no sponsor
+relay is attempted, and vere drops it. Zero bytes, matching both captures.
+
+Worse, **the hearer cannot acquire the lane either.** The heard-lane update
+at `ames.hoon:5347` is gated on `!=(her.channel (sein … her.channel))`,
+which for f1 is `!=(f1 f1)` — false. So f2 may receive unlimited packets
+from f1 and will never learn a route from any of them.
+
+The corrected property: **an unreachable comet cannot rescue itself.** A
+comet that committed neither a `fief` nor a `sponsor` has told the network
+nothing about where it is, and no amount of it speaking first fixes that —
+its peers have nowhere to reply to. Publication with a `fief` (5b.2) is the
+only escape hatch, and today **no tool can add a fief to an existing comet**
+(`--fief` exists at spawn only; every state-update path hardcodes
+carry-forward), so in practice that hatch is not reachable either.
+
+Commit the routing you need **at spawn**.
 
 ## Phase 6 — resilience and diagnostics
 

@@ -246,6 +246,27 @@ On-chain committed snapshots carry sponsorship and routing state:
   > **⚠️ CONTRADICTED ON MAINNET, 2026-08-05 — neither path worked.**
   > See `doc/live-tests/PHASE5B-RESULTS.md` findings 4 and 10, and §2b below
   > for the adopted resolution.
+  >
+  > **2026-08-13: the pairwise half is not merely unimplemented, it is
+  > impossible as described, and we now have the mechanism.** Dual packet
+  > captures agreeing to 400 µs: a comet with no fief and no sponsor sent a
+  > peer four packets and the peer answered with zero across 300 s, while
+  > holding it at `lyfe=[~ 1] dome=[~ %gw-btc]` and not snubbing it.
+  >
+  > An absent on-chain sponsor **projects to self**, so `sein(C)` is C, and
+  > `ames.hoon:12630` gives the peer a self-referential `[%& C]` lane —
+  > "reach C by asking C". It is `direct=%.y`, so `+get-forward-lanes`
+  > returns it and never falls through to `+zar`; vere drops it.
+  >
+  > And the peer can never learn better: the heard-lane update at
+  > `ames.hoon:5347` is gated on `!=(her (sein her))`, which for such a
+  > comet is false. **Receiving packets from it teaches the hearer
+  > nothing.** So "the comet initiates and the peer gains a route from that
+  > alone" cannot happen — there is no code path by which it could.
+  >
+  > The honest statement is the inverse of the one above: **an unreachable
+  > comet cannot rescue itself.** Routing must be committed at spawn, and
+  > `--fief` exists only there.
   > *Publication*: a correctly formed, fully gated publication (tx
   > `0cca2561…`, block 961 217) was indexed by nobody. **Partly fixed**
   > (§2b): a scanner that already tracks the comet now accepts it and
