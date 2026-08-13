@@ -24,6 +24,23 @@ P="${1:?pier name}"
 PORT="${2:?ames port}"
 PIER="/opt/gw/piers/$P"
 
+# THE BINARY MUST BE THE ONE THE PIER WAS BOOTED WITH, and it was hardcoded.
+#
+# On N1, piers/f1/.run was gw-vere-freeze (md5 81277d80) while this script
+# relaunched /opt/gw/bin/gw-vere (6c162e7d, a week older).  A VERE-DOWN
+# restart would have swapped the runtime underneath a running campaign --
+# silently, and the results after it would have been measuring a different
+# system.  The reverse pairing is worse and was observed: a pier first
+# booted by the OLDER binary and picked up by the NEWER one reads its
+# snapshot as stale, wants a replay, and dies on it -- "stale snapshot,
+# downgrade runtime to replay" then "serf unexpectedly shut down", once a
+# minute forever.
+#
+# So it is an override with a sane default, and the caller says which.
+# Whatever boots the pier and whatever supervises it must agree.
+VERE="${GWSUP_VERE:-/opt/gw/bin/gw-vere}"
+[ -x "$VERE" ] || { echo "gwsup: $VERE is not executable" >&2; exit 1; }
+
 # SINGLETON.  Two supervisors on one pier both see VERE-DOWN, both relaunch,
 # and the loser's ship dies on "mesa: bind: address already in use" -- which
 # reads exactly like a crash loop.  Observed live: every one of the three
@@ -144,7 +161,7 @@ ensure_vere() {
     log "INTERVENTION #$((N_WEDGE+N_VERE+N_SIDE)) VERE-DOWN (restart #$N_VERE) -> relaunching"
     free_port
     rm -f "$PIER/.vere.lock"
-    setsid nohup /opt/gw/bin/gw-vere -t --loom $LOOM -p "$PORT" "$PIER" \
+    setsid nohup "$VERE" -t --loom $LOOM -p "$PORT" "$PIER" \
       >> "$VLOG" 2>&1 </dev/null &
     sleep 60
     return 0
@@ -161,10 +178,16 @@ recover() {
   # node@063720b9 has no bulk kill-peer-connections poke -- it accepts
   # only %bitcoin-client-disconnect-peer, one address at a time -- so
   # killpeers.py scries /x/peers and loops.  Same effect, one strand.
+  # Do NOT guess the cause here.  This used to log "conn.sock
+  # unresponsive", which was a false diagnosis and said so on the
+  # recovery path, where a wrong cause is worst: killpeers.py had a type
+  # error in its poke payload, the socket was fine, and the operator was
+  # sent looking at the wrong layer.  Report the failure, name the log
+  # that has the real reason, and say nothing about why.
   if timeout 150 python3 /opt/gw/killpeers.py "$PIER" >> "$SLOG" 2>&1; then
     log "  disconnect-peers ok"
   else
-    log "  disconnect-peers FAILED (conn.sock unresponsive)"
+    log "  disconnect-peers FAILED -- see $SLOG for the thread's own error"
   fi
   sleep 5
   [ "$(pool_left)" -lt 20 ] && pool_fill
