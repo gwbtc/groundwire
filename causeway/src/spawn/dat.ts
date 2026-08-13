@@ -20,9 +20,20 @@
 // `dat` is hashed into the signing key, so the comet's @p commits to the
 // domain tag, the Kelvin, and the hidden spawn commitment forever.
 //
-// Because `blind` derives from the ship's seed alone, the opening is
-// recoverable without storing anything extra. This makes `dat` depend on the
+// `blind` derives from the ship's seed alone, which makes `dat` depend on the
 // seed, so the miner recomputes it per candidate seed (see mine-c.ts).
+//
+// THAT DOES NOT MAKE THE OPENING RECOVERABLE IN THIS CLIENT, and this comment
+// used to claim it did. The seed the blind derives from is 64 bytes of
+// crypto.getRandomValues, and it is DISCARDED after mining: the ring carries
+// sha512(seed), not the seed, and persist.ts deliberately stores no feed. So
+// the blind survives only in the artifacts the user keeps — the downloaded
+// feed file, and the xtr baked into the finalized feed — never in anything
+// re-derivable from a wallet.
+//
+// The desktop is different: derive_blind_seed hangs the blind off a BIP-39
+// phrase and the funding outpoint, so it genuinely is recoverable there.
+// Porting that here is the real fix; see the task board.
 //
 // Golden vectors: groundwire/vectors/gw-kelvin-9.json + tests/kelvin9.spec.ts,
 // pinned to the authoritative Hoon test tests/lib/gw-btc-pass.hoon.

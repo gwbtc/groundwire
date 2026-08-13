@@ -318,11 +318,24 @@ export function renderSpawn(root: HTMLElement): void {
     });
 
     const feedUw = atomToUw(bytesToAtomLE(mined.feed));
-    downloadBytes(new TextEncoder().encode(feedUw), `${cometPatp}.feed.txt`, "text/plain");
+    // The blind rides along. This file is the one that auto-downloads and is
+    // therefore the one people keep — but on its own it is the mine-time
+    // feed, with no xtr, so it could NOT reopen the comet's dat commitment.
+    // The only artifact that could was the finalized feed, which the user
+    // has to click for at the end of a flow they may never reach.
+    const blindLine = `\n\nblind: 0x${assembled.blindHex}\n`
+      + "# The blind opens this comet's dat commitment. Without it a\n"
+      + "# CONFIDENTIAL comet cannot be published or proved, ever. Keep this\n"
+      + "# file, or the finalized .feed.xtr.txt you are offered at the end.\n";
+    downloadBytes(
+      new TextEncoder().encode(feedUw + blindLine),
+      `${cometPatp}.feed.txt`, "text/plain",
+    );
     mineCard.appendChild(banner("warn",
       "Downloaded your comet key (feed) as a .txt — KEEP IT SAFE. It is your "
-      + "comet's private key and is not saved anywhere in this browser. You "
-      + "need it to boot, and to resume this spawn if the page reloads."));
+      + "comet's private key AND your blind, and is not saved anywhere in "
+      + "this browser. You need it to boot, to resume this spawn if the page "
+      + "reloads, and to ever prove this comet is yours."));
 
     renderSpawnTxCard(spawnCard, assembled.spawnPsbt, assembled.spawnTxidHex, isPublic);
 
@@ -436,8 +449,13 @@ export function renderSpawn(root: HTMLElement): void {
           renderFinalizeNeedsFeed(out, opts.cometPatp, xtr);
         } else {
           const feedBytes = bakeXtrIntoFeedAtom(baseFeed, xtr);
-          renderFinalizedBoot(out, opts.cometPatp, feedBytes);
-          clearPendingSpawn();
+          // Clear only once the user has actually TAKEN the finalized feed.
+          // This used to fire here, the instant the button was rendered:
+          // the button kept working (feedUw is captured in its closure), but
+          // anyone who reloaded or navigated away in that moment lost the
+          // only artifact carrying their blind. The mine-time feed that
+          // auto-downloads does not have the xtr in it.
+          renderFinalizedBoot(out, opts.cometPatp, feedBytes, clearPendingSpawn);
         }
       })
       .catch((err) => {
@@ -486,8 +504,12 @@ export function renderSpawn(root: HTMLElement): void {
     });
     discard.addEventListener("click", () => {
       if (!confirm(
-        "Discard the pending spawn? If you've already broadcast the spawn tx, "
-        + "those sats become unreachable.",
+        "Discard the pending spawn?\n\n"
+        + "This deletes the BLIND, which is the only thing that can reopen "
+        + "this comet's dat commitment — a confidential comet whose blind is "
+        + "gone can never be published or proved, by anyone, ever.\n\n"
+        + "If you have already broadcast the spawn tx, those sats also become "
+        + "unreachable.",
       )) return;
       clearPendingSpawn();
       el_.style.display = "none";
@@ -717,18 +739,27 @@ function renderBootCard(
   }
 }
 
-function renderFinalizedBoot(out: HTMLElement, cometPatp: string, feedBytes: Uint8Array): void {
+function renderFinalizedBoot(
+  out: HTMLElement,
+  cometPatp: string,
+  feedBytes: Uint8Array,
+  onSaved: () => void,
+): void {
   out.innerHTML = "";
   out.appendChild(banner("ok",
     "Reveal log baked into your feed. Use THIS boot command — it serves your "
-    + "attestation to the %gw-btc verifier."));
+    + "attestation to the %gw-btc verifier. Save it before you leave this "
+    + "page: it is the only file that carries your blind."));
   const cmd = formatBootCommand({ comet: cometPatp, feed: feedBytes });
   const cmdPre = el("pre", { class: "code" }, cmd);
   const row = el("div", { class: "row" });
-  row.appendChild(copyButton(() => cmd, "copy finalized command"));
+  // onSaved runs inside the producers, i.e. on CLICK, so the pending spawn
+  // survives until the user has copied or downloaded the finalized feed.
+  row.appendChild(copyButton(() => { onSaved(); return cmd; }, "copy finalized command"));
   const feedUw = atomToUw(bytesToAtomLE(feedBytes));
   row.appendChild(downloadButton(
-    () => new TextEncoder().encode(feedUw), `${cometPatp}.feed.xtr.txt`,
+    () => { onSaved(); return new TextEncoder().encode(feedUw); },
+    `${cometPatp}.feed.xtr.txt`,
   ));
   out.append(cmdPre, row);
 }

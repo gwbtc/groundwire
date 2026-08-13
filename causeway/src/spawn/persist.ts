@@ -131,8 +131,32 @@ export function loadPendingSpawn(): PersistedSpawn | null {
     if (!raw) return null;
     const data = JSON.parse(raw) as PersistedSpawn;
     if (data.version !== SCHEMA_VERSION) {
-      console.warn("causeway: dropping pending spawn, schema mismatch");
-      clearPendingSpawn();
+      // DO NOT DELETE IT. This used to call clearPendingSpawn() here, which
+      // meant that bumping SCHEMA_VERSION — already done three times — threw
+      // away the blind of every user holding a pending spawn, on their next
+      // page load, with no action or error on their part. The blind is the
+      // only thing that can reopen a confidential comet's dat commitment,
+      // and this client does not derive it from anything recoverable, so
+      // that deletion is an identity loss and not a cache eviction.
+      //
+      // Refusing to LOAD an unrecognised schema is right; destroying it is
+      // not. Stash it under a versioned key so a human can still get the
+      // blind out, and say where it went.
+      const parked = `${STORAGE_KEY}.v${String(data.version ?? "unknown")}`;
+      try {
+        if (localStorage.getItem(parked) === null) {
+          localStorage.setItem(parked, raw);
+        }
+        localStorage.removeItem(STORAGE_KEY);
+      } catch (err) {
+        console.warn("causeway: could not park the old pending spawn:", err);
+      }
+      console.warn(
+        `causeway: pending spawn has schema v${String(data.version)}, this `
+        + `build expects v${String(SCHEMA_VERSION)}. NOT discarded — kept at `
+        + `localStorage["${parked}"]. If that spawn was broadcast, its `
+        + `blindHex is in there and is the only way to reopen the comet.`,
+      );
       return null;
     }
     return data;
