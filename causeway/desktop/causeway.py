@@ -752,6 +752,42 @@ def _noun_from_json(n):
     return int(n)
 
 
+def parse_fief_arg(s):
+    """`IP:PORT` -> the $fief noun [%if [ip port]], or None if absent.
+
+    The only way a comet acquires routing after it is minted. Until this
+    existed, `--fief` was a spawn-only flag and every state-update path
+    hardcoded carry-forward, so a comet minted without a fief could never
+    get one — and since a comet with neither fief nor sponsor is
+    unreachable by design, and cannot learn a route from packets it
+    receives (ames gates the heard-lane update on the sender not being its
+    own sponsor), that made it permanently unreachable with no remedy.
+    The docs called publication-with-a-fief "the escape hatch"; nothing
+    could build it.
+
+    Byte-identical to what `ops/gwmint.py` emits at spawn: the tag is the
+    little-endian cord %if, the address a big-endian 4-octet atom.
+    """
+    if s is None:
+        return None
+    if ":" not in s:
+        raise ValueError(f"fief must be IP:PORT, got {s!r}")
+    ip_s, port_s = s.rsplit(":", 1)
+    octets = ip_s.split(".")
+    if len(octets) != 4:
+        raise ValueError(f"fief address must be dotted-quad IPv4, got {ip_s!r}")
+    try:
+        vals = [int(o) for o in octets]
+        port = int(port_s)
+    except ValueError:
+        raise ValueError(f"fief must be IP:PORT with integer parts, got {s!r}")
+    if any(v < 0 or v > 255 for v in vals):
+        raise ValueError(f"fief octet out of range in {ip_s!r}")
+    if port < 1 or port > 65535:
+        raise ValueError(f"fief port out of range: {port}")
+    return (FIEF_TAGS["if"], (int.from_bytes(bytes(vals), "big"), port))
+
+
 def fief_noun(fief):
     """Normalize a fief to its noun [tag [p q]], or None if absent.
 
@@ -3054,6 +3090,12 @@ _MGMT_PRIOR_PROOF_HELP = (
 @click.option("--sponsor", default=None,
               help="Set the sponsor committed by the NEW snapshot (@p or mnemonym). "
                    "Omit to carry the prior snapshot's sponsor forward.")
+@click.option("--fief", "fief_arg", default=None, metavar="IP:PORT",
+              help="Set the fief committed by the NEW snapshot. Omit to carry the "
+                   "prior snapshot's fief forward. This is the ONLY way a comet "
+                   "minted without routing can acquire it: a comet with neither "
+                   "fief nor sponsor is unreachable and cannot learn a route from "
+                   "packets it receives.")
 @click.option("--no-route", is_flag=True, default=False,
               help="Allow a new snapshot with no sponsor and no fief (outbound-only). "
                    "Without this, a state update that would strand the comet is refused.")
@@ -3073,7 +3115,7 @@ _MGMT_PRIOR_PROOF_HELP = (
               help="Value the identity output should end up holding, in sats. "
                    "Default: everything the inputs carry after the fee (no change).")
 def cmd_rekey(point, prior_proof, new_pass_hex, breach, fee_rate, network, output_dir, mempool_base,
-              sponsor, no_route, signed_psbt, fund_xpub, fund_utxo, sat_target):
+              sponsor, fief_arg, no_route, signed_psbt, fund_xpub, fund_utxo, sat_target):
     """Rotate a comet's messaging key — a state update committed in the sat
     output's taproot tweak. Spends the current sat-carrying UTXO key-path;
     chains off --prior-proof.
@@ -3085,7 +3127,8 @@ def cmd_rekey(point, prior_proof, new_pass_hex, breach, fee_rate, network, outpu
     new_pass = int.from_bytes(bytes.fromhex(new_pass_hex), "little")
     new_key = messaging_key_from_pass(new_pass)
     _run_rekey_op(point, prior_proof, new_key, breach, fee_rate, network, output_dir, mempool_base,
-                  sponsor=sponsor, no_route=no_route, signed_psbt=signed_psbt,
+                  sponsor=sponsor, fief_arg=fief_arg,
+                  no_route=no_route, signed_psbt=signed_psbt,
                   fund_xpub=fund_xpub, fund_utxo=fund_utxo, sat_target=sat_target,
                   new_pass=new_pass)
 
@@ -3142,7 +3185,8 @@ def _resolve_rekey_funding(*, fund_xpub: str | None, fund_utxo: str | None,
 
 
 def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool, fee_rate: int, network: str, output_dir: str, mempool_base: str,
-                  sponsor: str | None = None, no_route: bool = False,
+                  sponsor: str | None = None, fief_arg: str | None = None,
+                  no_route: bool = False,
                   signed_psbt: str | None = None,
                   fund_xpub: str | None = None, fund_utxo: str | None = None,
                   sat_target: int | None = None,
@@ -3182,7 +3226,9 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
         "key": new_key,
         # --sponsor sets it; otherwise the prior snapshot's carries forward
         "sponsor": sponsor_atom if sponsor_atom is not None else prior_snap.get("sponsor"),
-        "fief": prior_snap.get("fief"),
+        # --fief sets it; otherwise the prior snapshot's carries forward
+        "fief": (parse_fief_arg(fief_arg) if fief_arg is not None
+                 else prior_snap.get("fief")),
     }
     # A state update that leaves the comet with neither a sponsor nor a fief
     # strands it from this life onward — refuse unless deliberately opted out.

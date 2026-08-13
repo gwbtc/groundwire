@@ -2680,3 +2680,45 @@ def test_rekey_records_the_pass_it_rotates_to(tmp_path, monkeypatch):
                          str(tmp_path), "stub", new_pass=_PUB_PASS)
     assert captured["snap"]["key"] == cw.messaging_key_from_pass(_PUB_PASS)
     assert cw.messaging_key_from_pass(_PUB_PASS) != _PUB_PASS
+
+
+# --------------------------------------------------------------------------
+# --fief on rekey: the only way a comet acquires routing after it is minted.
+#
+# A comet with neither fief nor sponsor is unreachable by design AND cannot
+# learn a route from packets it receives -- ames gates the heard-lane update
+# on the sender not being its own sponsor, and an absent sponsor projects to
+# self.  Measured on mainnet: four packets delivered, zero answered, across
+# 300s.  So a comet minted without routing had no remedy at all until this
+# existed: `--fief` was spawn-only and every state-update path hardcoded
+# carry-forward.
+# --------------------------------------------------------------------------
+
+def test_parse_fief_arg_matches_gwmints_spawn_encoding():
+    """The two tools must emit the SAME noun, or a comet that acquires a fief
+    by rekey commits something a verifier reads differently from one that got
+    it at spawn."""
+    ip_s, port = "159.223.141.63", 35364
+    got = cw.parse_fief_arg(f"{ip_s}:{port}")
+    # exactly what ops/gwmint.py builds at spawn
+    gwmint = (
+        int.from_bytes(b"if", "little"),
+        (int.from_bytes(bytes(int(x) for x in ip_s.split(".")), "big"), port),
+    )
+    assert got == gwmint
+    # and it survives the normaliser every other path runs it through
+    assert cw.fief_noun(got) == got
+
+
+def test_parse_fief_arg_refuses_malformed():
+    """Each of these would otherwise commit a wrong route on chain, which is
+    permanent and costs a state update to correct."""
+    for bad in ("nope", "1.2.3:5", "1.2.3.999:5", "1.2.3.4:0", "1.2.3.4:70000"):
+        with pytest.raises(ValueError):
+            cw.parse_fief_arg(bad)
+
+
+def test_parse_fief_arg_none_is_carry_forward():
+    """None means "carry the prior snapshot's fief", not "clear it" -- the
+    caller distinguishes, and clearing is what --no-route is for."""
+    assert cw.parse_fief_arg(None) is None
