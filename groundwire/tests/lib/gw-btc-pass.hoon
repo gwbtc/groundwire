@@ -270,6 +270,43 @@
     ::  0x4d with a two-byte length that does not match the tail
     (expect-eq !>(*(unit [kel=@ud payload=hexb:btc])) !>((parse-publication:cc (bad 0x4d 77))))
   ==
+::  THE SPLIT.  "Not a Groundwire output" and "a Groundwire output we
+::  cannot read" must be DIFFERENT answers.  They were the same one:
+::  the whole of +parse-publication sat inside a +mole, envelope match
+::  included, so a script that IS ours with a broken push came back ~
+::  and vanished into +read-publication's hot filter alongside the
+::  millions of scripts that simply are not ours.  A comet past the
+::  ~17-hop ceiling that published anyway produced zero log lines on
+::  every watcher on the network, and its transaction was not retained.
+::
+::  The unit is ~ in both cases -- that is not what changed and is not
+::  what this pins.  What it pins is that +publication-envelope
+::  SEPARATES them, which is what lets +read-publication announce the
+::  first and stay silent about the second.
+::
+++  test-publication-envelope-tells-ours-from-unreadable
+  =/  bad
+    |=  [opc=@ux n=@ud]
+    ^-  hexb:btc
+    %-  cat:byt:bcu
+    ~[[5 0x6a.0375.7262] [1 0x1] [1 9] [1 opc] [n (fil 3 n 0xab)]]
+  ::  a 7-byte OP_RETURN that is not ours: right length, wrong tag
+  =/  alien  `hexb:btc`[7 0x6a.0311.2233.4455]
+  ;:  weld
+    ::  OURS, and unreadable.  0x4e is not a push opcode this codec
+    ::  emits; 0x4d 77 is a length that lies about its own tail.
+    (expect !>((publication-envelope:cc (bad 0x4e 78))))
+    (expect !>((publication-envelope:cc (bad 0x4d 77))))
+    (expect-eq !>(*(unit publication:sa)) !>((read-publication:cc (bad 0x4e 78))))
+    ::  NOT ours: the envelope says no, and the silence is correct.
+    (expect !>(!(publication-envelope:cc alien)))
+    (expect-eq !>(*(unit publication:sa)) !>((read-publication:cc alien)))
+    ::  The filter is TOTAL.  Every output of every transaction in every
+    ::  block reaches it, including scripts far too short to slice -- so
+    ::  it must answer, not crash.
+    (expect !>(!(publication-envelope:cc `hexb:btc`[3 0x6a.0375])))
+    (expect !>(!(publication-envelope:cc `hexb:btc`[0 0x0])))
+  ==
 ::  ------------------------------------------------------------------
 ::  Golden vector "pushdata2-fief" (/vectors/gw-kelvin-9.json).
 ::
