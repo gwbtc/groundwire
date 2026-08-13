@@ -991,9 +991,26 @@ def cmd_publish(label, artifact_n, fee_rate=4, fund=False, sat_target=None):
         chk("identity sat was topped up, not shrunk",
             sat_val > int(proof["sat_value"]),
             f"{proof['sat_value']} -> {sat_val} sats")
-    chk("fee sane (<= 2000 sats)", 0 < fee <= 2000, f"fee = {fee} sats")
-    chk("effective fee rate >= 1.0 sat/vB", fee / dec["vsize"] >= 1.0,
-        f"{fee}/{dec['vsize']} = {fee / dec['vsize']:.3f} sat/vB")
+    #  Scale with the transaction, do not sit at a constant.
+    #
+    #  Same defect as cmd_build's, in the other command, and I fixed only
+    #  the one I was looking at.  A LATE publication carries the whole
+    #  attestation packet -- that is the entire point of the rework -- so
+    #  it is several hundred vB more than a spawn, and at any sane fee
+    #  rate it blows a flat 2.000-sat ceiling while being perfectly
+    #  correct.  This blocked the late reveal, which is the single
+    #  capability the publication rework exists to deliver.
+    #
+    #  A flat cap cannot express "the fee is sane": sane means the rate is
+    #  what was asked for, and the rate is what the two checks below say.
+    eff = fee / dec["vsize"]
+    fee_cap = int(dec["vsize"] * (fee_rate + 1))
+    chk(f"fee <= {fee_cap} sats ({dec['vsize']} vB x {fee_rate}+1 sat/vB)",
+        0 < fee <= fee_cap, f"fee = {fee} sats")
+    chk("effective fee rate >= 1.0 sat/vB", eff >= 1.0,
+        f"{fee}/{dec['vsize']} = {eff:.3f} sat/vB")
+    chk(f"effective fee rate <= requested + 1 ({fee_rate + 1} sat/vB)",
+        eff <= fee_rate + 1.0, f"{eff:.3f} sat/vB, requested {fee_rate}")
 
     pub_spk = dec["vout"][1]["scriptPubKey"]
     chk("output 1 is the OP_RETURN publication",
