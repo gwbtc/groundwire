@@ -270,7 +270,19 @@
   =/  her=@p    ~nec
   =/  a-id      0xaa.0001
   =/  b-id      0xbb.0002
-  ::  two tracked comets, each alone on its own sat
+  ::  Two tracked comets, each alone on its own sat -- and each with a
+  ::  POINT as well as a sat.  Both halves are required: +update-sonts
+  ::  reaches +update-comet for any moved sat whose .sont-val names a
+  ::  comet, and that arm does `~(got by unv-ids)`, which bails on a
+  ::  missing key.  Seeding only sont-map crashes the arm inside the
+  ::  library before any assertion runs -- on a code path the fix does
+  ::  not touch, so it crashes identically fixed or unfixed and pins
+  ::  nothing at all.
+  ::
+  =/  pt-who=point:urb
+    [[[0xaaaa 0 0] ~] [0 1 (pass-of 0) [%.n who] ~ ~] `0xb.10c0]
+  =/  pt-her=point:urb
+    [[[0xbbbb 0 0] ~] [0 1 (pass-of 0) [%.n her] ~ ~] `0xb.10c0]
   =/  seeded=state:urb
     :*  [0xb.10c0 700]
         %:  put-com:si:ol
@@ -278,7 +290,8 @@
           0xbbbb  0  0  5.000  her
         ==
         *insc-ids:ord
-        *unv-ids:urb
+        %+  ~(put by (~(put by *unv-ids:urb) who pt-who))
+          her  pt-her
     ==
   ::  A moves who's sat.  B, IN THE SAME BLOCK, spends A's output at
   ::  input 0 and her's sat at input 1 -- so her's offset depends
