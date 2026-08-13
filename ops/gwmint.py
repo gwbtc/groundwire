@@ -470,15 +470,36 @@ def cmd_build(label, publish=False, fief=None, sponsor=None, fee_rate=1,
     #  and it failed EVERY mint -- after all the load-bearing checks had
     #  passed -- with cmd_broadcast refusing on gate_passed. The gate meant
     #  to stop a bad transaction stopped every good one instead.
-    n_change = 1
+    #  ... and then it happened AGAIN, in these same nine lines, for the
+    #  opposite reason: --sweep removes the change output and this block
+    #  still counted it, so the flag whose entire purpose is to change the
+    #  output shape was rejected by the check on the output shape. Fourth
+    #  safety check in this campaign to fail by refusing correct work.
+    #
+    #  The destination check is not merely miscounted under --sweep, it is
+    #  INVERTED: with no change output the last output IS output 0, the
+    #  identity sat, so asserting that it pays the funding address would be
+    #  asserting the identity sat went home to the wallet -- which is the
+    #  real defect this tool exists to catch. It has to be skipped, not
+    #  re-indexed.
+    n_change = 0 if sweep else 1
     n_expected = (2 if publish else 1) + n_change
-    chk(f"exactly {n_expected} output(s)", len(dec["vout"]) == n_expected,
-        f"got {len(dec['vout'])}")
-    #  ... and check the thing the count was standing in for. A bare count
-    #  says nothing about WHERE the change went; this says it comes home.
-    chk("last output pays the funding address (change)",
-        dec["vout"][-1]["scriptPubKey"] == w["spk"].hex(),
-        dec["vout"][-1]["scriptPubKey"])
+    chk(f"exactly {n_expected} output(s)"
+        f"{' (--sweep: no change)' if sweep else ''}",
+        len(dec["vout"]) == n_expected, f"got {len(dec['vout'])}")
+    if sweep:
+        #  The whole input goes into the identity sat. Say what that cost,
+        #  because it is the operator's own money and the flag is the only
+        #  thing standing between "funds a small mint" and "makes a
+        #  12.000-sat comet".
+        chk("--sweep: no change output, whole input to the identity sat",
+            True, f"{value} sats in -> {dec['vout'][0]['value']} sat identity")
+    else:
+        #  A bare count says nothing about WHERE the change went; this says
+        #  it comes home.
+        chk("last output pays the funding address (change)",
+            dec["vout"][-1]["scriptPubKey"] == w["spk"].hex(),
+            dec["vout"][-1]["scriptPubKey"])
 
     # independently recompute Q
     c = C.state_commit(snapshot)
