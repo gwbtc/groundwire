@@ -189,7 +189,7 @@ assume `~/` expands to the same place.
 
 ```sh
 gwmint.py mine  <label> <funding-txid> <vout>
-gwmint.py build <label> [--fief=IP:PORT] [--sponsor=~patp] [--publish] [--fee-rate=N]
+gwmint.py build <label> [--fief=IP:PORT] [--sponsor=~patp] [--publish] [--fee-rate=N] [--sweep]
 gwmint.py broadcast <label>          # refuses unless the gate passed
 gwmint.py status    <label>          # poll for confirmation
 gwmint.py artifact  <label> <n>      # -> /Users/trent/gw-building/.gw-comet-<n>.json (0600)

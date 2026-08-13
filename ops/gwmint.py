@@ -305,7 +305,7 @@ def cmd_mine(label, txid, vout):
 
 
 def cmd_build(label, publish=False, fief=None, sponsor=None, fee_rate=1,
-              replace=False):
+              replace=False, sweep=False):
     w = load_wallet()
     st = load_state(label)
     txid, vout = st["funding"]["txid"], st["funding"]["vout"]
@@ -395,6 +395,23 @@ def cmd_build(label, publish=False, fief=None, sponsor=None, fee_rate=1,
     # sats and returns the remainder, so ONE UTXO funds a whole run of
     # spawns back to back and no split is needed.  The vbyte estimate above
     # already counts the extra output, so the fee is right in both arms.
+    #  --sweep puts the WHOLE input into the identity sat, minus fee.
+    #
+    #  Change is right for a large UTXO -- it is what lets one output fund a
+    #  run of spawns -- and wrong for a small one.  build_spawn_psbt needs
+    #  330 (identity) + 330 (change dust) + fee and adds 43 vB, so a 984-sat
+    #  UTXO is REFUSED with change and mints comfortably without it.  Making
+    #  change unconditional stranded >=330 sats per spawn and put a
+    #  two-comet rig out of reach of 2.732 sats that was ample for it.
+    #
+    #  It stays an explicit flag rather than an automatic fallback: sweeping
+    #  a large UTXO into an identity sat is exactly the defect that made a
+    #  12.000-sat input into a 12.000-sat comet, so the operator says so.
+    change_kwargs = {} if sweep else dict(
+        change_internal_xonly=w["xonly"],
+        change_script_pubkey=w["spk"],
+        change_path=FUNDING_PATH,
+    )
     psbt_obj, proof = C.build_spawn_psbt(
         utxo_txid=txid, utxo_vout=vout, utxo_value=value,
         utxo_script_pubkey=w["spk"],
@@ -402,8 +419,7 @@ def cmd_build(label, publish=False, fief=None, sponsor=None, fee_rate=1,
         funding_fingerprint=w["fpr"], snapshot=snapshot,
         publication_pass_atom=pub_pass, publication_opening=pub_open,
         fee_rate=fee_rate, network="main",
-        change_internal_xonly=w["xonly"], change_script_pubkey=w["spk"],
-        change_path=FUNDING_PATH,
+        **change_kwargs,
     )
     psbt_obj.sign_with(w["root"])
     signed_b64 = psbt_obj.to_base64()
@@ -1132,7 +1148,8 @@ if __name__ == "__main__":
                 fee_rate = int(a.split("=", 1)[1])
         sys.exit(cmd_build(sys.argv[2], publish=pub, fief=fief,
                            sponsor=sponsor, fee_rate=fee_rate,
-                           replace="--replace" in sys.argv))
+                           replace="--replace" in sys.argv,
+                           sweep="--sweep" in sys.argv))
     elif cmd == "publish":
         fr = 4
         for a in sys.argv:
