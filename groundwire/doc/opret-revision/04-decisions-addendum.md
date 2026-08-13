@@ -264,9 +264,21 @@ On-chain committed snapshots carry sponsorship and routing state:
   > nothing.** So "the comet initiates and the peer gains a route from that
   > alone" cannot happen — there is no code path by which it could.
   >
-  > The honest statement is the inverse of the one above: **an unreachable
-  > comet cannot rescue itself.** Routing must be committed at spawn, and
-  > `--fief` exists only there.
+  > The honest statement is narrower than "cannot rescue itself": **speaking
+  > first is not a rescue.** The PUBLICATION path is unaffected and should
+  > work, for a reason worth knowing — `+fief-route` does not put an address
+  > in ames at all. It returns a *ship*-lane `[%& her]`; the address goes to
+  > the RUNTIME via `%give %fief`, into vere's lamp table, and vere resolves
+  > `[%& ship]` there exactly as it does for a galaxy.
+  >
+  > So the self-sponsor rule at `ames.hoon:12630` overwriting the fief route
+  > is harmless: both set the same lane `[%& ship]` and differ only in
+  > `direct`. A comet that publishes a fief later reaches jael → the lamp,
+  > and the route its peers ALREADY hold starts resolving. Nothing in ames
+  > changes. (Untested — traced, not measured.)
+  >
+  > `--fief` was spawn-only, which is the only reason this hatch was ever
+  > unreachable; `causeway rekey --fief` now exists.
   > *Publication*: a correctly formed, fully gated publication (tx
   > `0cca2561…`, block 961 217) was indexed by nobody. **Partly fixed**
   > (§2b): a scanner that already tracks the comet now accepts it and

@@ -173,15 +173,39 @@ at `ames.hoon:5347` is gated on `!=(her.channel (sein … her.channel))`,
 which for f1 is `!=(f1 f1)` — false. So f2 may receive unlimited packets
 from f1 and will never learn a route from any of them.
 
-The corrected property: **an unreachable comet cannot rescue itself.** A
-comet that committed neither a `fief` nor a `sponsor` has told the network
-nothing about where it is, and no amount of it speaking first fixes that —
-its peers have nowhere to reply to. Publication with a `fief` (5b.2) is the
-only escape hatch, and today **no tool can add a fief to an existing comet**
-(`--fief` exists at spawn only; every state-update path hardcodes
-carry-forward), so in practice that hatch is not reachable either.
+The corrected property: **speaking first is not a rescue.** A comet that
+committed neither a `fief` nor a `sponsor` has told the network nothing about
+where it is, and no amount of it speaking first fixes that — its peers have
+nowhere to reply to, and cannot learn one from the packets.
 
-Commit the routing you need **at spawn**.
+**Publication rescue (5b.2) is unaffected by any of this, and should work.**
+Do not read the above as "an unreachable comet is lost" — it is not, and the
+two paths fail and succeed for unrelated reasons:
+
+`+fief-route` (`ames.hoon:4348`) does **not** put an address in ames. It
+returns `[direct=%.n lane=[%& her]]` — a *ship*-lane. The address goes to the
+RUNTIME: ames `%give %fief`s it to the unix duct (`:4849`, and `+on-publ-fief`
+for a fief that arrives alone), populating vere's lamp table
+(`vere/pkg/vere/io/ames/lamp.c`), and vere resolves `[%& ship]` through
+`_ames_lamp_lane` — the same path galaxies use.
+
+So for a self-sponsored comet the self-sponsor rule at `:12630` **does**
+overwrite the fief route, and it does not matter: both produce the identical
+lane `[%& ship]`, differing only in `direct`. Reachability turns on whether
+vere's lamp holds an entry, not on which of the two set the route. A comet
+that publishes a fief later reaches jael → `%give %fief` → the lamp, and the
+route the peer already had starts resolving. Nothing in ames needs to change.
+
+Confirmed shape from the live rig: `ames: lamp ~noplup-… static ip
+.159.223.141.63 port 35364`.
+
+**Untested.** This is traced through ames and vere, not measured — no comet
+in this campaign has published a fief after spawn. `causeway rekey --fief`
+now exists to build one; before it, nothing could, which is the only reason
+this hatch was ever unreachable.
+
+Commit the routing you need at spawn if you can; it is one transaction
+cheaper and it is the only thing that works *immediately*.
 
 ## Phase 6 — resilience and diagnostics
 
