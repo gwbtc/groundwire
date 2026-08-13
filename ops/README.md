@@ -176,15 +176,23 @@ needs:
    `[internal-key, snapshot]` with its own secp256k1 point arithmetic and
    compares against causeway's, so a bug in causeway's encoder cannot pass.
 
-It also sets a `fief` and a `sponsor` at spawn, neither of which the causeway
-CLI can do (`--publish` exists only on `spawn`, and `rekey` has no `--fief`).
+It also sets a `fief` and a `sponsor` at spawn; the causeway CLI has no
+`--fief` anywhere. (It *can* publish late, via `causeway publish` — that
+half of the gap closed.)
+
+**gwmint's paths are absolute and point at one machine.** `gwmint.py:730`
+writes `/Users/trent/gw-building/.gw-comet-<n>.json`, and `sys.path` is
+pinned the same way. This file says these tools run ON A DROPLET, where
+that path does not exist — so gwmint is currently laptop-only, whatever the
+table above implies. Fix the paths or run it where they resolve; do not
+assume `~/` expands to the same place.
 
 ```sh
 gwmint.py mine  <label> <funding-txid> <vout>
 gwmint.py build <label> [--fief=IP:PORT] [--sponsor=~patp] [--publish] [--fee-rate=N]
 gwmint.py broadcast <label>          # refuses unless the gate passed
 gwmint.py status    <label>          # poll for confirmation
-gwmint.py artifact  <label> <n>      # -> ~/gw-building/.gw-comet-<n>.json (0600)
+gwmint.py artifact  <label> <n>      # -> /Users/trent/gw-building/.gw-comet-<n>.json (0600)
 gwmint.py publish <label> <n> [--fee-rate=N] [--fund] [--sat-target=S]
 ```
 

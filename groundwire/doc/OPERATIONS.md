@@ -359,9 +359,20 @@ causeway spawn generate [--invite <FAUCET_CODE>] [--sponsor <SPONSOR_PATP>] …
   OP_RETURN publication output, which is permanent and irreversible: it is
   the difference between an identity whose opening lives on chain and one
   whose opening lives only in twelve words. A confidential comet **can** be
-  published later as a state update (§10), but only its existing peers will
-  accept that; publishing at spawn is the only way a stranger can learn it
-  from the chain alone.
+  published later (§10), and since 2026-08-10 **any scanner accepts that
+  publication, including one that has never heard of the comet** — the
+  publication carries the whole attestation packet, so a stranger can learn
+  the identity from the chain alone whether it was published at spawn or
+  years later.
+
+  This bullet used to say the opposite: that only existing peers would
+  accept a late publication, making spawn-time the only way a stranger
+  could ever learn it. That was true before the publication rework and is
+  the reason to be careful reading it here — this is the one place in the
+  runbook where an operator makes a permanent, irreversible decision about
+  a mainnet identity, and it was arguing from a tradeoff that no longer
+  exists. Publishing at spawn is now a choice about *when* the identity
+  becomes public, not about whether it ever can be.
 - **A named sponsor must be one the verifier already knows.** `sponsor-ok`
   (`lib/self-attestation.hoon`) is `(~(has in known-public) u.sponsor…)`, and
   the set handed to the thread by `+verify-cards` is
@@ -377,7 +388,7 @@ causeway spawn generate [--invite <FAUCET_CODE>] [--sponsor <SPONSOR_PATP>] …
   confidential comet left the sponsee "silently unreachable forever". Measured
   live: false. `unv-ids` also holds comets the verifier has verified
   *confidentially*, and one of those satisfies `sponsor-known` — while the
-  agent's own `+known-public` predicate (`app/gw-btc.hoon:2068`), used for the
+  agent's own `+known-public` predicate (`+known-public:app/gw-btc`), used for the
   writ gate, does subtract `.confidential`. Two definitions of the same name in
   one agent; the peer-facing check uses the broader one. Recorded in §12 as a
   disagreement to settle, not relied on. An **absent** sponsor is fine either
@@ -579,7 +590,7 @@ Four rules here, all load-bearing:
   on disk. `gall: installing %gw-btc` in the log is the success signal.
 
 - `%gw-btc` registers itself with jael automatically —
-  `+on-init` emits `[%pass /anex %arvo %j %anex /writs]` (`gw-btc.hoon:248`).
+  `+on-init` emits `[%pass /anex %arvo %j %anex /writs]` (`+on-init:app/gw-btc`).
   There is nothing to configure. Agent reload preserves the registration.
 
 Verify the desk you deployed is the desk you meant to:
@@ -710,7 +721,7 @@ which prints, among others:
 Confirm the same thing from `%gw-btc`'s side:
 
 ```
-> .^([synced=? tip=(unit @ud) indexing=? halt=(unit [at=@ud cursor=@ud since=@da])] \
+> .^([synced=? tip=(unit @ud) indexing=?] \
       %gx /(scot %p our)/gw-btc/(scot %da now)/ready/noun)
 ```
 
@@ -754,7 +765,10 @@ cursor has moved or `unv-ids` is non-empty, logging
 before 2026-08-06 was reset to `%.n` on every `+on-load` and is not a
 record of anything.
 
-`%gw-index-from 0` is a silent no-op.
+`%gw-index-from 0` is refused, out loud:
+`%gw-btc: refusing %gw-index-from 0: name the first block to scan`. It used
+to swallow the poke without a word, so an operator who fat-fingered the
+argument saw an agent that accepted the command and then never indexed.
 
 ### 5.9 Supervisor
 
@@ -917,12 +931,20 @@ Then exchange traffic:
 > |hi ~<peer>
 ```
 
-**Known gap:** a verified `fief` becomes a jael point and a runtime lamp,
-but `+send-blob-via` chooses a lane only from a route learned from a heard
-packet, and ames offers the runtime a `[%& ship]` lane only for *sponsors*.
-So an on-chain fief is today useful only when its holder is reached **as a
-sponsor**. Two comets that have never exchanged a packet still route via
-the sponsor.
+**Closed, `b9ed5ec0f4`.** `+fief-route` (`sys/vane/ames.hoon`) hands the
+runtime a `[%& ship]` route for any peer holding a fief and no heard route,
+wired in at both places a fief becomes known (`+sy-put-ship`,
+`+on-publ-fief`). Two comets that have never exchanged a packet now reach
+each other by fief. The Aqua scenario `ted/ph/cc/hi-fief.hoon` exercises
+exactly that, with the sponsor down.
+
+**Still open for `|mesa`.** The fix lands on the `%ames` branch only; the
+`%mesa` branch returns before it, and `+on-publ-fief` patches `peers` and
+not `chums`. Dormant while `core.ames-state` defaults to `%ames`.
+
+This section used to describe the whole thing as an open gap, and PR #67's
+body called it "the biggest kernel gap here" — a reviewer reading either
+would have set out to re-derive a fix that had already shipped.
 
 ---
 
@@ -931,7 +953,7 @@ the sponsor.
 ### `%gw-btc` scries
 
 All are care `%x`, so `%gx` with a trailing mark. Confirmed against
-`app/gw-btc.hoon:635-716`.
+`++on-peek:app/gw-btc`.
 
 | path | mark | value |
 |---|---|---|
@@ -1011,15 +1033,19 @@ that is a large dump.
 %gw-btc: writ from ~… dropped: a verification is already in flight
 %gw-btc: writ from ~… dropped: sponsorship declined by operator
 %gw-btc: writ from ~… dropped: already a public point
-%gw-btc: writ from ~… dropped: public-spawn replay in progress
 %gw-btc: light client is SYNCED; confidential verification enabled
 %gw-btc: light client is NOT synced; holding all attestations (no verdicts)
 %gw-btc: SNUBBING ~… on a negative %gw-btc verdict
-%gw-btc: CHAIN REORG TO N -- BLOCK SCANNER HALTED
+%gw-btc: chain reorg to N, at or below our cursor
+%gw-btc: chain reorg to N, above our cursor
+%gw-btc: block batch discarded: the cursor moved while it ran
+%gw-btc: block batch discarded: a point was forgotten while it ran
 %gw-btc: refusing %gw-index-from: an index already exists
+%gw-btc: refusing %gw-index-from 0: name the first block to scan
 %gw-btc: verification thread for ~… ended without a verdict
 %gw-btc: custody log verified (N entries); refreshing our pass
-%gw-btc: %anew refused: …                       (seven distinct reasons)
+%gw-btc: %anew for ~… refused: …                 (nine distinct reasons)
+[%gw-btc-publication-unreadable-push …]
 [%gw-btc-lc-scan-clean …] / [%gw-btc-lc-scan-spent …] / [%gw-btc-lc-scan-degenerate …]
 ames: ~…: got attestation
 ames: lamp ~… static ip .a.b.c.d port N
@@ -1261,11 +1287,16 @@ Three things to know when reading the logs:
 - **Verification is asynchronous.** The block scanner emits the claim; the
   answer arrives on the `/claim/<ship>/<job>` wire, minutes later, after the
   light client has fetched every hop. `/x/inflight` holds the ship meanwhile.
-- **Causeway cannot build a late publication.** There is no `publish`
-  subcommand and no `--publish` on `rekey`; `build_rekey_psbt` accepts
-  `publication_pass_atom`/`publication_opening` but every caller passes neither.
-  Use `ops/gwmint.py`. A published *spawn* works, and now requires the funding
-  transaction's block height (Causeway refuses rather than writing 0).
+- **Causeway builds late publications: `causeway publish`.** It takes the
+  whole ordered proof chain and re-runs its gates on the final signed bytes.
+  Prefer it over `ops/gwmint.py` unless you need gwmint's ops wallet; the two
+  agree byte for byte. A published *spawn* also works, and requires the
+  funding transaction's block height (Causeway refuses rather than writing 0).
+
+  This bullet used to say no such subcommand existed and to use gwmint
+  instead — which is worse than a stale doc, because gwmint carries
+  hardcoded `/Users/trent/…` paths and this is the runbook an operator
+  reaches for while declassifying a live comet.
 
 Watch `/x/confidential` for the ship leaving the set. (`/x/publicizing` is
 gone: it latched a race between the scanner indexing a publication and the
@@ -1304,11 +1335,11 @@ Stated plainly so nobody hunts for a script that does not exist:
   `ops/gwctl.py desks`, which does it).
 - **No fully headless Causeway spawn without funding.** `spawn generate`
   with no funded UTXO waits forever rather than timing out.
-- **Causeway cannot commit a `fief`, and cannot publish anything except at
-  spawn.** No `--fief` anywhere; `rekey` carries the prior fief forward and
-  offers no way to set one. Since the sponsorship topology of Phase 4 requires
-  the sponsor to commit a real fief, that transaction has to come from
-  `ops/gwmint.py`.
+- **Causeway cannot commit a `fief`.** No `--fief` anywhere; `rekey` carries
+  the prior fief forward and offers no way to set one. Since the sponsorship
+  topology of Phase 4 requires the sponsor to commit a real fief, that
+  transaction has to come from `ops/gwmint.py`. (The publication half of this
+  limitation is gone — see `causeway publish` in §10.)
 - **No CI build of the `%tcp-sidecar` and `%node` desks.** Only the sidecar
   *binary* is released (§3.3). Both desks are checked-in Hoon needing no
   build step, but you still clone `gwbtc/tcp-sidecar` and `gwbtc/node` to get
@@ -1377,7 +1408,7 @@ the code.
 | boot into tmux and drive the dojo | **this runbook**, §5.3 | no live ship has ever run that way. Campaign ships run `-t` under a supervisor and are driven over `conn.sock`; the `>` lines are notation for a khan-eval. §5.3 rewritten, `ops/gwctl.py` added. |
 | — (nothing said) | **this runbook**, everywhere | there was **no shutdown procedure at all**, and stopping a supervised ship without stopping its supervisor first is a no-op. Directly caused an incident in which three running ships were handed over as "stopped". Added as §5.10. |
 | naming a **confidential** comet as a sponsor makes the sponsee permanently UNDETERMINED | **this runbook**, §5.2 (added 2026-08-06) | false, measured live 2026-08-07. `+verify-cards` hands `+run-checks` the **raw** `~(key by unv-ids.urb-state)`, which includes confidentially-verified comets, while `+known-public:gw-btc` — same name, same agent, two arms away — subtracts `.confidential`. A confidential sponsor satisfies `sponsor-known`. And UNDETERMINED is never permanent: it clears the moment the verifier learns the sponsor. §5.2 rewritten; the two definitions still need reconciling. |
-| `rekey` is the only on-chain management op | §12, below | true, and it is not enough: Causeway can commit **no** `fief` at all, and can publish only at spawn. The Phase 4 sponsorship topology therefore cannot be built with Causeway. `ops/gwmint.py` does both. |
+| `rekey` is the only on-chain management op | §12, below | true, and it is not quite enough: Causeway can commit **no** `fief` at all, so the Phase 4 sponsorship topology still needs `ops/gwmint.py`. It CAN publish late — see `causeway publish` in §10. |
 
 ### Closed by a code change
 
