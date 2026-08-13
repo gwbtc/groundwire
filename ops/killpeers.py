@@ -42,7 +42,23 @@ body = (
     "=/  m  (strand ,vase)\n^-  form:m\n"
     ";<  our=@p   bind:m  get-our\n"
     ";<  now=@da  bind:m  get-time\n"
-    "=/  pez  ;;([%all (map [@tas @ux @ud] *)] "
+    #  The key's head is clammed to the UNION, not to @tas.
+    #
+    #  node's poke arm does `!<(earth-address vaz)`, and $earth-address's
+    #  head is $network-address-id -- ?(%ipv4 %ipv6 %torv2 %torv3 %i2p
+    #  %cjdns %yggdrasil). A vase typed [@tas @ux @ud] does NOT nest under
+    #  that: @tas is WIDER than the union, so !< on the far side refuses
+    #  it and the strand dies %nest-fail.
+    #
+    #  It has to be ;; and not a ^- cast: `[?(%ipv4 ...) ...]`x on an
+    #  @tas-typed x is itself a nest-fail (verified: -need.?(%cjdns %i2p
+    #  %ipv4 ...) -have.@tas). ;; normalises instead of requiring nesting,
+    #  and still refuses a genuinely wrong term.
+    #
+    #  Reading with the union also means the loop below hands the poke a
+    #  correctly-typed key with no further work.
+    "=/  pez  ;;([%all (map "
+    "[?(%ipv4 %ipv6 %torv2 %torv3 %i2p %cjdns %yggdrasil) @ux @ud] *)] "
     ".^(* %gx /(scot %p our)/bitcoin-client/(scot %da now)/peers/noun))\n"
     "=/  eps  ~(tap by +.pez)\n"
     #  counted BEFORE the loop: inside the ?~ branch the list is ~,
@@ -50,6 +66,15 @@ body = (
     "=/  cnt  (lent eps)\n"
     "|-  ^-  form:m\n"
     "?~  eps  (pure:m !>((crip (weld \"disconnected \" (scow %ud cnt)))))\n"
+    #  p.i.eps now carries the union type from the read above, so this
+    #  needs no cast of its own.
+    #
+    #  Note how this hid: with an EMPTY peer list the poke never runs, so
+    #  nothing is ever type-checked and the strand reports success. It
+    #  failed on f1 (52 peers) and f2 (10) and "passed" where there was
+    #  nothing to disconnect. A loop whose body never executes is not a
+    #  passing test -- the same trap as a test that never reaches the code
+    #  it is written for.
     ";<  ~  bind:m  "
     "(poke-our %bitcoin-client %bitcoin-client-disconnect-peer !>(p.i.eps))\n"
     "$(eps t.eps)\n"
