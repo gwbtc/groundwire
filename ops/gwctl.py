@@ -219,17 +219,27 @@ READY = """=/  r  .^(* %gx /(scot %p our)/gw-btc/(scot %da now)/ready/noun)
 def cmd_ready(pier):
     """%gw-btc's /x/ready is the authoritative readiness surface.
 
-    %bitcoin-client's ++peek is literally `~` for EVERY path
-    (app/bitcoin-client.hoon:181-184), so there is nothing to scry there --
-    a tool that scries /is-synced or /best-block returns nothing and always
-    has.  %gw-btc learns `synced` from its /is-synced subscription and
-    surfaces it here."""
+    %gw-btc learns `synced` from its /is-synced subscription and surfaces
+    it here.
+
+    This used to say %bitcoin-client's ++peek was `~` for EVERY path, so
+    there was nothing to scry.  That WAS true and is not true at
+    node@063720b9, which serves /x/network, /x/is-synced, /x/best-block,
+    /x/peers and the block-header paths.  /x/ready is still the right
+    surface for readiness -- it is the verifier's own view, and it is
+    what gates verdicts -- but node is no longer a black box, and
+    killpeers.py depends on /x/peers being real."""
     print(ev(conn(pier, 600), READY))
 
 
 def cmd_peers(pier):
-    """Ask %bitcoin-client to dump status INTO THE SHIP'S LOG; there is no
-    scry.  Read it back out of the pier log afterwards."""
+    """Ask %bitcoin-client to dump status INTO THE SHIP'S LOG.  Read it
+    back out of the pier log afterwards.
+
+    %log-info is one of only two pokes node did NOT rename at 063720b9
+    (the other is %broadcast-transaction); the peer pokes both moved
+    under the %bitcoin-client- prefix.  A structured peer list is also
+    available now at /x/peers, which is what killpeers.py reads."""
     c = conn(pier, 300)
     c.poke_our("bitcoin-client", "log-info", "!>(~)")
     print("poked &log-info -- read /opt/gw/<pier>.log for "
@@ -237,8 +247,9 @@ def cmd_peers(pier):
 
 
 def cmd_seed(pier, batches="6", size="25"):
-    """Bulk %add-earth-peer SIGSEGVs the tcp-sidecar (gwbtc/node#1); ~25 at a
-    time is stable.  Filter headers are only servable by peers advertising
+    """Bulk peer-adds SIGSEGV the tcp-sidecar (gwbtc/node#1); ~25 at a
+    time is stable.  The mark is %bitcoin-client-connect-peer, renamed
+    from %add-earth-peer at node@063720b9.  Filter headers are only servable by peers advertising
     NODE_COMPACT_FILTERS, so the pool must come from x49.-filtered seeds."""
     name = str(pier).rstrip("/").split("/")[-1]
     pool, used = "/opt/gw/peerpool.txt", f"/opt/gw/used-{name}.txt"

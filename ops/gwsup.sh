@@ -6,7 +6,8 @@
 # every send returns "no such connection" forever, and the ship stops making
 # progress while looking healthy.  It does not self-heal and restarting the
 # sidecar alone does not fix it -- the agent's peer table has to be cleared
-# with &kill-peer-connections and re-seeded.
+# and re-seeded.  There is no bulk clear at node@063720b9, so killpeers.py
+# scries /x/peers and disconnects each address in one strand.
 #
 # LIVENESS SIGNAL: event-log progress, not block height and not peer count.
 # NOTE: <pier>/.urb/log is a DIRECTORY and its mtime never advances (LMDB
@@ -157,11 +158,13 @@ recover() {
   log "INTERVENTION #$((N_WEDGE+N_VERE+N_SIDE)) WEDGE (recover #$N_WEDGE): $why"
   ensure_sidecar
   sleep 3
-  if timeout 150 python3 /opt/gw/poke.py "$PIER" bitcoin-client kill-peer-connections '!>(~)' \
-       >> "$SLOG" 2>&1; then
-    log "  kill-peer-connections ok"
+  # node@063720b9 has no bulk kill-peer-connections poke -- it accepts
+  # only %bitcoin-client-disconnect-peer, one address at a time -- so
+  # killpeers.py scries /x/peers and loops.  Same effect, one strand.
+  if timeout 150 python3 /opt/gw/killpeers.py "$PIER" >> "$SLOG" 2>&1; then
+    log "  disconnect-peers ok"
   else
-    log "  kill-peer-connections FAILED (conn.sock unresponsive)"
+    log "  disconnect-peers FAILED (conn.sock unresponsive)"
   fi
   sleep 5
   [ "$(pool_left)" -lt 20 ] && pool_fill

@@ -27,7 +27,8 @@ a laptop.
 | `stopship.sh` | stop a *supervised* ship — supervisor first, then runtime, then sidecar |
 | `gwsup.sh` | per-ship supervisor: restarts vere and the sidecar, unwedges the light client |
 | `poolfill.py` | refill the peer pool from `x49.`-filtered DNS seeds |
-| `addpeers.py` | `%add-earth-peer` a batch of IPs in one strand |
+| `addpeers.py` | `%bitcoin-client-connect-peer` a batch of IPs in one strand |
+| `killpeers.py` | disconnect every earth peer — the unwedge step, one strand |
 | `gwvec.py` | build the Phase-2 adversarial attestation vectors from a comet artifact |
 | `gwsnub.py` | read and clear a ship's ames blocklist — one of the two ways to undo a snub |
 
@@ -65,11 +66,29 @@ VERE-DOWN, both relaunched, and the loser died on
 stopped were found running again — nothing stops a supervised ship except
 `stopship.sh`, and `OPERATIONS.md` documents no shutdown procedure at all.
 
-**Seed peers ~25 at a time.** Bulk `%add-earth-peer` reliably SIGSEGVs the
+**Seed peers ~25 at a time.** Bulk peer-adds reliably SIGSEGV the
 tcp-sidecar (`gwbtc/node#1`). Filter headers are only servable by peers
 advertising `NODE_COMPACT_FILTERS`, hence the `x49.` DNS prefix in
 `poolfill.py`; seeding from unfiltered seeds leaves filter sync at height 1
 forever and killed an entire test run.
+
+**node renamed its whole interface at `063720b9`.** That is the ref CI pins,
+and the one we need for `.stale-branch`. Every mark moved under
+`mar/bitcoin-client/` and was renamed with it: `%add-earth-peer` became
+`%bitcoin-client-connect-peer`, `kill-peer-connections` ceased to exist in
+favour of a per-address `%bitcoin-client-disconnect-peer`, and every *fact*
+mark the desk subscribes to gained the same prefix. Only `%log-info` and
+`%broadcast-transaction` kept their bare names.
+
+Nothing catches this class of break. Both desks compile independently and
+each is internally consistent, so CI is green and a code review has nothing
+to see — it shows up only on a running ship. It cost two validation runs:
+the first crash-looped 136,539 times on the fact marks, and the second came
+up with a healthy-looking agent, zero peers, and a cursor that never moved,
+because peer seeding was still poking a mark that no longer existed. A ship
+with no peers receives no facts, so "no unexpected subscription update" was
+vacuously true. **When bumping `NODE_REF`, diff `desk/mar/` and the agent's
+poke arms, not just `sur/`.**
 
 **A positive verdict lifts a snub — but no transport can deliver one.** The kernel's
 `f68a547b2b` made `+sy-sybl`'s `%full` branch the exact inverse of its `%fail`
