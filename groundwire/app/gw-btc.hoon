@@ -1411,10 +1411,17 @@
         ::  from an UNCHANGED cursor, so a bug that lands here loops
         ::  forever and, with the message swallowed, does it in total
         ::  silence: the agent looks alive and simply never indexes again.
+        ::  Cause-neutral, because there are now several.  This line used
+        ::  to assert "concurrent custody conflict", which is only one of
+        ::  them -- a reorg-discarded batch printed its own accurate
+        ::  reason and was then contradicted by this one, two lines later.
+        ::  The reorg guards in +reconcile-block slog before returning ~;
+        ::  the custody cases do not, so silence above means custody.
         %-  %-  slog
-            :~  leaf+"%gw-btc: concurrent custody conflict; retrying batch"
+            :~  leaf+"%gw-btc: block batch discarded; retrying from the unchanged cursor"
                 leaf+"  cursor={<num.block-id.urb-state>}"
                 leaf+"  confidential={<confidential>}"
+                leaf+"  (no reason logged above = a verifier result moved a tracked sat mid-batch)"
             ==
         ::  Schedule the batch for immediate retry from an UNCHANGED
         ::  cursor.  The claim jobs launched above are not retried with

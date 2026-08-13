@@ -1079,7 +1079,11 @@
 ++  rollback-sign
   |=  [fork=@ud stale=(list [@ud @ux])]
   ^-  sign:agent:gall
-  :+  %fact  %best-block
+  ::  the mark %bitcoin-client uses, named for its path in node's desk.
+  ::  A test that synthesizes the OLD name does not fail loudly -- it
+  ::  falls through to on-agent:def and CRASHES, which reads as a broken
+  ::  test rather than as the agent correctly refusing an unknown mark.
+  :+  %fact  %bitcoin-client-best-block
   !>  ^-  $:  %reorg-rollback
               last-common=[block-height=@ud block-hash=@ux]
               stale-branch=(list [block-height=@ud block-hash=@ux])
@@ -1089,7 +1093,7 @@
 ++  new-block-sign
   |=  height=@ud
   ^-  sign:agent:gall
-  :+  %fact  %best-block
+  :+  %fact  %bitcoin-client-best-block
   !>(`[%new block-height=@ud block-hash=@ux]`[%new height 0xbeef])
 ::  four points, one per case the selector has to tell apart.  .peer is
 ::  CONFIDENTIAL (so it also carries an attested tip and an in-flight
@@ -1123,6 +1127,20 @@
 ::
 ++  orphaned-branch  ^-((list [@ud @ux]) ~[[961.100 0xb.10c2] [961.099 0xb.10c1]])
 ++  untouched-branch  ^-((list [@ud @ux]) ~[[961.100 0xbad.0002] [961.099 0xbad.0001]])
+::  the sign a block thread delivers when it was ALREADY RUNNING when a
+::  %reorg-rollback landed.  Its base is the index as it stood BEFORE the
+::  repair -- every point still in it, cursor at 961.100 -- and its result
+::  carries that same index forward to 961.102, on the branch that turned
+::  out to lose.
+::
+++  stale-blocks-sign
+  ^-  sign-arvo
+  :^  %khan  %arow  %.y
+  :-  %noun
+  !>  ^-  [state:urb [(list [id:block:bitcoin effect:urb]) state:urb]]
+  =/  base=state:urb    [[0xdead.beef 961.100] ~ ~ reorg-ids]
+  =/  result=state:urb  [[0xb.10c4 961.102] ~ ~ reorg-ids]
+  [base [~ result]]
 ::
 ++  indexed-ships
   |=  agent=_gw-btc
@@ -1226,6 +1244,52 @@
     (expect-eq !>(1) !>((lent cs)))
     ::  a %lard block thread, NOT a bare timer re-arm
     (expect !>(?=([[%pass [%blocks ~] %arvo %k %lard *] ~] cs)))
+  ==
+::
+::  THE RACE.  +get-blocks awaits each block from the light client, so a
+::  thread genuinely spans events and a %reorg-rollback lands in the
+::  middle of one.  The rollback forgets the orphaned points and rewinds
+::  the cursor; the thread then returns from a base that predates both,
+::  and merging it undoes the entire repair.
+::
+::  Losing the rewind is the mild half -- the winning branch's blocks are
+::  never scanned and a %urb-state fact goes out for an index spliced
+::  from two chains.  The severe half is the points: a forgotten
+::  CONFIDENTIAL comet comes back into .unv-ids ALONE, because
+::  .confidential and .attested are separate legs the merge never
+::  restores.  +known-public is then true for a comet that never
+::  published, and its next %jael-writ is dropped %already-public --
+::  silently declassified, and unverifiable from then on.
+::
+::  +reconcile-block cannot catch this by iterating .conf, which is what
+::  it does for the verifier race: +forget-points drops a ship from the
+::  index and from .conf in LOCKSTEP, so an orphaned ship is in neither
+::  and the loop never examines it.  Comparing the two indexes directly
+::  is the only test that sees them.
+::
+++  test-a-stale-batch-cannot-undo-a-reorg
+  =/  agent  reorg-agent
+  =^  *  agent
+    (~(on-agent agent bowl0) /best-block (rollback-sign 961.098 orphaned-branch))
+  =/  repaired  (indexed-ships agent)
+  ::  ... and only NOW does the in-flight thread return.
+  =^  cards  agent  (~(on-arvo agent bowl0) /blocks stale-blocks-sign)
+  =/  st  ;;(state:urb (peek-noun (~(on-peek agent bowl0) /x/urb-state)))
+  =/  cs  (app-cards cards)
+  ;:  weld
+    ::  ~des was proved by an orphaned block and forgotten; the stale
+    ::  batch, whose base still holds it, does not bring it back.
+    ::
+    (expect !>(!(~(has in (indexed-ships agent)) ~des)))
+    (expect-eq !>(repaired) !>((indexed-ships agent)))
+    ::  and the cursor is not dragged forward onto the losing branch
+    ::
+    (expect-eq !>(961.098) !>(num.block-id.st))
+    ::  the batch is discarded and retried from the unchanged cursor,
+    ::  with no %urb-state fact published for it
+    ::
+    (expect-eq !>(1) !>((lent cs)))
+    (expect !>(?=([[%pass [%timer ~] %arvo %b %wait *] ~] cs)))
   ==
 ::
 ::  and a plain %new still just moves the tip.
@@ -1349,7 +1413,7 @@
   =/  agent  gw-btc
   =^  *  agent  ~(on-init agent bowl0)
   =^  *  agent
-    (~(on-agent agent bowl0) /is-synced [%fact %is-synced !>(&)])
+    (~(on-agent agent bowl0) /is-synced [%fact %bitcoin-client-is-synced !>(&)])
   =/  before  (peek-noun (~(on-peek agent bowl0) /x/ready))
   =^  *  agent  (~(on-load agent bowl0) ~(on-save agent bowl0))
   =/  after   (peek-noun (~(on-peek agent bowl0) /x/ready))
