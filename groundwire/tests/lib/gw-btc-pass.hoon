@@ -297,7 +297,12 @@
     ::  emits; 0x4d 77 is a length that lies about its own tail.
     (expect !>((publication-envelope:cc (bad 0x4e 78))))
     (expect !>((publication-envelope:cc (bad 0x4d 77))))
+    ::  Both on the READ path too, because they fail at different points
+    ::  and only the read path announces.  0x4e is refused by the opcode
+    ::  test; 0x4d 77 gets past it and dies on `=(len wid.rst)`, so a
+    ::  regression could plausibly close one route and not the other.
     (expect-eq !>(*(unit publication:sa)) !>((read-publication:cc (bad 0x4e 78))))
+    (expect-eq !>(*(unit publication:sa)) !>((read-publication:cc (bad 0x4d 77))))
     ::  NOT ours: the envelope says no, and the silence is correct.
     (expect !>(!(publication-envelope:cc alien)))
     (expect-eq !>(*(unit publication:sa)) !>((read-publication:cc alien)))
