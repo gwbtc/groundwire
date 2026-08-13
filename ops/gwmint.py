@@ -380,6 +380,18 @@ def cmd_build(label, publish=False, fief=None, sponsor=None, fee_rate=1,
             },
         }
 
+    # Wire change back to the ops wallet.  build_spawn_psbt has taken these
+    # three arguments all along and this caller passed none of them, so every
+    # spawn SWEPT its whole input into the identity output -- a 12.000-sat
+    # UTXO became a 12.000-sat comet.  That is why minting three comets
+    # needed a separate splitting transaction first, and that transaction is
+    # what then sat unconfirmed and ended the run: a defect here cost the
+    # whole campaign, one layer up.
+    #
+    # With change wired, the change branch caps the identity sat at 1.000
+    # sats and returns the remainder, so ONE UTXO funds a whole run of
+    # spawns back to back and no split is needed.  The vbyte estimate above
+    # already counts the extra output, so the fee is right in both arms.
     psbt_obj, proof = C.build_spawn_psbt(
         utxo_txid=txid, utxo_vout=vout, utxo_value=value,
         utxo_script_pubkey=w["spk"],
@@ -387,6 +399,8 @@ def cmd_build(label, publish=False, fief=None, sponsor=None, fee_rate=1,
         funding_fingerprint=w["fpr"], snapshot=snapshot,
         publication_pass_atom=pub_pass, publication_opening=pub_open,
         fee_rate=fee_rate, network="main",
+        change_internal_xonly=w["xonly"], change_script_pubkey=w["spk"],
+        change_path=FUNDING_PATH,
     )
     psbt_obj.sign_with(w["root"])
     signed_b64 = psbt_obj.to_base64()
@@ -451,10 +465,24 @@ def cmd_build(label, publish=False, fief=None, sponsor=None, fee_rate=1,
     sat_val = dec["vout"][0]["value"]
     fee = value - sum(o["value"] for o in dec["vout"])
     chk("output 0 value >= 330 (P2TR dust)", sat_val >= 330, f"{sat_val} sats")
-    chk("fee <= 500 sats", fee <= 500, f"fee = {fee} sats")
+    # The ceiling has to scale with the transaction, not sit at a constant.
+    # A flat `fee <= 500` contradicted the rate check one line below it: a
+    # spawn that also carries a publication is ~400 vB, so at the requested
+    # 2 sat/vB it owes ~800 sats and is CORRECT -- and the gate failed it
+    # anyway, after every substantive check had passed. Measured: 802 sats
+    # at exactly 2.000 sat/vB, refused.
+    #
+    # What this is actually for is catching a runaway fee, so express it as
+    # one: the effective rate must not exceed what was asked for by more
+    # than a sat, which bounds the fee at any size.
+    eff = fee / dec["vsize"]
+    fee_cap = int(dec["vsize"] * (fee_rate + 1))
+    chk(f"fee <= {fee_cap} sats ({dec['vsize']} vB x {fee_rate}+1 sat/vB)",
+        fee <= fee_cap, f"fee = {fee} sats")
     chk("effective fee rate >= 1.0 sat/vB",
-        fee / dec["vsize"] >= 1.0,
-        f"{fee}/{dec['vsize']} = {fee / dec['vsize']:.3f} sat/vB")
+        eff >= 1.0, f"{fee}/{dec['vsize']} = {eff:.3f} sat/vB")
+    chk(f"effective fee rate <= requested + 1 ({fee_rate + 1} sat/vB)",
+        eff <= fee_rate + 1.0, f"{eff:.3f} sat/vB, requested {fee_rate}")
 
     if publish:
         pub_spk = dec["vout"][1]["scriptPubKey"]

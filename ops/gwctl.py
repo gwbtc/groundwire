@@ -149,28 +149,57 @@ def cmd_desks(pier, *specs):
             shutil.rmtree(child) if child.is_dir() else child.unlink()
         subprocess.run(["rsync", "-a", "-L", "--exclude=.git*",
                         f"{src}/", f"{d}/"], check=True)
-        # pick the biggest file in the desk as the commit probe
-        files = [p for p in src.rglob("*") if p.is_file()]
-        probe = max(files, key=lambda p: p.stat().st_size)
-        rel = "/" + str(probe.relative_to(src)).replace(".", "/")
-        want = probe.stat().st_size
+        # Prove the commit landed by reading the desk's REVISION, not by
+        # probing for a file inside it.
+        #
+        # This used to scry `%cx` for the biggest file in the desk and
+        # compare byte counts.  Before the commit lands, that path is one
+        # Clay does not have -- and a `%cx` on a missing path does not come
+        # back empty.  It is `arvo: scry-lost` -> `bail: 4`, which takes
+        # spider down with it ("spider crashed, killing all strands") and
+        # kills every OTHER thread on the ship at the same time.  Measured
+        # on all three droplets: 59 retries, and the supervisor's peer
+        # seeding dead alongside the install it was supposed to be checking.
+        # One unguarded probe cost two subsystems.
+        #
+        # `%cw` asks the same question of a path that always exists for a
+        # desk that exists, and its $cass carries the aeon.  This is what
+        # automation/desk-commit.sh already does, for exactly this reason;
+        # see task 29.  Re-poking each round is kept -- a commit can race
+        # the rsync on a big desk, and %kiln-commit is idempotent.
+        def desk_aeon():
+            try:
+                return ev(c, f"(pure:m !>(ud:.^(cass:clay %cw /(scot %p our)"
+                             f"/{desk}/(scot %da now))))")
+            except Exception:
+                return None
+
+        before = desk_aeon()
+        if before is None:
+            sys.exit(f"ERROR: cannot read %{desk}'s revision out of Clay. "
+                     f"The desk should already exist (desk-create merged it "
+                     f"from %base); not being able to read it means the ship "
+                     f"is not answering, and everything after is guesswork.")
+        print(f"  %{desk} is at revision {before}", flush=True)
         deadline = time.time() + 900
         n = 0
         while True:
             c.poke_our("hood", "kiln-commit", f"!>([%{desk} %.n])")
             n += 1
             time.sleep(10)
-            got = None
-            try:
-                got = ev(c, f"(pure:m !>((met 3 .^(@t %cx /(scot %p our)"
-                            f"/{desk}/(scot %da now){rel}))))")
-            except Exception:
-                pass
-            print(f"  %{desk} commit#{n}: clay={got} disk={want}", flush=True)
-            if got == want:
+            got = desk_aeon()
+            print(f"  %{desk} commit#{n}: revision {before} -> {got}",
+                  flush=True)
+            if got is not None and got > before:
                 break
             if time.time() > deadline:
-                sys.exit(f"ERROR: %{desk} commit never reflected {rel}")
+                sys.exit(
+                    f"ERROR: %{desk} is still at revision {before}. Clay did "
+                    f"not take this commit, and it does not say so: a commit "
+                    f"it refuses changes nothing, prints nothing and fails "
+                    f"nothing. Usual causes, in order: a file whose mark the "
+                    f"desk does not carry; sys.kelvin naming a kernel this "
+                    f"ship is not at; the mount not synced.")
     for desk, _src in desks:
         print(f"install %{desk}", flush=True)
         c.poke_our("hood", "kiln-install", f"!>([%{desk} our %{desk}])")

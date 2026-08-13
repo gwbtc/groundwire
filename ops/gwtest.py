@@ -261,6 +261,23 @@ def _wait_dir(p: Path, timeout: int) -> bool:
     return False
 
 
+def _desk_aeon(a, pier: Path) -> int | None:
+    """The desk's revision, read out of Clay.
+
+    %cw is clay's case scry and its $cass carries the aeon.  Unlike probing
+    for a file inside the desk, it asks about a path that always exists for
+    a desk that exists, so it cannot scry-lost.
+    """
+    at = transcript_path(pier).stat().st_size
+    send(a.session, f".^(cass:clay %cw /(scot %p our)/{a.desk}/(scot %da now))")
+    time.sleep(4)
+    for line in read_transcript(pier, at):
+        m = re.search(r"ud=([0-9.]+)", line)
+        if m:
+            return int(m.group(1).replace(".", ""))
+    return None
+
+
 def cmd_commit(a) -> int:
     pier, src = Path(a.pier).resolve(), Path(a.src).resolve()
     if not src.is_dir():
@@ -284,16 +301,51 @@ def cmd_commit(a) -> int:
     for child in mount.iterdir():
         shutil.rmtree(child) if child.is_dir() else child.unlink()
     subprocess.run(["cp", "-R", *[str(p) for p in src.iterdir()], str(mount)], check=True)
+    before = _desk_aeon(a, pier)
     at = transcript_path(pier).stat().st_size
     send(a.session, f"|commit %{a.desk}")
     time.sleep(a.settle)
     # Unmount: a mounted desk keeps clay writing, and nothing here needs it.
     send(a.session, f"|unmount %{a.desk}")
     time.sleep(3)
-    bad = [l for l in read_transcript(pier, at) if "commit failed" in l or "%clay" in l]
+    # Clay refuses a commit by CHANGING NOTHING.  It prints no "commit
+    # failed", and the strings it does print are the mark's, not clay's --
+    # the real rejection read `[%error-validating /doc/confidential-comets/md]`
+    # and `[%no-cast-between %mime %md]`, so the old grep for "commit failed"
+    # or "%clay" matched neither and this function returned success.
+    #
+    # That is not a cosmetic miss.  The pill PRE-BAKES a %groundwire desk
+    # from GROUNDWIRE_BRANCH (main), so a refused commit leaves MAIN's code
+    # installed under the desk name we are about to test, and the run reads
+    # as green-ish while testing someone else's code entirely.  It cost a
+    # whole validation campaign: the "two test files do not build" finding
+    # was main's files, not ours.
+    #
+    # So ask Clay whether the revision moved, which is the only question
+    # that settles it.  Same fix, same reason, as automation/desk-commit.sh.
+    bad = [l for l in read_transcript(pier, at)
+           if "commit failed" in l or "%clay" in l
+           or "error-validating" in l or "no-cast-between" in l
+           or "validate-page-fail" in l or "error-building-tube" in l]
     for l in bad:
         print(l)
-    print(f"committed %{a.desk} from {src}")
+    after = _desk_aeon(a, pier)
+    if before is None or after is None:
+        print(f"WARNING: could not read %{a.desk}'s revision "
+              f"(before={before} after={after}); commit is UNVERIFIED")
+    elif after <= before:
+        raise SystemExit(
+            f"ERROR: %{a.desk} is still at revision {before} -- clay did not "
+            f"take this commit.\n"
+            f"Anything you run now tests whatever was already installed "
+            f"under %{a.desk}, which on a pill-booted ship is "
+            f"GROUNDWIRE_BRANCH's code, not {src}.\n"
+            f"Usual causes: a file whose mark the desk does not carry (are "
+            f"you committing the SOURCE tree instead of dist-groundwire?); "
+            f"sys.kelvin naming a kernel this ship is not at; the mount not "
+            f"synced.\nSee {transcript_path(pier)}")
+    else:
+        print(f"committed %{a.desk} from {src}: revision {before} -> {after}")
     return 0
 
 
