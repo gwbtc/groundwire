@@ -1512,7 +1512,15 @@
       ~[(watch-synced our.bowl)]
     ::
         %fact
-      ?.  ?=(%is-synced p.cage.sign)
+      ::  %bitcoin-client names its fact marks after their path in its own
+      ::  desk, mar/bitcoin-client/is-synced.hoon -- so the mark is
+      ::  %bitcoin-client-is-synced, NOT %is-synced.  A mismatch here is
+      ::  not a quiet no-op: the fact falls through to on-agent:def, which
+      ::  crashes on an unexpected update, gall closes the subscription,
+      ::  the %kick arm above re-watches, and the ship spins.  Measured at
+      ::  136.539 iterations and 191MB of transcript in ~15 minutes on an
+      ::  IDLE ship, against node@063720b9.
+      ?.  ?=(%bitcoin-client-is-synced p.cage.sign)
         (on-agent:def wire sign)
       =/  syn  !<(is-synced:update:lc q.cage.sign)
       ?:  =(syn synced)  `this
@@ -1541,9 +1549,17 @@
     ::
         %fact
       ::  The node's %bitcoin-client gives /best-block facts under its own
-      ::  fact mark %best-block, carrying best-block:update (a %new, or a
+      ::  fact mark, carrying best-block:update (a %new, or a
       ::  %reorg-rollback naming the fork point and the losing branch).
-      ?.  ?=(%best-block p.cage.sign)
+      ::
+      ::  That mark is %bitcoin-client-best-block, named for its path in
+      ::  node's desk (mar/bitcoin-client/best-block.hoon).  It read
+      ::  %best-block until node@063720b9 -- the very ref we pin for
+      ::  .stale-branch -- moved every mark under mar/bitcoin-client/ and
+      ::  renamed all of them with it.  See the +is-synced arm above for
+      ::  what a mismatch costs; the two desks still COMPILE independently,
+      ::  which is why CI cannot see this and a live ship must.
+      ?.  ?=(%bitcoin-client-best-block p.cage.sign)
         (on-agent:def wire sign)
       =/  upd  !<(best-block:update:lc q.cage.sign)
       ?:  ?=(%new -.upd)
@@ -2548,6 +2564,24 @@
   ?.  =(`who com.u.sv)  ~
   `result(unv-ids (~(put by unv-ids.result) who point))
 ::
+::  +any-forgotten: did a point leave the index while a batch was running?
+::
+::    +forget-points is the ONE way this agent un-knows an identity, and
+::    it drops the ship from the index and from .confidential in
+::    LOCKSTEP.  That lockstep is why +reconcile-block cannot find these
+::    ships by iterating .conf: an orphaned ship is in neither set, so
+::    the loop never examines it and its `?~ current ~` bail never fires.
+::    Comparing the two indexes directly is the only test that sees them.
+::
+++  any-forgotten
+  |=  [base=state:urb live=state:urb]
+  ^-  ?
+  =/  who=(list @p)  ~(tap in ~(key by unv-ids.base))
+  |-  ^-  ?
+  ?~  who  %.n
+  ?.  (~(has by unv-ids.live) i.who)  %.y
+  $(who t.who)
+::
 ::  A block thread computes from `base`, while attestation results can update
 ::  `live` concurrently.  Block-derived `sont.own` is accepted, but all other
 ::  fields of a confidential point remain live/private.  If both branches
@@ -2556,6 +2590,57 @@
 ++  reconcile-block
   |=  [base=state:urb live=state:urb result=state:urb conf=(set ship)]
   ^-  (unit state:urb)
+  ::  BASE FRESHNESS.  A +get-blocks thread genuinely spans events -- it
+  ::  awaits each block from the light client -- so a %reorg-rollback can
+  ::  and does land while one is in flight.  That arm REPAIRS the index:
+  ::  it forgets the points whose most recent evidence was orphaned and
+  ::  it rewinds the cursor.  This batch was computed from a base that
+  ::  predates the repair, so merging it undoes the repair.  Nothing else
+  ::  in the merge below can see that, because it reasons about tips
+  ::  rather than about the index having been rebuilt underneath it.
+  ::
+  ::  Two things move, so both are checked.  Either one discards the
+  ::  batch through the caller's existing `?~ merged` path, which retries
+  ::  from an UNCHANGED cursor -- and cannot livelock, because the retry's
+  ::  base is the live state, so the next attempt passes both tests.
+  ::
+  ::    THE CURSOR.  A rewind moves .block-id backwards.  Merging puts it
+  ::    back where the losing branch left it, so the winning branch's
+  ::    blocks between the fork point and this batch's base are NEVER
+  ::    scanned -- and a %urb-state fact is broadcast for an index
+  ::    spliced from two chains.  This half needs no confidential comet
+  ::    and no forgotten point: any at-or-below-cursor reorg reaches it.
+  ::
+  ?.  =(block-id.base block-id.live)
+    %-  %-  slog
+        :~  leaf+"%gw-btc: block batch discarded: the cursor moved while it ran"
+            leaf+"  batch base={<num.block-id.base>}, live={<num.block-id.live>}"
+            leaf+"  (a reorg repair landed mid-batch; rescanning from the live cursor)"
+        ==
+    ~
+  ::    THE POINTS.  A reorg whose fork point is AT our cursor height
+  ::    rewinds nothing -- the fork point IS the last block we scanned --
+  ::    and still forgets, because a $point's .seen is the block of its
+  ::    last custody entry, which +verify-lc fetched and which routinely
+  ::    sits ABOVE the scanner.  So the cursor test alone is not enough.
+  ::
+  ::    Resurrecting such a point is worse than losing a block: it comes
+  ::    back into .unv-ids ALONE, since .confidential and .attested are
+  ::    separate legs of the agent's state that this arm never restores.
+  ::    +known-public is then true for a comet that never published --
+  ::    a silent declassification, leaking through /x/point, /x/points,
+  ::    the %urb-state fact and the udiffs to jael -- and the comet is
+  ::    unverifiable forever after, its next %jael-writ dropped
+  ::    %already-public with no verdict and no line an operator reads as
+  ::    a fault.
+  ::
+  ?:  (any-forgotten base live)
+    %-  %-  slog
+        :~  leaf+"%gw-btc: block batch discarded: a point was forgotten while it ran"
+            leaf+"  cursor={<num.block-id.live>}"
+            leaf+"  (a reorg orphaned evidence at or above the cursor; rescanning)"
+        ==
+    ~
   =/  ships  ~(tap in conf)
   =/  out  result
   |-
