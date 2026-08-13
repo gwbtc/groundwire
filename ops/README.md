@@ -23,7 +23,10 @@ a laptop.
 | `gwtest.py` | boot a fakeship, commit a desk into it, `-test` it, and tally the result honestly |
 | `gwctl.py` | the operator surface: identity, desks, readiness, peers, verification pokes |
 | `gwmint.py` | mint a comet on mainnet, with an independent pre-broadcast verification gate |
-| `bootcomet.sh` | first boot of a minted comet from a pinned pill |
+| `bootcomet.sh` | full bringup of a minted comet: boot, install `%groundwire`, supervise, seed peers, report readiness |
+| `pcap.sh` | start a packet capture — run at BOTH ends of a networking test |
+| `pcapsum.sh` | summarise a capture BY DIRECTION ("N out, M back") |
+| `pushfile.sh` | copy one file to a droplet and prove it arrived — sha256 + byte count |
 | `stopship.sh` | stop a *supervised* ship — supervisor first, then runtime, then sidecar |
 | `gwsup.sh` | per-ship supervisor: restarts vere and the sidecar, unwedges the light client |
 | `poolfill.py` | refill the peer pool from `x49.`-filtered DNS seeds |
@@ -41,13 +44,14 @@ every live campaign has actually run with `-t` under a supervisor, driven over
 written there as `.^(* %gx /...)` has to be wrapped in a `(strand ,vase)` thread
 and handed to khan. `gwctl.py` is that wrapping.
 
-**`%bitcoin-client` cannot be scried.** Its `++peek` is literally `~` for every
-path (`app/bitcoin-client.hoon:181-184`). Any tool that scries `/is-synced`,
-`/best-block` or `/peers` gets nothing and always did — the recovered
-`p4setup.py sync`/`info` and `peercount.py` were dead code against a real node,
-which is why they are not carried forward in that form. Read readiness from
-`%gw-btc`'s `/x/ready` (`gwctl.py ready`), and detail from the ship's log after
-`gwctl.py peers` pokes `&log-info`.
+**`%bitcoin-client` COULD not be scried, and now can.** Its `++peek` was
+literally `~` for every path, which is why the recovered `p4setup.py
+sync`/`info` and `peercount.py` were dead code against a real node and are not
+carried forward. At `node@063720b9` it serves `/x/network`, `/x/is-synced`,
+`/x/best-block`, `/x/peers` and the block-header paths — `killpeers.py` depends
+on `/x/peers` being real. Readiness is still best read from `%gw-btc`'s
+`/x/ready` (`gwctl.py ready`), because that is the verifier's own view and it
+is what gates verdicts; `gwctl.py peers` pokes `&log-info` for detail.
 
 **Liveness is `<pier>/.urb/log/*/data.mdb`, never `<pier>/.urb/log`.** The
 directory is a dirent; LMDB writes into an already-created file. Measured 21 h
@@ -58,6 +62,14 @@ every healthy ship wedged from the moment it boots.
 `pkill -f urbit`. `gwsup.sh` matches the king by exact final argv, the serf by
 the field after `--snap-dir`, and the sidecar by `/proc/<pid>/cwd` — it has no
 port and no distinctive argv.
+
+Two traps in that, both sprung live. **`stopship.sh` silently stops nothing for
+a ship booted in CREATE form**: it matches the king by `$NF==pier`, but
+`-c PIER … -B PILL` ends its argv with the *pill*. And **`pgrep -f` on a remote
+host matches the ssh wrapper's own command line**, which contains the pattern as
+literal text — one such kill took out its own shell before the next command,
+with no output and no error, looking exactly like a clean no-op. Kill by
+explicit PID and confirm with `ps -p`.
 
 **`gwsup.sh` is now a singleton.** It takes an flock. Before that guard, all
 three droplets were found running *two* supervisors per pier; both saw
