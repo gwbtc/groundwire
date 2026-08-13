@@ -33,11 +33,26 @@ function bytesToHex(b: Uint8Array): string {
 }
 
 export async function broadcastStateUpdate(
-  signedPsbt: Uint8Array, mp: Mempool,
+  signedPsbt: Uint8Array, mp: Mempool, expectTxidHex: string,
 ): Promise<BroadcastResult> {
   const raw = extractTx(signedPsbt);
   const hex = bytesToHex(raw);
   const txid = rawTxid(raw);
+  // Refuse to broadcast a transaction we did not build.
+  //
+  // This txid was already being computed — for the idempotent-retry path
+  // below — and never compared to anything. A segwit txid commits to
+  // every input and output but NOT the witness, so signing cannot change
+  // it; a mismatch means the signer returned a different transaction,
+  // spending or paying somewhere we did not choose.
+  if (txid !== expectTxidHex) {
+    throw new Error(
+      `refusing to broadcast: signed transaction is not the one built `
+      + `(built ${expectTxidHex}, signed ${txid}). A segwit txid does not `
+      + `change when a transaction is signed, so these differ only if the `
+      + `inputs or outputs differ.`,
+    );
+  }
   // Idempotent broadcast: a retry of an already-known tx must not fail.
   let broadcastTxid: string;
   try {

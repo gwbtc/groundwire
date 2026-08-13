@@ -12,7 +12,7 @@ import { el, clearAndAppend, banner, copyButton, kvList } from "../components.js
 import { go, getSession } from "../state.js";
 import { atomToMnemonym, abridgeMnemonym } from "../../protocol/mnemonym.js";
 import { ops } from "../../ops/index.js";
-import type { StateUpdateCtx } from "../../ops/types.js";
+import type { BuiltStateUpdate, StateUpdateCtx } from "../../ops/types.js";
 import type { Snapshot } from "../../spawn/snapshot.js";
 import { messagingKeyFromPass } from "../../spawn/mine-c.js";
 import { lookupPoint } from "../../oracle/point.js";
@@ -191,6 +191,10 @@ export function renderOp(root: HTMLElement, opName: string): void {
   clearAndAppend(root, card, psbtCard, resultCard);
 
   let ctx: StateUpdateCtx | null = null;
+  // Held across the two handlers so the broadcast can prove it is sending
+  // the transaction the build produced. A rebuild replaces it, so a stale
+  // signed PSBT pasted after a rebuild is caught rather than broadcast.
+  let built: BuiltStateUpdate | null = null;
 
   form.addEventListener("submit", (ev) => {
     ev.preventDefault();
@@ -199,6 +203,32 @@ export function renderOp(root: HTMLElement, opName: string): void {
       const data = new FormData(form);
       const newKeyHex = String(data.get("newKeyHex") ?? "").trim().replace(/^0x/, "");
       if (!/^[0-9a-fA-F]+$/.test(newKeyHex)) throw new Error("new key must be a hex atom");
+      // This field wants `cry.pub` — a bare 32-byte messaging key — and it
+      // used to accept anything hex-shaped. The desktop's --new-pass-hex
+      // wants the WHOLE PASS and reads it little-endian, so the same string
+      // means two different things in the two tools, and the value users
+      // actually have to hand is the whole pass: Causeway writes
+      // `pass_atom_hex` with Python's hex(), big-endian, and this field is
+      // labelled "hex atom" with a 0x… placeholder.
+      //
+      // Getting it wrong is not a build error, it is a burnt identity.
+      // Nothing downstream checks the width — measured: the build succeeds
+      // with an 862-bit key, a 4096-bit key, and zero — and the comet then
+      // fails `pass-key` in +verify-lc, which is FRAUD class: a permanent,
+      // never-expiring, one-way snub on every transport. Worse, the fix is
+      // not another rekey through this tool, because it would rebuild the
+      // prior snapshot from the CORRECT cry and the merkle root would not
+      // match the UTXO.
+      const newKeyAtom = BigInt("0x" + newKeyHex);
+      if (newKeyAtom >> 256n !== 0n) {
+        throw new Error(
+          (newKeyAtom & 0xffn) === 0x63n
+            ? "that looks like a whole suite-C pass, not cry.pub — this field "
+              + "wants the 32-byte messaging key alone. (The desktop's "
+              + "--new-pass-hex takes the whole pass; this one does not.)"
+            : "messaging key must be at most 32 bytes (64 hex characters)",
+        );
+      }
       const breach = data.has("breach");
       const noRoute = data.has("noRoute");
       const sponsorText = String(data.get("sponsorPatp") ?? "").trim();
@@ -280,23 +310,24 @@ export function renderOp(root: HTMLElement, opName: string): void {
         noRoute,
       };
 
-      const built = ops.rekey.build(
+      const b = ops.rekey.build(
         {
-          newKey: BigInt("0x" + newKeyHex),
+          newKey: newKeyAtom,
           breach,
           ...(sponsor === undefined ? {} : { sponsor }),
         },
         ctx,
       );
+      built = b;
 
       psbtCard.style.display = "";
-      const stream = encodePsbtUR(built.psbt);
+      const stream = encodePsbtUR(b.psbt);
       animateUR(qrLeft, stream, { fps: 4, size: 360 });
       qrCopy.innerHTML = "";
-      qrCopy.appendChild(copyButton(() => base64.encode(built.psbt), "copy base64"));
+      qrCopy.appendChild(copyButton(() => base64.encode(b.psbt), "copy base64"));
       buildStatus.appendChild(banner("ok",
-        `built rekey → life ${built.newSnapshot.life}, rift ${built.newSnapshot.rift} `
-        + `(predicted txid ${built.txidHex.slice(0, 8)}…)`));
+        `built rekey → life ${b.newSnapshot.life}, rift ${b.newSnapshot.rift} `
+        + `(predicted txid ${b.txidHex.slice(0, 8)}…)`));
     } catch (err: any) {
       buildStatus.innerHTML = "";
       buildStatus.appendChild(banner("err", `build error: ${err.message ?? err}`));
@@ -306,10 +337,15 @@ export function renderOp(root: HTMLElement, opName: string): void {
   bcastBtn.addEventListener("click", async () => {
     status.innerHTML = "";
     try {
-      if (!ctx) throw new Error("build the PSBT first");
+      if (!ctx || !built) throw new Error("build the PSBT first");
       if (!signedPsbt) throw new Error("need the signed rekey PSBT");
+      // Captured before the await: these are mutable outer bindings, so
+      // the narrowing above does not survive the suspension point — and a
+      // rebuild during the broadcast really could swap them.
+      const bcastCtx = ctx;
+      const bcastBuilt = built;
       status.appendChild(banner("warn", "broadcasting state update…"));
-      const result = await ops.rekey.broadcast(signedPsbt, ctx);
+      const result = await ops.rekey.broadcast(signedPsbt, bcastCtx, bcastBuilt);
       resultCard.style.display = "";
       resultCard.innerHTML = "";
       resultCard.appendChild(el("h2", {}, "Broadcast ✓"));

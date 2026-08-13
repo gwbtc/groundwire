@@ -30,7 +30,7 @@ export const rekeyOp: OpModule<RekeyArgs> = {
     };
     return buildStateUpdate(newSnapshot, ctx);
   },
-  async broadcast(signedPsbt, ctx): Promise<BroadcastResult> {
-    return broadcastStateUpdate(signedPsbt, ctx.mp);
+  async broadcast(signedPsbt, ctx, built): Promise<BroadcastResult> {
+    return broadcastStateUpdate(signedPsbt, ctx.mp, built.txidHex);
   },
 };

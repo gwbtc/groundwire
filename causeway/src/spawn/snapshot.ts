@@ -121,6 +121,19 @@ export function fiefToNoun(f: Fief): Noun {
 
 // snapshot as a noun: [life [rift [key [sponsor fief]]]].
 export function snapshotToNoun(s: Snapshot): Noun {
+  // Enforce the invariant the Snapshot.key doc comment above states. It was
+  // only ever stated, and this is the chokepoint every commitment goes
+  // through — stateCommit, stateMerkleRoot and stateOutputKey all jam this
+  // noun — so an oversized key reached the chain silently and made the
+  // comet fail `pass-key` in +verify-lc, which is fraud class and a
+  // permanent snub. Cheaper to refuse here than to explain there.
+  if (s.key >> 256n !== 0n) {
+    throw new Error(
+      "Snapshot.key must be cry.pub, at most 32 bytes — got "
+      + `${(s.key.toString(16).length + 1) >> 1} bytes. A whole suite-C pass `
+      + "is ~108 bytes; split it with messagingKeyFromPass.",
+    );
+  }
   return [BigInt(s.life), [BigInt(s.rift), [s.key, [
     unit(s.sponsor),
     unit(s.fief === null ? null : fiefToNoun(s.fief)),

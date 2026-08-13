@@ -854,6 +854,14 @@ class PsbtBuildScreen(BaseScreen):
             # re-derivable from the user's phrase + the spawn outpoint, but the
             # snapshot and pass are not); if we broadcast first and then crash
             # before writing it, an already-spent sat is left with no proof.
+            # ... and before any of that, check the signer handed back the
+            # transaction we built.  The paste box accepts any PSBT; a
+            # segwit txid does not change under signing, so one comparison
+            # settles it.  Without this the proof written below can describe
+            # a transaction that was never broadcast.
+            cw.assert_signed_is_what_we_built(
+                state.psbt_b64_unsigned or "", state.psbt_b64_signed or ""
+            )
             commit_txid, tx_hex = cw._extract_tx_from_psbt(state.psbt_b64_signed or "")
             proof = getattr(self, "_pending_proof", None) or {}
             proof["commit_txid"] = commit_txid

@@ -3207,9 +3207,15 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
     )
     if proof.get("topped_up_by") is not None:
         delta = proof["topped_up_by"]
+        #  Colour by SIGN, not by "was there funding".  This printed green
+        #  whenever funding was present, so a rekey that funded 400 sats and
+        #  paid 3.380 in fees announced itself in green as though it were a
+        #  top-up.  That is the annunciation of the exact failure that once
+        #  priced a live comet down to 754 sats.
         click.echo(click.style(
             f"  Identity output: {prior.get('sat_value', '?')} → {proof['sat_value']} sats "
-            f"({delta:+d}){'  [TOP-UP]' if delta > 0 else ''}", fg="green"))
+            f"({delta:+d}){'  [TOP-UP]' if delta > 0 else '  [SHRANK — the fee exceeded the funding]'}",
+            fg="green" if delta > 0 else "yellow"))
     proof["op"] = "rekey"
     proof["patp"] = point
     #  The pass this rekey rotates TO.  A spawn proof records `pass_atom_hex`
@@ -3240,6 +3246,11 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
     except Exception as e:
         click.echo(click.style(f"\n  Error extracting signed tx: {e}", fg="red"))
         sys.exit(1)
+
+    #  Before the proof is written, not after: the proof is the durable
+    #  record the next state update chains off, so a wrong one is worse
+    #  than a wrong broadcast.
+    assert_signed_is_what_we_built(unsigned_b64, signed_b64)
 
     proof["commit_txid"] = commit_txid
     proof_path = os.path.join(output_dir, f"{pier}-rekey-{commit_txid[:12]}.proof.json")
@@ -3751,6 +3762,13 @@ def cmd_publish(proofs, fee_rate, network, output_dir, mempool_base, pass_hex,
         click.echo(click.style(f"\n  Error extracting signed tx: {e}", fg="red"))
         sys.exit(1)
 
+    #  GUARD 0 — is this even our transaction?  The two guards below are the
+    #  strongest in the tool and they still leave a hole: they check input 0
+    #  and they check the OP_RETURN, and neither looks at output 0.  A stale
+    #  publish PSBT for the SAME comet with the SAME xtr therefore passes
+    #  both while paying the identity sat somewhere else entirely.
+    assert_signed_is_what_we_built(unsigned_b64, signed_b64)
+
     #  GUARD 4, SECOND PASS — on the FINAL bytes, after signing and before the
     #  broadcast that cannot be taken back.  The signer returned this
     #  transaction; nothing here trusts that it is the one we handed over.
@@ -3915,6 +3933,45 @@ def _await_signed_psbt(unsigned_b64: str, signed_psbt: str | None = None) -> str
             return entry
         except Exception as e:
             print(f"  That doesn't look like a valid PSBT ({e}). Try again.")
+
+
+def assert_signed_is_what_we_built(unsigned_b64: str, signed_b64: str) -> str:
+    """Refuse to broadcast a transaction we did not build. Returns the txid.
+
+    Signing must not change what is being spent or where it goes, and for
+    a segwit transaction it cannot change the txid either: the txid
+    commits to everything EXCEPT the witness, so the value computed at
+    build time survives signing byte for byte. That makes the check one
+    comparison, and it is free.
+
+    Without it, every broadcast path except `publish` sent whatever came
+    back from the signer. Reproduced with the broadcast stubbed: hand
+    `rekey --signed-psbt` a PSBT that sweeps the same identity outpoint
+    to an unrelated address and it exits 0, broadcasts, and then writes
+    a proof file asserting a `sat_script_pubkey_hex` that is not on
+    chain. The proof outlives the transaction -- it is what the next
+    state update chains off -- so a wrong one costs the identity, not
+    just the sats.
+
+    This does not need a malicious signer. `<patp>-rekey.psbt` is a
+    fixed filename that every run overwrites, so a stale or wrong
+    `--signed-psbt` reaches exactly the same place.
+    """
+    want = psbt.PSBT.from_base64(unsigned_b64).tx.txid().hex()
+    got, _ = _extract_tx_from_psbt(signed_b64)
+    if want != got:
+        raise SystemExit(
+            "\n  REFUSING TO BROADCAST: the signed transaction is not the one "
+            "this tool built.\n"
+            f"    built:  {want}\n"
+            f"    signed: {got}\n"
+            "  A segwit txid does not change when a transaction is signed, so "
+            "these differ\n"
+            "  only if the inputs or outputs differ. Check you passed the "
+            "right --signed-psbt;\n"
+            "  the filename is reused across runs and a stale one lands here."
+        )
+    return got
 
 
 def _extract_tx_from_psbt(signed_b64: str) -> tuple[str, str]:
@@ -4221,6 +4278,8 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     except Exception as e:
         click.echo(click.style(f"\n  Error extracting signed tx: {e}", fg="red"))
         sys.exit(1)
+
+    assert_signed_is_what_we_built(unsigned_b64, signed_b64)
 
     proof["commit_txid"] = commit_txid
     write_proof_json(proof, proof_path)

@@ -289,15 +289,29 @@
 ++  read-publication
   |=  script=hexb:btc
   ^-  (unit publication:sa)
-  =/  env  (parse-publication script)
   ::  THE HOT FILTER, and the only silent exit in this arm: it runs on
   ::  every output of every transaction in every block, and virtually
   ::  none of them is an OP_RETURN "urb" envelope.  Announcing it would
   ::  drown the log in millions of lines a day.
   ::
-  ?~  env  ~
-  ::  Past it, the script IS a Groundwire publication envelope, and both
-  ::  refusals below are us declining to read something an operator paid
+  ::  It is asked SEPARATELY from parsing, which it was not.  The whole
+  ::  of +parse-publication sits inside a +mole -- including the envelope
+  ::  match -- so a script that IS ours but whose push header or length
+  ::  is wrong came back ~ and took this same silent exit, indistinguish-
+  ::  able from the millions of scripts that are simply not ours.  The
+  ::  comment below claimed there were two refusals past this point and
+  ::  there were three, the third silent.  Concretely: a comet past the
+  ::  ~17-hop ceiling that publishes anyway produced ZERO log lines on
+  ::  every watcher on the network, and the transaction was not even
+  ::  retained.  The operator paid the fee and got no signal from anyone.
+  ::
+  ?.  (publication-envelope script)  ~
+  =/  env  (parse-publication script)
+  ?~  env
+    ~&  >>>  [%gw-btc-publication-unreadable-push bytes=wid.script]
+    ~
+  ::  Past it, the script IS a Groundwire publication envelope, and every
+  ::  refusal here is us declining to read something an operator paid
   ::  miner fees to put on chain.  They are rare by construction -- and
   ::  they were invisible, which is the whole of test 6.7's complaint.
   ::
@@ -319,6 +333,25 @@
 ::    (0x4d, two LITTLE-ENDIAN length bytes).  Any other leading opcode
 ::    is not a push this codec produced, so the script is refused
 ::    rather than read as a length.
+::
+::  +publication-envelope: is this script ours AT ALL?
+::
+::    Split out of +parse-publication so that "not a Groundwire output"
+::    and "a Groundwire output we cannot read" are different answers.
+::    Inside the +mole they were the same one, and the second is the case
+::    somebody paid to put on chain.
+::
+::    Cheap and total: every output of every transaction in every block
+::    reaches this.  The width test guards the takes below it, and ?&
+::    short-circuits, so a 3-byte script is refused rather than read.
+::
+++  publication-envelope
+  |=  script=hexb:btc
+  ^-  ?
+  ?&  (gte wid.script 7)
+      =(0x6a.0375.7262 dat:(take:byt:bcu 5 script))
+      =(0x1 dat:(take:byt:bcu 1 (drop:byt:bcu 5 script)))
+  ==
 ::
 ++  parse-publication
   |=  script=hexb:btc

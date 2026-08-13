@@ -36,5 +36,12 @@ export interface BroadcastResult {
 export interface OpModule<Args> {
   readonly name: OpName;
   build(args: Args, ctx: StateUpdateCtx): BuiltStateUpdate;
-  broadcast(signedPsbt: Uint8Array, ctx: StateUpdateCtx): Promise<BroadcastResult>;
+  // `built` is REQUIRED, not optional, so that a caller cannot broadcast
+  // without saying what it thinks it is broadcasting. A segwit txid does
+  // not change under signing, so built.txidHex must equal the signed
+  // transaction's txid; if it does not, the signer returned a different
+  // transaction and the identity sat is going somewhere we did not choose.
+  broadcast(
+    signedPsbt: Uint8Array, ctx: StateUpdateCtx, built: BuiltStateUpdate,
+  ): Promise<BroadcastResult>;
 }

@@ -4,8 +4,11 @@
 Reuses causeway.py's encoders verbatim (no second implementation of any
 encoder).  The only thing this adds over `causeway spawn` is:
 
-  * a WALLET-SEED-DERIVED blind (causeway's CLI uses secrets.token_bytes,
-    which is not recoverable from the wallet), and
+  * a WALLET-SEED-DERIVED blind.  (causeway's CLI derives its blind too now
+    -- from a BIP-39 phrase and the funding outpoint, see derive_blind_seed
+    -- so this is a difference of WHICH secret it hangs off, not of
+    recoverable versus not.  The web client is the one still using
+    crypto.getRandomValues.)  And
   * a hard verification gate before broadcast.
 
 blind derivation (RECORD THIS):
@@ -725,9 +728,14 @@ def cmd_artifact(label, n):
         "dat_hex": st["dat_hex"],
         "dat_expr": st["dat_expr"],
 
+        #  The sponsor comes from the snapshot, not from a constant.  It was
+        #  hardcoded None while the adjacent causeway_proof.snapshot carried
+        #  the real one -- and the sponsor is INSIDE the state commitment,
+        #  so an artifact that misreports it misreports the thing the whole
+        #  file exists to preserve.
         "snapshot": {"life": 1, "rift": 0,
                      "key_hex": st["snapshot_key_hex"],
-                     "sponsor": None,
+                     "sponsor": st["snapshot"].get("sponsor"),
                      "fief": st["snapshot"].get("fief"),
                      "fief_noun": st.get("fief_noun")},
         "state_commit_c_hex": C.state_commit(snapshot).hex(),
@@ -994,14 +1002,35 @@ def cmd_publish(label, artifact_n, fee_rate=4, fund=False, sat_target=None):
     # An empty xtr here is the shape that put three unverifiable publications
     # on mainnet, and it is invisible in the decode: same envelope, same
     # opening, ~200 fewer bytes.
-    pub_noun = C.hoon_cue(int.from_bytes(
-        bytes.fromhex(pub_spk)[-(len(C.jam_bytes(
-            C.publication_noun(pub_pass, pub_open)))):], "little"))
-    chk("payload decodes to [pass opening]",
-        isinstance(pub_noun, tuple) and len(pub_noun) == 2)
-    chk("published pass carries the custody log (not the boot pass)",
-        pub_noun[0] == pub_pass and pub_pass != int(art["pass_atom_hex"], 16),
-        f"{len(log)} entries, ending {f'{last_txid:064x}'[:16]}...")
+    #  PARSE the script; do not re-derive how long it ought to be.
+    #
+    #  This used to slice the last N bytes of the OP_RETURN, where N came
+    #  from re-running jam_bytes(publication_noun(...)) -- the same encoder
+    #  that produced the script.  The expected-script check above compares
+    #  against that same encoder too, and the envelope check covers only the
+    #  first 7 bytes, so NOTHING here validated the push opcode or its
+    #  length independently.  Reproduced with the historical
+    #  OP_PUSHDATA1-mod-256 corruption on a 279-byte payload (good header
+    #  4d1701, corrupt 4c17): the re-cue passes it, causeway's parser
+    #  catches it.  That is the encoder-regression class these gates exist
+    #  for, and gwmint was blind to exactly it.
+    #
+    #  assert_publication_carries_log reaches the payload through
+    #  parse_publication_script, which reads the push header rather than
+    #  assuming a length, and checks the pass's xtr against the log we
+    #  meant to publish.
+    try:
+        C.assert_publication_carries_log(
+            bytes.fromhex(pub_spk),
+            xtr=C.xtr_of_pass(pub_pass),
+            entries=len(log),
+        )
+        chk("payload parses, and its pass carries the custody log", True,
+            f"{len(log)} entries, ending {f'{last_txid:064x}'[:16]}...")
+    except Exception as e:
+        chk("payload parses, and its pass carries the custody log", False, str(e))
+    chk("published pass is not the boot pass",
+        pub_pass != int(art["pass_atom_hex"], 16))
     chk("terminal opening carries no blind-opening (entry 0 owns it)",
         pub_open["blind_opening"] is None)
 

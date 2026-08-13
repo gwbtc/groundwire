@@ -2,21 +2,28 @@
 //
 // The authority is the Hoon desk: groundwire/lib/gw-btc-pass.hoon, pinned by
 // its own test groundwire/tests/lib/gw-btc-pass.hoon. The shared JSON vectors
-// (groundwire/vectors/gw-kelvin-9.json) are consumed here too, BUT three of the
-// JSON fields are STALE and disagree with the current Hoon desk:
+// (groundwire/vectors/gw-kelvin-9.json) are consumed here too.
 //
-//   * basic.spawn_commit_d  — JSON "f70d9e37…"; Hoon test pins  0x134aab80…57e0
-//   * basic.dat             — JSON "1ee1b3c6…"; Hoon test pins  0x2.6955.701e…77677c0
-//   * basic.state_commit_c  — JSON "8b4d1c6c…" is inconsistent with its own
-//                             basic.jam_snapshot_le (H_tag over it = 0bea6bbe…),
-//                             and with the Hoon `snap` test (life=1/sponsor=~ → c31d…).
+// THIS HEADER USED TO DECLARE THREE JSON FIELDS STALE. They are not, and have
+// not been since the JSON was regenerated: basic.spawn_commit_d is
+// 134aab80…57e0, basic.dat is 26955701…77677c0, and basic.state_commit_c is
+// 0bea6bbe…, which is exactly the H_tag over its own jam_snapshot_le. Those
+// are the Hoon values, and the assertions below pass against both — which is
+// the proof, not this comment.
+//
+// Left as a warning rather than deleted: a false staleness note is worse than
+// no note. The vectors file is the cross-language contract, the thing a fourth
+// implementation would be written from, and telling a reader it disagrees with
+// the desk when it agrees is how a correct artifact gets "fixed" into a wrong
+// one. The HOON_* constants below are kept as an INDEPENDENT restatement of
+// the same values, so a regeneration that silently changed the JSON would
+// still fail here.
 //
 // (basic.publication.op_return_script used to be a prose placeholder; it now
 // holds the real bytes, cross-checked against Hoon +make-publication, and is
 // asserted below.)
 //
-// For those we assert against the AUTHORITATIVE Hoon-test values (and prove the
-// JSON is self-inconsistent) rather than fudge. Every other JSON field
+// Every other JSON field
 // (blind, jam_spawn, jam_snapshot, publication payload, xtr, and ALL of
 // state-key-pin) is reproduced byte-for-byte.
 
@@ -60,7 +67,9 @@ const SPAWN: SpawnSont = {
 };
 const SEED = BigInt("0x" + basic.seed); // 0xdeadbeef
 
-// The Hoon desk pins these; the JSON is stale for them.
+// The Hoon desk pins these, and the JSON now carries the same values. Kept as
+// an independent restatement so a bad regeneration of the JSON fails loudly
+// here instead of silently redefining the contract.
 const HOON_SPAWN_COMMIT_D =
   "134aab80f09d97d80efc2573570e2767279aad7b43ea274018a7570d26fc57e0";
 const HOON_DAT =
@@ -126,8 +135,8 @@ describe("kelvin-9 snapshot / c / leaf / Q (state-key-pin)", () => {
   });
 });
 
-// The "basic" snapshot (life=2, sponsor=~zod) — its jam matches the JSON, but
-// the JSON's state_commit_c for it is stale/inconsistent.
+// The "basic" snapshot (life=2, sponsor=~zod). Its jam matches the JSON, and
+// so does its state_commit_c — 0bea6bbe…, the H_tag over that same jam.
 const basicSnap: Snapshot = {
   life: basic.snapshot.life, rift: basic.snapshot.rift,
   key: BigInt("0x" + basic.snapshot.key),
@@ -238,10 +247,16 @@ describe("kelvin-9 publication — OP_PUSHDATA2 (pushdata2-fief vector)", () => 
     expect(bytesToHex(stateOutputKey(hexToBytes(pd2.internal_key_compressed), fromPoint)))
       .toBe(pd2.state_output_key_q);
 
-    // …and the regression it guards: the un-split pass commits a different Q.
+    // …and the regression it guards. This used to assert that the un-split
+    // pass merely commits a DIFFERENT Q, which was true and not much comfort:
+    // a different Q is a spendable output whose comet can never verify, and
+    // `pass-key` is fraud class, so the cost of the mistake was a permanent
+    // snub. snapshotToNoun now refuses the oversized key outright, so the
+    // wrong Q is not reachable at all — assert the refusal, which is the
+    // stronger property.
     const unsplit: Snapshot = { ...snap, key: pass };
-    expect(bytesToHex(stateOutputKey(hexToBytes(pd2.internal_key_compressed), unsplit)))
-      .not.toBe(pd2.state_output_key_q);
+    expect(() => stateOutputKey(hexToBytes(pd2.internal_key_compressed), unsplit))
+      .toThrow(/at most 32 bytes/);
   });
 
   it("messagingKeyFromPass refuses a non-suite-C atom", () => {
@@ -393,12 +408,16 @@ describe("kelvin-9 full-packet publication", () => {
   });
 
   it("stays LOUD over the cap: it throws, it does not emit a script", () => {
+    // The key stays a LEGAL 32 bytes and the bulk comes from the internal
+    // key and the pass. It used to be 4000 bits, which now trips
+    // snapshotToNoun's width check and would make this test pass for the
+    // wrong reason — throwing on the key rather than on the cap.
     const huge: Opening = {
-      internalKey: (1n << 4000n) - 1n,
-      snapshot: { life: 1, rift: 0, key: (1n << 4000n) - 3n, sponsor: null, fief: null },
+      internalKey: (1n << 9000n) - 1n,
+      snapshot: { life: 1, rift: 0, key: (1n << 256n) - 3n, sponsor: null, fief: null },
       blindOpening: null,
     };
-    const bigPass = (1n << 4000n) - 5n;
+    const bigPass = (1n << 9000n) - 5n;
     expect(jam(publicationNoun(bigPass, huge)).length).toBeGreaterThan(MAX_PUBLICATION);
     expect(() => buildPublicationScript(bigPass, huge)).toThrow(/payload/);
   });
