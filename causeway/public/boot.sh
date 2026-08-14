@@ -20,7 +20,7 @@
 #   6. seed NODE_COMPACT_FILTERS-capable peers, in batches
 #   7. report sync progress until the light client reaches the chain tip
 #
-# It is the scripted form of groundwire/doc/OPERATIONS.md sections 5.3, 5.5,
+# It is the scripted form of ops/doc/OPERATIONS.md sections 5.3, 5.5,
 # 5.6, 5.7 and 5.9. Every non-obvious thing it does is there because that
 # document records it costing somebody hours; the comments name the section.
 #
@@ -760,7 +760,7 @@ bitcoin_preconditions() {
     info "    - re-run this installer when a release newer than #67 exists"
     info "      (it will restart your existing pier, not re-create it), or"
     info "    - build the sidecar and install the two desks by hand:"
-    info "      groundwire/doc/OPERATIONS.md sections 3.3 and 5.4."
+    info "      ops/doc/OPERATIONS.md sections 3.3 and 5.4."
     return 1
   fi
   good "sidecar binary present, %node and %tcp-sidecar are in the pill"
@@ -1112,7 +1112,7 @@ summary_lines() {
   info ""
   info "status      $SELF --status --comet $COMET"
   info "stop        $SELF --stop --comet $COMET"
-  info "runbook     groundwire/doc/OPERATIONS.md"
+  info "runbook     ops/doc/OPERATIONS.md"
 }
 
 case "$MODE" in

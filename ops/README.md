@@ -1,6 +1,6 @@
 # `ops/` — the Groundwire campaign tooling
 
-Everything here was previously described in prose in `groundwire/doc/OPERATIONS.md`
+Everything here was previously described in prose in `doc/OPERATIONS.md`
 and in the `PHASE*-RESULTS.md` docs, but existed only on the droplets at
 `/opt/gw/` and in operator scratchpads. `OPERATIONS.md` §11 said so plainly:
 

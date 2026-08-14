@@ -1,7 +1,7 @@
 ::  sur/self-attestation.hoon
 ::
 ::  The suite-%c self-attestation carried by a %gw-btc comet, in the
-::  OP_RETURN revision (doc/opret-revision/01-spec-revision.md as amended
+::  OP_RETURN revision (ops/doc/opret-revision/01-spec-revision.md as amended
 ::  by 04-decisions-addendum.md).
 ::
 ::  The pass commits immutably -- and hidingly -- to its spawn satpoint:

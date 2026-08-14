@@ -177,7 +177,7 @@ def tx_link(txid: str) -> str:
 # answered is a FATAL condition, never something to retry: the old
 # `except EOFError: ... continue` loops turned a headless run into a pinned
 # core writing ~110 MB/min of prompt spam until the disk filled
-# (doc/live-tests/PHASE67-RESULTS.md 7.1).  So:
+# (ops/doc/live-tests/PHASE67-RESULTS.md 7.1).  So:
 #
 #   * no TTY on stdin              -> abort, naming the flag that supplies it
 #   * EOF (stdin closed / at end)  -> abort, naming the flag
@@ -536,7 +536,7 @@ def format_hoon_ux(hex_str: str) -> str:
 #  vectors (vectors/gw-kelvin-9.json) and the Hoon golden test
 #  (groundwire/tests/lib/gw-btc-pass.hoon).  See the module docstring in
 #  that lib for the design; the two amending specs are
-#  doc/opret-revision/{01-spec-revision,04-decisions-addendum}.md.
+#  ops/doc/opret-revision/{01-spec-revision,04-decisions-addendum}.md.
 #
 #  Byte conventions, pinned by the vectors: H_tag is the BIP-340 tagged
 #  hash over BIG-endian byte strings; a jammed noun enters a hash message
@@ -4111,7 +4111,7 @@ def snapshot_is_routable(snapshot: dict) -> bool:
     A confidential comet has no fixed address; peers reach it through the
     sponsor committed in its verified snapshot, or (for static infrastructure)
     through its fief. With NEITHER, it is a one-way identity — legal protocol
-    (doc/opret-revision/04-decisions-addendum.md section 2, "Fief scope"), so
+    (ops/doc/opret-revision/04-decisions-addendum.md section 2, "Fief scope"), so
     the verifier must never reject it, but not something Causeway will mint by
     accident."""
     return snapshot.get("sponsor") is not None or snapshot.get("fief") is not None

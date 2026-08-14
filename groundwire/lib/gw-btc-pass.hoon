@@ -1,5 +1,5 @@
 ::  Codec for the suite-%c pass format owned by the %gw-btc PKI domain,
-::  protocol kelvin 9 (doc/opret-revision/01-spec-revision.md as amended
+::  protocol kelvin 9 (ops/doc/opret-revision/01-spec-revision.md as amended
 ::  by 04-decisions-addendum.md).
 ::
 ::  The immutable tweak data is:

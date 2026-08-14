@@ -3,7 +3,7 @@
 > **This is the legacy onboarding path.** The current, production way to mint
 > and boot a confidential comet is Causeway (`causeway/desktop/`), and the
 > end-to-end bring-up procedure — runtime, pill, identity, desks, light
-> client — is [`groundwire/doc/OPERATIONS.md`](../../groundwire/doc/OPERATIONS.md).
+> client — is [`ops/doc/OPERATIONS.md`](../../ops/doc/OPERATIONS.md).
 > `gw-onboard.py` predates the kelvin-9 OP_RETURN protocol and still mines the
 > legacy v9 `(rap 3 ~[%9 ~tyr …])` tweak. Keep it for reference; do not treat
 > it as the supported flow.
@@ -94,7 +94,7 @@ are not supported; the build uses 0.15-era `std.Build` APIs.
    > is ever written. There is no local pill build in this repo; use CI.
    > (A `fyrd (solid:pill …)` build from a *builder fakezod already booted on
    >  a Groundwire pill* has worked — see
-   >  `groundwire/doc/live-tests/PHASE67-RESULTS.md` — but that is a kernel-test
+   >  `ops/doc/live-tests/PHASE67-RESULTS.md` — but that is a kernel-test
    >  procedure, not the bring-up path, and it needs a Groundwire pill to start
    >  from.)
 
@@ -151,4 +151,4 @@ quickly: the Python script, the `%gw-btc` agent, and the SPV wallet all have to
 agree on the same Bitcoin network and the same attestation protocol. They
 currently do not — `gw-onboard.py` mines the retired v9 tweak while the desk
 runs kelvin-9 — which is why this path is legacy and Causeway is the supported
-one. See [`groundwire/doc/OPERATIONS.md`](../../groundwire/doc/OPERATIONS.md).
+one. See [`ops/doc/OPERATIONS.md`](../../ops/doc/OPERATIONS.md).

@@ -75,7 +75,7 @@
 ::    It is REFRESHED ON EVERY OBSERVATION -- a verified attestation, an
 ::    on-chain publication, a custody move the block scanner walked --
 ::    and not fixed when the point was first indexed (team decision,
-::    2026-08-10; doc/opret-revision/04-decisions-addendum.md section
+::    2026-08-10; ops/doc/opret-revision/04-decisions-addendum.md section
 ::    11b).  It therefore names the most recent evidence for this point,
 ::    which is the thing a chain reorganisation can take away.  Origin
 ::    would be the wrong quantity: a point spawned a year ago and moved
