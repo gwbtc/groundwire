@@ -1280,7 +1280,7 @@ def test_tui_spawn_and_rekey_go_through_the_routability_gate():
 # decisions-addendum section 5: after a custody tx confirms, the owner hands
 # the ship's OWN %gw-btc the new xtr entry + opening; the agent re-verifies
 # the whole extended log on-chain before refreshing the pass. The poke rides
-# the %noun mark ($ingest in groundwire/sur/self-attestation.hoon), so this
+# the %noun mark ($ingest in gw-btc/sur/self-attestation.hoon), so this
 # string is the desktop half of that contract.
 # ---------------------------------------------------------------------------
 
@@ -1314,7 +1314,7 @@ def test_custody_entry_poke_shape_for_a_spawn():
     # and would make the printed line unpasteable.
     assert re.search(r"(?<![.\dx])\d{4,}", line) is None
     # exact shape, pinned: this literal has been cast against the Hoon mold
-    # ($ingest in groundwire/sur/self-attestation.hoon) with `urbit eval`.
+    # ($ingest in gw-btc/sur/self-attestation.hoon) with `urbit eval`.
     assert line == (
         ":gw-btc &noun [%gw-custody-entry ["
         + cw.format_hoon_ux("de" * 32)
@@ -1507,7 +1507,7 @@ def test_zig_out_bin_names_every_path_it_looked_at(tmp_path, monkeypatch):
 
 
 def _index_to_sont(index: int, out_values: list[int]):
-    """Mirror of +index-to-sont (groundwire/lib/urb-core.hoon:491-503).
+    """Mirror of +index-to-sont (gw-btc/lib/urb-core.hoon:491-503).
 
     Walks the outputs in order, subtracting each output's value, and returns
     (vout, off) at the first output the running index falls inside. `~` (None)

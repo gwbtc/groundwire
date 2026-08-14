@@ -531,10 +531,10 @@ def format_hoon_ux(hex_str: str) -> str:
 # =========================================================================
 #  kelvin-9 (%gw-btc, OP_RETURN) confidential-comets protocol encoders.
 #
-#  Bit-exact port of groundwire/lib/gw-btc-pass.hoon +
+#  Bit-exact port of gw-btc/lib/gw-btc-pass.hoon +
 #  sur/self-attestation.hoon.  All values are pinned by the shared golden
 #  vectors (vectors/gw-kelvin-9.json) and the Hoon golden test
-#  (groundwire/tests/lib/gw-btc-pass.hoon).  See the module docstring in
+#  (gw-btc/tests/lib/gw-btc-pass.hoon).  See the module docstring in
 #  that lib for the design; the two amending specs are
 #  ops/doc/opret-revision/{01-spec-revision,04-decisions-addendum}.md.
 #
@@ -1197,7 +1197,7 @@ def format_custody_entry_poke(entry: dict) -> str:
     WHOLE extended log against the chain through %light-client, and — only on
     a positive verdict — re-encodes the ship's pass around it and answers
     jael's %anew. Nothing here is trusted; the poke is evidence, not
-    authority. See $ingest in groundwire/sur/self-attestation.hoon.
+    authority. See $ingest in gw-btc/sur/self-attestation.hoon.
 
     The mark is %noun so no mark file is needed on either side.
     """

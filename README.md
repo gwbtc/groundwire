@@ -1,8 +1,13 @@
 # Groundwire
 
-This repo contains two Urbit desks: `%groundwire` and `%spv-wallet`. 
+This repo contains two Urbit desks: `%gw-btc` and `%spv-wallet`.
 
-The `%groundwire` desk runs two Gall agents (`groundwire/desk.bill`):
+The `%gw-btc` desk was called `%groundwire` until it was renamed to match
+the one PKI domain it serves. A ship installed from a release older than
+that rename keeps an inert `%groundwire` desk; it can be uninstalled.
+
+
+The `%gw-btc` desk runs two Gall agents (`gw-btc/desk.bill`):
 
 - **`%gw-btc`** — scans Bitcoin for comet attestations and updates the ship's
   Jael accordingly. It reads the chain through the `%bitcoin-client` agent
@@ -24,11 +29,11 @@ See the onboarding directory for elaboration on the boot process and additional 
 
 To bring up a Groundwire confidential comet from scratch — build the runtime and the pill, mint an identity with Causeway, boot the ship, install the desks, sync a Bitcoin light client and verify a peer — follow [`ops/doc/OPERATIONS.md`](ops/doc/OPERATIONS.md). It carries the known-good timings and the failure modes that have cost the most time.
 
-This repo also contains a `vendor` directory containing shared libraries between the `%groundwire` and `%spv-wallet` desks. To install the two desks, you'll need to run `make build` to copy in `vendor`'s dependencies and generate a `dist` directory for each one, like so:
+This repo also contains a `vendor` directory containing shared libraries between the `%gw-btc` and `%spv-wallet` desks. To install the two desks, you'll need to run `make build` to copy in `vendor`'s dependencies and generate a `dist` directory for each one, like so:
 
-1. `|new-desk %groundwire`
-2. `|mount %groundwire`
+1. `|new-desk %gw-btc`
+2. `|mount %gw-btc`
 3. `make build`
-4. `$ cp -r dist-groundwire/* path/to/zod/groundwire/`
-5. `|commit %groundwire`
-6. `|install our %groundwire`
+4. `$ cp -r dist-gw-btc/* path/to/zod/gw-btc/`
+5. `|commit %gw-btc`
+6. `|install our %gw-btc`

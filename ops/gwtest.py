@@ -314,8 +314,9 @@ def cmd_commit(a) -> int:
     # and `[%no-cast-between %mime %md]`, so the old grep for "commit failed"
     # or "%clay" matched neither and this function returned success.
     #
-    # That is not a cosmetic miss.  The pill PRE-BAKES a %groundwire desk
-    # from GROUNDWIRE_BRANCH (main), so a refused commit leaves MAIN's code
+    # That is not a cosmetic miss.  The pill PRE-BAKES this desk from
+    # GROUNDWIRE_BRANCH (main) -- as %groundwire in releases before the
+    # rename and %gw-btc after -- so a refused commit leaves MAIN's code
     # installed under the desk name we are about to test, and the run reads
     # as green-ish while testing someone else's code entirely.  It cost a
     # whole validation campaign: the "two test files do not build" finding
@@ -341,7 +342,7 @@ def cmd_commit(a) -> int:
             f"under %{a.desk}, which on a pill-booted ship is "
             f"GROUNDWIRE_BRANCH's code, not {src}.\n"
             f"Usual causes: a file whose mark the desk does not carry (are "
-            f"you committing the SOURCE tree instead of dist-groundwire?); "
+            f"you committing the SOURCE tree instead of dist-gw-btc?); "
             f"sys.kelvin naming a kernel this ship is not at; the mount not "
             f"synced.\nSee {transcript_path(pier)}")
     else:
@@ -401,7 +402,7 @@ def main() -> int:
     c = sub.add_parser("commit", help="fill and commit a desk from a dist directory")
     c.add_argument("pier")
     c.add_argument("desk")
-    c.add_argument("src", help="e.g. dist-groundwire")
+    c.add_argument("src", help="e.g. dist-gw-btc")
     c.add_argument("--session", default=DEFAULT_SESSION)
     c.add_argument("--settle", type=int, default=90, help="seconds to let the commit build")
     c.set_defaults(fn=cmd_commit)

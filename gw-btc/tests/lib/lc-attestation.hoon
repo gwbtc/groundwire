@@ -53,7 +53,7 @@
       sup=*bitt:gall
       eny=`@uvJ`0
       now=~2026.7.20
-      byk=[~zod %groundwire %da ~2026.7.20]
+      byk=[~zod %gw-btc %da ~2026.7.20]
   ==
 ::
 ::  Run continuations eagerly until the strand blocks, fails, or completes.

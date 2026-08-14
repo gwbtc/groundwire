@@ -23,7 +23,7 @@
 #     -> VERE-DOWN every 60s, forever.  $VERE is used for the boot AND
 #     exported as GWSUP_VERE so gwsup.sh relaunches with the same one.
 #
-#  3. ONLY %groundwire IS INSTALLED.  The pill already provisions base,
+#  3. ONLY %gw-btc IS INSTALLED.  The pill already provisions base,
 #     vitriol, mcp, kids, node, tcp-sidecar and groundwire.  Only groundwire
 #     needs replacing, because the pill's copy predates the
 #     %groundwire->%gw-btc rename -- a ship booted from it has %urb-watcher
@@ -87,9 +87,9 @@ done
 echo "conn.sock up after $((i*5))s"
 sleep 30
 
-echo "=== 3. install ONLY %groundwire (see note 3 above) ==="
+echo "=== 3. install ONLY %gw-btc (see note 3 above) ==="
 set +e
-timeout 2400 python3 "$GW_ROOT/ops/gwctl.py" desks "$PIER" "groundwire=$DESK" \
+timeout 2400 python3 "$GW_ROOT/ops/gwctl.py" desks "$PIER" "gw-btc=$DESK" \
   > "$GW_ROOT/desks-$P.log" 2>&1
 RC=$?
 set -e

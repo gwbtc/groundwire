@@ -77,7 +77,7 @@ are not supported; the build uses 0.15-era `std.Build` APIs.
    The authoritative recipe is the `build-pill` job of
    `.github/workflows/groundwire-build.yml` in `gwbtc/urbit`. It builds a
    **brass** pill on a fake `~zod` via `fyrd`/`khan-eval` (`brass:pill`),
-   baking in `%gw-base`, `%groundwire`, `%mcp` and `%vitriol`. The pill is
+   baking in `%gw-base`, `%gw-btc`, `%mcp` and `%vitriol`. The pill is
    written into Clay at `/pill/pill` on `%base` — not into `.urb/put/` — and
    CI copies it out as `gw-base.pill`.
 

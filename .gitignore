@@ -1,4 +1,6 @@
 # build
+dist-gw-btc
+# transitional shim; delete with the Makefile target after gwbtc/urbit#67
 dist-groundwire
 dist-spv
 onboarding/booting/dist

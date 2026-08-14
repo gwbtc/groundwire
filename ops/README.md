@@ -23,7 +23,7 @@ a laptop.
 | `gwtest.py` | boot a fakeship, commit a desk into it, `-test` it, and tally the result honestly |
 | `gwctl.py` | the operator surface: identity, desks, readiness, peers, verification pokes |
 | `gwmint.py` | mint a comet on mainnet, with an independent pre-broadcast verification gate |
-| `bootcomet.sh` | full bringup of a minted comet: boot, install `%groundwire`, supervise, seed peers, report readiness |
+| `bootcomet.sh` | full bringup of a minted comet: boot, install `%gw-btc`, supervise, seed peers, report readiness |
 | `pcap.sh` | start a packet capture — run at BOTH ends of a networking test |
 | `pcapsum.sh` | summarise a capture BY DIRECTION ("N out, M back") |
 | `pushfile.sh` | copy one file to a droplet and prove it arrived — sha256 + byte count |
@@ -134,8 +134,8 @@ at all.
 ```sh
 gwtest.py boot   /tmp/zod --arvo ~/urbit/pkg/arvo --pill ~/urbit/bin/solid.pill \
                           --urbit ~/vere/zig-out/*/urbit
-make build                                     # -> dist-groundwire/
-gwtest.py commit /tmp/zod groundwire dist-groundwire
+make build                                     # -> dist-gw-btc/
+gwtest.py commit /tmp/zod gw-btc dist-gw-btc
 gwtest.py run    /tmp/zod --desk groundwire    # exits non-zero on any bad result
 gwtest.py tally  /tmp/zod.transcript           # re-tally a saved transcript
 ```
