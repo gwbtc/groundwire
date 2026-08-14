@@ -82,8 +82,17 @@ Common to both spawn commands: `--invite` (faucet code), `--fee-rate`
 (sat/vB, default 2), `--network main|testnet`, `--output-dir`, `--miner`,
 `--mempool-base`, `--publish` (public spawn: add an OP_RETURN publication
 output opening the `dat`; default is confidential), `--sponsor` (@p or
-mnemonym committed in the initial snapshot) and `--no-route` (deliberately
+mnemonym committed in the initial snapshot), `--fief IP:PORT` (a static
+endpoint committed in the initial snapshot) and `--no-route` (deliberately
 mint an unroutable, outbound-only comet).
+
+A comet needs a sponsor **or** a fief to be reachable at all; Causeway refuses
+to mint one with neither unless you pass `--no-route`, and it refuses *before*
+the faucet call, the UTXO scan and the proof-of-work, so a stranded comet never
+costs you a mine. A comet that other comets will name as their **sponsor** needs
+a fief of its own, because that is how peers reach it — so a sponsor is normally
+minted with `--fief`. If you set one, the ship must actually bind that port
+(`boot.sh --ames-port`), or the fief is a promise it cannot keep.
 
 `spawn connect` additionally takes `--xpub` (required), `--blind-mnemonic`,
 `--utxo` and `--signed-psbt`.
@@ -152,7 +161,9 @@ entry + opening to your ship's `%gw-btc` agent (the `%anew` poke) so peers can
 re-verify you.
 
 Other rekey flags: `--fee-rate`, `--network`, `--output-dir`, `--mempool-base`,
-`--sponsor`, `--no-route`, and `--signed-psbt PATH|-` for an unattended run.
+`--sponsor`, `--fief IP:PORT`, `--no-route`, and `--signed-psbt PATH|-` for an
+unattended run. `--sponsor` and `--fief` are set-or-carry: pass one to change
+it, omit it to keep whatever the prior snapshot committed.
 
 ## Finalize — bake the custody log into your boot feed
 

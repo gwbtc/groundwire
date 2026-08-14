@@ -2722,3 +2722,89 @@ def test_parse_fief_arg_none_is_carry_forward():
     """None means "carry the prior snapshot's fief", not "clear it" -- the
     caller distinguishes, and clearing is what --no-route is for."""
     assert cw.parse_fief_arg(None) is None
+
+
+# ---------------------------------------------------------------------------
+# Fief at spawn
+#
+# `--fief` was a rekey-only option, and the TUI could not set a fief at all
+# (its rekey screen hardcoded carry-forward).  So the only way to give a comet
+# a static endpoint was to mint it and then spend a SECOND on-chain
+# transaction -- which bit hardest on the one identity that always needs one,
+# a sponsor, because peers reach a confidential comet through its sponsor.
+#
+# gwmint.py has been able to do this since the beginning, and the two encoders
+# must agree byte for byte or a comet minted by one is unverifiable to a
+# verifier fed by the other.  These pin that agreement at the level that
+# matters -- the committed bytes, not the Python objects.
+# ---------------------------------------------------------------------------
+
+def _gwmint_fief_noun(s):
+    """ops/gwmint.py cmd_build, transcribed verbatim (the other encoder)."""
+    if s is None:
+        return None
+    ip_s, port_s = s.rsplit(":", 1)
+    ip = int.from_bytes(bytes(int(x) for x in ip_s.split(".")), "big")
+    return (int.from_bytes(b"if", "little"), (ip, int(port_s)))
+
+
+FIEF_CASES = ["1.2.3.4:1234", "64.227.13.22:34343", "203.0.113.7:65535",
+              "255.255.255.255:1", None]
+
+# A fixed 256-bit fixture; the exact value is irrelevant, only that both
+# sides build their snapshot from the SAME one.
+FIEF_PASS_ATOM = 0x5f2a_9c31_08b7_4e6d_a1c0_33f9_7d21_b845_e094_6a17_c2fb_58d3_0e71_9ab4_26cf_8d50
+
+
+@pytest.mark.parametrize("spec", FIEF_CASES)
+def test_fief_parse_matches_gwmint(spec):
+    assert cw.parse_fief_arg(spec) == _gwmint_fief_noun(spec)
+
+
+@pytest.mark.parametrize("spec", FIEF_CASES)
+def test_spawn_snapshot_jam_matches_gwmint(spec):
+    """The COMMITTED BYTES agree, not merely the Python tuples."""
+    pass_atom = FIEF_PASS_ATOM
+    key = cw.messaging_key_from_pass(pass_atom)
+    sponsor = 42
+
+    ours = cw._initial_snapshot(pass_atom, sponsor, cw.parse_fief_arg(spec))
+    theirs = {"life": 1, "rift": 0, "key": key, "sponsor": sponsor,
+              "fief": _gwmint_fief_noun(spec)}
+    assert (cw.jam_bytes(cw.snapshot_dict_to_noun(ours))
+            == cw.jam_bytes(cw.snapshot_dict_to_noun(theirs)))
+
+
+def test_fief_actually_reaches_the_commitment():
+    """A test that cannot pass if --fief is silently dropped.
+
+    Without this, every assertion above still passes when _initial_snapshot
+    ignores its fief argument entirely -- both sides would just be building
+    the same fief-less snapshot.
+    """
+    pass_atom = FIEF_PASS_ATOM
+    without = cw.jam_bytes(cw.snapshot_dict_to_noun(
+        cw._initial_snapshot(pass_atom, 42, None)))
+    with_fief = cw.jam_bytes(cw.snapshot_dict_to_noun(
+        cw._initial_snapshot(pass_atom, 42, cw.parse_fief_arg("1.2.3.4:1234"))))
+    assert without != with_fief
+    assert len(with_fief) > len(without)
+
+
+def test_fief_at_spawn_satisfies_the_routability_guard():
+    """A fief alone makes a comet routable -- no sponsor required."""
+    snap = cw._initial_snapshot(1234, None, cw.parse_fief_arg("1.2.3.4:1234"))
+    assert cw.snapshot_is_routable(snap)
+    cw.assert_routable(snap)          # must not raise
+
+    stranded = cw._initial_snapshot(1234, None, None)
+    with pytest.raises(Exception):
+        cw.assert_routable(stranded)
+
+
+@pytest.mark.parametrize("bad", ["1.2.3.4", "1.2.3:80", "1.2.3.4.5:80",
+                                 "1.2.3.256:80", "1.2.3.4:0", "1.2.3.4:65536",
+                                 "1.2.3.4:http"])
+def test_fief_rejects_malformed(bad):
+    with pytest.raises(ValueError):
+        cw.parse_fief_arg(bad)

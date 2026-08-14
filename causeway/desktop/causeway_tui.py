@@ -81,6 +81,9 @@ class FlowState:
     # Causeway refuses to mint one unless `no_route` is ticked deliberately.
     sponsor_input: str = ""
     sponsor_atom: Optional[int] = None
+    # The $fief noun (from cw.parse_fief_arg), not the raw string.
+    fief_input: str = ""
+    fief_noun: Optional[tuple] = None
     no_route: bool = False
     psbt_b64_unsigned: Optional[str] = None
     psbt_b64_signed: Optional[str] = None
@@ -176,6 +179,12 @@ class SpawnMethodScreen(BaseScreen):
             Static(" "),
             Static("Sponsor (@p or mnemonym) — peers route to your comet through it:", classes="hint"),
             Input(placeholder="~sampel-palnet", id="sponsor"),
+            Static(" "),
+            Static("Fief (IP:PORT) — a static endpoint peers can reach you at directly. "
+                   "Leave blank unless you know you need one; if set, the ship must "
+                   "actually bind this port. A comet that others will name as their "
+                   "SPONSOR needs one.", classes="hint"),
+            Input(placeholder="203.0.113.7:34343", id="fief"),
             Checkbox("no-route: mint with NO sponsor and NO fief (outbound-only)", id="no-route"),
             Static(" "),
             Button("Connect Wallet  (paste xpub, sign PSBT externally)", id="connect", variant="primary"),
@@ -196,10 +205,13 @@ class SpawnMethodScreen(BaseScreen):
         # comet nothing can ever contact (see cw.assert_routable).
         err = self.query_one("#err", Static)
         state.sponsor_input = self.query_one("#sponsor", Input).value.strip()
+        state.fief_input = self.query_one("#fief", Input).value.strip()
         state.no_route = self.query_one("#no-route", Checkbox).value
         try:
             state.sponsor_atom = cw.resolve_sponsor(state.sponsor_input or None)
-            cw.assert_routable({"sponsor": state.sponsor_atom, "fief": None},
+            state.fief_noun = cw.parse_fief_arg(state.fief_input or None)
+            cw.assert_routable({"sponsor": state.sponsor_atom,
+                                "fief": state.fief_noun},
                                state.no_route)
         except Exception as e:  # noqa: BLE001
             err.update(str(e))
@@ -712,7 +724,8 @@ class MiningScreen(BaseScreen):
         self.app.call_from_thread(log.write_line, f"Pass atom: 0x{state.pass_atom:x}")
 
         # The initial snapshot the sat output commits to (life 1, rift 0).
-        state.snapshot = cw._initial_snapshot(state.pass_atom, state.sponsor_atom)
+        state.snapshot = cw._initial_snapshot(state.pass_atom, state.sponsor_atom,
+                                              state.fief_noun)
         cw.assert_routable(state.snapshot, state.no_route)
         self.app.call_from_thread(log.write_line, f"Initial snapshot: life=1 rift=0 key=0x{state.snapshot['key']:x}")
         self.app.call_from_thread(self.app.push_screen, PsbtBuildScreen())
@@ -1041,6 +1054,8 @@ class ManageFormScreen(BaseScreen):
             Checkbox("breach", id="breach"),
             Static("Sponsor for the NEW snapshot (blank = keep the current one):", classes="label"),
             Input(placeholder="~sampel-palnet", id="sponsor"),
+            Static("Fief for the NEW snapshot, IP:PORT (blank = keep the current one):", classes="label"),
+            Input(placeholder="203.0.113.7:34343", id="fief"),
             Checkbox("no-route: commit no sponsor and no fief (outbound-only)", id="no-route"),
             Horizontal(
                 Button("Continue →", id="continue", variant="primary"),
@@ -1093,6 +1108,8 @@ class ManageFormScreen(BaseScreen):
         try:
             state.sponsor_atom = cw.resolve_sponsor(
                 self.query_one("#sponsor", Input).value.strip() or None)
+            state.fief_input = self.query_one("#fief", Input).value.strip()
+            state.fief_noun = cw.parse_fief_arg(state.fief_input or None)
         except Exception as e:  # noqa: BLE001
             err.update(str(e))
             return
@@ -1104,7 +1121,12 @@ class ManageFormScreen(BaseScreen):
             "key": new_key,
             "sponsor": (state.sponsor_atom if state.sponsor_atom is not None
                         else prior_snap.get("sponsor")),
-            "fief": prior_snap.get("fief"),
+            # Set-or-carry, matching `causeway rekey --fief`.  Carry-forward
+            # was hardcoded here, which made the TUI strictly less capable
+            # than the CLI: a comet minted without a fief could never be
+            # given one from this screen, and a fief is what a SPONSOR needs.
+            "fief": (state.fief_noun if state.fief_noun is not None
+                     else prior_snap.get("fief")),
         }
         # A state update that strands the comet is refused here too.
         try:

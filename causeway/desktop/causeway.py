@@ -3341,6 +3341,11 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
 @click.option("--sponsor", default=None,
               help="Sponsor for the initial snapshot (@p or mnemonym). Peers route to a "
                    "confidential comet through the sponsor committed on-chain.")
+@click.option("--fief", "fief_arg", default=None, metavar="IP:PORT",
+              help="Static endpoint to commit in the initial snapshot. A comet with "
+                   "a fief is reachable at exactly this IP:port, so the ship MUST "
+                   "actually bind it (boot.sh --ames-port). Required in practice for "
+                   "a comet other comets will name as their sponsor.")
 @click.option("--no-route", is_flag=True, default=False,
               help="Deliberately mint an UNROUTABLE comet (no sponsor, no fief). "
                    "Outbound-only: no peer will ever be able to contact it first.")
@@ -3356,7 +3361,7 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
                    "MUST capture this command's output — the phrase is printed "
                    "nowhere else and without it the comet is unrecoverable.")
 def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish, blind_mnemonic,
-                  sponsor, no_route, utxo_outpoint, signed_psbt, assume_saved):
+                  sponsor, fief_arg, no_route, utxo_outpoint, signed_psbt, assume_saved):
     """Spawn using a user-provided wallet (xpub / descriptor). You sign the PSBT externally.
 
     Your wallet's seed never reaches Causeway, so the comet's blind — the
@@ -3364,7 +3369,8 @@ def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_ba
     phrase that this command prints and makes you write down (or that you pass
     in with --blind-mnemonic). Losing it loses the identity."""
     run_spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish,
-                      blind_mnemonic=blind_mnemonic, sponsor=sponsor, no_route=no_route,
+                      blind_mnemonic=blind_mnemonic, sponsor=sponsor, fief_arg=fief_arg,
+                      no_route=no_route,
                       utxo_outpoint=utxo_outpoint, signed_psbt=signed_psbt,
                       assume_saved=assume_saved)
 
@@ -3381,6 +3387,11 @@ def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_ba
 @click.option("--sponsor", default=None,
               help="Sponsor for the initial snapshot (@p or mnemonym). Peers route to a "
                    "confidential comet through the sponsor committed on-chain.")
+@click.option("--fief", "fief_arg", default=None, metavar="IP:PORT",
+              help="Static endpoint to commit in the initial snapshot. A comet with "
+                   "a fief is reachable at exactly this IP:port, so the ship MUST "
+                   "actually bind it (boot.sh --ames-port). Required in practice for "
+                   "a comet other comets will name as their sponsor.")
 @click.option("--no-route", is_flag=True, default=False,
               help="Deliberately mint an UNROUTABLE comet (no sponsor, no fief). "
                    "Outbound-only: no peer will ever be able to contact it first.")
@@ -3388,14 +3399,15 @@ def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_ba
               help="Skip the seed-phrase read-back prompts. Scripted runs MUST "
                    "capture this command's output — the generated BIP-39 phrase is "
                    "printed nowhere else, and it backs both the coins and the blind.")
-def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish, sponsor, no_route,
-                   assume_saved):
+def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish, sponsor, fief_arg,
+                   no_route, assume_saved):
     """Generate a fresh BIP-39 wallet, fund it, spawn, and emit a boot one-liner.
 
     The comet's blind is derived from the generated seed phrase + the funding
     outpoint, so that one phrase recovers both the coins and the `dat` opening."""
     run_spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish,
-                       sponsor=sponsor, no_route=no_route, assume_saved=assume_saved)
+                       sponsor=sponsor, fief_arg=fief_arg, no_route=no_route,
+                       assume_saved=assume_saved)
 
 
 @proof.command("show")
@@ -4136,16 +4148,24 @@ def resolve_sponsor(sponsor: str | None) -> int | None:
         raise click.UsageError(f"--sponsor {sponsor!r}: {e}")
 
 
-def _initial_snapshot(pass_atom: int, sponsor: int | None = None) -> dict:
+def _initial_snapshot(pass_atom: int, sponsor: int | None = None,
+                      fief: tuple | None = None) -> dict:
     """The snapshot a fresh spawn commits: life 1, rift 0, messaging key from
-    the mined pass, and (in kelvin-9) an optional sponsor that carries in the
-    snapshot; absent projects to self-sponsorship."""
+    the mined pass, and (in kelvin-9) an optional sponsor and fief that carry
+    in the snapshot; an absent sponsor projects to self-sponsorship.
+
+    `fief` is the $fief noun from +parse_fief_arg, not a string.  It was
+    hardcoded None here until it wasn't: a comet could only acquire a static
+    endpoint by spending a SECOND on-chain transaction (`causeway rekey
+    --fief`), which mattered most for the one identity that always needs one
+    -- a sponsor, since peers reach a confidential comet through its
+    sponsor's fief."""
     return {
         "life": 1,
         "rift": 0,
         "key": messaging_key_from_pass(pass_atom),
         "sponsor": sponsor,
-        "fief": None,
+        "fief": fief,
     }
 
 
@@ -4223,7 +4243,8 @@ def _finish_spawn_proof(
 
 
 def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False, blind_mnemonic: str | None = None,
-                      sponsor: str | None = None, no_route: bool = False,
+                      sponsor: str | None = None, fief_arg: str | None = None,
+                      no_route: bool = False,
                       utxo_outpoint: str | None = None, signed_psbt: str | None = None,
                       assume_saved: bool = False) -> None:
     print()
@@ -4243,7 +4264,11 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     # comet must be refused up front, not after a proof-of-work search and a
     # broadcast the user cannot take back.
     sponsor_atom = resolve_sponsor(sponsor)
-    assert_routable({"sponsor": sponsor_atom, "fief": None}, no_route)
+    try:
+        parsed_fief = parse_fief_arg(fief_arg)
+    except ValueError as e:
+        raise click.UsageError(f"--fief: {e}")
+    assert_routable({"sponsor": sponsor_atom, "fief": parsed_fief}, no_route)
 
     source = parse_key_source(xpub_str, network=network)
     print(f"\n  Parsed key source: network={source.network}, account={_path_to_str(source.account_path)}")
@@ -4283,7 +4308,7 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     print(f"         @p {comet}")
 
     pass_atom = derive_pass_from_ring(ring_uw)
-    snapshot = _initial_snapshot(pass_atom, sponsor_atom)
+    snapshot = _initial_snapshot(pass_atom, sponsor_atom, parsed_fief)
     # Re-check against the real snapshot (belt-and-braces: the early check
     # above is what saves the user's time, this one is what saves the comet).
     assert_routable(snapshot, no_route)
@@ -4347,7 +4372,7 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
 
 
 def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False,
-                       sponsor: str | None = None, no_route: bool = False,
+                       sponsor: str | None = None, fief_arg: str | None = None, no_route: bool = False,
                        assume_saved: bool = False) -> None:
     print()
     print("=" * 60)
@@ -4356,7 +4381,11 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
 
     # Refuse an unroutable mint before generating a wallet or asking for funds.
     sponsor_atom = resolve_sponsor(sponsor)
-    assert_routable({"sponsor": sponsor_atom, "fief": None}, no_route)
+    try:
+        parsed_fief = parse_fief_arg(fief_arg)
+    except ValueError as e:
+        raise click.UsageError(f"--fief: {e}")
+    assert_routable({"sponsor": sponsor_atom, "fief": parsed_fief}, no_route)
 
     mnemonic = generate_new_mnemonic(strength_bits=128)
     print_seed_box(mnemonic)
@@ -4405,7 +4434,7 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
     print(f"         @p {comet}")
 
     pass_atom = derive_pass_from_ring(ring_uw)
-    snapshot = _initial_snapshot(pass_atom, sponsor_atom)
+    snapshot = _initial_snapshot(pass_atom, sponsor_atom, parsed_fief)
     # Re-check against the real snapshot (belt-and-braces: the early check
     # above is what saves the user's time, this one is what saves the comet).
     assert_routable(snapshot, no_route)
