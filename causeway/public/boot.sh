@@ -93,8 +93,13 @@ LOOM="${GROUNDWIRE_LOOM:-32}"
 EXPECT_SHA="${GROUNDWIRE_SHA256:-}"
 COMET=""
 FEED=""
+FEED_FILE=""
 PROOF=""
 MODE="install"
+MINT_XPUB=""
+MINT_SPONSOR=""
+MINT_FIEF=""
+MINT_ARGS=""
 DO_BITCOIN=1
 DO_SUPERVISOR=1
 DO_WAIT=1
@@ -109,15 +114,39 @@ Groundwire installer ${BOOT_SH_VERSION} -- boot a Causeway-minted comet and
 sync its Bitcoin light client.
 
 USAGE
-  curl -fsSL https://groundwire.io/causeway/boot.sh | bash -s -- \\
-    --comet ~sampel-palnet-... --feed 0w...
+  Mint a new confidential comet and boot it, in one command:
+
+    curl -fsSL https://groundwire.io/causeway/boot.sh | bash -s -- --mint
+
+  Boot a comet you have already minted and finalized:
+
+    curl -fsSL https://groundwire.io/causeway/boot.sh | bash -s -- \\
+      --comet ~sampel-palnet-... --feed-file ./my.feed
 
   boot.sh --status                 report on an existing install and exit
   boot.sh --stop                   stop a running ship, in the safe order
 
+MINT MODE (--mint)
+  Installs the release, runs Causeway to spawn a comet, waits for the spawn
+  transaction to confirm, bakes the custody log into the boot feed, and boots.
+  Interactive: it asks you to fund an address and to write down a recovery
+  phrase.
+
+  --xpub <descriptor> sign with your own wallet instead of one Causeway
+                     generates (a BIP-380 taproot descriptor or xpub)
+  --sponsor <@p>     sponsor to commit in the initial snapshot. Peers reach a
+                     confidential comet through its sponsor.
+  --fief <IP:PORT>   commit a static endpoint. Implies --ames-port <PORT>,
+                     because a fief the ship does not bind is a lie. A comet
+                     that others will name as their sponsor needs one.
+
 REQUIRED (for an install)
   --comet <@p>       the comet Causeway minted for you, with the leading ~
-  --feed  <0w...>    the boot feed Causeway gave you (a @uw atom)
+  --feed-file <path> the boot feed, read from a file. PREFER THIS: a feed is
+                     your ship's private key, and an argument lands in shell
+                     history. \`causeway finalize --out-feed\` writes one.
+  --feed  <0w...>    the same thing inline. Convenient, and it puts a private
+                     key in your history.
 
   Both, together, always. \`vere -G <feed>\` with no \`-w <name>\` does not fail:
   it falls through to [%come ~] and self-mines a DIFFERENT comet, quietly
@@ -191,6 +220,11 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --comet)      [ $# -ge 2 ] || usagedie "--comet needs a value"; COMET="$2"; shift 2 ;;
     --feed)       [ $# -ge 2 ] || usagedie "--feed needs a value"; FEED="$2"; shift 2 ;;
+    --feed-file)  [ $# -ge 2 ] || usagedie "--feed-file needs a value"; FEED_FILE="$2"; shift 2 ;;
+    --mint)       MODE="mint"; shift ;;
+    --xpub)       [ $# -ge 2 ] || usagedie "--xpub needs a value"; MINT_XPUB="$2"; shift 2 ;;
+    --sponsor)    [ $# -ge 2 ] || usagedie "--sponsor needs a value"; MINT_SPONSOR="$2"; shift 2 ;;
+    --fief)       [ $# -ge 2 ] || usagedie "--fief needs a value"; MINT_FIEF="$2"; shift 2 ;;
     --proof)      [ $# -ge 2 ] || usagedie "--proof needs a value"; PROOF="$2"; shift 2 ;;
     --dir)        [ $# -ge 2 ] || usagedie "--dir needs a value"; GW_DIR="$2"; shift 2 ;;
     --port)       [ $# -ge 2 ] || usagedie "--port needs a value"; HTTP_PORT="$2"; shift 2 ;;
@@ -254,8 +288,19 @@ validate_comet() {
 # a mnemonic is rejected at boot with "dawn: invalid private keys", after the
 # pier has already been created. Catch it here instead.
 validate_feed() {
+  # A feed is the ship's PRIVATE KEY.  Given inline it lands in shell history
+  # and -- worse -- in vere's own argv, where `ps` shows it to every local user
+  # for as long as the pier runs.  --feed-file keeps it off both.  vere still
+  # takes -G on the command line, so this narrows the exposure to the ship's
+  # runtime rather than removing it; closing that needs a vere change.
+  if [ -n "$FEED_FILE" ]; then
+    [ -n "$FEED" ] && usagedie "pass --feed or --feed-file, not both"
+    [ -r "$FEED_FILE" ] || usagedie "--feed-file cannot be read: $FEED_FILE"
+    FEED="$(tr -d '"'"' \t\r\n'"'"' < "$FEED_FILE")"
+    [ -n "$FEED" ] || usagedie "--feed-file is empty: $FEED_FILE"
+  fi
   case "$FEED" in
-    "") usagedie "--feed is required (the 0w... atom Causeway gave you)" ;;
+    "") usagedie "--feed or --feed-file is required (from \`causeway finalize\`)" ;;
     0w*) : ;;
     0v*) usagedie "--feed must be a @uw (0w...), not a @uv (0v...).
     vere parses the feed with (slaw %uw ...); a 0v atom is refused at boot.
@@ -1055,6 +1100,106 @@ cmd_stop() {
   good "stopped. The pier is untouched; re-run boot.sh to bring it back."
 }
 
+# ====================================================================== mint =
+# One command from nothing to a booted, verifiable confidential comet.
+#
+# Before this, the pieces existed but nothing joined them: Causeway was in no
+# release at all (the tarball shipped gw-onboard, which mines the RETIRED v9
+# %urb-watcher format), so the only way to mint an identity for the protocol
+# in the pill was to clone the repo.
+#
+# The order is forced by the protocol and cannot be rearranged:
+#   1. install the release        -- Causeway needs comet_miner from it
+#   2. spawn                      -- pick a funding UTXO, THEN mine: the @p
+#                                    commits that outpoint, so the comet does
+#                                    not exist until the coin is chosen
+#   3. wait for confirmation      -- the custody log needs a block
+#   4. finalize                   -- bake xtr into the feed; this is the first
+#                                    moment a BOOTABLE feed exists
+#   5. boot                       -- with the baked feed, by file
+#
+# Skipping 4 is the expensive mistake: a ship booted from the raw miner feed
+# has the right @p at the right life and an EMPTY custody log, so no peer can
+# ever verify it, and the sats are spent.
+cmd_mint() {
+  validate_port --port "$HTTP_PORT"
+  [ -n "$AMES_PORT" ] && validate_port --ames-port "$AMES_PORT"
+  case "$LOOM" in ''|*[!0-9]*) usagedie "--loom must be a number" ;; esac
+
+  # A fief names an exact IP:port, so the ship has to actually bind it.  Minting
+  # one and then booting on a random port commits a promise on chain that the
+  # ship does not keep, and the only repair is another on-chain rekey.
+  if [ -n "$MINT_FIEF" ] && [ -z "$AMES_PORT" ]; then
+    local fief_port="${MINT_FIEF##*:}"
+    case "$fief_port" in
+      ''|*[!0-9]*) usagedie "--fief must be IP:PORT, got $MINT_FIEF" ;;
+    esac
+    AMES_PORT="$fief_port"
+    info "--fief given: pinning --ames-port $AMES_PORT so the fief is true"
+  fi
+
+  detect_platform
+  preflight
+  resolve_tag
+  fetch_release
+  install_release
+  install_helpers
+
+  local cw="$GW_DIR/causeway"
+  [ -x "$cw" ] || die "this release does not ship Causeway ($cw).
+    Release $TAG predates Causeway being packaged. Use a newer one, or mint
+    from a checkout of gwbtc/groundwire and re-run with --comet/--feed-file."
+
+  local mintdir="$GW_DIR/var/mint"
+  mkdir -p "$mintdir"; chmod 700 "$mintdir"
+
+  local raw="$mintdir/spawn.feed" baked="$mintdir/boot.feed"
+  local args=(spawn)
+  if [ -n "$MINT_XPUB" ]; then args+=(connect --xpub "$MINT_XPUB"); else args+=(generate); fi
+  args+=(--output-dir "$mintdir" --out-feed "$raw")
+  [ -n "$MINT_SPONSOR" ] && args+=(--sponsor "$MINT_SPONSOR")
+  [ -n "$MINT_FIEF" ]    && args+=(--fief "$MINT_FIEF")
+
+  step "Minting a confidential comet with Causeway"
+  info "this is interactive: it will ask you to fund an address and to write"
+  info "down a recovery phrase. Do not skip the phrase."
+  printf '\n'
+  # </dev/tty because boot.sh is usually running under `curl | bash`, where
+  # stdin is the SCRIPT, not the keyboard.  Without this the first prompt eats
+  # the rest of the script and the mint dies half way through.
+  "$cw" "${args[@]}" </dev/tty || die "causeway spawn failed or was cancelled"
+
+  [ -s "$raw" ] || die "causeway spawn did not write a feed to $raw.
+    Nothing has been booted. If the transaction broadcast, your proof is in
+    $mintdir and you can finish by hand with 'causeway finalize'."
+
+  local proof
+  proof="$(ls -t "$mintdir"/*-spawn.proof.json 2>/dev/null | head -1 || true)"
+  [ -n "$proof" ] || die "no spawn proof found in $mintdir"
+
+  COMET="$(sed -n 's/.*"patp"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$proof" | head -1)"
+  [ -n "$COMET" ] || die "could not read the comet @p out of $proof"
+  good "minted $COMET"
+
+  step "Waiting for the spawn transaction to confirm, then baking the custody log"
+  info "this is the step that makes your comet verifiable; it can take an hour."
+  printf '\n'
+  "$cw" finalize "$proof" --feed-file "$raw" --out-feed "$baked" </dev/tty \
+    || die "causeway finalize failed.
+    Your comet is minted and on chain. Nothing is lost: re-run
+      $GW_DIR/causeway finalize $proof --feed-file $raw --out-feed $baked
+    and then boot with --comet $COMET --feed-file $baked"
+
+  [ -s "$baked" ] || die "finalize wrote no baked feed to $baked.
+    Refusing to boot: the raw feed would give you an unverifiable comet."
+
+  FEED_FILE="$baked"
+  PROOF="$proof"
+  good "custody log baked; booting"
+  MODE="install"
+  cmd_install
+}
+
 # =================================================================== install =
 cmd_install() {
   validate_comet
@@ -1118,5 +1263,6 @@ summary_lines() {
 case "$MODE" in
   status) cmd_status ;;
   stop)   cmd_stop ;;
+  mint)   cmd_mint ;;
   *)      cmd_install ;;
 esac

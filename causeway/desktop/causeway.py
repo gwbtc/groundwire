@@ -3356,12 +3356,14 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
               help="Read the signed PSBT from a file (or `-` for stdin) instead of "
                    "prompting. A named pipe works: the unsigned PSBT is written to "
                    "<patp>-spawn.psbt first.")
+@click.option("--out-feed", "out_feed", default=None, metavar="PATH",
+              help="Write the boot feed to this file (0600) instead of printing it. A feed is a private key; an argument lands in shell history and in the ship's argv.")
 @click.option("--assume-saved", is_flag=True, default=False,
               help="Skip the blind-recovery-phrase read-back prompts. Scripted runs "
                    "MUST capture this command's output — the phrase is printed "
                    "nowhere else and without it the comet is unrecoverable.")
 def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish, blind_mnemonic,
-                  sponsor, fief_arg, no_route, utxo_outpoint, signed_psbt, assume_saved):
+                  sponsor, fief_arg, no_route, utxo_outpoint, signed_psbt, out_feed, assume_saved):
     """Spawn using a user-provided wallet (xpub / descriptor). You sign the PSBT externally.
 
     Your wallet's seed never reaches Causeway, so the comet's blind — the
@@ -3372,7 +3374,7 @@ def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_ba
                       blind_mnemonic=blind_mnemonic, sponsor=sponsor, fief_arg=fief_arg,
                       no_route=no_route,
                       utxo_outpoint=utxo_outpoint, signed_psbt=signed_psbt,
-                      assume_saved=assume_saved)
+                      out_feed=out_feed, assume_saved=assume_saved)
 
 
 @spawn.command("generate")
@@ -3395,19 +3397,21 @@ def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_ba
 @click.option("--no-route", is_flag=True, default=False,
               help="Deliberately mint an UNROUTABLE comet (no sponsor, no fief). "
                    "Outbound-only: no peer will ever be able to contact it first.")
+@click.option("--out-feed", "out_feed", default=None, metavar="PATH",
+              help="Write the boot feed to this file (0600) instead of printing it. A feed is a private key; an argument lands in shell history and in the ship's argv.")
 @click.option("--assume-saved", is_flag=True, default=False,
               help="Skip the seed-phrase read-back prompts. Scripted runs MUST "
                    "capture this command's output — the generated BIP-39 phrase is "
                    "printed nowhere else, and it backs both the coins and the blind.")
 def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish, sponsor, fief_arg,
-                   no_route, assume_saved):
+                   no_route, out_feed, assume_saved):
     """Generate a fresh BIP-39 wallet, fund it, spawn, and emit a boot one-liner.
 
     The comet's blind is derived from the generated seed phrase + the funding
     outpoint, so that one phrase recovers both the coins and the `dat` opening."""
     run_spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish,
                        sponsor=sponsor, fief_arg=fief_arg, no_route=no_route,
-                       assume_saved=assume_saved)
+                       out_feed=out_feed, assume_saved=assume_saved)
 
 
 @proof.command("show")
@@ -3439,10 +3443,18 @@ def proof_verify(path, onchain, mempool_base):
 @cli.command("finalize")
 @click.argument("proofs", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False))
 @click.option("--feed", default=None, help="Boot feed (@uw, from the miner) to re-bake with the reveal log")
+@click.option("--feed-file", "feed_file", default=None, metavar="PATH",
+              help="Read the feed from a file instead of the command line. A feed is a private key; an argument lands in shell history.")
+@click.option("--out-feed", "out_feed", default=None, metavar="PATH",
+              help="Write the xtr-baked feed to this file (0600) instead of only printing it. This is what boot.sh --feed-file consumes.")
 @click.option("--wait/--no-wait", default=True, show_default=True, help="Poll until each commit confirms")
 @click.option("--poll-interval", type=int, default=POLL_INTERVAL, show_default=True)
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
-def cmd_finalize(proofs, feed, wait, poll_interval, mempool_base):
+def cmd_finalize(proofs, feed, wait, poll_interval, mempool_base,
+                 feed_file=None, out_feed=None):
+    # feed_file/out_feed sit at the end with defaults: click binds options by
+    # NAME, so order is free here, and keeping the original prefix intact
+    # means anything calling .callback() positionally still works.
     """Bake the kelvin-9 custody log (xtr) into proofs and, optionally, a boot feed.
 
     Give every proof.json for the point, OLDEST FIRST (spawn first, then each
@@ -3520,6 +3532,11 @@ def cmd_finalize(proofs, feed, wait, poll_interval, mempool_base):
         "  log on-chain before it will refresh your pass:\n", fg="cyan"))
     print(f"    {format_custody_entry_poke(entries[-1])}")
 
+    if feed_file and feed:
+        raise click.UsageError("pass --feed or --feed-file, not both")
+    if feed_file:
+        feed = read_feed_file(feed_file)
+
     if feed:
         noun = hoon_cue(decode_uw(feed))
         try:
@@ -3528,8 +3545,13 @@ def cmd_finalize(proofs, feed, wait, poll_interval, mempool_base):
             raise click.UsageError("--feed does not cue to a boot feed [[2 0] comet rift [[life ring] 0]]")
         new_feed = encode_uw(rebuild_feed(comet_p, rift, life, append_xtr_to_ring(ring_int, xtr)))
         patp = chain[-1].get("patp") or chain[0].get("patp") or "<your-comet>"
-        print("\n  Boot with the xtr-baked feed:")
-        _print_boot_oneliner(patp, new_feed, proofs[-1])
+        if out_feed:
+            written = write_feed_file(out_feed, new_feed)
+            print(f"\n  Baked feed written to {written} (0600)")
+            print(f"  Boot with:  boot.sh --comet {patp} --feed-file {written}")
+        else:
+            print("\n  Boot with the xtr-baked feed:")
+            _print_boot_oneliner(patp, new_feed, proofs[-1])
 
 
 # =========================================================================
@@ -4148,6 +4170,38 @@ def resolve_sponsor(sponsor: str | None) -> int | None:
         raise click.UsageError(f"--sponsor {sponsor!r}: {e}")
 
 
+def write_feed_file(path: str, feed: str) -> str:
+    """Write a boot feed to `path` with 0600, and return the path.
+
+    A feed IS the ship's private key.  Passing one as a command-line argument
+    puts it in shell history and, worse, in the ship's own argv for as long as
+    the pier runs -- `vere -G <feed>` is visible to every local user in `ps`
+    for the lifetime of the process.  boot.sh's own log line already redacts
+    it; this is the other half of that.
+
+    Writing the file 0600 BEFORE the content lands avoids the window where a
+    fresh file is briefly world-readable.
+    """
+    path = os.path.abspath(path)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(feed.strip() + "\n")
+    return path
+
+
+def read_feed_file(path: str) -> str:
+    """Read a feed written by write_feed_file, refusing an empty one."""
+    with open(path) as f:
+        feed = f.read().strip()
+    if not feed:
+        raise click.UsageError(f"--feed-file {path!r} is empty")
+    if not feed.startswith("0w"):
+        raise click.UsageError(
+            f"--feed-file {path!r} does not contain a @uw feed (expected 0w...)")
+    return feed
+
+
 def _initial_snapshot(pass_atom: int, sponsor: int | None = None,
                       fief: tuple | None = None) -> dict:
     """The snapshot a fresh spawn commits: life 1, rift 0, messaging key from
@@ -4246,6 +4300,7 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
                       sponsor: str | None = None, fief_arg: str | None = None,
                       no_route: bool = False,
                       utxo_outpoint: str | None = None, signed_psbt: str | None = None,
+                      out_feed: str | None = None,
                       assume_saved: bool = False) -> None:
     print()
     print("=" * 60)
@@ -4368,11 +4423,11 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     print_seed_box(blind_mnemonic, header=BLIND_SEED_BOX_HEADER)
     confirm_seed_saved(blind_mnemonic, label="blind recovery phrase", assume_saved=assume_saved)
 
-    _print_boot_oneliner(comet, feed, proof_path)
+    _print_spawn_next_steps(comet, feed, proof_path, out_feed)
 
 
 def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False,
-                       sponsor: str | None = None, fief_arg: str | None = None, no_route: bool = False,
+                       sponsor: str | None = None, fief_arg: str | None = None, no_route: bool = False, out_feed: str | None = None,
                        assume_saved: bool = False) -> None:
     print()
     print("=" * 60)
@@ -4483,7 +4538,50 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
     print_seed_box(mnemonic)
     confirm_seed_saved(mnemonic, assume_saved=assume_saved)
 
-    _print_boot_oneliner(comet, feed, proof_path)
+    _print_spawn_next_steps(comet, feed, proof_path, out_feed)
+
+
+def _print_spawn_next_steps(comet: str, feed: str, proof_path: str,
+                            out_feed: str | None = None) -> None:
+    """What to do after a spawn broadcasts.  Deliberately NOT a boot command.
+
+    This used to print a copy-pasteable `boot.sh ... --feed <feed>` line using
+    the RAW miner feed, with the "now run causeway finalize" note underneath
+    it.  A copy-pasteable command is for copying, so the happy path handed the
+    user a way to boot an identity with an EMPTY custody log -- right @p, right
+    life, and no peer can ever verify it -- after they had already spent real
+    sats.  boot.sh's own docs warn about exactly this.
+
+    The boot command now comes from `causeway finalize`, which is the first
+    point at which the correct feed exists.
+    """
+    pier = comet.lstrip("~")
+    print("\n" + "=" * 60)
+    print("  SPAWN BROADCAST")
+    print("=" * 60)
+    print(f"\n  Your comet: {patp_to_mnemonym(comet)}")
+    print(f"  @p:         {comet}")
+    print(f"  Proof:      {proof_path}")
+    if out_feed:
+        written = write_feed_file(out_feed, feed)
+        print(f"  Feed:       {written} (0600, NOT yet xtr-baked)")
+    else:
+        print(f"  Feed atom:  {feed[:52]}{'...' if len(feed) > 52 else ''}")
+    click.echo(click.style(
+        "\n  DO NOT BOOT THIS YET.\n"
+        "  The feed above carries an EMPTY custody log. A ship booted from it\n"
+        "  has the right @p at the right life, and no peer can ever verify it.\n",
+        fg="yellow"))
+    print("  Next, once the spawn transaction confirms (~10-60 min):")
+    if out_feed:
+        print(f"    causeway finalize {proof_path} \\")
+        print(f"      --feed-file {out_feed} --out-feed {out_feed}.baked")
+        print(f"    boot.sh --comet {comet} --feed-file {out_feed}.baked")
+    else:
+        print(f"    causeway finalize {proof_path} --feed <the feed above> \\")
+        print(f"      --out-feed ./{pier}.feed")
+        print(f"    boot.sh --comet {comet} --feed-file ./{pier}.feed")
+    print()
 
 
 def _print_boot_oneliner(comet: str, feed: str, proof_path: str) -> None:
