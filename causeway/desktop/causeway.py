@@ -917,9 +917,8 @@ def pass_with_xtr(pass_atom: int, xtr: int) -> int:
 
     This is what makes a publication the comet's WHOLE attestation packet:
     the pass in the OP_RETURN is the pass a peer receives, custody log and
-    all.  Mirrors +with-xtr:gw-btc-pass and passWithXtr() in
-    causeway/src/spawn/mine-c.ts; pinned by the `full-packet` golden
-    vector."""
+    all.  Mirrors +with-xtr:gw-btc-pass; pinned by the `full-packet`
+    golden vector."""
     if pass_atom & 0xFF != ord("c"):
         raise ValueError("pass_with_xtr: not a suite-C pass")
     bod = pass_atom >> 8
@@ -961,8 +960,8 @@ def xtr_of_pass(pass_atom: int) -> int:
 #  terminal opening ~100 B, so the floor is ~330 B and each further custody hop
 #  adds ~40 B — 1024 is ~17 hops, against the four that 512 allowed.  An
 #  OP_RETURN is all non-witness data, so that is a ~1160 vB transaction:
-#  ~2320 sats at 2 sat/vB.  MUST equal +max-publication:gw-btc-pass and
-#  MAX_PUBLICATION in causeway/src/spawn/publication.ts, byte for byte.
+#  ~2320 sats at 2 sat/vB.  MUST equal +max-publication:gw-btc-pass byte for
+#  byte -- the Hoon is the other half of this pair, and the only other half.
 MAX_PUBLICATION = 1024
 
 
@@ -974,7 +973,7 @@ def push_data(payload: bytes) -> bytes:
     so a fief-carrying publication (265–269 bytes in practice) already needs
     PUSHDATA2 (0x4d) and its TWO-byte LITTLE-ENDIAN length, and a full-packet
     one is never anything else.  Byte-for-byte identical to
-    +push-data:gw-btc-pass and pushData() in causeway/src/spawn/publication.ts.
+    +push-data:gw-btc-pass.
     """
     n = len(payload)
     if n <= 75:

@@ -228,10 +228,11 @@
 ::
 ::    The hard ceiling is MAX_SCRIPT_SIZE (10.000); OP_PUSHDATA2 has
 ::    reached it since 194e56d, so raising this later is a constant,
-::    not a format change.  THE SAME NUMBER LIVES IN THREE PLACES --
-::    here, causeway/desktop/causeway.py and
-::    causeway/src/spawn/publication.ts -- and they must agree byte for
-::    byte or an encoder writes a script the others refuse.
+::    not a format change.  THE SAME NUMBER LIVES IN TWO PLACES -- here
+::    and causeway/desktop/causeway.py -- and they must agree byte for
+::    byte or one encoder writes a script the other refuses.  It was
+::    three until the web front end was deleted; if a third encoder ever
+::    returns, it joins this list or it is wrong.
 ::
 ++  max-publication  1.024
 ::  +push-data: the minimal Bitcoin push opcode(s) for a byte string

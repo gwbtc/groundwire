@@ -41,12 +41,13 @@
 >   cc-draft-2 kernel requires **mat(dom)** at bit 0. A comet mined one
 >   way will not verify the other way — coordinate which stack you're
 >   targeting. (This note is historical: `--legacy-tweak` no longer exists
->   on the desktop CLI, and v9 has been retired from both front ends.) The
->   agent-side `%jael-writ` decoder for the new format is still TODO
->   upstream (spec §4 item 3); Causeway's `xtr` encoding is a proposal
->   pinned by golden vectors on both implementations
->   (`causeway/tests/kelvin9.spec.ts` — there is no `tests/dat.spec.ts` —
->   and `desktop/tests/test_causeway.py`) until the agent pins its own.
+>   on the desktop CLI, and v9 has been retired.) The agent-side
+>   `%jael-writ` decoder for the new format is still TODO upstream
+>   (spec §4 item 3); Causeway's `xtr` encoding is a proposal pinned by
+>   golden vectors in `desktop/tests/test_causeway.py`, shared with the
+>   Hoon via `groundwire/vectors/gw-kelvin-9.json`, until the agent pins
+>   its own. (A second set lived in the web front end's
+>   `tests/kelvin9.spec.ts`; that front end has been deleted.)
 >
 > The rest of this document describes the flow as originally built; the
 > mechanics (commit-only spends, single-leaf commitment, key-path
