@@ -597,13 +597,13 @@ class UtxoPickerScreen(BaseScreen):
                 f"UTXO too small: {state.picked_utxo['value']} < 630 sats minimum"
             )
             return
-        # For spawn we need to mine; for manage we skip mining.  Connect-wallet
-        # spawns have no seed to derive the blind from, so they stop off at
-        # BlindPhraseScreen first (mining bakes the blind into the @p).
+        # For spawn we need to mine; for manage we skip mining.  The blind
+        # phrase ceremony is retired: a connect-wallet spawn's blind is fresh
+        # entropy recorded in proof.json (the identity bundle: proof + feed).
+        # BlindPhraseScreen survives only for a deliberate re-spawn from a
+        # phrase minted before the retirement (state.blind_mnemonic pre-set).
         if state.op_name != "spawn":
             self.app.push_screen(PsbtBuildScreen())
-        elif state.mnemonic is None and state.blind_mnemonic is None:
-            self.app.push_screen(BlindPhraseScreen())
         else:
             self.app.push_screen(MiningScreen())
 
@@ -744,21 +744,25 @@ class MiningScreen(BaseScreen):
             self.app.call_from_thread(log.write_line, f"ERROR: miner binary not found at {state.miner_bin}")
             self.app.call_from_thread(self.query_one("#status", Static).update, "miner not found — configure --miner")
             return
-        # Seed-derived blind so the dat opening is recoverable from a phrase the
-        # user holds: the wallet seed if we generated it, else the dedicated
-        # blind recovery phrase collected by BlindPhraseScreen.
+        # Blind derivation, in preference order: the wallet seed when we
+        # generated it (free second recovery route); a supplied legacy blind
+        # phrase; else fresh entropy recorded only in proof.json.  The file is
+        # the custody object either way -- the ring is nondeterministically
+        # mined and lives only in the feed, so file custody was never optional.
         phrase = state.mnemonic or state.blind_mnemonic
-        if not phrase:
+        if phrase:
+            state.blind_derivation = (
+                cw.BLIND_DERIV_WALLET_SEED if state.mnemonic else cw.BLIND_DERIV_BLIND_MNEMONIC
+            )
+            state.blind_seed, state.blind = cw.blind_from_mnemonic(phrase, u["txid"], u["vout"])
+        else:
+            state.blind_seed = int.from_bytes(os.urandom(32), "big")
+            state.blind = cw.make_blind(state.blind_seed)
+            state.blind_derivation = cw.BLIND_DERIV_PROOF_FILE
             self.app.call_from_thread(log.write_line,
-                "ERROR: no seed or blind recovery phrase — refusing to mint an "
-                "unrecoverable comet")
-            self.app.call_from_thread(self.query_one("#status", Static).update,
-                                      "missing blind recovery phrase — go back")
-            return
-        state.blind_derivation = (
-            cw.BLIND_DERIV_WALLET_SEED if state.mnemonic else cw.BLIND_DERIV_BLIND_MNEMONIC
-        )
-        state.blind_seed, state.blind = cw.blind_from_mnemonic(phrase, u["txid"], u["vout"])
+                "Blind: fresh entropy, recorded in the proof file. Your identity")
+            self.app.call_from_thread(log.write_line,
+                "bundle is proof.json + the feed — back both up.")
         self.app.call_from_thread(log.write_line, f"Blind derived from {state.blind_derivation}")
         try:
             result = cw.mine_comet_from_utxo(u["txid"], u["vout"], 0, state.blind_seed, state.miner_bin)
@@ -987,15 +991,24 @@ class DoneScreen(BaseScreen):
             else:
                 cmd = f"~/.groundwire/causeway finalize {proof_path} --feed <miner feed>"
             comet_mnemo = cw.patp_to_mnemonym(comet) if comet != "<unknown>" else comet
-            recovery = (
-                "Recovery: this comet's blind is derived from your BLIND RECOVERY\n"
-                "PHRASE + the spawn outpoint. Keep the phrase — it is the only way\n"
-                "to reopen the dat commitment if the proof file is lost."
-                if state.blind_derivation == cw.BLIND_DERIV_BLIND_MNEMONIC else
-                "Recovery: this comet's blind is derived from your wallet seed\n"
-                "phrase + the spawn outpoint, so the seed alone can reopen the dat\n"
-                "commitment even if the proof file is lost."
-            )
+            if state.blind_derivation == cw.BLIND_DERIV_BLIND_MNEMONIC:
+                recovery = (
+                    "Recovery: this comet's blind is derived from your BLIND RECOVERY\n"
+                    "PHRASE + the spawn outpoint. Keep the phrase — it is the only way\n"
+                    "to reopen the dat commitment if the proof file is lost."
+                )
+            elif state.blind_derivation == cw.BLIND_DERIV_WALLET_SEED:
+                recovery = (
+                    "Recovery: this comet's blind is derived from your wallet seed\n"
+                    "phrase + the spawn outpoint, so the seed alone can reopen the dat\n"
+                    "commitment even if the proof file is lost."
+                )
+            else:
+                recovery = (
+                    "Custody: your identity bundle is the proof file + the feed file.\n"
+                    "Back BOTH up like a wallet. The blind lives only in the proof;\n"
+                    "the ship's key lives only in the feed. No phrase regenerates them."
+                )
             self._cmd = cmd
             yield Vertical(
                 Static("SPAWN COMPLETE", id="title"),

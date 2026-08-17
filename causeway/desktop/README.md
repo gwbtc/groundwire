@@ -97,6 +97,23 @@ minted with `--fief`. If you set one, the ship must actually bind that port
 `spawn connect` additionally takes `--xpub` (required), `--blind-mnemonic`,
 `--utxo` and `--signed-psbt`.
 
+### Custody: the identity bundle
+
+Your comet's identity is **two files**: the proof (`<patp>-spawn.proof.json`
+and any rekey proofs after it) and the feed. Back both up like a wallet.
+
+- The **feed** holds the ring — the ship's networking key. Mining is seeded
+  from system entropy, so no phrase regenerates it, ever.
+- The **proof chain** holds the blind (the secret half of the dat opening) and
+  the committed snapshot of every hop — sponsor, fief, life, rift. Choices,
+  not derivations; nothing regenerates them either.
+
+Both are written 0600. In the generate flow the wallet seed phrase additionally
+re-derives the blind (and controls the coins); in the connect flow your wallet
+seed stays in your wallet, the blind is fresh entropy recorded in the proof,
+and there is no second phrase to keep — the earlier blind-recovery-phrase
+ceremony is retired (`--blind-mnemonic` still accepts one from that era).
+
 ### The TUI
 
 `causeway-tui` (or `~/.groundwire/causeway tui`) is the screen-based flow, and

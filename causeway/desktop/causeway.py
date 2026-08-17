@@ -3039,35 +3039,6 @@ def normalize_blind_mnemonic(supplied: str) -> str:
     return m
 
 
-def obtain_blind_mnemonic(supplied: str | None = None, *,
-                          assume_saved: bool = False) -> str:
-    """The BIP-39 phrase that a `spawn connect` blind is derived from.
-
-    `spawn connect` only ever sees an account xpub — a watch-only wallet or a
-    hardware signer never hands over its seed — so the blind cannot be derived
-    from the wallet.  Rather than fall back to an unrecoverable random blind,
-    we mint a dedicated phrase and force the user to record it, or accept one
-    they already hold (re-spawn / recovery)."""
-    if supplied:
-        m = normalize_blind_mnemonic(supplied)
-        print("\n  Using the blind recovery phrase you supplied.")
-        print("  (It was passed on the command line — clear it from your shell history.)")
-        return m
-    print()
-    print("  Your wallet is external (xpub / hardware signer), so Causeway cannot")
-    print("  derive this comet's blind from your wallet seed. It is generating a")
-    print("  separate BIP-39 recovery phrase for the blind instead.")
-    m = generate_new_mnemonic(strength_bits=128)
-    print_seed_box(m, header=BLIND_SEED_BOX_HEADER)
-    confirm_seed_saved(m, label="blind recovery phrase", assume_saved=assume_saved)
-    return m
-
-
-# =========================================================================
-#  Miner wrapper — either subprocess to comet_miner binary, or pure-JS port (TBD)
-# =========================================================================
-
-
 def mine_comet_from_utxo(
     txid_hex: str,
     vout: int,
@@ -3376,8 +3347,9 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
 @click.option("--publish", is_flag=True, default=False,
               help="Public spawn: add an OP_RETURN publication output opening the dat commitment (default off = confidential)")
 @click.option("--blind-mnemonic", default=None,
-              help="Existing BIP-39 blind recovery phrase to derive this comet's blind from "
-                   "(re-spawn / recovery). Omit and Causeway mints one and makes you record it.")
+              help="Legacy: derive the blind from a phrase minted before the ceremony was "
+                   "retired (re-spawn / recovery). Omit and the blind is fresh entropy "
+                   "recorded in proof.json — the proof + feed are the identity bundle.")
 @click.option("--sponsor", default=None,
               help="Sponsor for the initial snapshot (@p or mnemonym). Peers route to a "
                    "confidential comet through the sponsor committed on-chain.")
@@ -3399,17 +3371,16 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
 @click.option("--out-feed", "out_feed", default=None, metavar="PATH",
               help="Write the boot feed to this file (0600) instead of printing it. A feed is a private key; an argument lands in shell history and in the ship's argv.")
 @click.option("--assume-saved", is_flag=True, default=False,
-              help="Skip the blind-recovery-phrase read-back prompts. Scripted runs "
-                   "MUST capture this command's output — the phrase is printed "
-                   "nowhere else and without it the comet is unrecoverable.")
+              help="No-op in the default flow (the blind phrase ceremony is retired; "
+                   "the blind lives in proof.json). Kept for script compatibility.")
 def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish, blind_mnemonic,
                   sponsor, fief_arg, no_route, utxo_outpoint, signed_psbt, out_feed, assume_saved):
     """Spawn using a user-provided wallet (xpub / descriptor). You sign the PSBT externally.
 
     Your wallet's seed never reaches Causeway, so the comet's blind — the
-    secret that opens its `dat` commitment — is derived from a SEPARATE BIP-39
-    phrase that this command prints and makes you write down (or that you pass
-    in with --blind-mnemonic). Losing it loses the identity."""
+    secret that opens its `dat` commitment — is fresh entropy recorded in the
+    proof file. Your identity bundle is proof.json + the feed file; back both
+    up like a wallet. (--blind-mnemonic re-derives from a legacy phrase.)"""
     run_spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish,
                       blind_mnemonic=blind_mnemonic, sponsor=sponsor, fief_arg=fief_arg,
                       no_route=no_route,
@@ -4396,6 +4367,14 @@ def _spawn_publication_opening(internal_xonly: bytes, snapshot: dict, utxo: dict
 
 BLIND_DERIV_WALLET_SEED = "wallet-seed+outpoint"
 BLIND_DERIV_BLIND_MNEMONIC = "blind-mnemonic+outpoint"
+# The connect-flow default since the phrase ceremony was banished: the blind
+# is fresh entropy, recorded ONLY in proof.json.  Justified by the custody
+# ledger, not convenience: the ring is nondeterministically mined and lives
+# only in the feed, and the snapshot (sponsor/fief, every hop) lives only in
+# the proof chain -- so file custody was already mandatory, and a phrase that
+# recovers one field of a file you must keep anyway is ceremony, not safety.
+# proof.json + feed ARE the identity bundle; both are written 0600.
+BLIND_DERIV_PROOF_FILE = "proof-file-entropy"
 
 
 def _finish_spawn_proof(
@@ -4492,8 +4471,17 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     # Seed-derived blind so the dat opening is recoverable.  We hold only an
     # xpub here, so the blind comes from a dedicated recovery phrase the user
     # records (or supplies) — never from ephemeral randomness.
-    blind_mnemonic = obtain_blind_mnemonic(blind_mnemonic, assume_saved=assume_saved)
-    blind_seed, blind = blind_from_mnemonic(blind_mnemonic, utxo["txid"], utxo["vout"])
+    if blind_mnemonic:
+        # Legacy / deliberate re-spawn from a phrase minted before the
+        # ceremony was retired.  Same derivation as ever.
+        blind_seed, blind = blind_from_mnemonic(blind_mnemonic, utxo["txid"], utxo["vout"])
+        blind_derivation = BLIND_DERIV_BLIND_MNEMONIC
+    else:
+        blind_seed = int.from_bytes(os.urandom(32), "big")
+        blind = make_blind(blind_seed)
+        blind_derivation = BLIND_DERIV_PROOF_FILE
+        print("\n  The comet's blind is fresh entropy, recorded in the proof file.")
+        print("  Your identity bundle is the proof.json + the feed file — back both up.")
     print(f"\n  Mining comet (kelvin-9 dat) from ({utxo['txid']}:{utxo['vout']},0)...")
     miner_result = mine_comet_from_utxo(utxo["txid"], utxo["vout"], 0, blind_seed, miner)
     comet = miner_result["comet"]
@@ -4523,7 +4511,7 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     )
     _finish_spawn_proof(
         proof, comet=comet, pass_atom=pass_atom, blind=blind, blind_seed=blind_seed,
-        utxo=utxo, blind_derivation=BLIND_DERIV_BLIND_MNEMONIC,
+        utxo=utxo, blind_derivation=blind_derivation,
     )
 
     os.makedirs(output_dir, exist_ok=True)

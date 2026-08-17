@@ -2980,3 +2980,20 @@ def test_proof_json_is_written_0600(tmp_path):
     cw.write_proof_json({"op": "spawn", "blind_hex": "ab"}, path)
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
     assert cw.load_proof_json(path)["blind_hex"] == "ab"
+
+
+def test_connect_default_blind_is_proof_file_entropy(monkeypatch, tmp_path):
+    """With no --blind-mnemonic, the connect flow's blind is fresh entropy and
+    the proof records blind_derivation="proof-file-entropy" — the file IS the
+    custody object.  The legacy phrase path stays reachable via
+    --blind-mnemonic (covered by the recoverability test above)."""
+    proof = {}
+    fake_utxo = {"txid": "cc" * 32, "vout": 1, "height": 900100}
+    cw._finish_spawn_proof(
+        proof, comet="~sampel", pass_atom=0xC0FFEE, blind=b"\x11" * 32,
+        blind_seed=0x22, utxo=fake_utxo,
+        blind_derivation=cw.BLIND_DERIV_PROOF_FILE)
+    assert proof["blind_derivation"] == "proof-file-entropy"
+    assert proof["blind_hex"] == "11" * 32
+    # and the ceremony machinery is actually gone, not merely bypassed
+    assert not hasattr(cw, "obtain_blind_mnemonic")
