@@ -806,7 +806,7 @@ class PsbtBuildScreen(BaseScreen):
         yield Header()
         yield Vertical(
             Static("BUILD & SIGN COMMIT PSBT", id="title"),
-            Static("Unsigned PSBT (base64) — load into your wallet, sign, paste the signed version below:"),
+            Static("", id="psbt-copy"),
             TextArea(id="b64", read_only=True),
             Static("Signed PSBT:"),
             TextArea(id="signed-in"),
@@ -824,9 +824,17 @@ class PsbtBuildScreen(BaseScreen):
     def on_mount(self) -> None:
         state: FlowState = self.app.state  # type: ignore[attr-defined]
         self.build_psbt()
-        # If we have a mnemonic, we can self-sign.
+        # Generate flow: Causeway signs; the manual button is redundant and
+        # the copy says broadcast.  Connect flow: external signing is the
+        # point; the self-sign button is impossible and hidden.
         if state.mnemonic is None:
-            self.query_one("#self-sign", Button).disabled = True
+            self.query_one("#self-sign", Button).display = False
+            self.query_one("#psbt-copy", Static).update(
+                "Unsigned PSBT (base64) — load into your wallet, sign, paste the signed version below:")
+        else:
+            self.query_one("#self-sign", Button).display = False
+            self.query_one("#psbt-copy", Static).update(
+                "Spawn transaction (signed by the generated wallet — shown for inspection):")
 
     def build_psbt(self) -> None:
         state: FlowState = self.app.state  # type: ignore[attr-defined]
@@ -879,7 +887,26 @@ class PsbtBuildScreen(BaseScreen):
             # stash proof temporarily in state via a closure
             self._pending_proof = proof  # type: ignore[attr-defined]
             self.query_one("#b64", TextArea).text = state.psbt_b64_unsigned
-            self.query_one("#status", Static).update("PSBT built — sign externally, paste signed below")
+            if state.mnemonic is not None:
+                # Generate-Wallet flow: Causeway holds the seed that owns the
+                # sats, so it signs.  Prompting a user to carry this PSBT to
+                # "their wallet" was a hand-off to a wallet that does not
+                # exist -- the paste UI is the CONNECT flow's, where the seed
+                # deliberately lives elsewhere.
+                try:
+                    from embit import psbt as _psbt
+                    root = cw.mnemonic_to_hdkey(state.mnemonic, network=state.network)
+                    signed = _psbt.PSBT.from_base64(state.psbt_b64_unsigned)
+                    signed.sign_with(root)
+                    state.psbt_b64_signed = signed.to_base64()
+                    self.query_one("#signed-in", TextArea).text = state.psbt_b64_signed
+                    self.query_one("#status", Static).update(
+                        "signed with the generated wallet — click Broadcast")
+                except Exception as e:  # noqa: BLE001
+                    self.query_one("#status", Static).update(f"self-sign failed: {e}")
+            else:
+                self.query_one("#status", Static).update(
+                    "PSBT built — sign in YOUR wallet, paste the signed version below")
         except Exception as e:
             self.query_one("#status", Static).update(f"build failed: {e}")
 
@@ -1018,9 +1045,12 @@ class DoneScreen(BaseScreen):
                 Static(f"Proof: {proof_path}", classes="label"),
                 Static(recovery, classes="label"),
                 Static(
-                    "DO NOT BOOT YET — the feed still carries an empty custody log.\n"
-                    "Once the spawn tx confirms, run this; it bakes the log and\n"
-                    "prints the boot command:",
+                    "You could boot now — the ship would run under the right name —\n"
+                    "but peers couldn't verify it yet: its pass doesn't carry the\n"
+                    "on-chain evidence for the name (the custody log). Once the spawn\n"
+                    "tx confirms, run this; it bakes the evidence into the feed so\n"
+                    "your ship is verifiable from its first packet, and prints the\n"
+                    "boot command:",
                     classes="label",
                 ),
                 Static(cmd, id="boot"),

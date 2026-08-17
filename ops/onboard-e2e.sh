@@ -84,7 +84,7 @@ step "2. the spawn log must NOT print a runnable boot command"
 if grep -E -- 'boot\.sh .*--feed 0w' "$WORK/spawn.log"; then
   die "spawn printed a raw-feed boot command again"
 fi
-grep -q "DO NOT BOOT THIS YET" "$WORK/spawn.log" || die "spawn no longer warns against booting the raw feed"
+grep -q "peers cannot verify you yet" "$WORK/spawn.log" || die "spawn no longer explains the raw-feed verification gap"
 
 step "3. finalize — confirmation wait + xtr bake, by file"
 if ! "$REL/causeway" finalize "$PROOF" \

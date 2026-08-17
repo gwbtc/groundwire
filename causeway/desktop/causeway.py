@@ -4705,9 +4705,18 @@ def _print_spawn_next_steps(comet: str, feed: str, proof_path: str,
     else:
         print(f"  Feed atom:  {feed[:52]}{'...' if len(feed) > 52 else ''}")
     click.echo(click.style(
-        "\n  DO NOT BOOT THIS YET.\n"
-        "  The feed above carries an EMPTY custody log. A ship booted from it\n"
-        "  has the right @p at the right life, and no peer can ever verify it.\n",
+        "\n  You CAN boot this feed now, but peers cannot verify you yet.\n"
+        "  The ship would come up with the right name and can reach out --\n"
+        "  but its pass (the ID it shows peers) does not yet carry the\n"
+        "  on-chain evidence for that name: the custody log. Peers who hear\n"
+        "  from an unproven comet quietly ignore it rather than trust it.\n"
+        "\n"
+        "  Finalize fixes that: it waits for the spawn tx to confirm, then\n"
+        "  bakes the evidence into the feed -- so a ship booted from the\n"
+        "  BAKED feed is verifiable from its very first packet. (A running\n"
+        "  ship can also be handed the evidence later, with a\n"
+        "  %gw-custody-entry poke; it then re-checks the chain itself, which\n"
+        "  needs its own light client synced first -- about an hour.)\n",
         fg="yellow"))
     print("  Next, once the spawn transaction confirms (~10-60 min):")
     if out_feed:
