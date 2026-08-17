@@ -537,8 +537,16 @@ install_release() {
   # Idempotence: an interrupted run re-enters here with the work already done.
   # Re-extracting would also swap the binary under a ship that is still
   # running, which is a thing to do deliberately, not by accident.
+  # "Already installed" must mean COMPLETELY installed.  release.txt is
+  # written after the moves, but an older boot.sh wrote it after moving fewer
+  # files -- a machine that installed this tag before Causeway shipped has a
+  # truthful release.txt and no Causeway, and skipping here would pin that
+  # state forever.  So the short-circuit also requires every file this
+  # version knows how to install, when the tarball provides it.
   if [ "$FORCE_REDOWNLOAD" = 0 ] && [ -x "$VERE" ] && [ -f "$PILL" ] &&
-     grep -qx "tag=$TAG" "$GW_DIR/var/release.txt" 2>/dev/null; then
+     grep -qx "tag=$TAG" "$GW_DIR/var/release.txt" 2>/dev/null &&
+     { ! tar tzf "$TARBALL" 2>/dev/null | grep -qx './causeway' ||
+       [ -x "$GW_DIR/causeway" ]; }; then
     info "release $TAG is already installed"
     HAVE_SIDECAR=0
     [ -x "$SIDECAR" ] && HAVE_SIDECAR=1
@@ -576,6 +584,23 @@ install_release() {
   # message can name the release rather than a missing file.
   [ -f "$stage/gwlib.sh" ] && mv -f "$stage/gwlib.sh" "$GW_DIR/lib/gwlib.sh"
   [ -f "$stage/gwsup.sh" ] && mv -f "$stage/gwsup.sh" "$GW_DIR/bin/gwsup.sh"
+  # Causeway: the launcher plus its source tree.  These go at the TOP of
+  # GW_DIR rather than into bin/, because the launcher locates causeway-src/
+  # relative to itself and builds its venv beside it.
+  #
+  # Packaging a file into the tarball and installing it are two different
+  # jobs, and doing only the first is silent: the tarball verified, the
+  # install reported success, and the mint died several steps later claiming
+  # the RELEASE lacked Causeway when the release had it all along and this
+  # function had simply walked past it.
+  if [ -d "$stage/causeway-src" ]; then
+    rm -rf "$GW_DIR/causeway-src"
+    mv -f "$stage/causeway-src" "$GW_DIR/causeway-src"
+  fi
+  [ -f "$stage/causeway" ] && { mv -f "$stage/causeway" "$GW_DIR/causeway"; chmod +x "$GW_DIR/causeway"; }
+  # boot.sh ships in the release too, so a pier can be managed without
+  # re-fetching this script from the network.
+  [ -f "$stage/boot.sh" ] && { mv -f "$stage/boot.sh" "$GW_DIR/boot.sh"; chmod +x "$GW_DIR/boot.sh"; }
   rm -rf "$stage"
 
   [ -x "$VERE" ] || die "gw-vere did not install as executable"
@@ -1149,10 +1174,22 @@ cmd_mint() {
   install_release
   install_helpers
 
+  # Distinguish the two ways this can be missing.  The first version of this
+  # check blamed the release for what was in fact an installer that never
+  # copied the file -- a message that sends someone to cut a new release to
+  # fix a bug in the line above.
   local cw="$GW_DIR/causeway"
-  [ -x "$cw" ] || die "this release does not ship Causeway ($cw).
-    Release $TAG predates Causeway being packaged. Use a newer one, or mint
-    from a checkout of gwbtc/groundwire and re-run with --comet/--feed-file."
+  if [ ! -x "$cw" ]; then
+    if tar tzf "$TARBALL" 2>/dev/null | grep -qx './causeway'; then
+      die "release $TAG contains Causeway but it was not installed to $cw.
+    That is a bug in this script's install step, not in the release.
+    Re-run with --redownload; if it persists, report it."
+    fi
+    die "release $TAG does not ship Causeway.
+    Releases before gwbtc/urbit a19776f3 predate it being packaged. Use a
+    newer one, or mint from a checkout of gwbtc/groundwire and re-run with
+    --comet/--feed-file."
+  fi
 
   local mintdir="$GW_DIR/var/mint"
   mkdir -p "$mintdir"; chmod 700 "$mintdir"
