@@ -85,6 +85,9 @@ class FlowState:
     fief_input: str = ""
     fief_noun: Optional[tuple] = None
     no_route: bool = False
+    # A wrapper (boot.sh --mint) launched us and will finalize + boot after we
+    # exit; the DoneScreen offers quit-and-continue instead of back-to-landing.
+    handoff: bool = False
     psbt_b64_unsigned: Optional[str] = None
     psbt_b64_signed: Optional[str] = None
     commit_txid: Optional[str] = None
@@ -178,13 +181,15 @@ class SpawnMethodScreen(BaseScreen):
             ),
             Static(" "),
             Static("Sponsor (@p or mnemonym) — peers route to your comet through it:", classes="hint"),
-            Input(placeholder="~sampel-palnet", id="sponsor"),
+            Input(placeholder="~sampel-palnet", id="sponsor",
+                  value=self.app.state.sponsor_input),  # type: ignore[attr-defined]
             Static(" "),
             Static("Fief (IP:PORT) — a static endpoint peers can reach you at directly. "
                    "Leave blank unless you know you need one; if set, the ship must "
                    "actually bind this port. A comet that others will name as their "
                    "SPONSOR needs one.", classes="hint"),
-            Input(placeholder="203.0.113.7:34343", id="fief"),
+            Input(placeholder="203.0.113.7:34343", id="fief",
+                  value=self.app.state.fief_input),  # type: ignore[attr-defined]
             Checkbox("no-route: mint with NO sponsor and NO fief (outbound-only)", id="no-route"),
             Static(" "),
             Button("Connect Wallet  (paste xpub, sign PSBT externally)", id="connect", variant="primary"),
@@ -966,7 +971,10 @@ class DoneScreen(BaseScreen):
                     classes="label",
                 ),
 
-                Button("Done  →  back to landing", id="home", variant="primary"),
+                (Button("Quit — the installer continues (finalize + boot)",
+                        id="handoff-quit", variant="success")
+                 if state.handoff else
+                 Button("Done  →  back to landing", id="home", variant="primary")),
                 id="panel",
             )
         else:
@@ -989,6 +997,12 @@ class DoneScreen(BaseScreen):
         yield Footer()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "handoff-quit":
+            # boot.sh --mint is waiting on our exit status; it finds the proof
+            # and the feed file on disk (both already written) and carries on
+            # with finalize + boot.  Nothing to pass -- the disk is the seam.
+            self.app.exit(0)
+            return
         if event.button.id == "home":
             # Pop everything back to landing
             self.app.pop_screen()
@@ -1220,6 +1234,29 @@ class ProofOpenScreen(BaseScreen):
 # ---------------------------------------------------------------------------
 
 
+def env_prefill(state: "FlowState") -> "FlowState":
+    """Seed a FlowState from CAUSEWAY_* environment variables.
+
+    This is the TUI's argument surface.  boot.sh --mint launches the TUI as
+    the default face of minting, and a full-screen app cannot take flags the
+    way a CLI does -- so the wrapper passes its --sponsor / --fief / work dir
+    through the environment, and the spawn screen comes up with them filled
+    in.  A user can still edit the fields; these are defaults, not overrides.
+
+      CAUSEWAY_SPONSOR      pre-fill the sponsor field
+      CAUSEWAY_FIEF         pre-fill the fief field (IP:PORT)
+      CAUSEWAY_OUTPUT_DIR   where proofs and feed files are written
+      CAUSEWAY_HANDOFF=1    a wrapper is waiting: the spawn-complete screen
+                            offers "quit and continue" and the app exits so
+                            the wrapper can finalize and boot
+    """
+    state.sponsor_input = os.environ.get("CAUSEWAY_SPONSOR", state.sponsor_input)
+    state.fief_input = os.environ.get("CAUSEWAY_FIEF", state.fief_input)
+    state.output_dir = os.environ.get("CAUSEWAY_OUTPUT_DIR", state.output_dir)
+    state.handoff = os.environ.get("CAUSEWAY_HANDOFF", "") == "1"
+    return state
+
+
 class CausewayApp(App):
     CSS = """
     Screen { background: #0a0a0a; }
@@ -1227,7 +1264,7 @@ class CausewayApp(App):
 
     def __init__(self) -> None:
         super().__init__()
-        self.state = FlowState()
+        self.state = env_prefill(FlowState())
 
     def on_mount(self) -> None:
         self.push_screen(LandingScreen())

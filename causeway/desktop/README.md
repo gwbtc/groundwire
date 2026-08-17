@@ -97,6 +97,16 @@ minted with `--fief`. If you set one, the ship must actually bind that port
 `spawn connect` additionally takes `--xpub` (required), `--blind-mnemonic`,
 `--utxo` and `--signed-psbt`.
 
+### The TUI
+
+`causeway-tui` (or `~/.groundwire/causeway tui`) is the screen-based flow, and
+it is the **default face of `boot.sh --mint`** at a terminal: the installer
+launches it with the sponsor/fief/work-dir passed through `CAUSEWAY_*`
+environment variables, you complete the spawn in the interface, and when you
+quit, the installer picks the proof and feed off disk and carries on with
+finalize + boot. `--headless`, `--resume`, `--xpub`, or the absence of a tty
+all fall back to the prompt-based CLI flow below.
+
 ### Headless / agent use
 
 Every flow runs without a terminal. The contract:

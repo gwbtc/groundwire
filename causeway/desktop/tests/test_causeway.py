@@ -2875,3 +2875,46 @@ def test_boot_sh_quotes_its_patp():
     assert not bad, (
         "these print a command whose @p is unquoted; zsh refuses to run it:\n  "
         + "\n  ".join(bad))
+
+
+# ---------------------------------------------------------------------------
+# The TUI mint handoff (boot.sh --mint's default face)
+#
+# boot.sh launches the TUI with CAUSEWAY_* env vars and judges completion by
+# DISK: a proof newer than its launch marker, and a feed file derived from the
+# proof's name.  Two sides of a filename contract in two languages -- pin it.
+# ---------------------------------------------------------------------------
+
+def test_tui_env_prefill(monkeypatch):
+    import causeway_tui as tui
+    monkeypatch.setenv("CAUSEWAY_SPONSOR", "~sampel-palnet")
+    monkeypatch.setenv("CAUSEWAY_FIEF", "1.2.3.4:5678")
+    monkeypatch.setenv("CAUSEWAY_OUTPUT_DIR", "/tmp/mintdir")
+    monkeypatch.setenv("CAUSEWAY_HANDOFF", "1")
+    st = tui.env_prefill(tui.FlowState())
+    assert st.sponsor_input == "~sampel-palnet"
+    assert st.fief_input == "1.2.3.4:5678"
+    assert st.output_dir == "/tmp/mintdir"
+    assert st.handoff is True
+
+
+def test_tui_feed_filename_matches_boot_sh_expectation():
+    """causeway_tui writes splitext(proof)[0] + '.feed'; boot.sh derives
+    ${proof%.json}.feed.  If either side changes, the mint dies with
+    'wrote a proof but no feed file' -- fail here instead."""
+    proof = "/x/mint/sampel-palnet-spawn.proof.json"
+    python_side = os.path.splitext(proof)[0] + ".feed"
+    bash_side = proof[: -len(".json")] + ".feed"     # ${proof%.json}.feed
+    assert python_side == bash_side == "/x/mint/sampel-palnet-spawn.proof.feed"
+    boot = pathlib.Path(cw.__file__).parent.parent / "public" / "boot.sh"
+    if boot.exists():
+        assert '${proof%.json}.feed' in boot.read_text()
+
+
+def test_tui_handoff_never_defaults_on():
+    import importlib
+    import causeway_tui as tui
+    for var in ("CAUSEWAY_SPONSOR", "CAUSEWAY_FIEF", "CAUSEWAY_OUTPUT_DIR", "CAUSEWAY_HANDOFF"):
+        os.environ.pop(var, None)
+    st = tui.env_prefill(tui.FlowState())
+    assert st.handoff is False and st.sponsor_input == ""

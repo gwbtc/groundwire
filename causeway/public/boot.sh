@@ -100,6 +100,7 @@ MINT_XPUB=""
 MINT_SPONSOR=""
 MINT_FIEF=""
 MINT_RESUME=0
+MINT_UI=tui
 MINT_ARGS=""
 DO_BITCOIN=1
 DO_SUPERVISOR=1
@@ -143,6 +144,10 @@ MINT MODE (--mint)
   --resume           a previous mint died after you funded the wallet: re-enter
                      that run's seed phrase instead of minting a fresh wallet,
                      and the spawn picks up your already-funded address.
+                     (Implies --headless for now.)
+  --headless         use the plain prompt-based flow instead of the TUI.
+                     The default at a terminal is the TUI; no terminal, or
+                     --resume/--xpub, falls back to prompts automatically.
 
 REQUIRED (for an install)
   --comet <@p>       the comet Causeway minted for you, with the leading ~.
@@ -234,6 +239,7 @@ while [ $# -gt 0 ]; do
     --sponsor)    [ $# -ge 2 ] || usagedie "--sponsor needs a value"; MINT_SPONSOR="$2"; shift 2 ;;
     --fief)       [ $# -ge 2 ] || usagedie "--fief needs a value"; MINT_FIEF="$2"; shift 2 ;;
     --resume)     MINT_RESUME=1; shift ;;
+    --headless)   MINT_UI=cli; shift ;;
     --proof)      [ $# -ge 2 ] || usagedie "--proof needs a value"; PROOF="$2"; shift 2 ;;
     --dir)        [ $# -ge 2 ] || usagedie "--dir needs a value"; GW_DIR="$2"; shift 2 ;;
     --port)       [ $# -ge 2 ] || usagedie "--port needs a value"; HTTP_PORT="$2"; shift 2 ;;
@@ -1200,36 +1206,74 @@ cmd_mint() {
   mkdir -p "$mintdir"; chmod 700 "$mintdir"
 
   local raw="$mintdir/spawn.feed" baked="$mintdir/boot.feed"
-  local args=(spawn)
-  if [ -n "$MINT_XPUB" ]; then args+=(connect --xpub "$MINT_XPUB"); else args+=(generate); fi
-  args+=(--output-dir "$mintdir" --out-feed "$raw")
-  # Explicit, even though the launcher also exports GROUNDWIRE_HOME: two
-  # independent routes to the same binary, either alone sufficient.
-  args+=(--miner "$GW_DIR/bin/comet_miner")
-  [ -n "$MINT_SPONSOR" ] && args+=(--sponsor "$MINT_SPONSOR")
-  [ -n "$MINT_FIEF" ]    && args+=(--fief "$MINT_FIEF")
-  # --resume: a previous run died after the wallet was funded.  Causeway
-  # prompts for the phrase from that run instead of minting a fresh wallet
-  # (which would strand the previous run's sats at an address nothing
-  # watches).  generate-flow only; a connect flow re-runs with the same xpub.
-  [ "$MINT_RESUME" = 1 ] && [ -z "$MINT_XPUB" ] && args+=(--resume)
 
-  step "Minting a confidential comet with Causeway"
-  info "this is interactive: it will ask you to fund an address and to write"
-  info "down a recovery phrase. Do not skip the phrase."
-  printf '\n'
-  # </dev/tty because boot.sh is usually running under `curl | bash`, where
-  # stdin is the SCRIPT, not the keyboard.  Without this the first prompt eats
-  # the rest of the script and the mint dies half way through.
-  "$cw" "${args[@]}" </dev/tty || die "causeway spawn failed or was cancelled"
-
-  [ -s "$raw" ] || die "causeway spawn did not write a feed to $raw.
-    Nothing has been booted. If the transaction broadcast, your proof is in
-    $mintdir and you can finish by hand with 'causeway finalize'."
+  # ---- which face?  The TUI is the default for a person at a terminal; the
+  # CLI prompts remain for --headless, for --resume (not yet a TUI flow), for
+  # --xpub, and for any environment without a tty.  The TUI takes its
+  # arguments through CAUSEWAY_* env vars -- a full-screen app has no flags --
+  # and hands back by DISK: it writes the proof and the raw feed into
+  # $mintdir and exits.  Exit codes from a full-screen app are not evidence
+  # (quitting is exit 0 too), so completion is judged by a proof file NEWER
+  # than the launch marker, never by status.
+  local ui="$MINT_UI"
+  [ -e /dev/tty ] || ui=cli
+  [ "$MINT_RESUME" = 1 ] && ui=cli
+  [ -n "$MINT_XPUB" ] && ui=cli
+  # A release older than the handoff contract has a TUI that ignores the env
+  # vars entirely -- it would open on a blank spawn form and never hand back.
+  if [ "$ui" = tui ] && ! grep -q "CAUSEWAY_HANDOFF" "$GW_DIR/causeway-src/causeway_tui.py" 2>/dev/null; then
+    info "this release's TUI predates the mint handoff; using the CLI prompts"
+    ui=cli
+  fi
 
   local proof
-  proof="$(ls -t "$mintdir"/*-spawn.proof.json 2>/dev/null | head -1 || true)"
-  [ -n "$proof" ] || die "no spawn proof found in $mintdir"
+  if [ "$ui" = tui ]; then
+    step "Minting a confidential comet — Causeway TUI"
+    info "complete the spawn in the interface; the installer resumes when you quit."
+    printf '\n'
+    local marker="$mintdir/.mint-start"
+    touch "$marker"; sleep 1
+    CAUSEWAY_SPONSOR="$MINT_SPONSOR" CAUSEWAY_FIEF="$MINT_FIEF" \
+      CAUSEWAY_OUTPUT_DIR="$mintdir" CAUSEWAY_HANDOFF=1 \
+      "$cw" tui </dev/tty >/dev/tty 2>&1 || true
+    proof="$(find "$mintdir" -maxdepth 1 -name '*-spawn.proof.json' -newer "$marker" 2>/dev/null | head -1)"
+    [ -n "$proof" ] || die "the TUI exited without completing a spawn.
+    Nothing was booted. Re-run to try again, or add --headless for the
+    prompt-based flow."
+    # The TUI writes the raw feed beside the proof: <name>-spawn.proof.feed
+    raw="${proof%.json}.feed"
+    [ -s "$raw" ] || die "the TUI wrote a proof but no feed file ($raw).
+    Treat this as a bug; finish by hand with 'causeway finalize'."
+  else
+    local args=(spawn)
+    if [ -n "$MINT_XPUB" ]; then args+=(connect --xpub "$MINT_XPUB"); else args+=(generate); fi
+    args+=(--output-dir "$mintdir" --out-feed "$raw")
+    # Explicit, even though the launcher also exports GROUNDWIRE_HOME: two
+    # independent routes to the same binary, either alone sufficient.
+    args+=(--miner "$GW_DIR/bin/comet_miner")
+    [ -n "$MINT_SPONSOR" ] && args+=(--sponsor "$MINT_SPONSOR")
+    [ -n "$MINT_FIEF" ]    && args+=(--fief "$MINT_FIEF")
+    # --resume: a previous run died after the wallet was funded.  Causeway
+    # prompts for the phrase from that run instead of minting a fresh wallet
+    # (which would strand the previous run's sats at an address nothing
+    # watches).  generate-flow only; a connect flow re-runs with the same xpub.
+    [ "$MINT_RESUME" = 1 ] && [ -z "$MINT_XPUB" ] && args+=(--resume)
+
+    step "Minting a confidential comet with Causeway"
+    info "this is interactive: it will ask you to fund an address and to write"
+    info "down a recovery phrase. Do not skip the phrase."
+    printf '\n'
+    # </dev/tty because boot.sh is usually running under `curl | bash`, where
+    # stdin is the SCRIPT, not the keyboard.  Without this the first prompt eats
+    # the rest of the script and the mint dies half way through.
+    "$cw" "${args[@]}" </dev/tty || die "causeway spawn failed or was cancelled"
+
+    [ -s "$raw" ] || die "causeway spawn did not write a feed to $raw.
+    Nothing has been booted. If the transaction broadcast, your proof is in
+    $mintdir and you can finish by hand with 'causeway finalize'."
+    proof="$(ls -t "$mintdir"/*-spawn.proof.json 2>/dev/null | head -1 || true)"
+    [ -n "$proof" ] || die "no spawn proof found in $mintdir"
+  fi
 
   COMET="$(sed -n 's/.*"patp"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$proof" | head -1)"
   [ -n "$COMET" ] || die "could not read the comet @p out of $proof"
