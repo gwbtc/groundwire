@@ -2932,3 +2932,23 @@ def test_qr_ascii_renders_an_address():
     assert set("".join(lines)) <= set("█▀▄ ")
     assert a == cw.qr_ascii("bc1p20sp5gnlkfavn8ww7cvd9f2unjlhc9udxpav8q7u3mumewytvahqqmxn5e")
     assert a != b
+
+
+def test_tui_funding_screen_resumes_polling_after_pop():
+    """Popping back from "Scan now" must restart the poll worker.
+
+    on_mount fires once per screen instance; the resume path is
+    on_screen_resume, and it must be guarded so the success path (utxo
+    already picked, MiningScreen pushed) does not restart polling and push a
+    second MiningScreen.  Source-level pin: the handler exists, resets
+    _superseded, restarts the worker, and checks picked_utxo first.
+    """
+    import causeway_tui as tui
+    import inspect
+    src = inspect.getsource(tui.WaitForFundingScreen)
+    assert "def on_screen_resume" in src
+    resume = src[src.index("def on_screen_resume"):]
+    resume = resume[:resume.index("def poll_worker")]
+    assert "picked_utxo" in resume          # the success-path guard
+    assert "_superseded = False" in resume  # polling can actually restart
+    assert "poll_worker()" in resume        # and does

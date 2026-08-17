@@ -417,6 +417,25 @@ class WaitForFundingScreen(BaseScreen):
         self._superseded = False
         self._poll = self.poll_worker()
 
+    def on_screen_resume(self) -> None:
+        """Restart polling when a covering screen pops back to us.
+
+        Textual fires on_mount ONCE per screen instance; popping back from
+        "Scan now" (UtxoPickerScreen) re-exposes this screen with
+        _superseded still True and the worker cancelled -- a dead screen
+        that looks exactly like a live one.  Found by a user clicking Scan
+        now, then Back, then waiting on a poll that would never come.
+
+        Restart ONLY while funding is still the open question: after the
+        success path (picked_utxo set, MiningScreen pushed) a resume must
+        not spin up a second poll and push a second MiningScreen.
+        """
+        state: FlowState = self.app.state  # type: ignore[attr-defined]
+        if state.picked_utxo is not None:
+            return
+        self._superseded = False
+        self._poll = self.poll_worker()   # exclusive=True: at most one runs
+
     @work(exclusive=True, thread=True)
     def poll_worker(self) -> None:
         state: FlowState = self.app.state  # type: ignore[attr-defined]
