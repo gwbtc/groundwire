@@ -385,7 +385,9 @@ class WaitForFundingScreen(BaseScreen):
     #panel { width: 88; border: round #ff6a00; padding: 2 4; }
     #title { content-align: center middle; color: #ff6a00; text-style: bold; padding-bottom: 1; }
     #addr { text-style: bold; color: #ff6a00; padding: 1 0; }
-    #log { height: 10; border: round #888; padding: 0 1; }
+    #qr { padding: 0 0 1 0; }
+    .hint { color: #888; }
+    #log { height: 5; border: round #888; padding: 0 1; }
     Button { margin-right: 2; }
     """
 
@@ -395,8 +397,13 @@ class WaitForFundingScreen(BaseScreen):
             Static("WAITING FOR FUNDING", id="title"),
             Static("Send at least 1000 sats to this address:"),
             Static("(loading...)", id="addr"),
+            Static("", id="qr"),
+            Static("Scan the QR from a phone wallet, or press Copy. "
+                   "(Select-to-copy needs \u2325/Shift held while dragging -- "
+                   "the TUI owns the mouse.)", classes="hint"),
             Log(id="log"),
             Horizontal(
+                Button("Copy address", id="copy-addr", variant="primary"),
                 Button("Back", id="back"),
                 Button("Scan now (skip polling)", id="skip"),
             ),
@@ -417,6 +424,12 @@ class WaitForFundingScreen(BaseScreen):
             return
         first_addr, _spk, _xonly, _p = state.source.derive_address(0, 0)
         self.app.call_from_thread(self.query_one("#addr", Static).update, first_addr)
+        self._addr = first_addr
+        try:
+            self.app.call_from_thread(
+                self.query_one("#qr", Static).update, cw.qr_ascii(first_addr))
+        except Exception:  # noqa: BLE001 -- a QR is a convenience, never a blocker
+            pass
         log = self.query_one("#log", Log)
 
         if state.faucet_invite:
@@ -459,7 +472,20 @@ class WaitForFundingScreen(BaseScreen):
         if worker is not None:
             worker.cancel()
 
+    _addr: str = ""
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "copy-addr":
+            if not self._addr:
+                self.notify("address not derived yet", severity="warning")
+            elif cw.copy_to_clipboard(self._addr):
+                self.notify("address copied")
+            else:
+                # No native clipboard tool (likely SSH): OSC 52 through the
+                # terminal, which most modern emulators honour.
+                self.app.copy_to_clipboard(self._addr)
+                self.notify("sent to clipboard via OSC 52 (terminal-dependent)")
+            return
         if event.button.id == "back":
             self._stop_polling()
             self.app.pop_screen()
@@ -951,6 +977,7 @@ class DoneScreen(BaseScreen):
                 "phrase + the spawn outpoint, so the seed alone can reopen the dat\n"
                 "commitment even if the proof file is lost."
             )
+            self._cmd = cmd
             yield Vertical(
                 Static("SPAWN COMPLETE", id="title"),
                 Static(f"Comet: {comet_mnemo}", classes="label"),
@@ -971,6 +998,7 @@ class DoneScreen(BaseScreen):
                     classes="label",
                 ),
 
+                Button("Copy the finalize command", id="copy-cmd"),
                 (Button("Quit — the installer continues (finalize + boot)",
                         id="handoff-quit", variant="success")
                  if state.handoff else
@@ -996,7 +1024,16 @@ class DoneScreen(BaseScreen):
             )
         yield Footer()
 
+    _cmd: str = ""
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "copy-cmd":
+            if self._cmd and cw.copy_to_clipboard(self._cmd):
+                self.notify("command copied")
+            elif self._cmd:
+                self.app.copy_to_clipboard(self._cmd)
+                self.notify("sent via OSC 52 (terminal-dependent)")
+            return
         if event.button.id == "handoff-quit":
             # boot.sh --mint is waiting on our exit status; it finds the proof
             # and the feed file on disk (both already written) and carries on

@@ -4285,6 +4285,32 @@ def prompt_existing_mnemonic() -> str:
             print("  Not a valid BIP-39 phrase (checksum failed). Check the words and try again.")
 
 
+def qr_ascii(text: str) -> str:
+    """Render `text` as a QR code in unicode half-blocks -- one char per
+    module wide, half a line tall, compact enough for a TUI panel.
+
+    Funding an address is the one moment when a phone wallet is most likely
+    to be the sender, and a QR needs no clipboard at all -- which matters
+    because a full-screen TUI captures the mouse, so select-to-copy silently
+    stops working at exactly that screen.
+    """
+    import qrcode
+    qr = qrcode.QRCode(border=1, error_correction=qrcode.constants.ERROR_CORRECT_L)
+    qr.add_data(text)
+    qr.make(fit=True)
+    m = qr.get_matrix()
+    if len(m) % 2:
+        m = m + [[False] * len(m[0])]
+    out = []
+    for y in range(0, len(m), 2):
+        row = []
+        for x in range(len(m[0])):
+            top, bot = m[y][x], m[y + 1][x]
+            row.append("█" if top and bot else "▀" if top else "▄" if bot else " ")
+        out.append("".join(row))
+    return "\n".join(out)
+
+
 def require_miner(miner: str) -> None:
     """Refuse to start a spawn whose miner does not exist.
 

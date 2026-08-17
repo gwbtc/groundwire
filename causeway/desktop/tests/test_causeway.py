@@ -2918,3 +2918,17 @@ def test_tui_handoff_never_defaults_on():
         os.environ.pop(var, None)
     st = tui.env_prefill(tui.FlowState())
     assert st.handoff is False and st.sponsor_input == ""
+
+
+def test_qr_ascii_renders_an_address():
+    """The funding screen's QR: half-block render, rectangular, deterministic,
+    and different inputs give different codes (i.e. the data actually lands
+    in the matrix -- a constant block would pass a shape-only check)."""
+    a = cw.qr_ascii("bc1p20sp5gnlkfavn8ww7cvd9f2unjlhc9udxpav8q7u3mumewytvahqqmxn5e")
+    b = cw.qr_ascii("bc1qdifferentaddressxxxxxxxxxxxxxxxxxxxxx")
+    lines = a.split("\n")
+    assert 10 < len(lines) < 30
+    assert all(len(l) == len(lines[0]) for l in lines)
+    assert set("".join(lines)) <= set("█▀▄ ")
+    assert a == cw.qr_ascii("bc1p20sp5gnlkfavn8ww7cvd9f2unjlhc9udxpav8q7u3mumewytvahqqmxn5e")
+    assert a != b
