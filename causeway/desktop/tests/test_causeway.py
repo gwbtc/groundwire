@@ -2970,3 +2970,13 @@ def test_tui_panels_scroll_when_the_window_is_small():
     assert rules, "no #panel rules found"
     for r in rules:
         assert "max-height: 100%" in r and "overflow-y: auto" in r, r
+
+
+def test_proof_json_is_written_0600(tmp_path):
+    """proof.json carries blind_hex — the secret half of the dat opening —
+    and must get the same 0600 treatment as the feed."""
+    import stat
+    path = str(tmp_path / "x-spawn.proof.json")
+    cw.write_proof_json({"op": "spawn", "blind_hex": "ab"}, path)
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    assert cw.load_proof_json(path)["blind_hex"] == "ab"

@@ -2622,8 +2622,17 @@ PROOF_SCHEMA_VERSION = 2
 
 
 def write_proof_json(proof: dict, path: str) -> None:
-    """Write a proof dict to `path` as pretty-printed JSON."""
-    with open(path, "w") as f:
+    """Write a proof dict to `path` as pretty-printed JSON, 0600.
+
+    A proof carries blind_hex and blind_seed_hex -- the secret half of the
+    dat opening -- and it is the ONE file a user is told suffices to keep
+    their identity recoverable.  It was written with the default umask,
+    world-readable, while the feed (the other secret-bearing artifact) was
+    already 0600.  Same material, same treatment: mode set at open, so
+    there is no window where the file exists wider than 0600.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
         json.dump(proof, f, indent=2, sort_keys=True)
         f.write("\n")
 
