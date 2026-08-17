@@ -2902,13 +2902,18 @@ def test_tui_feed_filename_matches_boot_sh_expectation():
     """causeway_tui writes splitext(proof)[0] + '.feed'; boot.sh derives
     ${proof%.json}.feed.  If either side changes, the mint dies with
     'wrote a proof but no feed file' -- fail here instead."""
-    proof = "/x/mint/sampel-palnet-spawn.proof.json"
-    python_side = os.path.splitext(proof)[0] + ".feed"
-    bash_side = proof[: -len(".json")] + ".feed"     # ${proof%.json}.feed
-    assert python_side == bash_side == "/x/mint/sampel-palnet-spawn.proof.feed"
+    for proof in ("/x/mint/sampel-palnet-spawn.proof.json",           # CLI spelling
+                  "/x/mint/sampel-palnet-spawn-0123456789.proof.json"):  # TUI spelling
+        python_side = os.path.splitext(proof)[0] + ".feed"
+        bash_side = proof[: -len(".json")] + ".feed"     # ${proof%.json}.feed
+        assert python_side == bash_side == proof[:-5] + ".feed"
     boot = pathlib.Path(cw.__file__).parent.parent / "public" / "boot.sh"
     if boot.exists():
-        assert '${proof%.json}.feed' in boot.read_text()
+        src = boot.read_text()
+        assert '${proof%.json}.feed' in src
+        # the glob must match BOTH spellings, or a successful TUI spawn is
+        # reported as "exited without completing"
+        assert "-name '*-spawn*.proof.json'" in src
 
 
 def test_tui_handoff_never_defaults_on():

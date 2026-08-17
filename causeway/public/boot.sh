@@ -1236,7 +1236,11 @@ cmd_mint() {
     CAUSEWAY_SPONSOR="$MINT_SPONSOR" CAUSEWAY_FIEF="$MINT_FIEF" \
       CAUSEWAY_OUTPUT_DIR="$mintdir" CAUSEWAY_HANDOFF=1 \
       "$cw" tui </dev/tty >/dev/tty 2>&1 || true
-    proof="$(find "$mintdir" -maxdepth 1 -name '*-spawn.proof.json' -newer "$marker" 2>/dev/null | head -1)"
+    # Both proof spellings: the CLI writes <name>-spawn.proof.json, the TUI
+    # writes <name>-spawn-<txid>.proof.json.  The narrow glob missed the
+    # TUI's, which would fail a SUCCESSFUL spawn as "exited without
+    # completing" -- found by reading, unreachable by the headless harness.
+    proof="$(find "$mintdir" -maxdepth 1 -name '*-spawn*.proof.json' -newer "$marker" 2>/dev/null | head -1)"
     [ -n "$proof" ] || die "the TUI exited without completing a spawn.
     Nothing was booted. Re-run to try again, or add --headless for the
     prompt-based flow."
@@ -1279,8 +1283,9 @@ cmd_mint() {
   [ -n "$COMET" ] || die "could not read the comet @p out of $proof"
   good "minted $COMET"
 
-  step "Waiting for the spawn transaction to confirm, then baking the custody log"
-  info "this is the step that makes your comet verifiable; it can take an hour."
+  step "Baking the custody log into the boot feed"
+  info "instant if Causeway already saw the confirmation; otherwise this"
+  info "waits for the spawn transaction to confirm first."
   printf '\n'
   "$cw" finalize "$proof" --feed-file "$raw" --out-feed "$baked" </dev/tty \
     || die "causeway finalize failed.

@@ -88,6 +88,7 @@ class FlowState:
     # A wrapper (boot.sh --mint) launched us and will finalize + boot after we
     # exit; the DoneScreen offers quit-and-continue instead of back-to-landing.
     handoff: bool = False
+    confirm_height: Optional[int] = None
     psbt_b64_unsigned: Optional[str] = None
     psbt_b64_signed: Optional[str] = None
     commit_txid: Optional[str] = None
@@ -969,9 +970,65 @@ class PsbtBuildScreen(BaseScreen):
             self.app.call_from_thread(status.update, f"proof saved — broadcasting {commit_txid}")
             broadcast_id = cw._broadcast_tx(tx_hex, mempool_base=state.mempool_base)
             state.commit_txid = broadcast_id
-            self.app.call_from_thread(self.app.push_screen, DoneScreen())
+            if state.op_name == "spawn":
+                self.app.call_from_thread(self.app.push_screen, ConfirmWaitScreen())
+            else:
+                self.app.call_from_thread(self.app.push_screen, DoneScreen())
         except Exception as e:
             self.app.call_from_thread(status.update, f"broadcast failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Confirmation wait — the TUI owns the wait, so SPAWN COMPLETE means complete
+# ---------------------------------------------------------------------------
+
+
+class ConfirmWaitScreen(BaseScreen):
+    CSS = """
+    Screen { align: center middle; }
+    #panel { max-width: 100%; max-height: 100%; overflow-y: auto; width: 84; border: round #ff6a00; padding: 2 4; }
+    #title { content-align: center middle; color: #ff6a00; text-style: bold; padding-bottom: 1; }
+    #txid { color: #ff6a00; }
+    .hint { color: #888; padding-top: 1; }
+    """
+
+    def compose(self) -> ComposeResult:
+        state: FlowState = self.app.state  # type: ignore[attr-defined]
+        yield Header()
+        yield Vertical(
+            Static("WAITING FOR SPAWN CONFIRMATION", id="title"),
+            Static("Your spawn transaction is broadcast. Nothing else to do or keep."),
+            Static(state.commit_txid or "", id="txid"),
+            Static("checking…", id="progress"),
+            Static("Usually 10\u201360 minutes. Quitting is safe: the proof and feed are "
+                   "on disk, and re-running the installer picks up from here.",
+                   classes="hint"),
+            id="panel",
+        )
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self._watch = self.confirm_worker()
+
+    @work(exclusive=True, thread=True)
+    def confirm_worker(self) -> None:
+        state: FlowState = self.app.state  # type: ignore[attr-defined]
+        progress = self.query_one("#progress", Static)
+        start = time.monotonic()
+        while True:
+            try:
+                st = cw.mempool_get(f"/tx/{state.commit_txid}",
+                                    base=state.mempool_base).get("status", {})
+                if st.get("confirmed"):
+                    state.confirm_height = st.get("block_height")
+                    self.app.call_from_thread(self.app.push_screen, DoneScreen())
+                    return
+            except Exception:  # noqa: BLE001 -- propagation 404s and blips are normal
+                pass
+            mins = int(time.monotonic() - start) // 60
+            self.app.call_from_thread(
+                progress.update, f"not confirmed yet — {mins} min elapsed, checking every 30s")
+            time.sleep(30)
 
 
 # ---------------------------------------------------------------------------
@@ -995,14 +1052,8 @@ class DoneScreen(BaseScreen):
             comet = state.comet or "<unknown>"
             feed = state.feed or ""
             proof_path = state.proof_path or ""
-            # The raw miner feed is written to a file, 0600, next to the proof
-            # -- never rendered on screen and never baked into a command.  This
-            # screen used to show a copy-pasteable boot line carrying the raw
-            # feed, with the finalize note underneath: following it boots a
-            # comet with an EMPTY custody log that no peer can ever verify,
-            # after the sats are spent.  The CLI had the same flaw; both ends
-            # now hand you finalize, which is where a bootable feed first
-            # exists.
+            # The feed file beside the proof is the handoff seam boot.sh reads
+            # (${proof%.json}.feed).  Written whether or not anyone is waiting.
             feed_path = ""
             if feed and proof_path:
                 feed_path = os.path.splitext(proof_path)[0] + ".feed"
@@ -1010,61 +1061,24 @@ class DoneScreen(BaseScreen):
                     cw.write_feed_file(feed_path, feed)
                 except OSError:
                     feed_path = ""
-            if feed_path:
-                cmd = (
-                    f"~/.groundwire/causeway finalize {proof_path} \\\n"
-                    f"  --feed-file {feed_path} --out-feed {feed_path}.baked"
-                )
-            else:
-                cmd = f"~/.groundwire/causeway finalize {proof_path} --feed <miner feed>"
+            self._cmd = (
+                f"~/.groundwire/causeway finalize {proof_path} "
+                f"--feed-file {feed_path} --out-feed {feed_path}.baked"
+                if feed_path else "")
             comet_mnemo = cw.patp_to_mnemonym(comet) if comet != "<unknown>" else comet
-            if state.blind_derivation == cw.BLIND_DERIV_BLIND_MNEMONIC:
-                recovery = (
-                    "Recovery: this comet's blind is derived from your BLIND RECOVERY\n"
-                    "PHRASE + the spawn outpoint. Keep the phrase — it is the only way\n"
-                    "to reopen the dat commitment if the proof file is lost."
-                )
-            elif state.blind_derivation == cw.BLIND_DERIV_WALLET_SEED:
-                recovery = (
-                    "Recovery: this comet's blind is derived from your wallet seed\n"
-                    "phrase + the spawn outpoint, so the seed alone can reopen the dat\n"
-                    "commitment even if the proof file is lost."
-                )
-            else:
-                recovery = (
-                    "Custody: your identity bundle is the proof file + the feed file.\n"
-                    "Back BOTH up like a wallet. The blind lives only in the proof;\n"
-                    "the ship's key lives only in the feed. No phrase regenerates them."
-                )
-            self._cmd = cmd
+            confirmed = (f"Confirmed in block {state.confirm_height:,}."
+                         if state.confirm_height else "Confirmed.")
             yield Vertical(
                 Static("SPAWN COMPLETE", id="title"),
                 Static(f"Comet: {comet_mnemo}", classes="label"),
                 Static(f"@p:    {comet}", classes="label"),
-                Static(f"Commit txid: {state.commit_txid}", classes="label"),
-                Static(f"Proof: {proof_path}", classes="label"),
-                Static(recovery, classes="label"),
-                Static(
-                    "You could boot now — the ship would run under the right name —\n"
-                    "but peers couldn't verify it yet: its pass doesn't carry the\n"
-                    "on-chain evidence for the name (the custody log). Once the spawn\n"
-                    "tx confirms, run this; it bakes the evidence into the feed so\n"
-                    "your ship is verifiable from its first packet, and prints the\n"
-                    "boot command:",
-                    classes="label",
-                ),
-                Static(cmd, id="boot"),
-                Static(
-                    "⚠ Runtime does not yet consume --proof. The proof file will be "
-                    "saved to ~/.groundwire/ but won't propagate via Ames until runtime support lands.",
-                    classes="label",
-                ),
-
-                Button("Copy the finalize command", id="copy-cmd"),
-                (Button("Quit — the installer continues (finalize + boot)",
-                        id="handoff-quit", variant="success")
+                Static(confirmed.replace(",", "."), classes="label"),
+                Static(f"Records saved to {os.path.dirname(proof_path) or '.'}", classes="label"),
+                (Button(f"Boot {comet}", id="handoff-quit", variant="success")
                  if state.handoff else
-                 Button("Done  →  back to landing", id="home", variant="primary")),
+                 Button("Copy the finalize command", id="copy-cmd")),
+                (Static("", classes="label") if state.handoff else
+                 Static("Run it once, then boot.sh with the feed it writes.", classes="label")),
                 id="panel",
             )
         else:
