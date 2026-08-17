@@ -165,7 +165,7 @@ class LandingScreen(BaseScreen):
 class SpawnMethodScreen(BaseScreen):
     CSS = """
     Screen { align: center middle; }
-    #panel { width: 72; border: round #ff6a00; padding: 2 4; }
+    #panel { max-width: 100%; max-height: 100%; overflow-y: auto; width: 72; border: round #ff6a00; padding: 2 4; }
     #title { content-align: center middle; color: #ff6a00; text-style: bold; padding-bottom: 1; }
     .hint { color: #888; }
     Button { width: 62; margin: 1 0; }
@@ -245,7 +245,7 @@ class SpawnMethodScreen(BaseScreen):
 class XpubInputScreen(BaseScreen):
     CSS = """
     Screen { align: center middle; }
-    #panel { width: 88; border: round #ff6a00; padding: 2 4; }
+    #panel { max-width: 100%; max-height: 100%; overflow-y: auto; width: 88; border: round #ff6a00; padding: 2 4; }
     #title { content-align: center middle; color: #ff6a00; text-style: bold; padding-bottom: 1; }
     .label { color: #bbb; padding-top: 1; }
     .hint { color: #888; padding-top: 1; }
@@ -314,7 +314,7 @@ class XpubInputScreen(BaseScreen):
 class GenerateSeedScreen(BaseScreen):
     CSS = """
     Screen { align: center middle; }
-    #panel { width: 90; border: round #ff6a00; padding: 2 4; }
+    #panel { max-width: 100%; max-height: 100%; overflow-y: auto; width: 90; border: round #ff6a00; padding: 2 4; }
     #title { content-align: center middle; color: #ff6a00; text-style: bold; padding-bottom: 1; }
     #warn { color: #ff6a00; text-style: bold; padding: 1 0; }
     #seed-box { border: heavy #ff6a00; padding: 1 2; margin: 1 0; height: auto; }
@@ -382,7 +382,7 @@ class GenerateSeedScreen(BaseScreen):
 class WaitForFundingScreen(BaseScreen):
     CSS = """
     Screen { align: center middle; }
-    #panel { width: 88; border: round #ff6a00; padding: 2 4; }
+    #panel { max-width: 100%; max-height: 100%; overflow-y: auto; width: 88; border: round #ff6a00; padding: 2 4; }
     #title { content-align: center middle; color: #ff6a00; text-style: bold; padding-bottom: 1; }
     #addr { text-style: bold; color: #ff6a00; padding: 1 0; }
     #qr { padding: 0 0 1 0; }
@@ -521,7 +521,7 @@ class WaitForFundingScreen(BaseScreen):
 class UtxoPickerScreen(BaseScreen):
     CSS = """
     Screen { align: center middle; }
-    #panel { width: 100; height: 30; border: round #ff6a00; padding: 1 2; }
+    #panel { max-width: 100%; max-height: 100%; overflow-y: auto; width: 100; height: 30; border: round #ff6a00; padding: 1 2; }
     #title { content-align: center middle; color: #ff6a00; text-style: bold; }
     DataTable { height: 1fr; }
     #actions { padding-top: 1; }
@@ -631,7 +631,7 @@ class BlindPhraseScreen(BaseScreen):
 
     CSS = """
     Screen { align: center middle; }
-    #panel { width: 92; border: round #ff6a00; padding: 2 4; }
+    #panel { max-width: 100%; max-height: 100%; overflow-y: auto; width: 92; border: round #ff6a00; padding: 2 4; }
     #title { content-align: center middle; color: #ff6a00; text-style: bold; padding-bottom: 1; }
     #warn { color: #ff6a00; text-style: bold; padding: 1 0; }
     #seed-box { border: heavy #ff6a00; padding: 1 2; margin: 1 0; height: auto; }
@@ -712,7 +712,7 @@ class BlindPhraseScreen(BaseScreen):
 class MiningScreen(BaseScreen):
     CSS = """
     Screen { align: center middle; }
-    #panel { width: 80; border: round #ff6a00; padding: 2 4; }
+    #panel { max-width: 100%; max-height: 100%; overflow-y: auto; width: 80; border: round #ff6a00; padding: 2 4; }
     #title { content-align: center middle; color: #ff6a00; text-style: bold; padding-bottom: 1; }
     #status { text-style: bold; padding: 1 0; }
     Log { height: 15; border: round #888; }
@@ -789,7 +789,7 @@ class MiningScreen(BaseScreen):
 class PsbtBuildScreen(BaseScreen):
     CSS = """
     Screen { align: center middle; }
-    #panel { width: 100; height: 40; border: round #ff6a00; padding: 1 2; }
+    #panel { max-width: 100%; max-height: 100%; overflow-y: auto; width: 100; height: 40; border: round #ff6a00; padding: 1 2; }
     #title { content-align: center middle; color: #ff6a00; text-style: bold; }
     #b64 { height: 10; border: round #888; }
     #signed-in { height: 8; border: round #888; }
@@ -951,7 +951,7 @@ class PsbtBuildScreen(BaseScreen):
 class DoneScreen(BaseScreen):
     CSS = """
     Screen { align: center middle; }
-    #panel { width: 96; border: round green; padding: 2 4; }
+    #panel { max-width: 100%; max-height: 100%; overflow-y: auto; width: 96; border: round green; padding: 2 4; }
     #title { content-align: center middle; color: green; text-style: bold; padding-bottom: 1; }
     #boot { padding: 1 0; background: #111; color: #eee; }
     .label { color: #bbb; padding-top: 1; }
@@ -1074,7 +1074,7 @@ class DoneScreen(BaseScreen):
 class ManagePickOpScreen(BaseScreen):
     CSS = """
     Screen { align: center middle; }
-    #panel { width: 72; border: round #ff6a00; padding: 2 4; }
+    #panel { max-width: 100%; max-height: 100%; overflow-y: auto; width: 72; border: round #ff6a00; padding: 2 4; }
     #title { content-align: center middle; color: #ff6a00; text-style: bold; padding-bottom: 1; }
     RadioSet { padding: 1 0; }
     Button { margin-right: 2; }
@@ -1117,7 +1117,7 @@ class ManagePickOpScreen(BaseScreen):
 class ManageFormScreen(BaseScreen):
     CSS = """
     Screen { align: center middle; }
-    #panel { width: 90; border: round #ff6a00; padding: 2 4; }
+    #panel { max-width: 100%; max-height: 100%; overflow-y: auto; width: 90; border: round #ff6a00; padding: 2 4; }
     #title { content-align: center middle; color: #ff6a00; text-style: bold; padding-bottom: 1; }
     Input { width: 100%; }
     .label { color: #bbb; padding-top: 1; }
@@ -1236,7 +1236,7 @@ class ManageFormScreen(BaseScreen):
 class ProofOpenScreen(BaseScreen):
     CSS = """
     Screen { align: center middle; }
-    #panel { width: 80; border: round #ff6a00; padding: 2 4; }
+    #panel { max-width: 100%; max-height: 100%; overflow-y: auto; width: 80; border: round #ff6a00; padding: 2 4; }
     #title { content-align: center middle; color: #ff6a00; text-style: bold; padding-bottom: 1; }
     Input { width: 100%; }
     #status { padding-top: 1; }

@@ -2952,3 +2952,21 @@ def test_tui_funding_screen_resumes_polling_after_pop():
     assert "picked_utxo" in resume          # the success-path guard
     assert "_superseded = False" in resume  # polling can actually restart
     assert "poll_worker()" in resume        # and does
+
+
+def test_tui_panels_scroll_when_the_window_is_small():
+    """Every screen panel must cap at the viewport and scroll internally.
+
+    align: center middle with content taller than the terminal CLIPS THE TOP
+    unreachably in Textual, and a fixed-size panel hides its bottom buttons —
+    found live when the QR pushed the funding screen past a small window's
+    height and "there was no way to scroll down."
+    """
+    import causeway_tui as tui
+    import inspect
+    import re
+    src = inspect.getsource(tui)
+    rules = re.findall(r"#panel \{[^}]*\}", src)
+    assert rules, "no #panel rules found"
+    for r in rules:
+        assert "max-height: 100%" in r and "overflow-y: auto" in r, r
