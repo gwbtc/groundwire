@@ -99,6 +99,7 @@ MODE="install"
 MINT_XPUB=""
 MINT_SPONSOR=""
 MINT_FIEF=""
+MINT_RESUME=0
 MINT_ARGS=""
 DO_BITCOIN=1
 DO_SUPERVISOR=1
@@ -139,6 +140,9 @@ MINT MODE (--mint)
   --fief <IP:PORT>   commit a static endpoint. Implies --ames-port <PORT>,
                      because a fief the ship does not bind is a lie. A comet
                      that others will name as their sponsor needs one.
+  --resume           a previous mint died after you funded the wallet: re-enter
+                     that run's seed phrase instead of minting a fresh wallet,
+                     and the spawn picks up your already-funded address.
 
 REQUIRED (for an install)
   --comet <@p>       the comet Causeway minted for you, with the leading ~.
@@ -229,6 +233,7 @@ while [ $# -gt 0 ]; do
     --xpub)       [ $# -ge 2 ] || usagedie "--xpub needs a value"; MINT_XPUB="$2"; shift 2 ;;
     --sponsor)    [ $# -ge 2 ] || usagedie "--sponsor needs a value"; MINT_SPONSOR="$2"; shift 2 ;;
     --fief)       [ $# -ge 2 ] || usagedie "--fief needs a value"; MINT_FIEF="$2"; shift 2 ;;
+    --resume)     MINT_RESUME=1; shift ;;
     --proof)      [ $# -ge 2 ] || usagedie "--proof needs a value"; PROOF="$2"; shift 2 ;;
     --dir)        [ $# -ge 2 ] || usagedie "--dir needs a value"; GW_DIR="$2"; shift 2 ;;
     --port)       [ $# -ge 2 ] || usagedie "--port needs a value"; HTTP_PORT="$2"; shift 2 ;;
@@ -1198,8 +1203,16 @@ cmd_mint() {
   local args=(spawn)
   if [ -n "$MINT_XPUB" ]; then args+=(connect --xpub "$MINT_XPUB"); else args+=(generate); fi
   args+=(--output-dir "$mintdir" --out-feed "$raw")
+  # Explicit, even though the launcher also exports GROUNDWIRE_HOME: two
+  # independent routes to the same binary, either alone sufficient.
+  args+=(--miner "$GW_DIR/bin/comet_miner")
   [ -n "$MINT_SPONSOR" ] && args+=(--sponsor "$MINT_SPONSOR")
   [ -n "$MINT_FIEF" ]    && args+=(--fief "$MINT_FIEF")
+  # --resume: a previous run died after the wallet was funded.  Causeway
+  # prompts for the phrase from that run instead of minting a fresh wallet
+  # (which would strand the previous run's sats at an address nothing
+  # watches).  generate-flow only; a connect flow re-runs with the same xpub.
+  [ "$MINT_RESUME" = 1 ] && [ -z "$MINT_XPUB" ] && args+=(--resume)
 
   step "Minting a confidential comet with Causeway"
   info "this is interactive: it will ask you to fund an address and to write"

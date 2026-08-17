@@ -24,6 +24,8 @@ a laptop.
 | `gwctl.py` | the operator surface: identity, desks, readiness, peers, verification pokes |
 | `gwmint.py` | mint a comet on mainnet, with an independent pre-broadcast verification gate |
 | `bootcomet.sh` | full bringup of a minted comet: boot, install `%gw-btc`, supervise, seed peers, report readiness |
+| `onboard-e2e.sh` | walk the whole onboarding pipeline — spawn, broadcast, finalize, verify, boot — against a local fake mempool, zero real bitcoin |
+| `mempool-stub.py` | the fake mempool.space API behind `onboard-e2e.sh`; parses broadcast txs so scriptpubkey verification is genuine |
 | `pcap.sh` | start a packet capture — run at BOTH ends of a networking test |
 | `pcapsum.sh` | summarise a capture BY DIRECTION ("N out, M back") |
 | `pushfile.sh` | copy one file to a droplet and prove it arrived — sha256 + byte count |

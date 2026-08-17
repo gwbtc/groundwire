@@ -97,6 +97,31 @@ minted with `--fief`. If you set one, the ship must actually bind that port
 `spawn connect` additionally takes `--xpub` (required), `--blind-mnemonic`,
 `--utxo` and `--signed-psbt`.
 
+### Headless / agent use
+
+Every flow runs without a terminal. The contract:
+
+```bash
+# mint (non-interactive: fund the printed address out-of-band, or use --invite)
+causeway spawn generate --assume-saved \
+  --sponsor '~host-ship' --out-feed ./raw.feed --output-dir ./work
+
+# resume a mint that died after funding (phrase from a file, never an argument)
+causeway spawn generate --mnemonic-file ./phrase.txt --out-feed ./raw.feed
+
+# once the spawn tx confirms: bake the custody log, write the bootable feed
+causeway finalize ./work/<patp>-spawn.proof.json \
+  --feed-file ./raw.feed --out-feed ./boot.feed
+
+# boot (feed by FILE — a feed is the ship's private key)
+boot.sh --comet '<patp>' --feed-file ./boot.feed
+```
+
+Secrets never ride the command line: seed phrases come from files or prompts,
+feeds move through 0600 files. `--assume-saved` skips the read-back prompts,
+so a script MUST capture stdout — the phrase is printed nowhere else.
+`ops/onboard-e2e.sh` exercises this exact sequence against a stub mempool.
+
 ### Scripting a spawn
 
 Causeway aborts rather than looping when a prompt cannot be answered, so a

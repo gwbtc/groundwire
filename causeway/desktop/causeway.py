@@ -137,11 +137,25 @@ _ZIG_TARGET = _detect_zig_target()
 # In frozen builds, binaries live alongside the executable in the same directory.
 # In dev, they're in the zig build output trees.
 if getattr(sys, "frozen", False):
+    # PyInstaller build (gw-onboard's world): binaries beside the executable.
     _BIN_DIR = os.path.dirname(os.path.abspath(sys.executable))
     COMET_MINER_BIN = os.path.join(_BIN_DIR, "comet_miner")
     VERE_BIN = os.path.join(_BIN_DIR, "gw-vere")
     GW_PILL = os.path.join(_BIN_DIR, "gw-base.pill")
+elif os.environ.get("GROUNDWIRE_HOME"):
+    # Release install: the `causeway` launcher exports GROUNDWIRE_HOME as the
+    # directory it lives in, where the tarball put bin/comet_miner, bin/gw-vere
+    # and pills/gw-base.pill.  This branch exists because the venv the launcher
+    # builds is NEITHER frozen NOR a dev checkout: sys.frozen is False and the
+    # zig-out trees below are relative to the CWD, so a shipped Causeway used
+    # to go looking for a build tree in whatever directory the user happened
+    # to be standing in -- and found one only on a developer's machine.
+    _GW_HOME = os.environ["GROUNDWIRE_HOME"]
+    COMET_MINER_BIN = os.path.join(_GW_HOME, "bin", "comet_miner")
+    VERE_BIN = os.path.join(_GW_HOME, "bin", "gw-vere")
+    GW_PILL = os.path.join(_GW_HOME, "pills", "gw-base.pill")
 else:
+    # Dev checkout: zig build outputs, relative to the repo root.
     COMET_MINER_BIN = _zig_out_bin("./comet-miner", "comet_miner")
     VERE_BIN = _zig_out_bin("./vere", "urbit")
     GW_PILL = "./gw-base.pill"
@@ -477,10 +491,16 @@ def request_faucet(address: str, invite: str | None = None) -> str | None:
         return None
 
 
-def scan_for_utxo(address: str, **_rpc_kwargs) -> dict | None:
-    """Check mempool.space API for a confirmed UTXO at `address`."""
+def scan_for_utxo(address: str, *, mempool_base: str = MEMPOOL_API_URL, **_rpc_kwargs) -> dict | None:
+    """Check the mempool API for a confirmed UTXO at `address`.
+
+    Takes the base URL like every other network call here.  It was hardcoded
+    to mempool.space, which quietly ignored --mempool-base for exactly one
+    request -- the funding poll -- making the flow untestable against a stub
+    and unusable against any other backend.
+    """
     try:
-        resp = requests.get(f"{MEMPOOL_API_URL}/address/{address}/utxo", timeout=15)
+        resp = requests.get(f"{mempool_base}/address/{address}/utxo", timeout=15)
         if not resp.ok:
             return None
         utxos = resp.json()
@@ -2354,6 +2374,17 @@ def _mnemo_dir() -> str:
     candidates = []
     with contextlib.suppress(NameError):
         candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor"))
+    # pip install: setuptools data-files land at sys.prefix/vendor (inside a
+    # venv, <venv>/vendor), NOT beside the module in site-packages.  This is
+    # the layout the release launcher's venv produces, and it was missing --
+    # so a shipped Causeway mined a comet successfully and then crashed
+    # RENDERING ITS NAME, one line later.
+    candidates.append(os.path.join(sys.prefix, "vendor"))
+    # And beside GROUNDWIRE_HOME's source tree, for a by-hand invocation of
+    # causeway-src under the release environment.
+    if os.environ.get("GROUNDWIRE_HOME"):
+        candidates.append(os.path.join(
+            os.environ["GROUNDWIRE_HOME"], "causeway-src", "vendor"))
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
         candidates.append(os.path.join(meipass, "vendor"))
@@ -3397,6 +3428,13 @@ def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_ba
 @click.option("--no-route", is_flag=True, default=False,
               help="Deliberately mint an UNROUTABLE comet (no sponsor, no fief). "
                    "Outbound-only: no peer will ever be able to contact it first.")
+@click.option("--resume", is_flag=True, default=False,
+              help="Resume a previous spawn: prompt for the seed phrase you already "
+                   "wrote down instead of generating a new wallet. Use this if a "
+                   "spawn died after you funded the address.")
+@click.option("--mnemonic-file", "mnemonic_file", default=None, metavar="PATH",
+              help="Headless resume: read the seed phrase from a file. A phrase on "
+                   "the command line would land in shell history.")
 @click.option("--out-feed", "out_feed", default=None, metavar="PATH",
               help="Write the boot feed to this file (0600) instead of printing it. A feed is a private key; an argument lands in shell history and in the ship's argv.")
 @click.option("--assume-saved", is_flag=True, default=False,
@@ -3404,13 +3442,14 @@ def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_ba
                    "capture this command's output — the generated BIP-39 phrase is "
                    "printed nowhere else, and it backs both the coins and the blind.")
 def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish, sponsor, fief_arg,
-                   no_route, out_feed, assume_saved):
+                   no_route, resume, mnemonic_file, out_feed, assume_saved):
     """Generate a fresh BIP-39 wallet, fund it, spawn, and emit a boot one-liner.
 
     The comet's blind is derived from the generated seed phrase + the funding
     outpoint, so that one phrase recovers both the coins and the `dat` opening."""
     run_spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish,
                        sponsor=sponsor, fief_arg=fief_arg, no_route=no_route,
+                       resume=resume, mnemonic_file=mnemonic_file,
                        out_feed=out_feed, assume_saved=assume_saved)
 
 
@@ -4202,6 +4241,71 @@ def read_feed_file(path: str) -> str:
     return feed
 
 
+def _normalize_mnemonic(raw: str) -> str:
+    words = raw.strip().lower().split()
+    if len(words) not in (12, 15, 18, 21, 24):
+        raise click.UsageError(
+            f"that is {len(words)} words; a BIP-39 phrase is 12, 15, 18, 21 or 24")
+    return " ".join(words)
+
+
+def read_mnemonic_file(path: str) -> str:
+    """Read a seed phrase from a file (headless resume).  The file, not an
+    argument: a seed phrase on a command line lands in shell history."""
+    with open(path) as f:
+        phrase = _normalize_mnemonic(f.read())
+    # Validate the checksum NOW, with a named error -- mnemonic_to_hdkey would
+    # throw embit's own exception several lines later.
+    try:
+        mnemonic_to_hdkey(phrase, network="main")
+    except Exception as e:  # noqa: BLE001
+        raise click.UsageError(f"--mnemonic-file {path!r}: not a valid BIP-39 phrase ({e})")
+    return phrase
+
+
+def prompt_existing_mnemonic() -> str:
+    """Interactive resume: re-enter the phrase from a previous run.
+
+    Exists because a spawn can die AFTER the wallet is funded (the first live
+    one did), and re-running `spawn generate` mints a FRESH wallet -- leaving
+    the previous run's sats at an address the new run never looks at.  The
+    blind is derived from seed + funding outpoint, so resuming with the same
+    phrase produces the identical comet the first run would have.
+    """
+    print("\n  Resuming a previous spawn: enter the seed phrase you wrote down.")
+    while True:
+        phrase = input("  > ")
+        try:
+            phrase = _normalize_mnemonic(phrase)
+            mnemonic_to_hdkey(phrase, network="main")
+            return phrase
+        except click.UsageError as e:
+            print(f"  {e.message}. Try again.")
+        except Exception:  # noqa: BLE001
+            print("  Not a valid BIP-39 phrase (checksum failed). Check the words and try again.")
+
+
+def require_miner(miner: str) -> None:
+    """Refuse to start a spawn whose miner does not exist.
+
+    Called BEFORE the wallet is generated and before the user is asked to send
+    money.  The first live mint failed the other way around: seed phrase
+    written down, address funded, 1100 sats confirmed -- and THEN the miner
+    path was found to be wrong.  Everything that can fail for environmental
+    reasons must fail before anything costs the user ink or sats.
+    """
+    if os.path.isfile(miner) and os.access(miner, os.X_OK):
+        return
+    raise SystemExit(
+        f"  ERROR: comet miner not found at: {miner}\n"
+        + _not_found_hint(miner)
+        + "  From a release install, run causeway via the launcher\n"
+        + "  (~/.groundwire/causeway), which points it at the bundled miner.\n"
+        + "  From a dev checkout, `zig build` in comet-miner/, or pass --miner.\n"
+        + "  Nothing has been generated, funded or spent."
+    )
+
+
 def _initial_snapshot(pass_atom: int, sponsor: int | None = None,
                       fief: tuple | None = None) -> dict:
     """The snapshot a fresh spawn commits: life 1, rift 0, messaging key from
@@ -4324,6 +4428,7 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     except ValueError as e:
         raise click.UsageError(f"--fief: {e}")
     assert_routable({"sponsor": sponsor_atom, "fief": parsed_fief}, no_route)
+    require_miner(miner)
 
     source = parse_key_source(xpub_str, network=network)
     print(f"\n  Parsed key source: network={source.network}, account={_path_to_str(source.account_path)}")
@@ -4428,6 +4533,7 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
 
 def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False,
                        sponsor: str | None = None, fief_arg: str | None = None, no_route: bool = False, out_feed: str | None = None,
+                       resume: bool = False, mnemonic_file: str | None = None,
                        assume_saved: bool = False) -> None:
     print()
     print("=" * 60)
@@ -4441,10 +4547,18 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
     except ValueError as e:
         raise click.UsageError(f"--fief: {e}")
     assert_routable({"sponsor": sponsor_atom, "fief": parsed_fief}, no_route)
+    require_miner(miner)
 
-    mnemonic = generate_new_mnemonic(strength_bits=128)
-    print_seed_box(mnemonic)
-    confirm_seed_saved(mnemonic, assume_saved=assume_saved)
+    if mnemonic_file:
+        mnemonic = read_mnemonic_file(mnemonic_file)
+        print("\n  Resuming with the wallet from --mnemonic-file.")
+    elif resume:
+        mnemonic = prompt_existing_mnemonic()
+    else:
+        mnemonic = generate_new_mnemonic(strength_bits=128)
+    if not (resume or mnemonic_file):
+        print_seed_box(mnemonic)
+        confirm_seed_saved(mnemonic, assume_saved=assume_saved)
 
     root = mnemonic_to_hdkey(mnemonic, network=network)
     account_path = [_hardened(86), _hardened(0 if network == "main" else 1), _hardened(0)]

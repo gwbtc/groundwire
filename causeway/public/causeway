@@ -77,6 +77,14 @@ fi
 [ -x "$VENV/bin/causeway" ] || die "the venv built but produced no 'causeway'
   entry point. Treat this as a packaging bug, not a local problem."
 
+# The Python side resolves bundled binaries (comet_miner, gw-vere, the pill)
+# through this.  Without it, a venv'd Causeway is neither frozen nor a dev
+# checkout, and its fallback path pointed at a zig build tree relative to the
+# user's CWD -- which is how the first live mint got a funded wallet and then
+# "comet miner not found".  Exported, not passed, so `causeway-src` invoked
+# by hand under this launcher's environment behaves the same way.
+export GROUNDWIRE_HOME="$HERE"
+
 # `causeway tui` is not a click subcommand -- the TUI is its own entry point.
 # Accepting it here means users have one name to remember instead of two.
 if [ "${1:-}" = "tui" ]; then

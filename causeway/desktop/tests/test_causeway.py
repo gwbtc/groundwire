@@ -312,7 +312,7 @@ def test_spawn_generate_blind_is_recoverable_from_its_wallet_seed(tmp_path, monk
 
     # no_route: this test is about blind recovery, not routing, so it mints a
     # deliberately outbound-only comet rather than naming a sponsor.
-    cw.run_spawn_generate(None, 2, "main", str(tmp_path), "miner", "http://stub", False,
+    cw.run_spawn_generate(None, 2, "main", str(tmp_path), FAKE_MINER, "http://stub", False,
                           no_route=True)
 
     proof = cw.load_proof_json(str(tmp_path / "zod-spawn.proof.json"))
@@ -337,7 +337,7 @@ def test_spawn_connect_blind_is_recoverable_from_the_blind_mnemonic(tmp_path, mo
     monkeypatch.setattr(cw, "_await_signed_psbt", sign)
     blind_phrase = "absurd amount doctor acoustic avoid letter advice cage absurd amount doctor adjust"
 
-    cw.run_spawn_connect(desc, None, 2, "main", str(tmp_path), "miner", "http://stub", False,
+    cw.run_spawn_connect(desc, None, 2, "main", str(tmp_path), FAKE_MINER, "http://stub", False,
                          blind_mnemonic=blind_phrase, no_route=True)
 
     proof = cw.load_proof_json(str(tmp_path / "zod-spawn.proof.json"))
@@ -350,7 +350,7 @@ def test_spawn_connect_rejects_an_invalid_blind_mnemonic(tmp_path, monkeypatch):
     captured: dict = {}
     _stub_spawn_io(monkeypatch, captured, "cd" * 32, 0)
     with pytest.raises(SystemExit):
-        cw.run_spawn_connect("xpub-unused", None, 2, "main", str(tmp_path), "miner",
+        cw.run_spawn_connect("xpub-unused", None, 2, "main", str(tmp_path), FAKE_MINER,
                              "http://stub", False, blind_mnemonic="clearly not bip39")
     assert "mine_seed" not in captured, "must bail before mining an unrecoverable comet"
 
@@ -1164,11 +1164,11 @@ def test_spawn_refuses_an_unroutable_comet_before_doing_any_work(monkeypatch):
     monkeypatch.setattr(cw, "generate_new_mnemonic", boom)
 
     with pytest.raises(Exception) as e:
-        cw.run_spawn_connect("xpub-does-not-matter", None, 2, "main", ".", "miner", "stub")
+        cw.run_spawn_connect("xpub-does-not-matter", None, 2, "main", ".", FAKE_MINER, "stub")
     assert "neither a sponsor nor a fief" in str(e.value)
 
     with pytest.raises(Exception) as e:
-        cw.run_spawn_generate(None, 2, "main", ".", "miner", "stub")
+        cw.run_spawn_generate(None, 2, "main", ".", FAKE_MINER, "stub")
     assert "neither a sponsor nor a fief" in str(e.value)
 
 
@@ -1182,7 +1182,7 @@ def test_spawn_with_a_sponsor_passes_the_routability_gate(monkeypatch):
 
     monkeypatch.setattr(cw, "parse_key_source", stop)
     with pytest.raises(RuntimeError) as e:
-        cw.run_spawn_connect("xpub", None, 2, "main", ".", "miner", "stub",
+        cw.run_spawn_connect("xpub", None, 2, "main", ".", FAKE_MINER, "stub",
                              sponsor=SPONSOR_PATP)
     assert e.value is sentinel
 
@@ -1195,9 +1195,17 @@ def test_spawn_no_route_flag_passes_the_gate(monkeypatch):
 
     monkeypatch.setattr(cw, "parse_key_source", stop)
     with pytest.raises(RuntimeError) as e:
-        cw.run_spawn_connect("xpub", None, 2, "main", ".", "miner", "stub",
+        cw.run_spawn_connect("xpub", None, 2, "main", ".", FAKE_MINER, "stub",
                              no_route=True)
     assert e.value is sentinel
+
+
+# require_miner() now runs before any wallet or funding work, so a spawn
+# runner can no longer be driven past its preflight with a made-up miner
+# path.  The preflight checks existence and executability, not behaviour --
+# every test that goes deeper stubs the mining call itself -- so any real
+# executable satisfies it.
+FAKE_MINER = "/bin/ls"
 
 
 def _rekey_prior(tmp_path, sponsor=None):

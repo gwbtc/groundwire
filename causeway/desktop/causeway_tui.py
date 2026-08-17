@@ -914,10 +914,28 @@ class DoneScreen(BaseScreen):
             comet = state.comet or "<unknown>"
             feed = state.feed or ""
             proof_path = state.proof_path or ""
-            cmd = (
-                f"curl -fsSL https://groundwire.io/causeway/boot.sh | \\\n"
-                f"  bash -s -- --comet {comet} --feed {feed} --proof {proof_path}"
-            )
+            # The raw miner feed is written to a file, 0600, next to the proof
+            # -- never rendered on screen and never baked into a command.  This
+            # screen used to show a copy-pasteable boot line carrying the raw
+            # feed, with the finalize note underneath: following it boots a
+            # comet with an EMPTY custody log that no peer can ever verify,
+            # after the sats are spent.  The CLI had the same flaw; both ends
+            # now hand you finalize, which is where a bootable feed first
+            # exists.
+            feed_path = ""
+            if feed and proof_path:
+                feed_path = os.path.splitext(proof_path)[0] + ".feed"
+                try:
+                    cw.write_feed_file(feed_path, feed)
+                except OSError:
+                    feed_path = ""
+            if feed_path:
+                cmd = (
+                    f"~/.groundwire/causeway finalize {proof_path} \\\n"
+                    f"  --feed-file {feed_path} --out-feed {feed_path}.baked"
+                )
+            else:
+                cmd = f"~/.groundwire/causeway finalize {proof_path} --feed <miner feed>"
             comet_mnemo = cw.patp_to_mnemonym(comet) if comet != "<unknown>" else comet
             recovery = (
                 "Recovery: this comet's blind is derived from your BLIND RECOVERY\n"
@@ -935,18 +953,19 @@ class DoneScreen(BaseScreen):
                 Static(f"Commit txid: {state.commit_txid}", classes="label"),
                 Static(f"Proof: {proof_path}", classes="label"),
                 Static(recovery, classes="label"),
-                Static("Run this to boot:", classes="label"),
+                Static(
+                    "DO NOT BOOT YET — the feed still carries an empty custody log.\n"
+                    "Once the spawn tx confirms, run this; it bakes the log and\n"
+                    "prints the boot command:",
+                    classes="label",
+                ),
                 Static(cmd, id="boot"),
                 Static(
                     "⚠ Runtime does not yet consume --proof. The proof file will be "
                     "saved to ~/.groundwire/ but won't propagate via Ames until runtime support lands.",
                     classes="label",
                 ),
-                Static(
-                    f"Once the spawn confirms, bake the custody log (xtr) into the feed:\n"
-                    f"  causeway finalize {proof_path} --feed <feed>",
-                    classes="label",
-                ),
+
                 Button("Done  →  back to landing", id="home", variant="primary"),
                 id="panel",
             )
