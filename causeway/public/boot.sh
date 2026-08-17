@@ -3,7 +3,7 @@
 # Groundwire installer.
 #
 #   curl -fsSL https://groundwire.io/causeway/boot.sh | bash -s -- \
-#     --comet ~sampel-palnet-sampel-palnet--sampel-palnet-sampel-palnet \
+#     --comet '~sampel-palnet-sampel-palnet--sampel-palnet-sampel-palnet' \
 #     --feed 0w2M5n3.su88A...
 #
 # Causeway (web or desktop) mints the comet and hands you a @p and a feed.
@@ -121,7 +121,7 @@ USAGE
   Boot a comet you have already minted and finalized:
 
     curl -fsSL https://groundwire.io/causeway/boot.sh | bash -s -- \\
-      --comet ~sampel-palnet-... --feed-file ./my.feed
+      --comet '~sampel-palnet-...' --feed-file ./my.feed
 
   boot.sh --status                 report on an existing install and exit
   boot.sh --stop                   stop a running ship, in the safe order
@@ -141,7 +141,11 @@ MINT MODE (--mint)
                      that others will name as their sponsor needs one.
 
 REQUIRED (for an install)
-  --comet <@p>       the comet Causeway minted for you, with the leading ~
+  --comet <@p>       the comet Causeway minted for you, with the leading ~.
+                     QUOTE IT: '~sampel-...'. A bare leading ~ is a home
+                     directory to the shell, and zsh (the macOS default)
+                     fails outright with "no such user or named directory".
+                     The ~ is optional here if you would rather not quote.
   --feed-file <path> the boot feed, read from a file. PREFER THIS: a feed is
                      your ship's private key, and an argument lands in shell
                      history. \`causeway finalize --out-feed\` writes one.
@@ -747,7 +751,7 @@ check_identity() {
     booted as : $our
     This is what a bad -w/-G pairing looks like. The pier at $GW_PIER holds
     the wrong identity; nothing here will delete it for you. Stop the ship
-    ($SELF --stop --comet $our), move that pier aside, and re-run with the
+    ($SELF --stop --comet '$our'), move that pier aside, and re-run with the
     feed Causeway printed for ~$NAME."
   fi
   good "identity confirmed: $our"
@@ -784,7 +788,7 @@ bitcoin_preconditions() {
         # say so rather than reporting desks missing on that evidence.
         warn "could not read the ship's desk list over the control socket.
     Continuing; if %node is not really there, the next step will say so.
-    Check by hand with:  $SELF --status --comet $COMET" ;;
+    Check by hand with:  $SELF --status --comet '$COMET'" ;;
     esac
   fi
 
@@ -937,7 +941,7 @@ watch_sync() {
   info "Published runs put the total between ~1h20m and ~2.5h."
   info ""
   info "Safe to Ctrl-C: the ship and its supervisor keep running. Re-attach"
-  info "with:  $SELF --status --comet $COMET"
+  info "with:  $SELF --status --comet '$COMET'"
   info ""
 
   # A tip height makes the ETA real instead of a guess. It is public read-only
@@ -1188,7 +1192,7 @@ cmd_mint() {
     || die "causeway finalize failed.
     Your comet is minted and on chain. Nothing is lost: re-run
       $GW_DIR/causeway finalize $proof --feed-file $raw --out-feed $baked
-    and then boot with --comet $COMET --feed-file $baked"
+    and then boot with --comet '$COMET' --feed-file $baked"
 
   [ -s "$baked" ] || die "finalize wrote no baked feed to $baked.
     Refusing to boot: the raw feed would give you an unverifiable comet."
@@ -1242,7 +1246,7 @@ cmd_install() {
     watch_sync
   else
     step "Running (--no-wait)"
-    info "sync is under way; check on it with:  $SELF --status --comet $COMET"
+    info "sync is under way; check on it with:  $SELF --status --comet '$COMET'"
   fi
   summary_lines
 }
@@ -1255,8 +1259,8 @@ summary_lines() {
   [ -f "$GW_DIR/var/sup-$NAME.log" ] && info "supervisor  $GW_DIR/var/sup-$NAME.log"
   info "http        http://127.0.0.1:$HTTP_PORT"
   info ""
-  info "status      $SELF --status --comet $COMET"
-  info "stop        $SELF --stop --comet $COMET"
+  info "status      $SELF --status --comet '$COMET'"
+  info "stop        $SELF --stop --comet '$COMET'"
   info "runbook     ops/doc/OPERATIONS.md"
 }
 

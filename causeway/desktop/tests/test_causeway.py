@@ -1,3 +1,4 @@
+import pathlib
 """Pytest suite for causeway.py — kelvin-9 (%gw-btc, OP_RETURN) encoders,
 spawn/rekey PSBT builders, proof round-trip, xpub parsing, mnemonyms.
 
@@ -2808,3 +2809,61 @@ def test_fief_at_spawn_satisfies_the_routability_guard():
 def test_fief_rejects_malformed(bad):
     with pytest.raises(ValueError):
         cw.parse_fief_arg(bad)
+
+
+# ---------------------------------------------------------------------------
+# Printed commands must survive being pasted into a shell
+#
+# An Urbit @p starts with `~`, which a shell reads as a home directory when it
+# leads a word.  bash leaves an unknown `~name` alone; ZSH -- the macOS default
+# -- fails outright:
+#
+#     zsh: no such user or named directory: ligdes-risbur-folmus-mattyp-...
+#
+# So any command we PRINT for a user to copy has to quote its @p.  This was
+# found the only way it could be, by a person pasting one and watching it die.
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+
+def _printed_command_lines():
+    """Source lines that print a shell command containing a @p placeholder."""
+    src = pathlib.Path(cw.__file__).read_text().splitlines()
+    for i, line in enumerate(src, 1):
+        if "print(" not in line and "echo" not in line:
+            continue
+        if _re.search(r"--(comet|point|sponsor)\s+[{~]", line):
+            yield i, line.strip()
+
+
+def test_printed_commands_quote_their_patp():
+    bad = []
+    for lineno, line in _printed_command_lines():
+        # acceptable: '{comet}' or '~sampel' -- the @p sits inside single quotes
+        if _re.search(r"--(comet|point|sponsor)\s+'", line):
+            continue
+        bad.append(f"causeway.py:{lineno}: {line}")
+    assert not bad, (
+        "these print a command whose @p is unquoted; zsh refuses to run it:\n  "
+        + "\n  ".join(bad))
+
+
+def test_boot_sh_quotes_its_patp():
+    """boot.sh prints commands too, and is the thing users copy most."""
+    boot = pathlib.Path(cw.__file__).parent.parent / "public" / "boot.sh"
+    if not boot.exists():           # not present in a packaged release
+        pytest.skip("boot.sh not alongside this checkout")
+    bad = []
+    for lineno, line in enumerate(boot.read_text().splitlines(), 1):
+        m = _re.search(r"--(comet|point|sponsor)\s+(\S+)", line)
+        if not m:
+            continue
+        val = m.group(2)
+        if val.startswith("<") or val.startswith("'"):
+            continue              # a placeholder, or already quoted
+        if val.startswith("~") or val.startswith("$"):
+            bad.append(f"boot.sh:{lineno}: {line.strip()}")
+    assert not bad, (
+        "these print a command whose @p is unquoted; zsh refuses to run it:\n  "
+        + "\n  ".join(bad))

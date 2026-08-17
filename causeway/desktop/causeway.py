@@ -3548,7 +3548,7 @@ def cmd_finalize(proofs, feed, wait, poll_interval, mempool_base,
         if out_feed:
             written = write_feed_file(out_feed, new_feed)
             print(f"\n  Baked feed written to {written} (0600)")
-            print(f"  Boot with:  boot.sh --comet {patp} --feed-file {written}")
+            print(f"  Boot with:  boot.sh --comet '{patp}' --feed-file {written}")
         else:
             print("\n  Boot with the xtr-baked feed:")
             _print_boot_oneliner(patp, new_feed, proofs[-1])
@@ -4576,11 +4576,11 @@ def _print_spawn_next_steps(comet: str, feed: str, proof_path: str,
     if out_feed:
         print(f"    causeway finalize {proof_path} \\")
         print(f"      --feed-file {out_feed} --out-feed {out_feed}.baked")
-        print(f"    boot.sh --comet {comet} --feed-file {out_feed}.baked")
+        print(f"    boot.sh --comet '{comet}' --feed-file {out_feed}.baked")
     else:
         print(f"    causeway finalize {proof_path} --feed <the feed above> \\")
         print(f"      --out-feed ./{pier}.feed")
-        print(f"    boot.sh --comet {comet} --feed-file ./{pier}.feed")
+        print(f"    boot.sh --comet '{comet}' --feed-file ./{pier}.feed")
     print()
 
 
@@ -4596,7 +4596,7 @@ def _print_boot_oneliner(comet: str, feed: str, proof_path: str) -> None:
     print()
     print("  To boot (the runtime uses the @p as the machine form of your ID):")
     print(f"    curl -fsSL https://groundwire.io/causeway/boot.sh | \\")
-    print(f"      bash -s -- --comet {comet} --feed {feed} --proof {proof_path}")
+    print(f"      bash -s -- --comet '{comet}' --feed {feed} --proof {proof_path}")
     print()
     click.echo(click.style(
         "  NOTE: The --proof argument is preserved for future runtime support.\n"

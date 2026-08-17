@@ -147,7 +147,7 @@ and commits a new snapshot (life+1, rift+1 on `--breach`, rotated messaging
 key), chaining off the point's prior proof:
 
 ```bash
-causeway rekey --point ~sampel-palnet --prior-proof ~sampel-palnet-spawn.proof.json \
+causeway rekey --point '~sampel-palnet' --prior-proof ~sampel-palnet-spawn.proof.json \
   --new-pass-hex <NEW_PASS_HEX> [--breach]
 ```
 
