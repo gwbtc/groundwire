@@ -537,8 +537,8 @@
 ::  a well-formed suite-C %gw-btc pass whose xtr decodes to an EMPTY log
 ++  empty-pass  pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam ~))
 ++  empty-sat   ^-(self-attestation:sa [who empty-pass ~])
-::  ... and one whose entry 0 carries no opening, so nothing opens the
-::  hiding dat commitment and the log is never bound to the name.
+::  ... and one whose entry 0 carries no opening, so nothing names the
+::  spawn sat and the log is never bound to the name.
 ++  no-open-chain  ^-(custody-log:sa ~[[c0-id 100 ~] [c1-id 101 ~]])
 ++  no-open-pass
   pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam no-open-chain))
@@ -929,7 +929,7 @@
     (expect !>(!(stale-verdict:lsa verdict.res)))
   ==
 ::
-::  Entry 0 with no opening never opens the pass's hiding dat commitment,
+::  Entry 0 with no opening never names the pass's spawn satpoint,
 ::  so the log is not bound to the name it arrived under.  Again purely
 ::  structural, again decided from the peer's own xtr before any fetch.
 ::

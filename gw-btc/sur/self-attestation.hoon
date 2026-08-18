@@ -109,7 +109,7 @@
 ::    A public comet reveals this in a deliberate OP_RETURN output
 ::    (kelvin 9).  It is not a second format and it gets no second
 ::    verification path: .pass is byte-for-byte the pass this comet
-::    hands a peer over ames -- name, hiding dat commitment, and the
+::    hands a peer over ames -- name, plaintext spawn satpoint, and the
 ::    whole custody log in xtr -- and a watcher runs it through the
 ::    same +verify-lc / ++run-checks walk a mailed attestation gets.
 ::

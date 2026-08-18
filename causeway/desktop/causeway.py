@@ -899,9 +899,9 @@ def xtr_of_pass(pass_atom: int) -> int:
 #  The byte cap on a publication payload.  1024, and the number is not
 #  arbitrary: it is the PACKET bound (decisions addendum §6 fixes a complete
 #  jammed attestation at one Mesa fragment, ~1 KiB), and a publication carries
-#  that same packet.  A pass core is ~108 B, entry 0's opening ~120 B and the
-#  terminal opening ~100 B, so the floor is ~330 B and each further custody hop
-#  adds ~40 B — 1024 is ~17 hops, against the four that 512 allowed.  An
+#  that same packet.  A pass core is ~114 B, entry 0's opening ~90 B and the
+#  terminal opening ~100 B, so the floor is ~300 B and each further custody hop
+#  adds ~40 B — 1024 is ~18 hops, against the four that 512 allowed.  An
 #  OP_RETURN is all non-witness data, so that is a ~1160 vB transaction:
 #  ~2320 sats at 2 sat/vB.  MUST equal +max-publication:gw-btc-pass byte for
 #  byte -- the Hoon is the other half of this pair, and the only other half.
@@ -2887,8 +2887,8 @@ WALLET_SEED_BOX_HEADER = (
 def print_seed_box(mnemonic: str, *, header: tuple[str, ...] = WALLET_SEED_BOX_HEADER) -> None:
     """Render a mnemonic in a warning box.
 
-    `header` is the text above the words; overridable so any second
-    recovery phrase (which is NOT the wallet seed) gets its own wording."""
+    `header` is the text above the words.  (Overridable; the only phrase
+    Causeway prints today is the generate-flow wallet seed.)"""
     words = mnemonic.split()
     width = max(len(w) for w in words) + 4
     rows = (len(words) + 2) // 3
@@ -3237,7 +3237,7 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
 @click.option("--miner", default=COMET_MINER_BIN, show_default=True, help="Path to comet_miner binary")
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
 @click.option("--publish", is_flag=True, default=False,
-              help="Public spawn: add an OP_RETURN publication output opening the dat commitment (default off = confidential)")
+              help="Public spawn: add an OP_RETURN publication output (default off = confidential)")
 @click.option("--sponsor", default=None,
               help="Sponsor for the initial snapshot (@p or mnemonym). Peers route to a "
                    "confidential comet through the sponsor committed on-chain.")

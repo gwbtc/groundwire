@@ -282,7 +282,7 @@
       ::  The `?~ pub` filter is the hot one and stays silent: it runs on
       ::  every transaction in every block, and all but a handful carry no
       ::  Groundwire OP_RETURN at all.  Everything BELOW it has already
-      ::  matched the OP_RETURN "urb" envelope at this protocol kelvin, so
+      ::  matched the OP_RETURN "gw" envelope at this protocol kelvin, so
       ::  reaching one of these is an operator who published on chain and
       ::  will otherwise never learn why their comet did not appear.
       ::
@@ -329,7 +329,7 @@
       ~&  >  ["%gw-btc: on-chain self-attestation published by" who]
       (emit [%claim who u.done])
     ::
-    ::  Find the first OP_RETURN "urb" publication among a tx's outputs.
+    ::  Find the first OP_RETURN "gw" publication among a tx's outputs.
     ++  find-publication
       |=  outs=(list output:tx:bitcoin)
       ^-  (unit publication:sa)

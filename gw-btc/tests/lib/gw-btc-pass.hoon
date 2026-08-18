@@ -171,8 +171,8 @@
 ::  OP_PUSHDATA2 -- the publication that does not fit in one length byte
 ::
 ::  OP_PUSHDATA1 (0x4c) carries a SINGLE length byte and therefore stops
-::  at 255, but +max-publication is 1.024 and every fief-carrying
-::  publication measures 265-269 bytes.  Before +push-data learned
+::  at 255, but +max-publication is 1.024 and a full-packet publication
+::  runs to hundreds of bytes.  Before +push-data learned
 ::  OP_PUSHDATA2 (0x4d, TWO length bytes, LITTLE-ENDIAN), `[1 wid]` with
 ::  wid > 255 packed to wid mod 256 and this lib emitted a silently
 ::  corrupt script -- no crash, no parse, an unreadable OP_RETURN on
@@ -291,11 +291,12 @@
 ::  ------------------------------------------------------------------
 ::  Golden vector "pushdata2-fief" (/vectors/gw-kelvin-9.json).
 ::
-::  A realistic public spawn: a real 108-byte suite-%c pass, a snapshot
-::  committing a fief, a spawn-opening.  The payload size and script are
-::  the script carries OP_PUSHDATA2 `4d 0d 01`.  Causeway desktop
-::  (Python) and Causeway web (TS) pin the SAME bytes from the SAME JSON
-::  -- that agreement is the point of the vector.
+::  A realistic public spawn: a real 114-byte suite-%c pass, a snapshot
+::  committing a fief, a spawn-opening.  241 bytes of payload, so the
+::  script carries OP_PUSHDATA1 `4c f1` (it was 269 bytes and PUSHDATA2
+::  while the opening carried a 32-byte blind; the full-packet vector
+::  below still exercises PUSHDATA2).  Causeway desktop (Python) pins the
+::  SAME bytes from the SAME JSON -- that agreement is the point.
 ::  ------------------------------------------------------------------
 ++  v2-pass
   ^-  pass
@@ -381,8 +382,8 @@
       !>  (state-key:cc v2-internal-key v2-snapshot)
   ==
 ::
-::  ... and the "basic" vector, whose 69-byte payload takes the DIRECT
-::  push (0x45).  Pinned here too so the <=75 path cannot drift while
+::  ... and the "basic" vector, whose 34-byte payload takes the DIRECT
+::  push (0x22).  Pinned here too so the <=75 path cannot drift while
 ::  OP_PUSHDATA2 is added above; Causeway desktop and web assert the same
 ::  op_return_script bytes from the same JSON.
 ++  test-golden-basic-publication-script
@@ -410,9 +411,9 @@
 ::  carrying transaction performs, which the payload cannot name
 ::  because that transaction's txid does not exist until it is signed.
 ::
-::  Six carried hops (the same 108-byte suite-%c pass as pushdata2-fief,
-::  re-encoded around them) jam to 392 bytes of xtr, a 500-byte pass and
-::  a 588-byte payload.  That is past the old 512-byte cap and inside
+::  Six carried hops (the same 114-byte suite-%c pass as pushdata2-fief,
+::  re-encoded around them) jam to 358 bytes of xtr, a 471-byte pass and
+::  a 560-byte payload.  That is past the old 512-byte cap and inside
 ::  the new 1.024 -- which is the whole argument for the change,
 ::  measured rather than asserted.  Causeway desktop (Python) and
 ::  Causeway web (TS) pin these same bytes from this same JSON.
@@ -457,7 +458,7 @@
       [0x5555.5555.5555.5555.5555.5555.5555.5555.5555.5555.5555.5555.5555.5555.5555.5555 961.512 ~]
       [0x6666.6666.6666.6666.6666.6666.6666.6666.6666.6666.6666.6666.6666.6666.6666.6666 961.744 ~]
   ==
-::  the 108-byte pass BEFORE the log rides in it (pushdata2-fief's pass)
+::  the 114-byte pass BEFORE the log rides in it (pushdata2-fief's pass)
 ::
 ++  fp-pass-empty
   ^-  pass

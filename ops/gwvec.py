@@ -118,14 +118,22 @@ def hoonux(v):
 
 
 def _dat_with_kelvin(dat, kelvin):
-    """dat = (can 0 (mat %gw-btc) (mat KEL) [256 d]); swap the kelvin."""
+    """dat = (can 0 (mat %gw-btc) (mat KEL) (mat (jam sont))); swap the kelvin.
+
+    The third item is a self-delimiting mat, NOT a fixed 256-bit field --
+    that was the retired hiding commitment.  Rub it and re-emit it as a
+    mat, or a real 32-byte txid's jam (wider than 256 bits) gets truncated
+    and test 2.9 (foreign kelvin, WELL-FORMED dat) silently degenerates
+    into test 2.14 (malformed dat).  Both are silence, so nothing would
+    have said so."""
     p1, dom = C._hoon_rub(0, dat)
     p2, _old = C._hoon_rub(p1, dat)
-    d = (dat >> (p1 + p2)) & ((1 << 256) - 1)
+    p3, spawn_jam = C._hoon_rub(p1 + p2, dat)
+    assert p1 + p2 + p3 == dat.bit_length(), "dat has trailing bits"
     w = C.BitWriter()
     w.write_mat(dom)
     w.write_mat(kelvin)
-    w.write(256, d)
+    w.write_mat(spawn_jam)
     return w.to_int()
 
 

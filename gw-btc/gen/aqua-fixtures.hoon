@@ -26,7 +26,7 @@
 ::
 ::    Usage:
 ::
-::        +groundwire!aqua-fixtures
+::        +gw-btc!aqua-fixtures
 ::
 ::    Paste the printed literals into +cc-dat-tail and +cc-xtr in
 ::    gwbtc/urbit/pkg/arvo/lib/aqua-azimuth.hoon.  The comet names it
@@ -37,7 +37,7 @@
 ::
 ::    The %fail fixture is broken deliberately and minimally: its
 ::    spawn-opening names a satpoint its dat does NOT commit to, so a
-::    real verifier's commitment check -- and only that check -- fails.
+::    real verifier's `spawn-matches` check -- and only that check -- fails.
 ::    Give it (spawn %fail) below instead and it verifies like %ok.
 ::
 /-  sa=self-attestation, ord
@@ -90,7 +90,7 @@
 ::  +dat: the immutable tweak data, under +aqua-domain
 ::
 ::    The real codec's output with its domain tag swapped.  Everything
-::    after the tag -- kelvin and hiding commitment -- is byte-identical
+::    after the tag -- kelvin and spawn satpoint -- is byte-identical
 ::    to what +make-dat:gwp produces, which is what makes these fixtures
 ::    derived data rather than an invention.
 ::

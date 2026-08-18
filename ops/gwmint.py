@@ -516,7 +516,7 @@ def cmd_build(label, publish=False, fief=None, sponsor=None, fee_rate=1,
         chk("OP_RETURN envelope 6a 02 'gw' 01 09",
             pub_spk.startswith("6a02677701" + "09"))
         chk("output 1 value == 0", dec["vout"][1]["value"] == 0)
-        # envelope = 7 prefix bytes + the pushdata header (1 direct / 2
+        # envelope = 6 prefix bytes + the pushdata header (1 direct / 2
         # PUSHDATA1 / 3 PUSHDATA2), so measure the payload rather than
         # assuming PUSHDATA1.
         pub_len = len(C.jam_bytes(C.publication_noun(pub_pass, pub_open)))
@@ -677,7 +677,7 @@ def cmd_artifact(label, n):
     )
     xtr = C.build_xtr_atom([entry])
     # The poke that extends a RUNNING ship's custody log in place, no reboot.
-    # A ship booted from the miner's feed serves a 108-byte pass and CANNOT be
+    # A ship booted from the miner's feed serves a bare (~114-byte) pass and CANNOT be
     # verified by anyone; this is how it gets its evidence without a restart.
     # The agent re-verifies the whole extended log against the chain before it
     # will re-encode the pass, so this is evidence, not authority.
@@ -691,7 +691,7 @@ def cmd_artifact(label, n):
     assert comet_p == C.patp_to_int(st["comet"]), "feed comet != mined comet"
     # The pass a PEER must be given to verify this comet is the one derived
     # from the ring WITH the xtr appended -- ~330-405 B.  pass_atom_hex above
-    # is the bare 108-byte object and carries no custody evidence at all; a
+    # is the bare ~114-byte object and carries no custody evidence at all; a
     # %jael-writ built from it is dropped silently through +public-pass.
     # Deriving it from a running ship is a trap: jael's /vein gives you the
     # ring, and re-deriving from that reproduces the BARE pass however much
@@ -1014,9 +1014,9 @@ def cmd_publish(label, artifact_n, fee_rate=4, fund=False, sat_target=None):
     chk("output 1 is the OP_RETURN publication",
         pub_spk == C.make_publication_script(pub_pass, pub_open).hex())
     chk("OP_RETURN envelope 6a 02 'gw' 01 09",
-        pub_spk.startswith("6a03757262" + "0109"), pub_spk[:16])
+        pub_spk.startswith("6a026777" + "0109"), pub_spk[:20])
     chk("OP_RETURN value is 0", dec["vout"][1]["value"] == 0)
-    # MAX_PUBLICATION payload + 7-byte envelope + up to a 3-byte PUSHDATA2
+    # MAX_PUBLICATION payload + 6-byte envelope + up to a 3-byte PUSHDATA2
     # header.  The cap is C.MAX_PUBLICATION (1024 since 2026-08-10) and must be
     # read from there, never restated: it lives in three implementations that
     # have to agree byte for byte.
@@ -1035,7 +1035,7 @@ def cmd_publish(label, artifact_n, fee_rate=4, fund=False, sat_target=None):
     #  from re-running jam_bytes(publication_noun(...)) -- the same encoder
     #  that produced the script.  The expected-script check above compares
     #  against that same encoder too, and the envelope check covers only the
-    #  first 7 bytes, so NOTHING here validated the push opcode or its
+    #  first 6 bytes, so NOTHING here validated the push opcode or its
     #  length independently.  Reproduced with the historical
     #  OP_PUSHDATA1-mod-256 corruption on a 279-byte payload (good header
     #  4d1701, corrupt 4c17): the re-cue passes it, causeway's parser

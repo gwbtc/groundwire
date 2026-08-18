@@ -47,7 +47,7 @@ FULL = _VECS["full-packet"]
 # Byte convention (pinned by the JSON + the compiled Hoon lib gw-btc-pass.hoon
 # and its passing test, the real authority): a jammed noun enters a tagged-hash
 # preimage as its natural LITTLE-endian byte serialization — the same jam_*_le
-# bytes, NOT byte-reversed.  So d = H_tag('gw/spawn-commit', jam_spawn_le || blind)
+# bytes, NOT byte-reversed.  (The retired d = H_tag('gw/spawn-commit', ...) used it too;)
 # and c = H_tag('gw/state-commit', jam_snapshot_le).  Our encoders do exactly
 # this (cw.jam_bytes returns the LE serialization), so every golden below is
 # asserted directly against the JSON.
@@ -73,7 +73,7 @@ def _snap(vec) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Golden vectors — hiding dat / blind / d
+# Golden vectors — plaintext dat
 # ---------------------------------------------------------------------------
 
 
@@ -301,7 +301,7 @@ def _full_log() -> list:
 
 
 def test_golden_full_packet_xtr_and_pass():
-    """The custody log jams to the vector's xtr, and re-encoding the 108-byte
+    """The custody log jams to the vector's xtr, and re-encoding the 114-byte
     pass around it reproduces the full pass byte for byte."""
     xtr = cw.build_xtr_atom(_full_log())
     assert xtr.to_bytes((xtr.bit_length() + 7) // 8, "little").hex() == FULL["jam_xtr_le"]
@@ -366,7 +366,7 @@ def test_publication_script_refuses_over_cap():
 def test_golden_xtr_jam():
     sp = BASIC["spawn_sont"]
     entries = [
-        # entry 0 — spawn, full opening (with blind-opening)
+        # entry 0 — spawn, full opening (with spawn-opening)
         {"txid_hex": sp["txid"], "height": 778000, "opening": _basic_opening()},
         # entry 1 — plain custody hop, no opening
         {"txid_hex": "feedface", "height": 778010, "opening": None},
@@ -730,7 +730,7 @@ def test_int_to_patp_comet_roundtrip():
 # ---------------------------------------------------------------------------
 # start-height: the FUNDING tx's block, never the spawn tx's
 #
-# sur/self-attestation defines a blind-opening's start-height as the block
+# sur/self-attestation defines a spawn-opening's start-height as the block
 # containing the transaction that CREATED the spawn satpoint. `finalize` used
 # to write the SPAWN tx's height instead, and no proof ever carried an explicit
 # start_height, so the wrong default always won. The verifier fetches that
@@ -818,7 +818,7 @@ def test_resolve_start_height_refuses_to_guess(monkeypatch):
 
 
 def _xtr_start_height(xtr: int) -> int:
-    """Dig the spawn entry's blind-opening start-height out of a jammed xtr.
+    """Dig the spawn entry's spawn-opening start-height out of a jammed xtr.
 
     xtr           = (jam (list custody-entry))
     custody-entry = [txid height opening=(unit opening)]
@@ -1084,7 +1084,7 @@ def test_custody_entry_poke_renders_sponsor_and_a_bare_hop():
     }
     line = cw.format_custody_entry_poke(entry)
     assert "`~marzod" in line
-    # an absent blind-opening is the bare ~ that marks a non-spawn hop
+    # an absent spawn-opening is the bare ~ that marks a non-spawn hop
     assert line.rstrip().endswith("~]]]")
     assert line.count("[") == line.count("]")
 
@@ -2078,7 +2078,7 @@ def test_funded_state_update_fee_estimate_tracks_the_real_vsize():
 
 from click.testing import CliRunner  # noqa: E402
 
-_PUB_PASS = int(FULL["pass_empty"], 16)          # a real 108-byte suite-C pass
+_PUB_PASS = int(FULL["pass_empty"], 16)          # a real 114-byte suite-C pass
 
 
 def _pub_log(n_bare: int = 0) -> list:
@@ -2247,7 +2247,7 @@ def test_publish_dry_run_builds_the_whole_packet(tmp_path):
     # the pass carries the log finalize baked, and it is NOT the boot pass
     assert cw.xtr_of_pass(pass_atom) == cw.build_xtr_atom(log)
     assert pass_atom != _PUB_PASS
-    # GUARD 2 — the terminal opening's blind-opening unit is ~ (0): the dat
+    # GUARD 2 — the terminal opening's spawn-opening unit is ~ (0): the spawn
     # opening may sit on entry 0 only, and entry 0 is inside the xtr.
     _internal_key, (_snapshot, spawn_opening_unit) = opening
     assert spawn_opening_unit == 0

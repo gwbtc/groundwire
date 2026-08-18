@@ -470,7 +470,7 @@
   ==
 ::
 ++  test-run-spawn-opening-required
-  ::  entry 0 without an opening cannot open the dat commitment
+  ::  entry 0 without an opening cannot name the spawn sat
   ::
   =/  bad-chain=custody-log:sa  ~[[c0-id 100 ~] [c1-id 101 ~]]
   =/  sat  ^-(self-attestation:sa [who carried-pass bad-chain])
@@ -1088,8 +1088,8 @@
     ::  the peer's own xtr, judged before a single watch card is emitted:
     ::  an empty log offers no evidence for the identity the pass asserts.
     (expect-eq !>(%fraud) !>((abort-class:sal %empty-chain)))
-    ::  likewise structural, likewise local: entry 0 never opens the dat
-    ::  commitment, so the log is not bound to the name.
+    ::  likewise structural, likewise local: entry 0 never names the
+    ::  spawn sat, so the log is not bound to the name.
     (expect-eq !>(%fraud) !>((abort-class:sal %spawn-opening)))
     ::  after the fetches -- but every fetch that reached here was
     ::  confirmed on the main chain at the claimed height and txid, because

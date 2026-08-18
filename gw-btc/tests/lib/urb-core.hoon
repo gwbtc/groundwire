@@ -2,7 +2,7 @@
 ::
 ::  Current-protocol (kelvin-9) vectors for the OP_RETURN scanner in
 ::  lib/urb-core.  +find-block-reveals discovers public identities by
-::  grepping outputs for the OP_RETURN "urb" publication (and follows
+::  grepping outputs for the OP_RETURN "gw" publication (and follows
 ::  tracked-sat spends); +process-publication turns each publication into
 ::  a %claim -- the comet's own attestation packet, with the log
 ::  completed by the transaction that carried it -- and +update-sonts

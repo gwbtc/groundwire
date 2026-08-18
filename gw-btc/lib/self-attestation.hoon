@@ -712,9 +712,9 @@
 ::
 ::  Decode the fixed-domain, fixed-kelvin suite-C pass.  Both atom
 ::  tails are required to be canonical so `cue` cannot silently accept
-::  appended alternate data.  The hiding dat commitment is NOT opened
-::  here: the spawn satpoint is learned only from the custody log's
-::  $spawn-opening and bound to the pass in ++run-checks.
+::  appended alternate data.  The pass's plaintext spawn satpoint is
+::  parsed but not consulted here: binding it to the custody log's
+::  $spawn-opening is ++run-checks' job (`spawn-matches`).
 ++  from-xtr
   |=  [who=@p =pass]
   ^-  (unit self-attestation:sa)

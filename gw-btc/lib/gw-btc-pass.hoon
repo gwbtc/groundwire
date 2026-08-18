@@ -203,9 +203,9 @@
 ::    What it buys and costs, since an OP_RETURN is all non-witness data
 ::    and payload bytes convert ~1:1 into vbytes:
 ::
-::      - a pass core is ~108 B, entry 0's opening ~120 B and the
-::        terminal opening ~100 B, so the floor is ~330 B and each
-::        further custody hop adds ~40 B.  1.024 B is therefore ~17
+::      - a pass core is ~114 B, entry 0's opening ~90 B and the
+::        terminal opening ~100 B, so the floor is ~300 B and each
+::        further custody hop adds ~40 B.  1.024 B is therefore ~18
 ::        hops, against the four that 512 allowed.
 ::      - ~1.024 payload bytes is a ~1.160 vB transaction: ~2.320 sats
 ::        at 2 sat/vB.  Payable only because a state update may take a
@@ -228,10 +228,11 @@
 ::
 ::    A direct push (opcode = length) reaches 75.  OP_PUSHDATA1 (0x4c)
 ::    carries ONE length byte and therefore stops at 255 -- which is
-::    far below this codec's own 1.024-byte cap, so a fief-carrying
-::    publication (265-269 bytes in practice) already needs
-::    OP_PUSHDATA2 (0x4d) and its TWO-byte LITTLE-ENDIAN length, and a
-::    full-packet one is never anything else.
+::    far below this codec's own 1.024-byte cap, so a full-packet
+::    publication (hundreds of bytes: the fixed-point vector is 560)
+::    needs OP_PUSHDATA2 (0x4d) and its TWO-byte LITTLE-ENDIAN length.
+::    (A bare fief-carrying spawn publication is 241 bytes and takes
+::    OP_PUSHDATA1; it was 269 and PUSHDATA2 while a blind rode in it.)
 ::
 ::    Every arm here is total or crashes: a width this encoding cannot
 ::    express, or a `dat` too wide for its declared `wid`, is an %exit
