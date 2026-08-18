@@ -641,7 +641,21 @@ def parse_dat_atom(dat: int) -> tuple[str, int, tuple]:
     if w1 + w2 + w3 != dat.bit_length():
         raise ValueError("dat has trailing data after the spawn satpoint")
     dom = dom_atom.to_bytes((dom_atom.bit_length() + 7) // 8, "little").decode("ascii")
-    return dom, kel, hoon_cue(spawn_jam)
+    spawn = hoon_cue(spawn_jam)
+    # Canonical, or refused -- the twin of +parse-dat's `?> =(dat (make-dat
+    # spawn))`.  mat length-prefixes whatever it is given and cue ignores
+    # trailing bits inside that atom, so a padded third item cues to the
+    # SAME satpoint but is a DIFFERENT dat and therefore a different @p:
+    # many names per sat.  Only +make-dat's own encoding is accepted.
+    txid, (vout, off) = spawn
+    # Re-encode with the domain AND kelvin the dat itself carries: a foreign
+    # kelvin must still parse (the caller decides silence from `kel`), it
+    # just must not be malleable.
+    w = BitWriter()
+    w.write_mat(dom_atom); w.write_mat(kel); w.write_mat(hoon_jam(spawn))
+    if dat != w.to_int():
+        raise ValueError("dat is not the canonical encoding of its satpoint")
+    return dom, kel, spawn
 
 
 def make_dat_expr(txid_hex: str, vout: int, off: int, dom: str = PKI_DOM) -> str:

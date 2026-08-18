@@ -70,6 +70,20 @@
     !>(*(unit [dom=@tas kel=@ud spawn=sont:ord]))
     !>((parse-dat:cc (can 0 ~[(mat %gw-btc) (mat 9) (mat (jam [1 2]))])))
 ::
+++  test-dat-refuses-non-canonical-satpoint
+  ::  a third item that cues to the same satpoint but is not the canonical
+  ::  jam (jam plus padding bits) is a DIFFERENT dat, i.e. a different @p
+  ::  for one sat.  Refused: one satpoint, one dat.
+  =/  j    (jam spawn)
+  =/  pad  (can 0 ~[[(met 0 j) j] [5 22]])
+  =/  bad  (can 0 ~[(mat domain:cc) (mat kelvin:cc) (mat pad)])
+  ;:  weld
+    (expect-eq !>(spawn) !>(;;(sont:ord (cue pad))))
+    (expect !>(!=(bad dat)))
+    (expect-eq !>(*(unit [dom=@tas kel=@ud spawn=sont:ord])) !>((parse-dat:cc bad)))
+    (expect-eq !>(`(unit [dom=@tas kel=@ud spawn=sont:ord])``[%gw-btc 9 spawn]) !>((parse-dat:cc dat)))
+  ==
+::
 ++  test-verify-dat
   ;:  weld
     (expect-eq !>(%.y) !>((verify-dat:cc dat spawn)))

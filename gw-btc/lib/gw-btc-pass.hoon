@@ -53,6 +53,24 @@
 ::    satpoint is cued from its jam and clammed to $sont, so a dat whose
 ::    third item is not a well-formed satpoint fails to parse.
 ::
+::    CANONICAL, OR REFUSED (2026-08-18 adversarial review).  `mat` faithfully
+::    length-prefixes whatever atom it is given, and `cue` ignores trailing
+::    bits inside that atom -- so a third item that is jam(sont) plus padding
+::    cues to the SAME satpoint yet is a DIFFERENT dat, hence a different @p,
+::    for one sat: unboundedly many names per satpoint, bounded only by who
+::    indexed first.  The only accepted dat for a satpoint is the
+::    canonical three-mat encoding (checked against the domain and kelvin
+::    the dat itself carries, so a foreign kelvin still parses and is
+::    refused for its kelvin, not for its shape).  (The old fixed-width [256 d] had no such
+::    malleability; the plaintext mat form reintroduced it.)
+::
+::    Deliberately NOT hardened against malformed-length DoS (a rub prefix
+::    with a 33-bit zero run bails %fail through +mole; a jam header
+::    claiming a huge atom bails %meme).  That class is kernel-wide -- ames'
+::    own (rub 512 bod) has it -- and mechanical DoS resistance is out of
+::    scope by the decisions addendum: economic sybil resistance, not
+::    piecemeal hardening.  Recorded so nobody re-derives it.
+::
 ++  parse-dat
   |=  dat=@
   ^-  (unit [dom=@tas kel=@ud spawn=sont:ord])
@@ -63,7 +81,12 @@
   =/  pos  (add p.hed p.kel)
   =/  spn  (rub pos dat)
   ?>  =((met 0 dat) (add pos p.spn))
-  [`@tas`q.hed `@ud`q.kel ;;(sont:ord (cue q.spn))]
+  =/  spawn  ;;(sont:ord (cue q.spn))
+  ::  canonical against the kelvin FOUND, not ours: a foreign-kelvin dat
+  ::  must parse (so +foreign-kelvin can see the kelvin and go silent), it
+  ::  just must not be malleable either.
+  ?>  =(dat (can 0 ~[(mat q.hed) (mat q.kel) (mat (jam spawn))]))
+  [`@tas`q.hed `@ud`q.kel spawn]
 ::  +verify-dat: check that a dat names exactly this domain, kelvin and
 ::  spawn satpoint
 ::

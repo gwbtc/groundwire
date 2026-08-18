@@ -2773,3 +2773,37 @@ def test_no_blind_machinery_survives():
                  "BLIND_DERIV_WALLET_SEED", "BLIND_DERIV_BLIND_MNEMONIC",
                  "BLIND_DERIV_PROOF_FILE"):
         assert not hasattr(cw, name), name
+
+
+def test_dat_refuses_non_canonical_satpoint_encoding():
+    """A dat whose third item cues to the right satpoint but is not the
+    canonical jam (here: jam plus padding bits) is a DIFFERENT dat and would
+    be a DIFFERENT @p for the same sat.  Refused -- one satpoint, one dat.
+    Twin of +parse-dat's `?> =(dat (make-dat spawn))`."""
+    txid = "ab" * 32
+    good = cw.build_dat_atom(txid, 1, 0)
+    j = cw.hoon_jam(cw.spawn_sont_noun(txid, 1, 0))
+    padded = (22 << j.bit_length()) | j          # same noun on cue, extra high bits
+    w = cw.BitWriter()
+    w.write_mat(int.from_bytes(b"gw-btc", "little")); w.write_mat(9); w.write_mat(padded)
+    bad = w.to_int()
+    assert cw.hoon_cue(padded) == cw.spawn_sont_noun(txid, 1, 0)   # the attack premise holds
+    assert bad != good                                            # ...and yields a different dat
+    with pytest.raises(ValueError, match="canonical"):
+        cw.parse_dat_atom(bad)
+    assert cw.parse_dat_atom(good)[2] == cw.spawn_sont_noun(txid, 1, 0)
+
+
+def test_canonical_check_is_kelvin_agnostic():
+    """The canonical re-encode must use the kelvin the dat CARRIES, not ours.
+    A foreign-kelvin dat has to parse -- the agent decides silence from the
+    parsed kelvin (+foreign-kelvin) -- it just must not be malleable.  The
+    Hoon suite caught the first version of this check re-encoding with
+    kelvin 9 and turning every foreign kelvin into a parse failure."""
+    txid = "cd" * 32
+    w = cw.BitWriter()
+    w.write_mat(int.from_bytes(b"gw-btc", "little")); w.write_mat(cw.KELVIN + 1)
+    w.write_mat(cw.hoon_jam(cw.spawn_sont_noun(txid, 2, 0)))
+    dom, kel, spawn = cw.parse_dat_atom(w.to_int())
+    assert (dom, kel) == ("gw-btc", cw.KELVIN + 1)
+    assert spawn == cw.spawn_sont_noun(txid, 2, 0)
