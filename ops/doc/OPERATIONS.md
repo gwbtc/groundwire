@@ -393,7 +393,7 @@ causeway spawn generate [--invite <FAUCET_CODE>] [--sponsor <SPONSOR_PATP>] …
   one agent; the peer-facing check uses the broader one. Recorded in §12 as a
   disagreement to settle, not relied on. An **absent** sponsor is fine either
   way — it projects to self and `sponsor-ok` is `%.y`.
-- **`--assume-saved` is not optional in a script.** Without it the blind-phrase
+- **`--assume-saved` is not optional in a script.** Without it the seed-phrase
   read-back fires a second time *after the transaction has been broadcast*, and
   the run exits 2 with mainnet money already spent. Note also that piping stdin
   does **not** answer prompts: the `isatty()` check fires before `input()`, so
@@ -1245,12 +1245,12 @@ this, your pill predates the fix.
 
 ## 10. Things that are deliberately not repairable
 
-- **A destroyed blind destroys a confidential identity.** See below.
-- **A destroyed blind destroys a confidential identity.** `+verify-dat`'s
-  `=(d.u.psd (spawn-commit spawn.open blind.open))` cannot be satisfied
-  without the blind; brute force is a 2^256 search. A **public** comet's
-  opening is in its OP_RETURN and recovers from the chain alone with no
-  secret material. This is the property, not a bug.
+- **A destroyed feed destroys a confidential identity.** The ring is mined
+  from system entropy and lives only in the feed; nothing regenerates it. (A
+  destroyed *blind* used to be listed here too. There is no blind since
+  2026-08-18: `dat` is the plaintext satpoint, so the identity has no
+  per-comet secret outside the feed.) A **public** comet's opening is in its
+  OP_RETURN and its custody log recovers from the chain alone.
 - **Reorg recovery is a halt, not a repair.** See §9.
 
 ### What *is* repairable, contrary to earlier drafts

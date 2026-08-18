@@ -276,8 +276,7 @@
 ++  c0-id      0x2b2b.2b2b
 ++  c1-id      0x3c3c.3c3c
 ++  spawn      ^-(sont:ord [start-id 0 0])
-++  blind      (make-blind:cc seed)
-++  dat        (make-dat:cc spawn blind)
+++  dat        (make-dat:cc spawn)
 ::
 ++  base-pass  pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat 0)
 ++  who
@@ -292,7 +291,7 @@
 ++  snap0  ^-(snapshot:sa [life=1 rift=0 key=cry sponsor=~ fief=~])
 ++  ikey0  (mk-ikey 17)
 ++  ikey1  (mk-ikey 23)
-++  spawn-open  ^-(blind-opening:sa [spawn start-height=778.000 blind])
+++  spawn-open  ^-(spawn-opening:sa [spawn start-height=778.000])
 ++  open0       ^-(opening:sa [ikey0 snap0 `spawn-open])
 ::
 ++  start-out  ^-(output:tx:bitcoin [(p2tr-spk (mk-ikey 5)) 10.000])
@@ -860,51 +859,17 @@
 ::    with the entry the publisher could not write down -- and an index
 ::    that is still empty, because nothing has been judged yet.
 ::
-++  test-real-mainnet-publication-claims-c3
-  =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]
-    (scan-block (empty-at c3-height) c3-block)
-  =/  cs=(list [who=ship =pass])
-    %+  murn  (effs fx)
-    |=  e=effect:urb
-    ^-  (unit [ship pass])
-    ?.(?=([%claim *] e) ~ `[who.e pass.e])
-  ::  exactly one %claim, and it is the ONLY effect: an unjudged
-  ::  publication tells jael nothing.
-  ?>  ?=([* ~] cs)
-  ::  the claimed pass is a well-formed %gw-btc self-attestation whose
-  ::  fingerprint is the name it was claimed under -- +from-xtr checks
-  ::  the domain, the kelvin, the suite, the @p and the log's canonical
-  ::  jam, so this is not a shape assertion, it is the packet grammar.
-  =/  sat  (from-xtr:lsa who.i.cs pass.i.cs)
-  ?>  ?=(^ sat)
-  ::  C3 published AT SPAWN, so the log it carried was empty and the
-  ::  completed one is a single entry: this transaction, at this block's
-  ::  height, opening the snapshot that output 0 commits.
-  ?>  ?=([* ~] chain.u.sat)
-  =*  ent  i.chain.u.sat
-  ?>  ?=(^ opening.ent)
-  ;:  weld
-    (expect-eq !>(`@p`c3) !>(who.i.cs))
-    (expect-eq !>(`(list effect:urb)`~[[%claim who.i.cs pass.i.cs]]) !>((effs fx)))
-    (expect-eq !>(`txid:ord`c3-txid) !>(txid.ent))
-    (expect-eq !>(`@ud`c3-height) !>(height.ent))
-    (expect-eq !>(`life`1) !>(life.snapshot.u.opening.ent))
-    (expect-eq !>(`rift`0) !>(rift.snapshot.u.opening.ent))
-    ::  NOTHING is indexed.  The claim is evidence, not a verdict.
-    (expect-eq !>(*unv-ids:urb) !>(unv-ids.st))
-    (expect-eq !>(*(unit @p)) !>((get-com:si:ol sont-map.st c3-txid 0 0)))
-    ::  the scanner's cursor advanced onto the block it just read
-    (expect-eq !>(`id:block:bitcoin`[c3-block-hash c3-height]) !>(block-id.st))
-  ==
-::  ---- a CONFIDENTIAL spawn must NOT appear --------------------------
-::
-::    C1 and C2 spawned with the same on-chain shape as C3 -- a P2TR
-::    output whose key is a genuine state-key -- and published no
-::    OP_RETURN.  They are visible only to the confidential verifier, and
-::    the public index must never learn them.  This is the contrast that
-::    proves the scanner reads PUBLICATIONS and not merely taproot
-::    outputs: same block height, same converted-block path, same
-::    scanner; the only difference is the OP_RETURN.
+::  RETIRED 2026-08-18: +test-real-mainnet-publication-claims-c3 scanned
+::  C3's real mainnet block (c3-block, c3-height above) and required its
+::  publication to yield exactly one %claim.  C3 was minted under the
+::  hiding-dat format (d = H_tag(jam(sont) || blind)); under the plaintext
+::  dat that replaced it, +parse-dat correctly REFUSES C3's pass -- its third
+::  mat item does not cue to a $sont -- so the scanner emits no %claim, which
+::  is the right verdict for an old-format identity and the wrong premise for
+::  this test.  The block bytes are kept as a historical fixture.  The first
+::  new-format mainnet publication should be pinned here in its place, and it
+::  is the arm that proves the ENVELOPE off real bytes -- do not leave it
+::  retired longer than the first live mint.
 ::
 ++  test-confidential-spawn-is-not-indexed
   =/  [fx=(list [id:block:bitcoin effect:urb]) st=state:urb]

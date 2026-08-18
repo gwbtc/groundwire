@@ -152,14 +152,21 @@ The domain `dat` carries an explicit protocol version, Kelvin-style
 (counting down), starting at **9**:
 
 ```
-dat = (can 0 (mat %gw-btc) (mat 9) [256 d] ~)
-d   = H_tag("gw/spawn-commit", (jam spawn-sont) || blind)
+dat = (can 0 (mat %gw-btc) (mat 9) (mat (jam spawn-sont)) ~)
 ```
+
+> **Amended 2026-08-18.** As adopted on 2026-08-03 the third item was a
+> 256-bit hiding commitment `d = H_tag("gw/spawn-commit", jam(sont) || blind)`.
+> That was reverted to the plaintext satpoint of the original spec, with Jake's
+> agreement, after white-hat review established that the pass and the
+> attestation are one object and so no pass-holder ever lacked the opening —
+> the blind protected nobody. See `01-spec-revision.md` §4 for the full
+> reasoning. The Kelvin, the domain tag, and everything below stand.
 
 - The domain tag remains the first `+mat` item at bit 0 — Ames reads only
   that and nothing else changes in the kernel.
-- The Kelvin is plaintext (not inside the hiding commitment) so any holder
-  of a pass can read a comet's mint version without an opening.
+- The Kelvin is plaintext so any holder of a pass can read a comet's mint
+  version — as is the satpoint, now that there is no hiding commitment.
 - `dat` is hashed into the name, so a comet's mint Kelvin is immutable.
   A Kelvin decrement changes what new comets mint under; verifiers advertise
   the set of Kelvins they accept, and retiring a Kelvin is a deliberate
@@ -167,11 +174,11 @@ d   = H_tag("gw/spawn-commit", (jam spawn-sont) || blind)
 - One number governs interpretation of everything downstream for that comet:
   snapshot mold, xtr grammar, tag-string semantics, publication payload.
   Consequently (resolving §9 Q1): the tagged-hash strings
-  (`gw/spawn-commit`, `gw/state-commit`, `gw/spawn-blind`) are themselves
+  (`gw/state-commit`; `gw/spawn-commit` and `gw/spawn-blind` retired 2026-08-18) are themselves
   **unversioned**; the OP_RETURN publication envelope's version byte **is
   the Kelvin** (`0x09`). No separate registry is needed.
 - Decoders MUST reject trailing data: the bit-width of `dat` is exactly
-  `p:(mat %gw-btc) + p:(mat 9) + 256`.
+  `p:(mat %gw-btc) + p:(mat 9) + p:(mat (jam spawn-sont))`.
 - **A pass at a Kelvin we do not implement gets SILENCE, never a negative
   verdict.** A negative verdict is a Jael `%fail`, which Ames turns into a
   *snub*. If a verifier condemned foreign Kelvins, then across a Kelvin

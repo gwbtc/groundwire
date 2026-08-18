@@ -64,17 +64,9 @@ class FlowState:
     feed: Optional[str] = None
     ring: Optional[str] = None
     pass_atom: Optional[int] = None
-    # kelvin-9: the sat output commits a snapshot; a seed-derived blind hides the
-    # spawn satpoint in dat and is opened later in the xtr / a public OP_RETURN.
-    # The blind is ALWAYS derived from a BIP-39 phrase the user holds — the
-    # wallet seed when we generated it, else `blind_mnemonic`, a dedicated
-    # recovery phrase minted on the connect-wallet path (where we only have an
-    # xpub).  A random blind would make the comet unrecoverable.
-    snapshot: Optional[dict] = None
-    blind: Optional[bytes] = None
-    blind_seed: Optional[int] = None
-    blind_mnemonic: Optional[str] = None  # connect-wallet: no seed to derive from
-    blind_derivation: Optional[str] = None
+    # kelvin-9: the sat output commits a snapshot; the pass's dat names the
+    # spawn satpoint in plaintext.  Nothing here is secret but the ring, which
+    # the miner returns in the feed.
     publish: bool = False
     # Routing (decisions-addendum section 2): a snapshot with neither a sponsor
     # nor a fief is a one-way identity — nothing can cold-contact the comet.
@@ -224,12 +216,9 @@ class SpawnMethodScreen(BaseScreen):
             return
         err.update("")
         # FlowState survives a trip back to the landing screen, so clear the
-        # key material a previous spawn left behind. Otherwise a stale
-        # `mnemonic` would silently back the next comet's blind (and skip the
-        # blind-phrase prompt) even though that wallet is not the one funding it.
+        # key material a previous spawn left behind: a stale `mnemonic` is not
+        # the wallet funding the next comet.
         state.mnemonic = None
-        state.blind_mnemonic = None
-        state.blind = state.blind_seed = state.blind_derivation = None
         state.source = None
         state.picked_utxo = None
         if event.button.id == "connect":
@@ -598,11 +587,7 @@ class UtxoPickerScreen(BaseScreen):
                 f"UTXO too small: {state.picked_utxo['value']} < 630 sats minimum"
             )
             return
-        # For spawn we need to mine; for manage we skip mining.  The blind
-        # phrase ceremony is retired: a connect-wallet spawn's blind is fresh
-        # entropy recorded in proof.json (the identity bundle: proof + feed).
-        # BlindPhraseScreen survives only for a deliberate re-spawn from a
-        # phrase minted before the retirement (state.blind_mnemonic pre-set).
+        # For spawn we need to mine; for manage we skip mining.
         if state.op_name != "spawn":
             self.app.push_screen(PsbtBuildScreen())
         else:
@@ -617,96 +602,6 @@ class UtxoPickerScreen(BaseScreen):
             self.app.pop_screen()
 
 
-# ---------------------------------------------------------------------------
-# Blind recovery phrase — connect-wallet only
-# ---------------------------------------------------------------------------
-
-
-class BlindPhraseScreen(BaseScreen):
-    """Collect the BIP-39 phrase a connect-wallet spawn derives its blind from.
-
-    The connect flow only ever holds an account xpub (watch-only wallet or
-    hardware signer), so there is no wallet seed to derive the blind from.
-    Rather than mint an unrecoverable random blind, we generate a dedicated
-    phrase and make the user write it back, or accept one they already hold."""
-
-    CSS = """
-    Screen { align: center middle; }
-    #panel { max-width: 100%; max-height: 100%; overflow-y: auto; width: 92; border: round #ff6a00; padding: 2 4; }
-    #title { content-align: center middle; color: #ff6a00; text-style: bold; padding-bottom: 1; }
-    #warn { color: #ff6a00; text-style: bold; padding: 1 0; }
-    #seed-box { border: heavy #ff6a00; padding: 1 2; margin: 1 0; height: auto; }
-    #seed-box > Static { width: 1fr; height: auto; }
-    Button { margin-right: 2; }
-    #actions { padding-top: 1; }
-    #err { color: red; }
-    #note { color: #888; }
-    """
-
-    def compose(self) -> ComposeResult:
-        state: FlowState = self.app.state  # type: ignore[attr-defined]
-        if state.blind_mnemonic is None:
-            state.blind_mnemonic = cw.generate_new_mnemonic(strength_bits=128)
-        yield Header()
-        words = state.blind_mnemonic.split()
-        rows = (len(words) + 2) // 3
-        cols: list[list[str]] = [[] for _ in range(3)]
-        for i, w in enumerate(words):
-            cols[i // rows].append(f"{i+1:>2}. {w}")
-        col_static = [Static("\n".join(c)) for c in cols]
-        yield Vertical(
-            Static("BLIND RECOVERY PHRASE", id="title"),
-            Static(
-                "Your wallet is external, so Causeway cannot derive this comet's\n"
-                "blind from your wallet seed. This separate phrase is REQUIRED to\n"
-                "ever prove or recover the identity — without it nobody, not even\n"
-                "the holder of the wallet seed, can open the dat commitment your\n"
-                "@p is built from. As important as your wallet seed. Write it down.",
-                id="warn",
-            ),
-            Horizontal(*col_static, id="seed-box"),
-            Static("Type the full phrase back below to confirm you wrote it down:"),
-            Input(placeholder="word1 word2 word3 ...", id="confirm"),
-            Static(
-                "Or paste an existing blind recovery phrase (re-spawn / recovery):",
-                id="note",
-            ),
-            Input(placeholder="blank to use the generated phrase above", id="existing"),
-            Horizontal(
-                Button("I saved it — continue", id="continue", variant="primary"),
-                Button("Back", id="back"),
-                id="actions",
-            ),
-            Static("", id="err"),
-            id="panel",
-        )
-        yield Footer()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "back":
-            self.app.pop_screen()
-            return
-        if event.button.id != "continue":
-            return
-        state: FlowState = self.app.state  # type: ignore[attr-defined]
-        err = self.query_one("#err", Static)
-        existing = self.query_one("#existing", Input).value.strip()
-        if existing:
-            try:
-                state.blind_mnemonic = cw.normalize_blind_mnemonic(existing)
-            except ValueError as e:
-                err.update(f"supplied phrase rejected: {e}")
-                return
-        else:
-            typed = self.query_one("#confirm", Input).value.strip().lower()
-            if typed != (state.blind_mnemonic or "").lower():
-                err.update("That doesn't match. Try again.")
-                return
-        self.app.push_screen(MiningScreen())
-
-
-# ---------------------------------------------------------------------------
-# Mining screen — subprocess progress
 # ---------------------------------------------------------------------------
 
 
@@ -745,28 +640,8 @@ class MiningScreen(BaseScreen):
             self.app.call_from_thread(log.write_line, f"ERROR: miner binary not found at {state.miner_bin}")
             self.app.call_from_thread(self.query_one("#status", Static).update, "miner not found — configure --miner")
             return
-        # Blind derivation, in preference order: the wallet seed when we
-        # generated it (free second recovery route); a supplied legacy blind
-        # phrase; else fresh entropy recorded only in proof.json.  The file is
-        # the custody object either way -- the ring is nondeterministically
-        # mined and lives only in the feed, so file custody was never optional.
-        phrase = state.mnemonic or state.blind_mnemonic
-        if phrase:
-            state.blind_derivation = (
-                cw.BLIND_DERIV_WALLET_SEED if state.mnemonic else cw.BLIND_DERIV_BLIND_MNEMONIC
-            )
-            state.blind_seed, state.blind = cw.blind_from_mnemonic(phrase, u["txid"], u["vout"])
-        else:
-            state.blind_seed = int.from_bytes(os.urandom(32), "big")
-            state.blind = cw.make_blind(state.blind_seed)
-            state.blind_derivation = cw.BLIND_DERIV_PROOF_FILE
-            self.app.call_from_thread(log.write_line,
-                "Blind: fresh entropy, recorded in the proof file. Your identity")
-            self.app.call_from_thread(log.write_line,
-                "bundle is proof.json + the feed — back both up.")
-        self.app.call_from_thread(log.write_line, f"Blind derived from {state.blind_derivation}")
         try:
-            result = cw.mine_comet_from_utxo(u["txid"], u["vout"], 0, state.blind_seed, state.miner_bin)
+            result = cw.mine_comet_from_utxo(u["txid"], u["vout"], 0, state.miner_bin)
         except Exception as e:
             self.app.call_from_thread(log.write_line, f"Mining error: {e}")
             return
@@ -849,7 +724,7 @@ class PsbtBuildScreen(BaseScreen):
                 if state.publish:
                     pub_pass = state.pass_atom
                     pub_opening = cw._spawn_publication_opening(
-                        u["xonly"], state.snapshot, u, state.blind or b""
+                        u["xonly"], state.snapshot, u
                     )
                 p, proof = cw.build_spawn_psbt(
                     utxo_txid=u["txid"],
@@ -866,9 +741,7 @@ class PsbtBuildScreen(BaseScreen):
                     network=state.network,
                 )
                 cw._finish_spawn_proof(
-                    proof, comet=state.comet or "", pass_atom=state.pass_atom or 0,
-                    blind=state.blind or b"", blind_seed=state.blind_seed or 0, utxo=u,
-                    blind_derivation=state.blind_derivation or cw.BLIND_DERIV_WALLET_SEED,
+                    proof, comet=state.comet or "", pass_atom=state.pass_atom or 0, utxo=u,
                 )
             else:
                 # Rekey: spend the point's current sat output key-path, identified
@@ -945,9 +818,8 @@ class PsbtBuildScreen(BaseScreen):
         try:
             # The signed tx's txid is deterministic (segwit), so we know the
             # commit_txid before broadcasting. Persist the proof FIRST — it is
-            # the only durable record of the snapshot (the blind itself is
-            # re-derivable from the user's phrase + the spawn outpoint, but the
-            # snapshot and pass are not); if we broadcast first and then crash
+            # the only durable record of the snapshot (choice data no phrase
+            # regenerates); if we broadcast first and then crash
             # before writing it, an already-spent sat is left with no proof.
             # ... and before any of that, check the signer handed back the
             # transaction we built.  The paste box accepts any PSBT; a

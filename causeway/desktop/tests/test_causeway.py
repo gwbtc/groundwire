@@ -77,294 +77,45 @@ def _snap(vec) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_golden_blind():
-    seed = int(BASIC["seed"], 16)
-    assert cw.make_blind(seed).hex() == BASIC["blind"]
-
-
 def test_golden_jam_spawn():
     sp = BASIC["spawn_sont"]
     noun = cw.spawn_sont_noun(sp["txid"], sp["vout"], sp["off"])
     assert cw.jam_bytes(noun).hex() == BASIC["jam_spawn_le"]
 
 
-def test_golden_spawn_commit_d():
-    # d = H_tag('gw/spawn-commit', jam_spawn_le || blind) — LE jam bytes.
-    sp = BASIC["spawn_sont"]
-    blind = cw.make_blind(int(BASIC["seed"], 16))
-    d = cw.spawn_commit(sp["txid"], sp["vout"], sp["off"], blind)
-    assert d.hex() == BASIC["spawn_commit_d"]
-
-
 def test_golden_dat():
     sp = BASIC["spawn_sont"]
-    dat = cw.build_dat_atom(sp["txid"], sp["vout"], sp["off"], int(BASIC["seed"], 16))
+    dat = cw.build_dat_atom(sp["txid"], sp["vout"], sp["off"])
     assert dat == int(BASIC["dat"], 16)
-    # mat("gw-btc") 59 bits + mat(9) 10 bits + 256 bits d = 325 bits -> 41 bytes.
-    assert len(cw.build_dat_bytes(sp["txid"], sp["vout"], sp["off"], int(BASIC["seed"], 16))) == 41
+    # mat("gw-btc") 59 bits + mat(9) 10 bits + mat(jam [txid vout off]) -> 167 bits
+    # for this 8-byte-txid fixture -> 21 bytes.  Plaintext: the satpoint reads back.
+    assert len(cw.build_dat_bytes(sp["txid"], sp["vout"], sp["off"])) == 21
+    dom, kel, spawn = cw.parse_dat_atom(dat)
+    assert (dom, kel) == ("gw-btc", 9)
+    assert spawn == cw.spawn_sont_noun(sp["txid"], sp["vout"], sp["off"])
 
 
 def test_dat_domain_is_rub_extractable():
     # +pass-pki-dom does (rub 0 dat); the head must decode to the domain tag.
     sp = BASIC["spawn_sont"]
-    dat = cw.build_dat_atom(sp["txid"], sp["vout"], sp["off"], int(BASIC["seed"], 16))
+    dat = cw.build_dat_atom(sp["txid"], sp["vout"], sp["off"])
     _width, dom_atom = cw._hoon_rub(0, dat)
     assert dom_atom.to_bytes(6, "little").decode() == "gw-btc"
 
 
 def test_dat_expr_is_a_concrete_can():
+    """The --tweak expression is all literals: no arm the miner's +wish
+    would have to resolve, and it evaluates to exactly +make-dat."""
     sp = BASIC["spawn_sont"]
-    expr = cw.make_dat_expr(sp["txid"], sp["vout"], sp["off"], int(BASIC["seed"], 16))
-    assert expr.startswith("(can 0 (mat %gw-btc) (mat 9) [256 0x")
-    assert expr.endswith("] ~)")
-
-
-def test_blind_depends_on_seed():
-    assert cw.make_blind(1) != cw.make_blind(2)
-    # And dat therefore depends on the seed too.
-    sp = BASIC["spawn_sont"]
-    assert cw.build_dat_atom(sp["txid"], sp["vout"], sp["off"], 1) != \
-        cw.build_dat_atom(sp["txid"], sp["vout"], sp["off"], 2)
+    expr = cw.make_dat_expr(sp["txid"], sp["vout"], sp["off"])
+    assert expr.startswith("(can 0 (mat %gw-btc) (mat 9) (mat (jam [txid=0x")
+    assert expr.endswith(" vout=1 off=0])) ~)")
+    assert "blind" not in expr and "H_tag" not in expr
 
 
 # ---------------------------------------------------------------------------
-# Blind derivation — the blind must NEVER be random: it is the only thing that
-# opens the dat commitment, so a comet whose blind is not reproducible from a
-# BIP-39 phrase the user holds is an identity that dies with its artifact file.
+# Spawn flow plumbing (network + miner stubbed)
 # ---------------------------------------------------------------------------
-
-# Test vector, pinned so any drift in the (frozen) scheme is loud.  Scheme:
-#   blind_seed = int(sha256(bip39_seed_64 || b"gw/spawn-blind-seed"
-#                           || txid_be32 || vout_le4), "big")
-#   blind      = H_tag("gw/spawn-blind", minimal_LE_bytes(blind_seed))
-BLIND_M = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-BLIND_TXID = "00" * 31 + "01"
-BLIND_VOUT = 0
-BLIND_SEED_PIN = 0x9A38D802E6820AE8E327475C15F7F56E891EAD2174CE3D092A47F7046ED7A814
-BLIND_PIN = "cd2085c8c8fb1345ee6a84dde2e1b48df4fea154295eb12ffcff210f5c1adafa"
-
-
-def _bip39_seed(mnemonic: str) -> bytes:
-    from embit import bip39 as _b39
-    return _b39.mnemonic_to_seed(mnemonic, "")
-
-
-def test_derive_blind_seed_matches_frozen_scheme():
-    # Recompute from first principles rather than trusting our own helper.
-    import hashlib
-    seed = _bip39_seed(BLIND_M)
-    assert len(seed) == 64
-    want = int.from_bytes(hashlib.sha256(
-        seed + b"gw/spawn-blind-seed"
-        + bytes.fromhex(BLIND_TXID) + BLIND_VOUT.to_bytes(4, "little")
-    ).digest(), "big")
-    got = cw.derive_blind_seed(seed, BLIND_TXID, BLIND_VOUT)
-    assert got == want == BLIND_SEED_PIN
-
-
-def test_derive_blind_seed_is_deterministic():
-    seed = _bip39_seed(BLIND_M)
-    a = cw.derive_blind_seed(seed, BLIND_TXID, 3)
-    b = cw.derive_blind_seed(seed, BLIND_TXID, 3)
-    assert a == b
-    assert cw.make_blind(a) == cw.make_blind(b)
-
-
-def test_derive_blind_seed_is_outpoint_sensitive():
-    """One phrase can back several spawns: each outpoint gets its own blind."""
-    seed = _bip39_seed(BLIND_M)
-    by_vout = {v: cw.make_blind(cw.derive_blind_seed(seed, BLIND_TXID, v)) for v in range(4)}
-    assert len(set(by_vout.values())) == 4, "different vout must give a different blind"
-    other_txid = "11" * 32
-    assert cw.derive_blind_seed(seed, BLIND_TXID, 0) != cw.derive_blind_seed(seed, other_txid, 0)
-
-
-def test_derive_blind_seed_depends_on_the_phrase():
-    other = "absurd amount doctor acoustic avoid letter advice cage absurd amount doctor adjust"
-    assert cw.normalize_blind_mnemonic(other) == other  # a real, valid phrase
-    assert cw.derive_blind_seed(_bip39_seed(BLIND_M), BLIND_TXID, 0) != \
-        cw.derive_blind_seed(_bip39_seed(other), BLIND_TXID, 0)
-
-
-def test_derive_blind_seed_rejects_malformed_outpoint():
-    seed = _bip39_seed(BLIND_M)
-    with pytest.raises(ValueError):
-        cw.derive_blind_seed(seed, "abcd", 0)          # not 32 bytes
-    with pytest.raises(ValueError):
-        cw.derive_blind_seed(seed, BLIND_TXID, 2**32)  # vout doesn't fit in 4 bytes
-
-
-def test_blind_from_mnemonic_round_trips_to_known_blind():
-    """The blind-mnemonic path: a known phrase yields a known blind."""
-    blind_seed, blind = cw.blind_from_mnemonic(BLIND_M, BLIND_TXID, BLIND_VOUT)
-    assert blind_seed == BLIND_SEED_PIN
-    assert blind.hex() == BLIND_PIN
-    # …and composes exactly as make_blind ∘ derive_blind_seed.
-    assert blind == cw.make_blind(cw.derive_blind_seed(_bip39_seed(BLIND_M), BLIND_TXID, BLIND_VOUT))
-    # Same phrase again -> same blind (a re-spawn with --blind-mnemonic recovers it).
-    assert cw.blind_from_mnemonic(BLIND_M, BLIND_TXID, BLIND_VOUT) == (blind_seed, blind)
-
-
-def test_recovery_drill_from_phrase_and_satpoint_alone():
-    """Lose every artifact; keep the phrase and the (public, on-chain) spawn
-    satpoint. The blind, d and dat must all come back."""
-    txid = "de" * 32
-    vout, off = 2, 0
-
-    # --- spawn time -------------------------------------------------------
-    blind_seed, blind = cw.blind_from_mnemonic(BLIND_M, txid, vout)
-    dat_at_spawn = cw.build_dat_atom(txid, vout, off, blind_seed)
-    d_at_spawn = cw.spawn_commit(txid, vout, off, blind)
-
-    # --- much later: only BLIND_M + the satpoint survive -------------------
-    rec_seed = cw.derive_blind_seed(_bip39_seed(BLIND_M), txid, vout)
-    rec_blind = cw.make_blind(rec_seed)
-    rec_d = cw.spawn_commit(txid, vout, off, rec_blind)
-    rec_dat = cw.build_dat_atom(txid, vout, off, rec_seed)
-
-    assert rec_blind == blind
-    assert rec_d == d_at_spawn
-    assert rec_dat == dat_at_spawn
-    # The recovered opening reproduces the miner's tweak expression too, so the
-    # @p that was mined from it can be re-derived.
-    assert cw.make_dat_expr(txid, vout, off, rec_seed) == cw.make_dat_expr(txid, vout, off, blind_seed)
-
-
-def test_normalize_blind_mnemonic_accepts_valid_and_rejects_junk():
-    assert cw.normalize_blind_mnemonic("  " + BLIND_M.upper() + "  ") == BLIND_M
-    with pytest.raises(ValueError):
-        cw.normalize_blind_mnemonic("not actually a bip39 phrase at all")
-    with pytest.raises(ValueError):
-        # Valid words, bad checksum.
-        cw.normalize_blind_mnemonic(" ".join(["abandon"] * 12))
-
-
-def test_finish_spawn_proof_records_blind_and_its_derivation():
-    txid, vout = "cd" * 32, 1
-    blind_seed, blind = cw.blind_from_mnemonic(BLIND_M, txid, vout)
-    proof: dict = {}
-    cw._finish_spawn_proof(
-        proof, comet="~zod", pass_atom=0x1234, blind=blind, blind_seed=blind_seed,
-        utxo={"txid": txid, "vout": vout, "xonly": b"\x00" * 32},
-        blind_derivation=cw.BLIND_DERIV_BLIND_MNEMONIC,
-    )
-    assert proof["blind_hex"] == blind.hex()
-    assert int(proof["blind_seed_hex"], 16) == blind_seed
-    assert proof["blind_derivation"] == "blind-mnemonic+outpoint"
-    assert proof["spawn_sont"] == {"txid_hex": txid, "vout": vout, "off": 0}
-    # dat in the proof is the one the phrase reproduces.
-    assert int(proof["dat_hex"], 16) == cw.build_dat_atom(txid, vout, 0, blind_seed)
-
-
-def test_spawn_flows_never_use_a_random_blind():
-    """Regression guard for the unrecoverable-blind bug: both CLI spawn flows
-    must derive the blind from a BIP-39 phrase, never from secrets.token_bytes."""
-    import inspect
-    for fn in (cw.run_spawn_connect, cw.run_spawn_generate):
-        src = inspect.getsource(fn)
-        assert "blind_from_mnemonic" in src, f"{fn.__name__} must derive its blind"
-        assert "token_bytes" not in src, f"{fn.__name__} still randomizes something"
-
-
-def _stub_spawn_io(monkeypatch, captured: dict, txid: str, vout: int):
-    """Stub every network/miner touchpoint of the spawn flows, capturing the
-    blind seed the miner is handed (it is baked into the @p, so it is the value
-    that must be reproducible)."""
-    def stub_scan(source, **kw):
-        addr, spk, xonly, path = source.derive_address(0, 0)
-        return [{"address": addr, "scriptpubkey": spk, "xonly": xonly, "path": path,
-                 "change": 0, "index": 0, "txid": txid, "vout": vout,
-                 "value": 10_000, "confirmed": True}]
-
-    def stub_mine(_txid, _vout, off=0, seed=0, miner_bin="", dom=cw.PKI_DOM):
-        captured["mine_seed"] = seed
-        captured["mine_outpoint"] = (_txid, _vout, off)
-        return {"comet": "~zod", "feed": "0vfeed", "ring": "0wring"}
-
-    monkeypatch.setattr(cw, "scan_addresses", stub_scan)
-    monkeypatch.setattr(cw, "mine_comet_from_utxo", stub_mine)
-    monkeypatch.setattr(cw, "derive_pass_from_ring", lambda r, t=None: 0xDEADBEEF)
-    monkeypatch.setattr(cw, "_broadcast_tx", lambda tx_hex, mempool_base=None: "bc" * 32)
-    monkeypatch.setattr(cw, "_print_boot_oneliner", lambda *a, **k: None)
-    monkeypatch.setattr(cw, "pick_utxo_interactive", lambda u, **kw: u[0])
-    monkeypatch.setattr(cw, "confirm_seed_saved", lambda m, **kw: None)
-
-
-def _assert_proof_blind_recoverable(proof: dict, phrase: str, derivation: str, captured: dict):
-    """The whole point: phrase + spawn satpoint must rebuild blind / seed / dat."""
-    assert proof["blind_derivation"] == derivation
-    sp = proof["spawn_sont"]
-    seed, blind = cw.blind_from_mnemonic(phrase, sp["txid_hex"], sp["vout"])
-    assert proof["blind_hex"] == blind.hex()
-    assert int(proof["blind_seed_hex"], 16) == seed
-    assert int(proof["dat_hex"], 16) == cw.build_dat_atom(sp["txid_hex"], sp["vout"], 0, seed)
-    # And that same seed is what the miner mined the @p under.
-    assert captured["mine_seed"] == seed
-    assert captured["mine_outpoint"] == (sp["txid_hex"], sp["vout"], 0)
-
-
-def test_spawn_generate_blind_is_recoverable_from_its_wallet_seed(tmp_path, monkeypatch):
-    captured: dict = {}
-    _stub_spawn_io(monkeypatch, captured, "ab" * 32, 1)
-    real_gen = cw.generate_new_mnemonic
-    monkeypatch.setattr(cw, "generate_new_mnemonic",
-                        lambda **kw: captured.setdefault("phrase", real_gen(**kw)))
-
-    # no_route: this test is about blind recovery, not routing, so it mints a
-    # deliberately outbound-only comet rather than naming a sponsor.
-    cw.run_spawn_generate(None, 2, "main", str(tmp_path), FAKE_MINER, "http://stub", False,
-                          no_route=True)
-
-    proof = cw.load_proof_json(str(tmp_path / "zod-spawn.proof.json"))
-    _assert_proof_blind_recoverable(proof, captured["phrase"], "wallet-seed+outpoint", captured)
-
-
-def test_spawn_connect_blind_is_recoverable_from_the_blind_mnemonic(tmp_path, monkeypatch):
-    from embit import psbt as _psbt
-    captured: dict = {}
-    _stub_spawn_io(monkeypatch, captured, "cd" * 32, 0)
-
-    seed_phrase = cw.generate_new_mnemonic()
-    root = cw.mnemonic_to_hdkey(seed_phrase)
-    acct = root.derive("m/86h/0h/0h").to_public()
-    desc = f"tr([{cw.hdkey_fingerprint(root).hex()}/86h/0h/0h]{acct.to_base58()}/0/*)"
-
-    def sign(unsigned_b64, signed_psbt=None):
-        p = _psbt.PSBT.from_base64(unsigned_b64)
-        p.sign_with(root)
-        return p.to_base64()
-
-    monkeypatch.setattr(cw, "_await_signed_psbt", sign)
-    blind_phrase = "absurd amount doctor acoustic avoid letter advice cage absurd amount doctor adjust"
-
-    cw.run_spawn_connect(desc, None, 2, "main", str(tmp_path), FAKE_MINER, "http://stub", False,
-                         blind_mnemonic=blind_phrase, no_route=True)
-
-    proof = cw.load_proof_json(str(tmp_path / "zod-spawn.proof.json"))
-    _assert_proof_blind_recoverable(proof, blind_phrase, "blind-mnemonic+outpoint", captured)
-    # The wallet seed must NOT be what backs the blind on this path.
-    assert cw.blind_from_mnemonic(seed_phrase, "cd" * 32, 0)[1].hex() != proof["blind_hex"]
-
-
-def test_spawn_connect_rejects_an_invalid_blind_mnemonic(tmp_path, monkeypatch):
-    captured: dict = {}
-    _stub_spawn_io(monkeypatch, captured, "cd" * 32, 0)
-    with pytest.raises(SystemExit):
-        cw.run_spawn_connect("xpub-unused", None, 2, "main", str(tmp_path), FAKE_MINER,
-                             "http://stub", False, blind_mnemonic="clearly not bip39")
-    assert "mine_seed" not in captured, "must bail before mining an unrecoverable comet"
-
-
-def test_tui_mining_screen_never_uses_a_random_blind():
-    pytest.importorskip("textual")
-    import inspect
-    import causeway_tui as tui
-    src = inspect.getsource(tui.MiningScreen.run_mine)
-    assert "blind_from_mnemonic" in src
-    assert "token_bytes" not in src
-    # The connect flow (no wallet seed) must route through the phrase screen.
-    assert "BlindPhraseScreen" in inspect.getsource(tui.UtxoPickerScreen.pick_current)
-
 
 # ---------------------------------------------------------------------------
 # Golden vectors — snapshot / state commitment / leaf / output key Q
@@ -418,14 +169,12 @@ def _basic_opening() -> dict:
     """The opening used by the basic vector's publication and xtr entry 0."""
     pub = BASIC["publication"]
     sp = BASIC["spawn_sont"]
-    blind = cw.make_blind(int(BASIC["seed"], 16))
     return {
         "internal_key": int(pub["internal_key"], 16),
         "snapshot": _snap(BASIC),
-        "blind_opening": {
+        "spawn_opening": {
             "spawn": {"txid_hex": sp["txid"], "vout": sp["vout"], "off": sp["off"]},
             "start_height": pub["start_height"],
-            "blind": blind,
         },
     }
 
@@ -442,7 +191,7 @@ def test_publication_script_shape():
     # OP_RETURN PUSH3 'urb' PUSH1 <kelvin=0x09> then pushdata.
     assert script[:7] == bytes([0x6A, 0x03, 0x75, 0x72, 0x62, 0x01, 0x09])
     payload = bytes.fromhex(pub["jam_publication_le"])
-    assert len(payload) == 69  # <= 75 -> a direct length push, not PUSHDATA1
+    assert len(payload) == 34  # <= 75 -> a direct length push, not PUSHDATA1
     assert script[7:] == bytes([len(payload)]) + payload
     # ... and the whole script is pinned in the shared vector
     assert script.hex() == pub["op_return_script"]
@@ -453,7 +202,7 @@ def test_publication_script_shape():
 def test_publication_small_payload_uses_direct_push():
     # A tiny opening (< 75 byte payload) must use a direct length push, no 0x4c.
     opening = {"internal_key": 1, "snapshot": {"life": 1, "rift": 0, "key": 1,
-               "sponsor": None, "fief": None}, "blind_opening": None}
+               "sponsor": None, "fief": None}, "spawn_opening": None}
     script = cw.make_publication_script(1, opening)
     payload = cw.jam_bytes(cw.publication_noun(1, opening))
     assert len(payload) <= 75
@@ -478,45 +227,35 @@ def _pd2_opening() -> dict:
     return {
         "internal_key": int(pub["internal_key"], 16),
         "snapshot": _snap(PD2),
-        "blind_opening": {
+        "spawn_opening": {
             "spawn": {"txid_hex": sp["txid"], "vout": sp["vout"], "off": sp["off"]},
             "start_height": pub["start_height"],
-            "blind": bytes.fromhex(PD2["blind"]),
         },
     }
 
 
-def test_golden_pushdata2_blind_and_commitments():
-    # the vector's own inputs reproduce its blind / d / snapshot jam / Q
-    assert cw.make_blind(int(PD2["seed"], 16)).hex() == PD2["blind"]
-    sp = PD2["spawn_sont"]
-    assert cw.spawn_commit(
-        sp["txid"], sp["vout"], sp["off"], bytes.fromhex(PD2["blind"])
-    ).hex() == PD2["spawn_commit_d"]
-    snap = _snap(PD2)
-    assert cw.jam_bytes(cw.snapshot_dict_to_noun(snap)).hex() == PD2["jam_snapshot_le"]
-    assert cw.state_commit(snap).hex() == PD2["state_commit_c"]
-    q = cw.state_output_key(bytes.fromhex(PD2["internal_key_compressed"]), snap)
-    assert q.hex() == PD2["state_output_key_q"]
-
-
 def test_golden_pushdata2_publication_script():
-    """The whole point: byte-identical to Hoon for a >255-byte payload."""
+    """Byte-identical to Hoon for the fief-carrying spawn publication.
+
+    This was THE PUSHDATA2 vector: with a 32-byte blind in the opening the
+    payload was 269 bytes, past OP_PUSHDATA1's 255 ceiling.  Plaintext dat
+    dropped it to 241, so it now pins the PUSHDATA1 side of that boundary;
+    the full-packet vector below still exercises PUSHDATA2."""
     pub = PD2["publication"]
     pass_atom = int(pub["pass"], 16)
     payload = cw.jam_bytes(cw.publication_noun(pass_atom, _pd2_opening()))
     assert payload.hex() == pub["jam_publication_le"]
-    assert len(payload) == pub["payload_bytes"] == 269
-    assert len(payload) > 255  # PUSHDATA1 cannot express this
+    assert len(payload) == pub["payload_bytes"] == 241
+    assert 75 < len(payload) <= 255  # PUSHDATA1 territory
 
     script = cw.make_publication_script(pass_atom, _pd2_opening())
     assert script.hex() == pub["op_return_script"]
-    assert len(script) == pub["op_return_script_bytes"] == 279
-    # envelope, then OP_PUSHDATA2 with a TWO-byte LITTLE-ENDIAN length
+    assert len(script) == pub["op_return_script_bytes"] == 250
+    # envelope, then OP_PUSHDATA1 with a ONE-byte length
     assert script[:7] == bytes([0x6A, 0x03, 0x75, 0x72, 0x62, 0x01, 0x09])
-    assert script[7:10].hex() == pub["pushdata"] == "4d0d01"
-    assert script[8] | (script[9] << 8) == 269
-    assert script[10:] == payload
+    assert script[7:9].hex() == pub["pushdata"] == "4cf1"
+    assert script[8] == 241
+    assert script[9:] == payload
 
 
 # ---------------------------------------------------------------------------
@@ -542,16 +281,15 @@ def _full_snapshot(s: dict) -> dict:
 
 
 def _full_opening(o: dict) -> dict:
-    bo = o.get("blind_opening")
+    so = o.get("spawn_opening")
     out = {"internal_key": int(o["internal_key"], 16),
            "snapshot": _full_snapshot(o["snapshot"]),
-           "blind_opening": None}
-    if bo is not None:
-        sp = bo["spawn_sont"]
-        out["blind_opening"] = {
+           "spawn_opening": None}
+    if so is not None:
+        sp = so["spawn_sont"]
+        out["spawn_opening"] = {
             "spawn": {"txid_hex": sp["txid"], "vout": sp["vout"], "off": sp["off"]},
-            "start_height": bo["start_height"],
-            "blind": bytes.fromhex(bo["blind"]),
+            "start_height": so["start_height"],
         }
     return out
 
@@ -569,10 +307,10 @@ def test_golden_full_packet_xtr_and_pass():
     assert xtr.to_bytes((xtr.bit_length() + 7) // 8, "little").hex() == FULL["jam_xtr_le"]
 
     empty = int(FULL["pass_empty"], 16)
-    assert (empty.bit_length() + 7) // 8 == FULL["pass_empty_bytes"] == 108
+    assert (empty.bit_length() + 7) // 8 == FULL["pass_empty_bytes"] == 114
     full = cw.pass_with_xtr(empty, xtr)
     assert format(full, "x").rjust(FULL["pass_full_bytes"] * 2, "0") == FULL["pass_full"]
-    assert (full.bit_length() + 7) // 8 == FULL["pass_full_bytes"] == 500
+    assert (full.bit_length() + 7) // 8 == FULL["pass_full_bytes"] == 471
     # xtr rides outside the key tweak: 'c', ugn, cry and dat are untouched
     assert full & ((1 << (8 + 256 + 256)) - 1) == empty & ((1 << (8 + 256 + 256)) - 1)
 
@@ -583,14 +321,14 @@ def test_golden_full_packet_publication_script():
     opening = _full_opening(FULL["terminal_opening"])
     payload = cw.jam_bytes(cw.publication_noun(pass_full, opening))
     assert payload.hex() == FULL["jam_publication_le"]
-    assert len(payload) == FULL["payload_bytes"] == 588
+    assert len(payload) == FULL["payload_bytes"] == 560
     assert len(payload) > 512, "this is the packet the old cap could not carry"
 
     script = cw.make_publication_script(pass_full, opening)
     assert script.hex() == FULL["op_return_script"]
-    assert len(script) == FULL["op_return_script_bytes"] == 598
-    assert script[7:10].hex() == FULL["pushdata"] == "4d4c02"
-    assert script[8] | (script[9] << 8) == 588
+    assert len(script) == FULL["op_return_script_bytes"] == 570
+    assert script[7:10].hex() == FULL["pushdata"] == "4d3002"
+    assert script[8] | (script[9] << 8) == 560
 
 
 def test_max_publication_is_the_agreed_cap():
@@ -601,7 +339,7 @@ def test_max_publication_is_the_agreed_cap():
     (3, "03"), (75, "4b"),                      # direct push: opcode IS the length
     (76, "4c4c"), (254, "4cfe"), (255, "4cff"),  # PUSHDATA1, one length byte
     (256, "4d0001"), (269, "4d0d01"), (512, "4d0002"),  # PUSHDATA2, LE length
-    (588, "4d4c02"), (1024, "4d0004"),
+    (560, "4d3002"), (588, "4d4c02"), (1024, "4d0004"),
 ])
 def test_push_data_boundaries(n, head):
     assert cw.push_data(b"\xab" * n).hex() == head
@@ -618,7 +356,7 @@ def test_publication_script_refuses_over_cap():
     big = {"internal_key": int("ab" * 500, 16),
            "snapshot": {"life": 1, "rift": 0, "key": int("cd" * 500, 16),
                         "sponsor": None, "fief": None},
-           "blind_opening": None}
+           "spawn_opening": None}
     over = int("ef" * 400, 16)
     assert len(cw.jam_bytes(cw.publication_noun(over, big))) > cw.MAX_PUBLICATION
     with pytest.raises(ValueError, match="publication payload"):
@@ -704,8 +442,8 @@ def test_spawn_public_adds_op_return():
     opening = {
         "internal_key": int.from_bytes(b"\x02" + u["funding_internal_xonly"], "big"),
         "snapshot": snap,
-        "blind_opening": {"spawn": {"txid_hex": u["utxo_txid"], "vout": 0, "off": 0},
-                          "start_height": 0, "blind": b"\x11" * 32},
+        "spawn_opening": {"spawn": {"txid_hex": u["utxo_txid"], "vout": 0, "off": 0},
+                          "start_height": 0},
     }
     p, proof = cw.build_spawn_psbt(**u, snapshot=snap,
                                    publication_pass_atom=0xDEAD, publication_opening=opening)
@@ -838,7 +576,7 @@ def test_ring_xtr_append_and_pass_roundtrip():
     # A miner-fresh ring has no xtr; appending one must leave dat (and hence the
     # @p) unchanged and surface the xtr in the derived pass.
     sp = BASIC["spawn_sont"]
-    dat = cw.build_dat_atom(sp["txid"], sp["vout"], sp["off"], int(BASIC["seed"], 16))
+    dat = cw.build_dat_atom(sp["txid"], sp["vout"], sp["off"])
     w = cw.BitWriter()
     w.write(8, ord("C"))
     w.write(512, 0xDEAD << 496 | 0xBEEF)  # arbitrary 64-byte seed material
@@ -1018,7 +756,6 @@ def _spawn_proof(**over) -> dict:
         "network": "main",
         "funding": {"txid": FUNDING_TXID, "vout": 1, "value": 2_000},
         "commit_txid": SPAWN_TXID,
-        "blind_hex": "cc" * 32,
     }
     proof.update(over)
     return proof
@@ -1085,17 +822,17 @@ def _xtr_start_height(xtr: int) -> int:
 
     xtr           = (jam (list custody-entry))
     custody-entry = [txid height opening=(unit opening)]
-    opening       = [internal-key snapshot blind-opening=(unit blind-opening)]
-    blind-opening = [spawn start-height blind]
+    opening       = [internal-key snapshot spawn-opening=(unit spawn-opening)]
+    spawn-opening = [spawn start-height]
     """
     log = cw.hoon_cue(xtr)
     entry0 = log[0]
     opening = entry0[1][1][1]          # (unit opening) -> opening
-    blind_opening = opening[1][1][1]   # (unit blind-opening) -> blind-opening
-    return blind_opening[1][0]
+    spawn_opening = opening[1][1][1]   # (unit spawn-opening) -> spawn-opening
+    return spawn_opening[1]            # start-height is the tail
 
 
-def test_finalize_bakes_the_funding_height_into_the_blind_opening(tmp_path, monkeypatch):
+def test_finalize_bakes_the_funding_height_into_the_spawn_opening(tmp_path, monkeypatch):
     _stub_mempool(monkeypatch)
     path = tmp_path / "spawn.json"
     cw.write_proof_json(_spawn_proof(), str(path))
@@ -1301,10 +1038,9 @@ def test_custody_entry_poke_shape_for_a_spawn():
         "opening": {
             "internal_key": int("02" + "ab" * 32, 16),
             "snapshot": {"life": 1, "rift": 0, "key": 0xC0FFEE, "sponsor": None, "fief": None},
-            "blind_opening": {
+            "spawn_opening": {
                 "spawn": {"txid_hex": "ad" * 32, "vout": 1, "off": 0},
                 "start_height": 900_100,
-                "blind": bytes.fromhex("cc" * 32),
             },
         },
     }
@@ -1312,7 +1048,7 @@ def test_custody_entry_poke_shape_for_a_spawn():
     assert line.startswith(":gw-btc &noun [%gw-custody-entry ")
     # entry = [txid height opening]; the opening is PRESENT (a spawn)
     assert " 900.142 `[" in line
-    # the blind-opening carries the FUNDING tx's height, not the entry's
+    # the spawn-opening carries the FUNDING tx's height, not the entry's
     assert "900.100" in line
     assert "900.142" != "900.100"
     # sponsor absent, fief absent -> two bare ~ inside the snapshot
@@ -1331,9 +1067,7 @@ def test_custody_entry_poke_shape_for_a_spawn():
         + cw.format_hoon_ux("02" + "ab" * 32)
         + " [1 0 0xc0.ffee ~ ~] `[["
         + cw.format_hoon_ux("ad" * 32)
-        + " 1 0] 900.100 "
-        + cw.format_hoon_ux("cc" * 32)
-        + "]]]]"
+        + " 1 0] 900.100]]]]"
     )
 
 
@@ -1345,7 +1079,7 @@ def test_custody_entry_poke_renders_sponsor_and_a_bare_hop():
             "internal_key": int("02" + "ab" * 32, 16),
             "snapshot": {"life": 2, "rift": 0, "key": 0xC0FFEE,
                          "sponsor": cw.patp_to_int("~marzod"), "fief": None},
-            "blind_opening": None,     # a state update, not a spawn
+            "spawn_opening": None,     # a state update, not a spawn
         },
     }
     line = cw.format_custody_entry_poke(entry)
@@ -1387,7 +1121,7 @@ def _c3_entry(snapshot) -> dict:
         "opening": {
             "internal_key": int("02" + C3_INTERNAL_X, 16),
             "snapshot": snapshot,
-            "blind_opening": None,     # a state update, not the spawn
+            "spawn_opening": None,     # a state update, not the spawn
         },
     }
 
@@ -2476,7 +2210,7 @@ def test_recue_guard_rejects_a_boot_pass_publication():
     packet = cw.make_publication_script(cw.pass_with_xtr(_PUB_PASS, xtr), opening)
     # ...and the two really are near-identical on the wire, which is the point
     assert boot[:7] == packet[:7]
-    assert len(packet) - len(boot) == 393
+    assert len(packet) - len(boot) == 359   # the 358-byte xtr + one length byte
 
     with pytest.raises(ValueError, match="carries NO custody log"):
         cw.assert_publication_carries_log(boot, xtr=xtr, entries=6)
@@ -2515,8 +2249,8 @@ def test_publish_dry_run_builds_the_whole_packet(tmp_path):
     assert pass_atom != _PUB_PASS
     # GUARD 2 — the terminal opening's blind-opening unit is ~ (0): the dat
     # opening may sit on entry 0 only, and entry 0 is inside the xtr.
-    _internal_key, (_snapshot, blind_opening_unit) = opening
-    assert blind_opening_unit == 0
+    _internal_key, (_snapshot, spawn_opening_unit) = opening
+    assert spawn_opening_unit == 0
     # nothing was signed and nothing was broadcast
     assert not [f for f in os.listdir(str(tmp_path)) if f.endswith(".proof.json")
                 and "publish" in f]
@@ -2978,27 +2712,64 @@ def test_tui_panels_scroll_when_the_window_is_small():
 
 
 def test_proof_json_is_written_0600(tmp_path):
-    """proof.json carries blind_hex — the secret half of the dat opening —
-    and must get the same 0600 treatment as the feed."""
+    """proof.json is half the identity bundle and gets the same 0600 treatment
+    as the feed."""
     import stat
     path = str(tmp_path / "x-spawn.proof.json")
-    cw.write_proof_json({"op": "spawn", "blind_hex": "ab"}, path)
+    cw.write_proof_json({"op": "spawn", "patp": "~zod"}, path)
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
-    assert cw.load_proof_json(path)["blind_hex"] == "ab"
+    assert cw.load_proof_json(path)["patp"] == "~zod"
 
 
-def test_connect_default_blind_is_proof_file_entropy(monkeypatch, tmp_path):
-    """With no --blind-mnemonic, the connect flow's blind is fresh entropy and
-    the proof records blind_derivation="proof-file-entropy" — the file IS the
-    custody object.  The legacy phrase path stays reachable via
-    --blind-mnemonic (covered by the recoverability test above)."""
-    proof = {}
-    fake_utxo = {"txid": "cc" * 32, "vout": 1, "height": 900100}
-    cw._finish_spawn_proof(
-        proof, comet="~sampel", pass_atom=0xC0FFEE, blind=b"\x11" * 32,
-        blind_seed=0x22, utxo=fake_utxo,
-        blind_derivation=cw.BLIND_DERIV_PROOF_FILE)
-    assert proof["blind_derivation"] == "proof-file-entropy"
-    assert proof["blind_hex"] == "11" * 32
-    # and the ceremony machinery is actually gone, not merely bypassed
-    assert not hasattr(cw, "obtain_blind_mnemonic")
+
+
+# ---------------------------------------------------------------------------
+# dat is the PLAINTEXT spawn satpoint (2026-08-18 reversion to the original)
+#
+# Jake and Christian's spec put the satpoint in the tweak in cleartext:
+# (cat 0 (mat dom) <spawn satpoint>).  A hiding commitment with a blind
+# replaced it during the OP_RETURN revision and was reverted: the pass and the
+# attestation are one object, so every pass-holder held the opening anyway.
+# These pin the reverted shape at the level that matters -- the bytes agree
+# with the compiled Hoon codec -- and the property that motivates it.
+# ---------------------------------------------------------------------------
+
+def test_dat_is_plaintext_and_round_trips():
+    txid = "aa" * 31 + "07"
+    dat = cw.build_dat_atom(txid, 3, 0)
+    dom, kel, spawn = cw.parse_dat_atom(dat)
+    assert (dom, kel) == ("gw-btc", 9)
+    assert spawn == cw.spawn_sont_noun(txid, 3, 0)
+    # a different satpoint is a different dat -- the @p really commits to it
+    assert cw.build_dat_atom(txid, 4, 0) != dat
+    # and there is nothing else in it: no seed, no blind, no hash
+    assert cw.build_dat_atom(txid, 3, 0) == dat
+
+
+def test_dat_matches_the_hoon_codec_golden():
+    """+make-dat:gw-btc-pass on a fake ship, for the Hoon test fixture
+    [txid=0x1234.5678.9abc.def0 vout=1 off=0], printed 0x58.c8d1.59e2.6af3.
+    7bc3.b00a.9012.4637.4622.d776.77c0 (167 bits) and parsed back to the same
+    satpoint.  Two implementations, one number."""
+    txid = format(0x123456789abcdef0, "064x")
+    dat = cw.build_dat_atom(txid, 1, 0)
+    assert dat == 0x58c8d159e26af37bc3b00a901246374622d77677c0
+    assert dat.bit_length() == 167
+    assert BASIC["dat"] == "58c8d159e26af37bc3b00a901246374622d77677c0"
+
+
+def test_dat_rejects_trailing_data():
+    txid = "bb" * 32
+    dat = cw.build_dat_atom(txid, 0, 0)
+    with pytest.raises(ValueError):
+        cw.parse_dat_atom((0xab << dat.bit_length()) | dat)
+
+
+def test_no_blind_machinery_survives():
+    """The removal is a subtraction, not a bypass: none of the blind-era
+    entry points exist, so nothing can quietly mint an old-format identity."""
+    for name in ("make_blind", "derive_blind_seed", "blind_from_mnemonic",
+                 "spawn_commit", "obtain_blind_mnemonic", "normalize_blind_mnemonic",
+                 "BLIND_DERIV_WALLET_SEED", "BLIND_DERIV_BLIND_MNEMONIC",
+                 "BLIND_DERIV_PROOF_FILE"):
+        assert not hasattr(cw, name), name

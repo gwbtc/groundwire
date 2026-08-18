@@ -1937,7 +1937,7 @@
 ::  Recognize the public onboarder's intentionally absent xtr tail.  This is
 ::  narrower than an empty decoded custody log: `(jam ~)` is a present but
 ::  invalid confidential attestation and must receive a negative verdict.
-::  The hiding dat commitment is not opened here (no blind is carried), so
+::  The spawn satpoint in dat is not checked against the chain here, so
 ::  this only confirms a well-formed suite-C %gw-btc pass with no xtr; the
 ::  block scanner resolves the actual on-chain spawn.
 ++  public-pass

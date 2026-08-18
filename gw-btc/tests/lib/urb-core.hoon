@@ -92,8 +92,7 @@
 ::  ---- identity ------------------------------------------------------
 ++  seed   'urb-core-comet'
 ++  fund   ^-(sont:ord [0xf00d 0 0])
-++  blind  (make-blind:cc seed)
-++  dat    (make-dat:cc fund blind)
+++  dat    (make-dat:cc fund)
 ++  pass-of
   |=  xtr=@
   ^-  pass
@@ -121,7 +120,7 @@
 ++  ikey0     (mk-ikey 11)
 ++  ikey1     (mk-ikey 13)
 ++  ikey2     (mk-ikey 17)
-++  spawn-open  ^-(blind-opening:sa [fund start-height=699 blind])
+++  spawn-open  ^-(spawn-opening:sa [fund start-height=699])
 ++  opening0  ^-(opening:sa [ikey0 snap0 `spawn-open])
 ++  opening2  ^-(opening:sa [ikey2 snap1 ~])
 ::
@@ -395,7 +394,7 @@
   =/  res  (verify u.sat fund-tx ~[spawn-tx])
   ;:  weld
     (expect !>(ok.verdict.res))
-    (expect !>((got-check verdict.res 'spawn-commit')))
+    (expect !>((got-check verdict.res 'spawn-matches')))
     (expect !>((got-check verdict.res 'entry-0-commitment')))
     (expect !>(?=(^ point.res)))
   ==
@@ -404,7 +403,7 @@
 ::  has moved since the spawn, publishes -- and is accepted.
 ::
 ::  This never once worked.  ++process-publication used to route it to
-::  ++apply-spawn (it carries a blind-opening and we track no point for
+::  ++apply-spawn (it carries a spawn-opening and we track no point for
 ::  it), and ++apply-spawn demanded that input 0 BE the spawn satpoint.
 ::  It is not: this transaction spends the sat's CURRENT home, two hops
 ::  along.  The other branch refused it too, because a stranger has no
@@ -430,7 +429,7 @@
     ::  the dat commitment still binds the name to the SPAWN satpoint,
     ::  which is where the walk starts
     ::
-    (expect !>((got-check verdict.res 'spawn-commit')))
+    (expect !>((got-check verdict.res 'spawn-matches')))
     ::  and every hop between there and here checked out
     ::
     (expect !>((got-check verdict.res 'entry-1-continuity')))

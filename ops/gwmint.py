@@ -2,24 +2,13 @@
 """gwmint — drive a real mainnet Groundwire kelvin-9 confidential-comet spawn.
 
 Reuses causeway.py's encoders verbatim (no second implementation of any
-encoder).  The only thing this adds over `causeway spawn` is:
+encoder).  The only thing this adds over `causeway spawn` is a hard
+verification gate before broadcast, and scriptable control of every step.
 
-  * a WALLET-SEED-DERIVED blind.  (causeway's CLI derives its blind too now
-    -- from a BIP-39 phrase and the funding outpoint, see derive_blind_seed
-    -- so this is a difference of WHICH secret it hangs off, not of
-    recoverable versus not.  The web client is the one still using
-    crypto.getRandomValues.)  And
-  * a hard verification gate before broadcast.
-
-blind derivation (RECORD THIS):
-    bip39_seed  = BIP39-seed(mnemonic, passphrase="")            # 64 bytes
-    preimage    = bip39_seed || b"gw/spawn-blind-seed" || txid_be32 || vout_le4
-    blind_seed  = int.from_bytes(sha256(preimage), "big")        # an @ atom
-    blind       = H_tag("gw/spawn-blind", minimal_LE_bytes(blind_seed))
-                = causeway.make_blind(blind_seed)
-
-  txid_be32 = bytes.fromhex(<display-order txid>)   (32 bytes)
-  vout_le4  = vout.to_bytes(4, "little")
+dat is the PLAINTEXT spawn satpoint (2026-08-18; the blind era is over):
+    dat = (can 0 (mat %gw-btc) (mat 9) (mat (jam [txid vout off])) ~)
+so the identity is fixed the moment the funding UTXO is chosen, and nothing
+the wallet holds enters the tweak.
 """
 import hashlib
 import json
@@ -219,13 +208,6 @@ def load_wallet():
             "addr": addr, "spk": spk, "bip39_seed": bip39_seed}
 
 
-def blind_seed_for(bip39_seed: bytes, txid_hex: str, vout: int) -> int:
-    preimage = (bip39_seed + b"gw/spawn-blind-seed"
-                + bytes.fromhex(txid_hex) + vout.to_bytes(4, "little"))
-    assert len(bytes.fromhex(txid_hex)) == 32
-    return int.from_bytes(hashlib.sha256(preimage).digest(), "big")
-
-
 def statefile(label):
     return os.path.join(STATE_DIR, f"state-{label}.json")
 
@@ -252,19 +234,12 @@ def rpc(method, params=None):
 
 # --------------------------------------------------------------------- steps
 def cmd_mine(label, txid, vout):
-    w = load_wallet()
-    bs = blind_seed_for(w["bip39_seed"], txid, vout)
-    blind = C.make_blind(bs)
-    dat = C.build_dat_atom(txid, vout, 0, bs)
-    expr = C.make_dat_expr(txid, vout, 0, bs)
-    d = C.spawn_commit(txid, vout, 0, blind)
+    dat = C.build_dat_atom(txid, vout, 0)
+    expr = C.make_dat_expr(txid, vout, 0)
 
     print(f"label       : {label}")
     print(f"funding utxo: {txid}:{vout}")
-    print(f"blind_seed  : {bs:064x}")
-    print(f"blind       : {blind.hex()}")
-    print(f"d           : {d.hex()}")
-    print(f"dat         : {hex(dat)}")
+    print(f"dat         : {hex(dat)}   (plaintext satpoint; parses back: {C.parse_dat_atom(dat)[2]})")
     print(f"tweak expr  : {expr}")
     print()
 
@@ -293,8 +268,7 @@ def cmd_mine(label, txid, vout):
 
     st = {
         "label": label, "funding": {"txid": txid, "vout": vout},
-        "blind_seed_hex": f"{bs:064x}", "blind_hex": blind.hex(),
-        "d_hex": d.hex(), "dat_hex": hex(dat), "dat_expr": expr,
+        "dat_hex": hex(dat), "dat_expr": expr,
         "comet": comet, "mnemonym": C.patp_to_mnemonym(comet),
         "seed": res.get("seed"), "ring": ring, "feed": res.get("feed"),
         "pass_atom_hex": hex(pass_atom),
@@ -356,7 +330,7 @@ def cmd_build(label, publish=False, fief=None, sponsor=None, fee_rate=1,
     if publish:
         # A SPAWN publication is the degenerate packet: xtr empty, so the
         # watcher completes a one-entry log whose single entry is this
-        # transaction, and its opening carries the blind-opening.  That is
+        # transaction, and its opening carries the spawn-opening.  That is
         # correct here and only here -- see cmd_publish for the late case.
         pub_pass = pass_atom
         # start-height names the block of the transaction that CREATED the
@@ -376,10 +350,9 @@ def cmd_build(label, publish=False, fief=None, sponsor=None, fee_rate=1,
         pub_open = {
             "internal_key": int.from_bytes(b"\x02" + w["xonly"], "big"),
             "snapshot": snapshot,
-            "blind_opening": {
+            "spawn_opening": {
                 "spawn": {"txid_hex": txid, "vout": vout, "off": 0},
                 "start_height": fh,
-                "blind": bytes.fromhex(st["blind_hex"]),
             },
         }
 
@@ -658,7 +631,6 @@ def cmd_artifact(label, n):
     proof["block_height"] = height
     proof["block_hash"] = st["block_hash"]
     proof["patp"] = st["comet"]
-    proof["blind_hex"] = st["blind_hex"]
     proof["dat_hex"] = st["dat_hex"]
 
     ok, why = C.verify_proof_self(proof)
@@ -690,17 +662,16 @@ def cmd_artifact(label, n):
     assert fh <= height, f"funding height {fh} above spawn height {height}"
     print(f"  funding height      : {fh}  (spawn is at {height})")
 
-    # bake the xtr (entry 0 = the spawn, opening the dat commitment)
+    # bake the xtr (entry 0 = the spawn, naming the sat and its start height)
     entry = dict(
         txid_hex=txid, height=height,
         opening=dict(
             internal_key=int("02" + proof["internal_pubkey_hex"], 16),
             snapshot=snapshot,
-            blind_opening=dict(
+            spawn_opening=dict(
                 spawn=dict(txid_hex=st["funding"]["txid"],
                            vout=st["funding"]["vout"], off=0),
                 start_height=fh,
-                blind=bytes.fromhex(st["blind_hex"]),
             ),
         ),
     )
@@ -757,23 +728,13 @@ def cmd_artifact(label, n):
             "commitment, no @p and no on-chain data -- only the xtr custody "
             "log and the xtr-baked boot feed."),
 
-        "blind_derivation": {
-            "scheme": ("blind = H_tag('gw/spawn-blind', minimal_LE_bytes(blind_seed)) "
-                       "[= causeway.make_blind(blind_seed)]; "
-                       "blind_seed = int(sha256(bip39_seed_64 || b'gw/spawn-blind-seed' "
-                       "|| txid_be32 || vout_le4), 'big')"),
-            "bip39_seed": ("BIP-39 seed of the mnemonic in "
-                           "/Users/trent/gw-building/.gw-mainnet-wallet.json, "
-                           "empty passphrase, 64 bytes"),
-            "txid_be32": "bytes.fromhex(<display-order funding txid>)",
-            "vout_le4": "<funding vout>.to_bytes(4,'little')",
-            "blind_seed_hex": st["blind_seed_hex"],
-            "blind_hex": st["blind_hex"],
-        },
+        "dat_format": ("plaintext: dat = (can 0 (mat %gw-btc) (mat 9) (mat (jam "
+                       "[txid vout off])) ~). No blind, no hash; the satpoint is "
+                       "readable from any pass (2026-08-18 reversion to the original "
+                       "spec's cleartext tweak)."),
 
         "spawn_sont": {"txid": st["funding"]["txid"],
                        "vout": st["funding"]["vout"], "off": 0},
-        "spawn_commit_d_hex": st["d_hex"],
         "dat_hex": st["dat_hex"],
         "dat_expr": st["dat_expr"],
 
@@ -926,11 +887,11 @@ def cmd_publish(label, artifact_n, fee_rate=4, fund=False, sat_target=None):
     pub_open = {
         "internal_key": int("02" + proof["internal_pubkey_hex"], 16),
         "snapshot": new_snap,
-        # The dat opening may sit ONLY on entry 0 -- `blind-opening-zero` in
+        # The spawn opening may sit ONLY on entry 0 -- `spawn-opening-zero` in
         # +run-checks -- and entry 0 is inside the xtr above, carrying the
         # real start-height the artifact recorded.  This transaction is entry
         # N>0, so its own opening carries none.
-        "blind_opening": None,
+        "spawn_opening": None,
     }
 
     fund_kwargs = {}
@@ -1097,8 +1058,8 @@ def cmd_publish(label, artifact_n, fee_rate=4, fund=False, sat_target=None):
         chk("payload parses, and its pass carries the custody log", False, str(e))
     chk("published pass is not the boot pass",
         pub_pass != int(art["pass_atom_hex"], 16))
-    chk("terminal opening carries no blind-opening (entry 0 owns it)",
-        pub_open["blind_opening"] is None)
+    chk("terminal opening carries no spawn-opening (entry 0 owns it)",
+        pub_open.get("spawn_opening", pub_open.get("blind_opening")) is None)
 
     # Core 29 rejects our OP_RETURN by policy, so testmempoolaccept on the real
     # script is expected to fail; prove the SIGNING path instead by swapping in

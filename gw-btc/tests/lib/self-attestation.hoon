@@ -72,7 +72,7 @@
 ::
 ++  no-points  *(set ship)
 ::  --------------------------------------------------------------------
-::  Identity: seed -> blind -> dat -> suite-C pass; who = fig(pass).
+::  Identity: spawn satpoint -> dat -> suite-C pass; who = fig(pass).
 ::  The messaging key (cry.pub) is independent of the mutable xtr, so it
 ::  is computed once and pinned into every committed snapshot.
 ::  --------------------------------------------------------------------
@@ -81,8 +81,7 @@
 ++  c0-id      0x2b2b.2b2b
 ++  c1-id      0x3c3c.3c3c
 ++  spawn      ^-(sont:ord [start-id 0 0])
-++  blind      (make-blind:cc seed)
-++  dat        (make-dat:cc spawn blind)
+++  dat        (make-dat:cc spawn)
 ::
 ++  base-pass  pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat 0)
 ++  who
@@ -101,9 +100,9 @@
 ::
 ++  ikey0  (mk-ikey 17)
 ++  ikey1  (mk-ikey 23)
-::  blind-opening on entry 0 opens the hiding dat commitment.
+::  spawn-opening on entry 0 names the sat the pass's dat commits to.
 ::
-++  spawn-open  ^-(blind-opening:sa [spawn start-height=778.000 blind])
+++  spawn-open  ^-(spawn-opening:sa [spawn start-height=778.000])
 ++  open0       ^-(opening:sa [ikey0 snap0 `spawn-open])
 ::
 ::  start (funding) tx: output 0 holds the spawn sat.
@@ -165,12 +164,12 @@
 ::  ---------------------------------------------------------------------
 ::
 ::  Both height fields move -- the entry's own .height and the
-::  .start-height inside entry 0's $blind-opening -- because a reorg deep
+::  .start-height inside entry 0's $spawn-opening -- because a reorg deep
 ::  enough to move the custody transaction moves the funding transaction
 ::  too.  Nothing else changes: same txids, same outpoints, same
 ::  commitments, same spawn sat.
 ::
-++  spawn-open-r  ^-(blind-opening:sa [spawn start-height=777.000 blind])
+++  spawn-open-r  ^-(spawn-opening:sa [spawn start-height=777.000])
 ++  open0-r       ^-(opening:sa [ikey0 snap0 `spawn-open-r])
 ++  chain-r
   ^-  custody-log:sa
@@ -368,15 +367,15 @@
 ::
 ++  test-run-wrong-dat-binding
   ::  a pass whose dat commits a different spawn satpoint than the
-  ::  blind-opening reveals fails the spawn-commit binding.
+  ::  spawn-opening names fails the spawn-matches binding.
   ::
-  =/  wrong-dat  (make-dat:cc [start-id 7 0] blind)
+  =/  wrong-dat  (make-dat:cc [start-id 7 0])
   =/  bad-pass
     pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c wrong-dat (jam chain))
   =/  res  (run [who bad-pass chain] ~[c0-tx c1-tx] ~)
   ;:  weld
     (expect !>(!ok.verdict.res))
-    (expect !>(!(got-check verdict.res 'spawn-commit')))
+    (expect !>(!(got-check verdict.res 'spawn-matches')))
   ==
 ::
 ++  test-run-tip-status-fails-closed
@@ -521,7 +520,7 @@
 ::  BUG 2: a log is a fork or not by its HOPS, never by their heights
 ::  ---------------------------------------------------------------------
 ::
-::  Custody entries carry a block height, and entry 0's $blind-opening
+::  Custody entries carry a block height, and entry 0's $spawn-opening
 ::  carries the funding transaction's, so heights sit INSIDE the log the
 ::  pass commits to.  Comparing whole entries therefore made an ordinary
 ::  Bitcoin reorg -- which at block-confirmations=1 happens several times
@@ -773,7 +772,7 @@
   =/  e0   `custody-entry:sa`[c0-id 100 `open0]
   =/  e1   `custody-entry:sa`[c1-id 101 ~]
   ::  the same two hops after a reorg: both heights moved, including the
-  ::  start-height inside entry 0's blind-opening.
+  ::  start-height inside entry 0's spawn-opening.
   ::
   =/  e0r  `custody-entry:sa`[c0-id 90 `open0-r]
   =/  e1r  `custody-entry:sa`[c1-id 91 ~]
@@ -958,7 +957,7 @@
     pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c dat (jam bad-chain))
   =/  forged-commitment  (run [who bad-pass bad-chain] ~[c0-tx c1-tx] ~)
   ::
-  =/  wrong-dat  (make-dat:cc [start-id 7 0] blind)
+  =/  wrong-dat  (make-dat:cc [start-id 7 0])
   =/  wrong-pass
     pub:ex:(pit:nu:cric:crypto 512 (shaz seed) %c wrong-dat (jam chain))
   =/  wrong-name  (run [who wrong-pass chain] ~[c0-tx c1-tx] ~)

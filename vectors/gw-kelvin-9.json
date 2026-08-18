@@ -1,12 +1,10 @@
 {
-  "description": "Shared golden vectors for the %gw-btc kelvin-9 (OP_RETURN) formats. The authority is the Hoon desk; values were computed with `urbit eval` against zuse's secp tagged hash and jam, and cross-checked in Python. Consumed by the Hoon tests (gw-btc/tests/lib/gw-btc-pass.hoon) and Causeway desktop (causeway/desktop/tests/test_causeway.py). Both MUST agree with this file byte-for-byte. (A third consumer, the Causeway web front end, was deleted; any future implementation joins this list or is wrong.)",
+  "description": "Shared golden vectors for the %gw-btc kelvin-9 (OP_RETURN) formats. The authority is the Hoon desk; values were computed with the compiled gw-btc-pass lib on a fake ship (2026-08-18 regeneration, plaintext dat) and cross-checked in Python. Consumed by the Hoon tests (gw-btc/tests/lib/gw-btc-pass.hoon) and Causeway desktop (causeway/desktop/tests/test_causeway.py). Both MUST agree with this file byte-for-byte.",
   "conventions": {
     "tagged_hash": "H_tag(tag, msg) = sha256(sha256(tag) || sha256(tag) || msg); tag is the ASCII tag string; output is 32 big-endian bytes.",
     "jam": "A jammed noun is serialized to its minimal little-endian byte string. In this file every `jam_*_le` field is that byte string in hex (first byte = least significant. Tagged-hash preimages consume a jam in exactly this little-endian byte order (matching the Hoon lib's jam-octs); do NOT byte-reverse). A noun is an atom (unsigned int) or a cell [head, tail]; cells right-associate: [a b c] == [a [b c]].",
     "unit": "(unit x): the null unit ~ is the atom 0; a full unit [~ v] is the cell [0, v].",
-    "dat": "dat = can(0, [mat(dom), mat(9), [256, d]]) \u2014 bit-level: mat-encoded domain tag at bit 0, then mat-encoded kelvin 9, then exactly 256 bits of d. `dat` below is the resulting atom in big-endian hex. Decoders reject trailing data.",
-    "spawn_commit": "d = H_tag('gw/spawn-commit', jam(spawn_sont)_le_bytes || blind)",
-    "blind": "blind = H_tag('gw/spawn-blind', seed_le_bytes)  (seed as its minimal little-endian byte string)",
+    "dat": "dat = can(0, [mat(dom), mat(9), mat(jam(spawn_sont))]) -- bit-level: mat-encoded domain tag at bit 0, then mat-encoded kelvin 9, then the mat-encoded jam of the spawn satpoint noun [txid vout off]. The satpoint is PLAINTEXT and readable by any pass-holder. `dat` is the resulting atom in big-endian hex. Decoders reject trailing data. (Until 2026-08-18 the third item was a 256-bit hiding commitment H_tag('gw/spawn-commit', jam(sont)||blind); that format is retired.)",
     "state_commit": "c = H_tag('gw/state-commit', jam(snapshot)_le_bytes)",
     "state_leaf": "tapleaf, version 0xc0, script = OP_RETURN PUSH2 'gw' PUSH32 c = bytes 6a 02 67 77 20 || c (37 bytes). Single-leaf tree: merkle root == TapLeaf hash.",
     "state_output_key_q": "Q = taproot output key = x-coordinate of lift_x(P) + H_tag('TapTweak', x(P) || leafhash)*G, where P is the 33-byte compressed internal key and leafhash is the TapLeaf hash of the state leaf. The sat-carrying output's scriptPubKey is OP_1 PUSH32 Q.",
@@ -17,7 +15,8 @@
     "snapshot": "snapshot = [life, rift, key, sponsor, fief]; sponsor = (unit @p); fief = (unit fief); key is the messaging key (cry.pub of the suite-C pass). As a noun: [life [rift [key [sponsor fief]]]].",
     "custody_entry": "custody log entry = [txid, height, opening] where opening = (unit opening). xtr = jam(list of entries, oldest first).",
     "fief": "(unit fief); fief = [%turf p q] | [%if p q] | [%is p q]. As a noun: [tag, [p, q]], tag being the term's own little-endian cord atom (%if = 26217, %is = 29545, %turf = 1718903156). For %if, p is the IPv4 address as its ordinary big-endian 32-bit integer (.64.227.13.22 = 1088621846) and q is the UDP port. Absent in the `basic` and `state-key-pin` vectors; present in `pushdata2-fief`.",
-    "with_xtr": "with_xtr(pass, xtr): re-encode a suite-%c pass around a different xtr tail.  Layout is 'c'(8 bits) | ugn(256) | cry(256) | mat(dat) | xtr, with xtr riding at its exact bit length ((met 0 xtr)) and OMITTED entirely when 0.  ugn, cry and dat are copied verbatim, so fig (the @p) is unchanged: xtr is outside the key tweak.  Mirrors +with-xtr:gw-btc-pass, pass_with_xtr() in causeway.py and passWithXtr() in src/spawn/mine-c.ts."
+    "with_xtr": "with_xtr(pass, xtr): re-encode a suite-%c pass around a different xtr tail.  Layout is 'c'(8 bits) | ugn(256) | cry(256) | mat(dat) | xtr, with xtr riding at its exact bit length ((met 0 xtr)) and OMITTED entirely when 0.  ugn, cry and dat are copied verbatim, so fig (the @p) is unchanged: xtr is outside the key tweak.  Mirrors +with-xtr:gw-btc-pass, pass_with_xtr() in causeway.py and passWithXtr() in src/spawn/mine-c.ts.",
+    "spawn_opening": "spawn-opening = [spawn_sont start_height]; opening = [internal_key snapshot spawn_opening=(unit ...)]. Entry 0 of a custody log carries a spawn-opening; start_height is the funding tx's block."
   },
   "vectors": [
     {
@@ -27,12 +26,8 @@
         "vout": 1,
         "off": 0
       },
-      "seed": "deadbeef",
-      "seed_bytes_le": "efbeadde",
       "jam_spawn_le": "0176786f5e4d3c2b1a190b",
-      "blind": "f0dedc6a72ecb8c16b5daf252b8db53b25104f32c2d9e9bc3459db716535ef2e",
-      "spawn_commit_d": "134aab80f09d97d80efc2573570e2767279aad7b43ea274018a7570d26fc57e0",
-      "dat": "26955701e13b2fb01df84ae6ae1c4ece4f355af687d44e80314eae1a4df8afc1246374622d77677c0",
+      "dat": "58c8d159e26af37bc3b00a901246374622d77677c0",
       "kelvin": 9,
       "domain": "gw-btc",
       "snapshot": {
@@ -47,19 +42,19 @@
       "internal_key_compressed": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
       "state_leaf_script": "6a026777200bea6bbe757e070b8ad98345414f03e494ec67cfbf1e424d2c6e92ca1a59df2b",
       "publication": {
-        "note": "publication = [pass, [internal_key, snapshot, blind_opening]]; here pass=0xdeadbeefcafe, internal_key=0x2cafe, snapshot as above, blind_opening=[spawn_sont, start_height=778000, blind]",
+        "note": "publication = [pass, [internal_key, snapshot, spawn_opening]]; here pass=0xdeadbeefcafe, internal_key=0x2cafe, snapshot as above, spawn_opening=[spawn_sont, start_height=778000]",
         "pass": "deadbeefcafe",
         "internal_key": "2cafe",
         "start_height": 778000,
-        "jam_publication_le": "01427fe577df56ef80e2af6c21332034af969a05d8e1bd7935f1ac68646c4082f85e0002b8bcd794c56d67d1f0a6670bcb3c4194ecd436ae94bc76ad05e3b2cba9717bc303",
-        "payload_bytes": 69,
-        "pushdata": "45",
-        "op_return_script": "6a0375726201094501427fe577df56ef80e2af6c21332034af969a05d8e1bd7935f1ac68646c4082f85e0002b8bcd794c56d67d1f0a6670bcb3c4194ecd436ae94bc76ad05e3b2cba9717bc303",
-        "op_return_script_bytes": 77
+        "jam_publication_le": "01427fe577df56ef80e2af6c21332034af969a05d8e1bd7935f1ac68642c9020be17",
+        "payload_bytes": 34,
+        "pushdata": "22",
+        "op_return_script": "6a0375726201092201427fe577df56ef80e2af6c21332034af969a05d8e1bd7935f1ac68642c9020be17",
+        "op_return_script_bytes": 42
       },
       "xtr": {
-        "note": "two entries oldest-first: entry0 = [txid=0x123...def0, height=778000, opening (full, with blind_opening)], entry1 = [txid=0xfeedface, height=778010, opening=~]",
-        "jam_xtr_le": "05d8e1bd7935f1ac68644082f8de0c28feca16320342f36aa95933631b870210c0e5bda62c6e3b8b86373d5b58e609a264a7b671a5e4b56b2d18975d4e8ddb1bbe0081b37ebb7f40d2f85e05"
+        "note": "two entries oldest-first: entry0 = [txid=0x123...def0, height=778000, opening (full, with spawn_opening)], entry1 = [txid=0xfeedface, height=778010, opening=~]",
+        "jam_xtr_le": "05d8e1bd7935f1ac68644082f8de0c28feca16320342f36aa9593363c7a105089cf5dbfd0392c6f72a"
       }
     },
     {
@@ -81,18 +76,14 @@
     },
     {
       "name": "pushdata2-fief",
-      "note": "THE OP_PUSHDATA2 VECTOR. A realistic public spawn: a real 108-byte suite-%c pass (minted over the `dat` below with an empty xtr), a snapshot committing a fief, and a full blind-opening. That jams to 269 bytes -- past the 255-byte ceiling of OP_PUSHDATA1 -- so op_return_script uses OP_PUSHDATA2: bytes `4d 0d 01`, a TWO-byte LITTLE-ENDIAN 269. Every fief-carrying publication measured in the field is 265-269 bytes, so this is the ordinary shape, not an edge case; before kelvin-9's encoders learned 0x4d, Hoon silently truncated the length byte here and Causeway raised. `key` in the snapshot is the pass's own cry.pub, as a real publication carries. Cross-checked: Hoon (`urbit eval` over lib/gw-btc-pass.hoon) and Python (causeway/desktop/causeway.py) produce byte-identical jam_publication_le and op_return_script.",
+      "note": "THE PUSHDATA1-BOUNDARY VECTOR (formerly the PUSHDATA2 vector). A realistic public spawn: a real 114-byte suite-%c pass minted by +pit:nu:cric over the `dat` below with seed (shaz 'pushdata2-fief') and an empty xtr, a snapshot committing a fief, and a spawn-opening. Without the 32-byte blind the publication jams to 241 bytes -- UNDER the 255-byte OP_PUSHDATA1 ceiling -- so op_return_script uses OP_PUSHDATA1 (`4c f1`). It was 269 bytes / PUSHDATA2 while the blind existed. The full-packet vector still exercises OP_PUSHDATA2. `key` in the snapshot is the messaging key.",
       "spawn_sont": {
         "txid": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
         "vout": 1,
         "off": 0
       },
-      "seed": "feedface",
-      "seed_bytes_le": "cefaedfe",
       "jam_spawn_le": "011000f2d1af8d6b492705e3c0be9c7a583614f2d1af8d6b492705e3c0be9c7a58363416",
-      "blind": "345bc3c5fc0eb35bee8dce5de886b1306e7967e4e111b009ab9e13d228506127",
-      "spawn_commit_d": "55581c16f3ed69f9f3b587ed9eebeb75fb69920e67db5022fac5dd712881c2b4",
-      "dat": "aab0382de7dad3f3e76b0fdb3dd7d6ebf6d3241ccfb6a045f58bbae251038569246374622d77677c0",
+      "dat": "b1a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90008008ec01246374622d77677c0",
       "kelvin": 9,
       "domain": "gw-btc",
       "snapshot": {
@@ -121,24 +112,24 @@
       "state_leaf_hash": "48b562fa7ccef8970736db2c4a3ecc3890271818f56a946f42c6c3bffe8286d4",
       "state_output_key_q": "6c60baebb2f8880a20eed1977ef22eaeb93cf147f287661c12f81f8372400d41",
       "publication": {
-        "note": "publication = [pass, [internal_key, snapshot, blind_opening]]; blind_opening = [spawn_sont, start_height=961059, blind]. pass_bytes/payload_bytes are byte lengths of the hex fields below, given so a reader can see 269 > 255 without counting.",
-        "pass": "2aac0e0b79f6b4fcf9dac3f6cf75f5bafdb4c90733eda8117d62eeb89440e15a4918dd188b5dd9df0112007e5662ba9c7b41343cda615d338992f009596ab8a28912084bffd793abd02bae4d45ed4517a91738d2eeab1876aded77073533e061c872748eb1611c02e4a64063",
-        "pass_bytes": 108,
-        "pass_fig": "~siglur-lapfep-raptud-micdur--nattyn-widnes-tadnul-dacnyx",
+        "note": "publication = [pass, [internal_key, snapshot, spawn_opening]]; spawn_opening = [spawn_sont, start_height=961059]. pass_bytes/payload_bytes are byte lengths of the hex fields below.",
+        "pass": "2c686cb0f5397d81c60a4e92d71b5fa3e4286cb0f5397d81c60a4e92d71b5fa3e40020023b004918dd188b5dd9df01d20002d2a88b153fb631fa388576c742e11f5ca4dbe52ad275f8d89f7e50eaaf7a41bba753636493181b39d1580416eaee6be0b213d4c779ee06491c4fff3e8eae2863",
+        "pass_bytes": 114,
+        "pass_fig": "~salfer-pitpub-motlur-pocbex--tolsem-folnyd-ralpeg-tilbet",
         "internal_key": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
         "start_height": 961059,
-        "jam_publication_le": "01a0d731205372018eb058473a39e430f0999a83bbf6563b8c5577699c8bd48ba2f6a226d715e8d5c9ebff25048944515cb5ac0478c9c499ae306d1e9aa03d4e5d312b3f008980efecae458c6e8c24ad70204a5c77b1be08d4f6998364da7eddfaba67fb61ed7c7e5afbbc05075635000a605ee05b6c05ca6765a338b76cf36f0a1c2c1c3a578a8156b1ee72e7fb99f9e6599c01f8775d815e9dbcfe5f42904814c555cb4a80974c9ce90ad3e6a109dae3d415b3f267063ecd1cf02d1ac68140c850cc022000e4a35f1bd7924e0ac6817d39f5b06c28e4a35f1bd7924e0ac6817d39f5b06c686c401a517500fd27615028d2139eab09b011e1e467796e30b186e85dce8dee5bb30efcc5c35b34",
-        "payload_bytes": 269,
-        "pushdata": "4d0d01",
-        "op_return_script": "6a0375726201094d0d0101a0d731205372018eb058473a39e430f0999a83bbf6563b8c5577699c8bd48ba2f6a226d715e8d5c9ebff25048944515cb5ac0478c9c499ae306d1e9aa03d4e5d312b3f008980efecae458c6e8c24ad70204a5c77b1be08d4f6998364da7eddfaba67fb61ed7c7e5afbbc05075635000a605ee05b6c05ca6765a338b76cf36f0a1c2c1c3a578a8156b1ee72e7fb99f9e6599c01f8775d815e9dbcfe5f42904814c555cb4a80974c9ce90ad3e6a109dae3d415b3f267063ecd1cf02d1ac68140c850cc022000e4a35f1bd7924e0ac6817d39f5b06c28e4a35f1bd7924e0ac6817d39f5b06c686c401a517500fd27615028d2139eab09b011e1e467796e30b186e85dce8dee5bb30efcc5c35b34",
-        "op_return_script_bytes": 279
+        "jam_publication_le": "01a0e3311457479fff278e2403f7bc63ea0959f03577750b02ace89c0d8c49b2b1a9d3dd20bd577528bf4f6cfc3a6995f26d52ae8f70a163bb421cfd18db9f8a4554690100e980efecae458c6e8c24801d011000f2d1af8d6b492705e3c0be9c7a583614f2d1af8d6b492705e3c0be9c7a58363436000a605ee05b6c05ca6765a338b76cf36f0a1c2c1c3a578a8156b1ee72e7fb99f9e6599c01f8775d815e9dbcfe5f42904814c555cb4a80974c9ce90ad3e6a109dae3d415b3f267063ecd1cf02d1ac68140c850cc022000e4a35f1bd7924e0ac6817d39f5b06c28e4a35f1bd7924e0ac6817d39f5b06c682c9046541d",
+        "payload_bytes": 241,
+        "pushdata": "4cf1",
+        "op_return_script": "6a0375726201094cf101a0e3311457479fff278e2403f7bc63ea0959f03577750b02ace89c0d8c49b2b1a9d3dd20bd577528bf4f6cfc3a6995f26d52ae8f70a163bb421cfd18db9f8a4554690100e980efecae458c6e8c24801d011000f2d1af8d6b492705e3c0be9c7a583614f2d1af8d6b492705e3c0be9c7a58363436000a605ee05b6c05ca6765a338b76cf36f0a1c2c1c3a578a8156b1ee72e7fb99f9e6599c01f8775d815e9dbcfe5f42904814c555cb4a80974c9ce90ad3e6a109dae3d415b3f267063ecd1cf02d1ac68140c850cc022000e4a35f1bd7924e0ac6817d39f5b06c28e4a35f1bd7924e0ac6817d39f5b06c682c9046541d",
+        "op_return_script_bytes": 250
       }
     },
     {
       "name": "full-packet",
       "note": "THE FULL-PACKET VECTOR, and the reason MAX_PUBLICATION had to rise. A kelvin-9 publication is the comet's whole attestation packet: `pass` is byte-for-byte the pass it hands a peer over ames -- the same 108-byte suite-%c pass as pushdata2-fief, re-encoded with the custody log below in its `xtr` -- and `opening` is the hop the carrying transaction performs, which the payload cannot name because its txid does not exist until the transaction is signed. A watcher completes the log with [txid height opening] from the block it is reading, giving seven hops. Six carried hops jam to 392 bytes of xtr, a 500-byte pass and a 588-byte payload: over the old 512-byte cap and well inside the new 1024. Hoon (+with-xtr / +make-publication:gw-btc-pass), Causeway desktop (Python) and Causeway web (TS) must all produce these exact bytes.",
-      "pass_empty": "2aac0e0b79f6b4fcf9dac3f6cf75f5bafdb4c90733eda8117d62eeb89440e15a4918dd188b5dd9df0112007e5662ba9c7b41343cda615d338992f009596ab8a28912084bffd793abd02bae4d45ed4517a91738d2eeab1876aded77073533e061c872748eb1611c02e4a64063",
-      "pass_empty_bytes": 108,
+      "pass_empty": "2c686cb0f5397d81c60a4e92d71b5fa3e4286cb0f5397d81c60a4e92d71b5fa3e40020023b004918dd188b5dd9df01d20002d2a88b153fb631fa388576c742e11f5ca4dbe52ad275f8d89f7e50eaaf7a41bba753636493181b39d1580416eaee6be0b213d4c779ee06491c4fff3e8eae2863",
+      "pass_empty_bytes": 114,
       "custody_log": [
         {
           "txid": "1111111111111111111111111111111111111111111111111111111111111111",
@@ -164,14 +155,13 @@
                 ]
               }
             },
-            "blind_opening": {
+            "spawn_opening": {
               "spawn_sont": {
                 "txid": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
                 "vout": 1,
                 "off": 0
               },
-              "start_height": 961055,
-              "blind": "345bc3c5fc0eb35bee8dce5de886b1306e7967e4e111b009ab9e13d228506127"
+              "start_height": 961055
             }
           }
         },
@@ -201,10 +191,10 @@
           "opening": null
         }
       ],
-      "jam_xtr_le": "05603f2222222222222222222222222222222222222222222222222222222222222206a41155cf00288079816fb115289f958de2dcb2cdbf2970b070e85c29065ac5bacb9def67e69b677106e0df75057a75f2fa7f0941225114572d2b015e3271a62b4c9b8726688f5357ccca9f19f83473c0b7681807022143310b8000908f7e6d5c4b3a291807f6e5d4c3b2a1908f7e6d5c4b3a291807f6e5d4c3b2a1b101e943d501f49f8441a1484f78ae26c04684939fe5b9c1c41aa2773937ba6fcd3af0170f6fd105a05f444444444444444444444444444444444444444444444444444444444444440c4850aa6e01e89f999999999999999999999999999999999999999999999999999999999999990312b6aa5b00fe898888888888888888888888888888888888888888888888888888888888888801896dd52d00ff55555555555555555555555555555555555555555555555555555555555555d58084beea16807f33333333333333333333333333333333333333333333333333333333333333734082667505",
-      "xtr_bytes": 392,
-      "pass_full": "015d59a0901cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccdfe005baafa12035555555555555555555555555555555555555555555555555555555555555557fc00b755b624062222222222222222222222222222222222222222222222222222222222222227f8016eaad8480e666666666666666666666666666666666666666666666666666666666666667fa005baa9412031111111111111111111111111111111111111111111111111111111111111117e801745bc3c5fc0eb35bee8dce5de886b1306e7967e4e111b009ab9e13d228506127fd007550fa406c686cb0f5397d81c60a4e92d71b5fa3e4286cb0f5397d81c60a4e92d71b5fa3e4002002cc50c84081c61a2df01ccd3e0667f2b315d4e3da09a1e6d30ae99c4c97804acb55c5144890425ffebc9d5e815d77f8019c59e6f999fbe772eeb156818a573a1c2c1c0a6ff36cb738a36567ca056c5be05e600a0033d5446901888888888888888888888888888888888888888888888888888888888888888fd8016aac0e0b79f6b4fcf9dac3f6cf75f5bafdb4c90733eda8117d62eeb89440e15a4918dd188b5dd9df0112007e5662ba9c7b41343cda615d338992f009596ab8a28912084bffd793abd02bae4d45ed4517a91738d2eeab1876aded77073533e061c872748eb1611c02e4a64063",
-      "pass_full_bytes": 500,
+      "jam_xtr_le": "05603f2222222222222222222222222222222222222222222222222222222222222206a41155cf00288079816fb115289f958de2dcb2cdbf2970b070e85c29065ac5bacb9def67e69b677106e0df75057a75f2fa7f0941225114572d2b015e3271a62b4c9b8726688f5357ccca9f19f83473c0b7681807022143310b8000908f7e6d5c4b3a291807f6e5d4c3b2a1908f7e6d5c4b3a291807f6e5d4c3b2a1b140fa50f502d02f2222222222222222222222222222222222222222222222222222222222222206242855b700f4cfcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc01095bd52d00ff44444444444444444444444444444444444444444444444444444444444444c480c4b6ea1680ffaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa6a40425f750bc0bf99999999999999999999999999999999999999999999999999999999999999392041b3ba02",
+      "xtr_bytes": 358,
+      "pass_full": "aeacd0480e666666666666666666666666666666666666666666666666666666666666666ff002dd57d0901aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabfe005baadb12031111111111111111111111111111111111111111111111111111111111111113fc00b7556c2407333333333333333333333333333333333333333333333333333333333333333fd002dd54a0901888888888888888888888888888888888888888888888888888888888888888bf400bd543e902c686cb0f5397d81c60a4e92d71b5fa3e4286cb0f5397d81c60a4e92d71b5fa3e4002002cc50c84081c61a2df01ccd3e0667f2b315d4e3da09a1e6d30ae99c4c97804acb55c5144890425ffebc9d5e815d77f8019c59e6f999fbe772eeb156818a573a1c2c1c0a6ff36cb738a36567ca056c5be05e600a0033d5446901888888888888888888888888888888888888888888888888888888888888888fd8016c686cb0f5397d81c60a4e92d71b5fa3e4286cb0f5397d81c60a4e92d71b5fa3e40020023b004918dd188b5dd9df01d20002d2a88b153fb631fa388576c742e11f5ca4dbe52ad275f8d89f7e50eaaf7a41bba753636493181b39d1580416eaee6be0b213d4c779ee06491c4fff3e8eae2863",
+      "pass_full_bytes": 471,
       "terminal_opening": {
         "internal_key": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
         "snapshot": {
@@ -226,13 +216,13 @@
             ]
           }
         },
-        "blind_opening": null
+        "spawn_opening": null
       },
-      "jam_publication_le": "0180991f03322517e0088b75a493430e039fa939b86b6fb5c3587597c6b948bd286a2f6a725d815e9dbcfe5f42904814c555cb4a80974c9ce90ad3e6a109dae3d415b3f2039008f8ceee5ac4e8c648d20a07a2c47517eb8b406d9f3948a6edd7adaf7bb61fd6cee7a7b5cf5b7060550bc07e444444444444444444444444444444444444444444444444444444444444440c4823aa9e015000f302df622b503e2b1bc5b9659b7f53e060e1d0b9520cb48a75973bdfcfcc37cfe20cc0bfeb0af4eae4f5ff128244a228ae5a5602bc64e24c5798360f4dd01ea7ae98953f33f069e6806fd1300e04428662160001201ffddab8967452300eeccba9876543211ffddab8967452300eeccba98765436303d287aa03e83f098342919ef05c4d808d08273fcb7383893544ef726e74df9a75e02f1edea20b40bf888888888888888888888888888888888888888888888888888888888888881890a054dd02d03f3333333333333333333333333333333333333333333333333333333333333307246c55b700fc13111111111111111111111111111111111111111111111111111111111111110312dbaa5b00feabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01097dd52d00ff66666666666666666666666666666666666666666666666666666666666666e68004cdea1a0005302ff02db602e5b3b2519c5bb6f937050e160e9d2bc540ab5877b9f3fdcc7cf32ccc3800ffae2bd0ab93d7ff4b081289a2b86a5909f09289335d61da3c34417b9cba6256fed20c7c9a39e05b348c038190a128",
-      "payload_bytes": 588,
-      "pushdata": "4d4c02",
-      "op_return_script": "6a0375726201094d4c020180991f03322517e0088b75a493430e039fa939b86b6fb5c3587597c6b948bd286a2f6a725d815e9dbcfe5f42904814c555cb4a80974c9ce90ad3e6a109dae3d415b3f2039008f8ceee5ac4e8c648d20a07a2c47517eb8b406d9f3948a6edd7adaf7bb61fd6cee7a7b5cf5b7060550bc07e444444444444444444444444444444444444444444444444444444444444440c4823aa9e015000f302df622b503e2b1bc5b9659b7f53e060e1d0b9520cb48a75973bdfcfcc37cfe20cc0bfeb0af4eae4f5ff128244a228ae5a5602bc64e24c5798360f4dd01ea7ae98953f33f069e6806fd1300e04428662160001201ffddab8967452300eeccba9876543211ffddab8967452300eeccba98765436303d287aa03e83f098342919ef05c4d808d08273fcb7383893544ef726e74df9a75e02f1edea20b40bf888888888888888888888888888888888888888888888888888888888888881890a054dd02d03f3333333333333333333333333333333333333333333333333333333333333307246c55b700fc13111111111111111111111111111111111111111111111111111111111111110312dbaa5b00feabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01097dd52d00ff66666666666666666666666666666666666666666666666666666666666666e68004cdea1a0005302ff02db602e5b3b2519c5bb6f937050e160e9d2bc540ab5877b9f3fdcc7cf32ccc3800ffae2bd0ab93d7ff4b081289a2b86a5909f09289335d61da3c34417b9cba6256fed20c7c9a39e05b348c038190a128",
-      "op_return_script_bytes": 598,
+      "jam_publication_le": "0180b81e437175f4f97fe2483270cf3ba69e90055f7357b720c08aced9c098241b9b3add0dd27b5587f2fbc4c6af935629df26e5fa08173ab62bc4d18fb1fda95844951600900ef8ceee5ac4e8c64802d8110001201ffddab8967452300eeccba9876543211ffddab8967452300eeccba9876543630bc07e444444444444444444444444444444444444444444444444444444444444440c4823aa9e015000f302df622b503e2b1bc5b9659b7f53e060e1d0b9520cb48a75973bdfcfcc37cfe20cc0bfeb0af4eae4f5ff128244a228ae5a5602bc64e24c5798360f4dd01ea7ae98953f33f069e6806fd1300e04428662160001201ffddab8967452300eeccba9876543211ffddab8967452300eeccba98765436381f4a1ea05a05f444444444444444444444444444444444444444444444444444444444444440c4850aa6e01e89f999999999999999999999999999999999999999999999999999999999999990312b6aa5b00fe898888888888888888888888888888888888888888888888888888888888888801896dd52d00ff55555555555555555555555555555555555555555555555555555555555555d58084beea16807f3333333333333333333333333333333333333333333333333333333333333373408266750d80029817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7916661c807fd715e8d5c9ebff25048944515cb5ac0478c9c499ae306d1e9aa03d4e5d312b7f69063ecd1cf02d1ac68140c85014",
+      "payload_bytes": 560,
+      "pushdata": "4d3002",
+      "op_return_script": "6a0375726201094d30020180b81e437175f4f97fe2483270cf3ba69e90055f7357b720c08aced9c098241b9b3add0dd27b5587f2fbc4c6af935629df26e5fa08173ab62bc4d18fb1fda95844951600900ef8ceee5ac4e8c64802d8110001201ffddab8967452300eeccba9876543211ffddab8967452300eeccba9876543630bc07e444444444444444444444444444444444444444444444444444444444444440c4823aa9e015000f302df622b503e2b1bc5b9659b7f53e060e1d0b9520cb48a75973bdfcfcc37cfe20cc0bfeb0af4eae4f5ff128244a228ae5a5602bc64e24c5798360f4dd01ea7ae98953f33f069e6806fd1300e04428662160001201ffddab8967452300eeccba9876543211ffddab8967452300eeccba98765436381f4a1ea05a05f444444444444444444444444444444444444444444444444444444444444440c4850aa6e01e89f999999999999999999999999999999999999999999999999999999999999990312b6aa5b00fe898888888888888888888888888888888888888888888888888888888888888801896dd52d00ff55555555555555555555555555555555555555555555555555555555555555d58084beea16807f3333333333333333333333333333333333333333333333333333333333333373408266750d80029817f8165b81f259d928ce2ddbfc9b02070b87ce9562a055acbbdcf97e66be7916661c807fd715e8d5c9ebff25048944515cb5ac0478c9c499ae306d1e9aa03d4e5d312b7f69063ecd1cf02d1ac68140c85014",
+      "op_return_script_bytes": 570,
       "max_publication": 1024
     }
   ]

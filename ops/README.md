@@ -177,14 +177,11 @@ Two traps `boot` exists to dodge, both of which cost hours before:
 
 ## Minting
 
-`gwmint.py` exists because `causeway spawn` cannot do two things the campaign
-needs:
+`gwmint.py` exists because `causeway spawn` cannot do one thing the campaign
+needs (it used to be two: a wallet-seed-derived blind was the other, and the
+blind is gone — `dat` is the plaintext satpoint since 2026-08-18):
 
-1. **a wallet-seed-derived blind.** causeway's CLI uses `secrets.token_bytes`,
-   which is not recoverable from the wallet. `gwmint.py` derives
-   `blind_seed = sha256(bip39_seed || "gw/spawn-blind-seed" || txid_be32 || vout_le4)`,
-   so phrase + satpoint alone rebuild the identity.
-2. **a pre-broadcast verification gate.** causeway broadcasts the moment it has
+1. **a pre-broadcast verification gate.** causeway broadcasts the moment it has
    a signed PSBT. `gwmint.py` splits `build` from `broadcast` and refuses to
    broadcast unless `build` set `gate_passed`. The gate recomputes `Q` from
    `[internal-key, snapshot]` with its own secp256k1 point arithmetic and
@@ -220,7 +217,7 @@ the payload out of the script both before signing and again before broadcast.
 Since 2026-08-10 the OP_RETURN payload is the comet's whole attestation
 packet, so what goes in it is the pass a **peer** receives: the custody log in
 its `xtr` (`pass_with_xtr`, from the artifact's baked `xtr_hex`), and an
-opening with **no** blind-opening, because the dat opening may sit only on
+opening with **no** spawn-opening, because the spawn opening may sit only on
 entry 0 and entry 0 is inside that log. Publish the 108-byte boot pass
 instead and the watcher completes a one-entry log whose single entry is this
 transaction — the degenerate *spawn* shape — so `+run-checks` demands that
@@ -259,8 +256,9 @@ table.
 `gwvec.py` builds the Phase-2 adversarial matrix
 (`doc/opret-revision/05-live-test-plan.md`, tests 2.2–2.16) out of a comet's
 **own on-chain custody log**: truncate it and the tip is a satpoint the next
-entry already spent; flip a bit in the blind and `spawn-commit` cannot open
-`dat`; append a real foreign transaction and `derive-tip` breaks. No
+entry already spent; point entry 0's spawn-opening at a different vout and
+`spawn-matches` fails against the pass's `dat`; append a real foreign
+transaction and `derive-tip` breaks. No
 transaction is built and nothing is broadcast.
 
 ```sh

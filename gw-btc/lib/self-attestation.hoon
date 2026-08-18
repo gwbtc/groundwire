@@ -89,7 +89,7 @@
 ::                      which since 2026-08-10 is always yes.
 ::
 ::    Everything else stays a %fail, because it is evidence that was never
-::    true rather than evidence that has expired: spawn-commit (the log is
+::    true rather than evidence that has expired: spawn-matches (the log is
 ::    not bound to this name), entry-N-commitment (a snapshot never
 ::    committed on chain), entry-N-continuity / -key-path / -sat-landed /
 ::    -txid (a custody hop that did not happen), entry-N-life-order (a log
@@ -203,7 +203,7 @@
     ::  check that failing late would have caught.
     ::
       %empty-chain  %fraud
-    ::  Entry 0 carries no $blind-opening, so the log never binds itself
+    ::  Entry 0 carries no $spawn-opening, so the log never binds itself
     ::  to the name the pass fingerprints to.  Again purely structural,
     ::  again computed from the peer's own xtr with no fetch involved, and
     ::  again ++run-checks' own `spawn-opening' check (same name, same
@@ -714,7 +714,7 @@
 ::  tails are required to be canonical so `cue` cannot silently accept
 ::  appended alternate data.  The hiding dat commitment is NOT opened
 ::  here: the spawn satpoint is learned only from the custody log's
-::  $blind-opening and bound to the pass in ++run-checks.
+::  $spawn-opening and bound to the pass in ++run-checks.
 ++  from-xtr
   |=  [who=@p =pass]
   ^-  (unit self-attestation:sa)
@@ -730,14 +730,14 @@
   ?>  =(xtr.meta (jam chain))
   [who pass chain]
 ::
-::  +spawn-of: the blind-opening that must sit on entry 0
+::  +spawn-of: the spawn-opening that must sit on entry 0
 ::
 ++  spawn-of
   |=  chain=custody-log:sa
-  ^-  (unit blind-opening:sa)
+  ^-  (unit spawn-opening:sa)
   ?~  chain  ~
   ?~  opening.i.chain  ~
-  blind-opening.u.opening.i.chain
+  spawn-opening.u.opening.i.chain
 ::
 ::  +openings-of: (idx, opening) pairs in custody order
 ::
@@ -777,25 +777,24 @@
       (lien entering |=(s=sont:ord =(s tracked)))
   ==
 ::
-::  +spawn-id: a $blind-opening reduced to WHICH SAT IT IS
+::  +spawn-id: a $spawn-opening reduced to WHICH SAT IT IS
 ::
 ::    start-height dropped.  sur/self-attestation says it in as many words
-::    -- "start-height is transport metadata, not part of the commitment
-::    preimage" -- and +spawn-commit:gw-btc-pass agrees: the pass's hiding
-::    dat commits to [spawn blind] and to nothing else.  A comparison that
-::    included the height would therefore be strictly stricter than the
-::    commitment the whole identity rests on, and would disagree with it
-::    the first time a reorg re-mined the funding transaction.
+::    -- start-height is transport metadata -- and the pass's dat agrees:
+::    it commits to the spawn satpoint and to nothing else.  A comparison
+::    that included the height would therefore be strictly stricter than
+::    the commitment the whole identity rests on, and would disagree with
+::    it the first time a reorg re-mined the funding transaction.
 ::
 ::    Rebuilt field by field under a cast rather than patched with %=, so
-::    a new field in $blind-opening does not compile until somebody has
+::    a new field in $spawn-opening does not compile until somebody has
 ::    decided whether it identifies the sat.
 ::
 ++  spawn-id
-  |=  bo=(unit blind-opening:sa)
-  ^-  (unit blind-opening:sa)
-  ?~  bo  ~
-  `[spawn.u.bo 0 blind.u.bo]
+  |=  so=(unit spawn-opening:sa)
+  ^-  (unit spawn-opening:sa)
+  ?~  so  ~
+  `[spawn.u.so 0]
 ::
 ::  +hop-id: one custody entry reduced to its HOP IDENTITY
 ::
@@ -816,7 +815,7 @@
 ::    a fork, not a lag.
 ::
 ::    The heights come out.  BOTH of them: .height, and the .start-height
-::    buried in entry 0's $blind-opening (+spawn-id).  A height is where
+::    buried in entry 0's $spawn-opening (+spawn-id).  A height is where
 ::    the chain happened to put a transaction, which a reorg rewrites
 ::    while the transaction, its txid and its outpoints all survive
 ::    unchanged; it is not a property of the comet's custody.  Keeping it
@@ -847,7 +846,7 @@
     0
   ?~  opening.ent  ~
   =*  op  u.opening.ent
-  `[internal-key.op snapshot.op (spawn-id blind-opening.op)]
+  `[internal-key.op snapshot.op (spawn-id spawn-opening.op)]
 ::
 ::  $log-relation: how an incoming custody log stands to the one we hold
 ::
@@ -1105,14 +1104,15 @@
     (fail-checks who checks)
   ?>  ?=(^ spawn-open)
   =/  spawn=sont:ord  spawn.u.spawn-open
-  ::  the pass's hiding dat commitment must open to exactly this spawn
-  ::  satpoint and blind
+  ::  the pass's dat names a spawn satpoint in plaintext; entry 0's
+  ::  spawn-opening must name the same one.  This is the binding between
+  ::  the NAME (fig of a key tweaked over dat) and the SAT the log walks.
   ::
   =/  meta  (parse-pass:cc pass.sat)
-  =/  commit-ok=?
+  =/  spawn-ok=?
     ?~  meta  %.n
-    =((spawn-commit:cc spawn blind.u.spawn-open) d.u.meta)
-  =.  checks  (snoc checks ['spawn-commit' commit-ok])
+    =(spawn spawn.u.meta)
+  =.  checks  (snoc checks ['spawn-matches' spawn-ok])
   =.  checks  (snoc checks ['start-txid' =(id.start txid.spawn)])
   ?.  (levy checks |=(c=check:sa ok.c))
     (fail-checks who checks)
@@ -1195,10 +1195,10 @@
     ::  stay fraud below -- they are not lags of anything.
     ::
     ::  NB the spawn comparison runs through +spawn-id for the same reason
-    ::  +hop-id does: entry 0's blind-opening carries a start-height, and
+    ::  +hop-id does: entry 0's spawn-opening carries a start-height, and
     ::  a reorg of the FUNDING transaction moves it.  The commitment this
-    ::  gate is standing in for (spawn-commit, checked above) covers
-    ::  [spawn blind] and not the height, so this must not be stricter.
+    ::  gate is standing in for (spawn-matches, checked above) covers the
+    ::  spawn satpoint and not the height, so this must not be stricter.
     ::
     =/  rel=(unit log-relation)
       ?~  tracked  ~
@@ -1305,12 +1305,12 @@
     ==
   =*  open  u.opening.ent
   =.  checks  (weld checks (opening-checks idx open this landed))
-  ::  the dat opening may sit only on entry 0, and snapshot lives may
+  ::  the spawn-opening may sit only on entry 0, and snapshot lives may
   ::  never regress across openings
   ::
   =.  checks
     %+  snoc  checks
-    [(nom idx 'blind-opening-zero') |(=(0 idx) ?=(~ blind-opening.open))]
+    [(nom idx 'spawn-opening-zero') |(=(0 idx) ?=(~ spawn-opening.open))]
   =.  checks
     %+  snoc  checks
     :-  (nom idx 'life-order')

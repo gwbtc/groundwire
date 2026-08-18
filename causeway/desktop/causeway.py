@@ -586,23 +586,23 @@ def _unit(value):
     return 0 if value is None else (0, value)
 
 
-# --- hiding `dat` — the immutable name-committing tweak (spec §4) ----------
+# --- `dat` — the immutable name-committing tweak (original spec §2.1) --------
 #
-#     dat   = (can 0 (mat %gw-btc) (mat 9) [256 d] ~)
-#     d     = H_tag("gw/spawn-commit", (jam spawn-sont) || blind)
-#     blind = H_tag("gw/spawn-blind", seed)
+#     dat = (can 0 (mat %gw-btc) (mat 9) (mat (jam spawn-sont)) ~)
 #
-# The spawn satpoint is hidden behind a seed-derived blind: only an
-# explicit blind-opening (in the xtr, or a public OP_RETURN publication)
-# reveals it, never `dat` itself.  Because dat is hashed into the signing
-# key, the comet's @p commits to it forever.  Ames reads only the leading
-# `mat %gw-btc` to route the pass to the %gw-btc agent.
+# Three self-delimiting mat items: the domain tag, the kelvin, and the spawn
+# satpoint's canonical jam -- Jake and Christian's original design
+# ((cat 0 (mat dom) <spawn satpoint>) in sur/stealth.hoon), plus the kelvin.
+# The satpoint is PLAINTEXT: any holder of a pass reads it, and the verifier
+# requires it to equal entry 0's spawn-opening.  Because dat is hashed into
+# the signing key, the comet's @p commits to it forever.  Ames reads only the
+# leading `mat %gw-btc` to route the pass to the %gw-btc agent.
 #
-# The blind is NEVER random: it is always derived from a BIP-39 seed the
-# user holds (see derive_blind_seed / blind_from_mnemonic below).  A random
-# blind that lives only in an artifact file is an identity-loss bug — lose
-# the file and no one, not even the holder of the wallet seed, can ever open
-# the dat commitment and prove the spawn.
+# A hiding commitment (d = H_tag(jam(sont) || blind)) sat here from
+# 2026-08-03 to 2026-08-18.  Removed: it protected nobody -- the pass and the
+# attestation are one object, so every pass-holder held the opening too --
+# and it cost a 32-byte secret to lose.  Byte-identical to
+# +make-dat:gw-btc-pass; pinned by the golden vector.
 
 
 def spawn_sont_noun(txid_hex: str, vout: int, off: int = 0) -> tuple:
@@ -610,125 +610,47 @@ def spawn_sont_noun(txid_hex: str, vout: int, off: int = 0) -> tuple:
     return (int(txid_hex, 16), (vout, off))
 
 
-def make_blind(seed: int) -> bytes:
-    """blind = H_tag('gw/spawn-blind', minimal-LE-bytes(seed)). 32 bytes.
-
-    `seed` must come from derive_blind_seed() so the opening is recoverable
-    from a BIP-39 phrase alone (spec §4)."""
-    seed_le = seed.to_bytes((seed.bit_length() + 7) // 8, "little") if seed else b""
-    return _tagged_hash("gw/spawn-blind", seed_le)
-
-
-# Domain separator for the blind-seed KDF.  Distinct from the 'gw/spawn-blind'
-# tagged hash below it: this one turns a BIP-39 seed into the blind *seed*, the
-# tagged hash turns that seed into the blind itself.
-BLIND_SEED_TAG = b"gw/spawn-blind-seed"
-
-
-def derive_blind_seed(bip39_seed: bytes, txid: str, vout: int) -> int:
-    """Deterministically derive a spawn blind seed from a BIP-39 seed and the
-    funding outpoint the comet is minted from.
-
-        blind_seed = int(sha256(bip39_seed || "gw/spawn-blind-seed"
-                                || txid_be32 || vout_le4), "big")
-        blind      = make_blind(blind_seed)
-
-    This is the whole recovery story for a comet's `dat` opening.  Given the
-    12/24-word phrase and the spawn satpoint (both of which the owner has:
-    the satpoint is the funding outpoint, publicly visible on-chain and
-    recorded in the proof), anyone can recompute `blind`, then
-    d = H_tag('gw/spawn-commit', jam(spawn-sont) || blind), then `dat` — and
-    so re-prove the spawn even if every artifact file is lost.
-
-    Arguments:
-      bip39_seed  the 64-byte BIP-39 seed, i.e. bip39.mnemonic_to_seed(m, "").
-                  In `spawn generate` this is the wallet's own seed; in
-                  `spawn connect` (watch-only / hardware signer, no wallet
-                  seed available) it is a separate blind recovery phrase the
-                  user is made to write down.
-      txid        funding txid in DISPLAY order hex (as mempool.space and
-                  Bitcoin Core report it); hashed as its 32 raw bytes.
-      vout        funding output index; hashed as 4 little-endian bytes.
-
-    Folding the outpoint in makes each comet's blind distinct, so one phrase
-    can safely back several spawns.
-
-    Scheme is frozen: it is the derivation used by the three live mainnet
-    comets minted before this was factored out, and it passed a recovery
-    drill.  Do not "improve" it without a migration.
-    """
-    txid_be32 = bytes.fromhex(txid)
-    if len(txid_be32) != 32:
-        raise ValueError(f"txid must be 32 bytes of hex, got {len(txid_be32)}")
-    if not 0 <= int(vout) < 2**32:
-        raise ValueError(f"vout out of range: {vout}")
-    preimage = (
-        bytes(bip39_seed) + BLIND_SEED_TAG + txid_be32 + int(vout).to_bytes(4, "little")
-    )
-    return int.from_bytes(hashlib.sha256(preimage).digest(), "big")
-
-
-def blind_from_mnemonic(
-    mnemonic: str, txid: str, vout: int, passphrase: str = ""
-) -> tuple[int, bytes]:
-    """(blind_seed, blind) for a BIP-39 mnemonic + funding outpoint.
-
-    The one call both spawn flows use, so `spawn generate` (wallet seed) and
-    `spawn connect` (separate blind recovery phrase) derive identically and a
-    recovery tool only needs to know one rule."""
-    seed = bip39.mnemonic_to_seed(mnemonic, passphrase)
-    blind_seed = derive_blind_seed(seed, txid, vout)
-    return blind_seed, make_blind(blind_seed)
-
-
-def spawn_commit(txid_hex: str, vout: int, off: int, blind: bytes) -> bytes:
-    """d = H_tag('gw/spawn-commit', jam(spawn-sont) || blind). 32 bytes.
-
-    `blind` is the 32-byte big-endian blind value (as make_blind returns).
-    """
-    return _tagged_hash(
-        "gw/spawn-commit", jam_bytes(spawn_sont_noun(txid_hex, vout, off)) + blind
-    )
-
-
-def build_dat_atom(
-    txid_hex: str, vout: int, off: int, seed: int, dom: str = PKI_DOM
-) -> int:
+def build_dat_atom(txid_hex: str, vout: int, off: int, dom: str = PKI_DOM) -> int:
     """The kelvin-9 dat as a Hoon atom (integer):
 
-        dat = (can 0 (mat dom) (mat 9) [256 d] ~)
+        dat = (can 0 (mat dom) (mat 9) (mat (jam spawn-sont)) ~)
 
-    where d hides the spawn satpoint under a seed-derived blind.  The dat
-    now depends on `seed` (via blind), so it must be recomputed per
-    candidate seed at mine time."""
-    d = spawn_commit(txid_hex, vout, off, make_blind(seed))
+    Depends on nothing but the satpoint, the domain and the kelvin -- so it
+    is fixed the moment the funding UTXO is chosen, and identical across
+    every candidate seed the miner tries."""
     w = BitWriter()
     w.write_mat(int.from_bytes(dom.encode("ascii"), "little"))
     w.write_mat(KELVIN)
-    w.write(256, int.from_bytes(d, "big"))
+    w.write_mat(hoon_jam(spawn_sont_noun(txid_hex, vout, off)))
     return w.to_int()
 
 
-def build_dat_bytes(
-    txid_hex: str, vout: int, off: int, seed: int, dom: str = PKI_DOM
-) -> bytes:
-    """The kelvin-9 dat as minimal LE atom bytes.
-
-    Safe to size from the bit stream: dat ends in exactly 256 bits of d
-    whose top bit is (almost surely) set, and the width is fixed anyway."""
-    a = build_dat_atom(txid_hex, vout, off, seed, dom)
+def build_dat_bytes(txid_hex: str, vout: int, off: int, dom: str = PKI_DOM) -> bytes:
+    """The kelvin-9 dat as minimal LE atom bytes."""
+    a = build_dat_atom(txid_hex, vout, off, dom)
     return a.to_bytes((a.bit_length() + 7) // 8, "little")
 
 
-def make_dat_expr(
-    txid_hex: str, vout: int, off: int, seed: int, dom: str = PKI_DOM
-) -> str:
+def parse_dat_atom(dat: int) -> tuple[str, int, tuple]:
+    """(dom, kelvin, spawn-sont-noun) read straight out of a dat atom -- the
+    Python twin of +parse-dat:gw-btc-pass.  Rejects trailing bits, exactly
+    as the Hoon does (`?> =((met 0 dat) (add pos p.spn))`)."""
+    w1, dom_atom = _hoon_rub(0, dat)
+    w2, kel = _hoon_rub(w1, dat)
+    w3, spawn_jam = _hoon_rub(w1 + w2, dat)
+    if w1 + w2 + w3 != dat.bit_length():
+        raise ValueError("dat has trailing data after the spawn satpoint")
+    dom = dom_atom.to_bytes((dom_atom.bit_length() + 7) // 8, "little").decode("ascii")
+    return dom, kel, hoon_cue(spawn_jam)
+
+
+def make_dat_expr(txid_hex: str, vout: int, off: int, dom: str = PKI_DOM) -> str:
     """Hoon expression that reconstructs the concrete kelvin-9 dat, for
-    comet-miner's --tweak flag.  d is a concrete hash we compute here, so
-    the expression is a literal (can 0 (mat dom) (mat 9) [256 0x..d..] ~)."""
-    d = spawn_commit(txid_hex, vout, off, make_blind(seed))
-    d_ux = format_hoon_ux(d.hex())
-    return f"(can 0 (mat %{dom}) (mat {KELVIN}) [256 {d_ux}] ~)"
+    comet-miner's --tweak flag.  Every term is a literal, so the miner's
+    +wish evaluates exactly what +make-dat:gw-btc-pass would build."""
+    txid_ux = format_hoon_ux(txid_hex)
+    return (f"(can 0 (mat %{dom}) (mat {KELVIN}) "
+            f"(mat (jam [txid={txid_ux} vout={vout} off={off}])) ~)")
 
 
 # --- state snapshot + on-chain state commitment (spec §3) -----------------
@@ -889,29 +811,30 @@ def state_output_key(internal_key: bytes, snap: dict) -> bytes:
 
 # --- opening / publication / xtr (spec §5–6, sur/self-attestation) --------
 #
-#     blind-opening = [spawn=sont start-height=@ud blind=@]
-#     opening       = [internal-key=@ux snapshot blind-opening=(unit ...)]
+#     spawn-opening = [spawn=sont start-height=@ud]
+#     opening       = [internal-key=@ux snapshot spawn-opening=(unit ...)]
 #     publication   = [pass opening]
 #     custody-entry = [txid height opening=(unit opening)]
 #     xtr           = (jam (list custody-entry))    oldest first
 
 
-def _blind_opening_noun(spawn: dict, start_height: int, blind: bytes) -> tuple:
-    """[spawn=sont start-height blind] — spawn is {txid_hex, vout, off}."""
+def _spawn_opening_noun(spawn: dict, start_height: int) -> tuple:
+    """[spawn=sont start-height] — spawn is {txid_hex, vout, off}."""
     return (
         spawn_sont_noun(spawn["txid_hex"], spawn["vout"], spawn.get("off", 0)),
-        (start_height, int.from_bytes(blind, "big")),
+        start_height,
     )
 
 
 def opening_noun(opening: dict) -> tuple:
-    """[internal-key snapshot blind-opening=(unit ...)] as a noun.
+    """[internal-key snapshot spawn-opening=(unit ...)] as a noun.
 
-    opening = {internal_key (int), snapshot (dict), blind_opening (None or
-    {spawn, start_height, blind})}."""
-    bo = opening.get("blind_opening")
-    bo_unit = 0 if bo is None else _unit(
-        _blind_opening_noun(bo["spawn"], bo["start_height"], bo["blind"])
+    opening = {internal_key (int), snapshot (dict), spawn_opening (None or
+    {spawn, start_height})}.  `blind_opening` is accepted as a legacy key
+    name for the same shape (its blind, if present, is ignored)."""
+    so = opening.get("spawn_opening", opening.get("blind_opening"))
+    bo_unit = 0 if so is None else _unit(
+        _spawn_opening_noun(so["spawn"], so["start_height"])
     )
     return (
         opening["internal_key"],
@@ -1234,16 +1157,14 @@ def format_custody_entry_poke(entry: dict) -> str:
         # fails SILENTLY — so this field must be the entry's real fief.
         f'{_hoon_unit(format_hoon_fief(snap.get("fief")))}]'
     )
-    bo = o.get("blind_opening")
-    if bo is None:
+    so = o.get("spawn_opening", o.get("blind_opening"))
+    if so is None:
         bo_hoon = "~"
     else:
-        sp = bo["spawn"]
-        blind = bo["blind"]
-        blind_hex = blind.hex() if isinstance(blind, (bytes, bytearray)) else str(blind)
+        sp = so["spawn"]
         bo_hoon = (
             f'`[[{format_hoon_ux(sp["txid_hex"])} {_hoon_ud(sp["vout"])} {_hoon_ud(sp.get("off", 0))}] '
-            f'{_hoon_ud(bo["start_height"])} {format_hoon_ux(blind_hex)}]'
+            f'{_hoon_ud(so["start_height"])}]'
         )
     opening_hoon = (
         f'`[{format_hoon_ux(format(int(o["internal_key"]), "x"))} {snap_hoon} {bo_hoon}]'
@@ -1259,7 +1180,7 @@ def build_xtr_atom(entries: list[dict]) -> int:
 
     Each entry: {txid_hex, height, opening}, where opening is None (a plain
     custody hop) or an opening dict (see opening_noun). Exactly one entry —
-    entry 0, the spawn — carries a blind_opening opening the dat commitment."""
+    entry 0, the spawn — carries a spawn_opening naming the sat and its start height."""
     log = 0  # ~ (null-terminated list)
     for e in reversed(entries):
         op = e.get("opening")
@@ -2624,12 +2545,11 @@ PROOF_SCHEMA_VERSION = 2
 def write_proof_json(proof: dict, path: str) -> None:
     """Write a proof dict to `path` as pretty-printed JSON, 0600.
 
-    A proof carries blind_hex and blind_seed_hex -- the secret half of the
-    dat opening -- and it is the ONE file a user is told suffices to keep
-    their identity recoverable.  It was written with the default umask,
-    world-readable, while the feed (the other secret-bearing artifact) was
-    already 0600.  Same material, same treatment: mode set at open, so
-    there is no window where the file exists wider than 0600.
+    A proof carries the comet's committed snapshot chain -- sponsor, fief,
+    life, rift per hop -- which is choice data no phrase regenerates, and it
+    is one half of the identity bundle (the feed is the other).  Written
+    0600 like the feed: mode set at open, so there is no window where the
+    file exists wider.
     """
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
@@ -2843,7 +2763,7 @@ def scan_addresses(
                     "value": u["value"],
                     "confirmed": u.get("status", {}).get("confirmed", False),
                     # The block that created this outpoint. For the UTXO a spawn
-                    # is minted from, this is the blind-opening's start-height —
+                    # is minted from, this is the spawn-opening's start-height —
                     # see resolve_start_height().
                     "height": u.get("status", {}).get("block_height"),
                 })
@@ -2964,25 +2884,10 @@ WALLET_SEED_BOX_HEADER = (
     "and the funds that back it. Write it down. Losing it is fatal.",
 )
 
-# `spawn connect` has no wallet seed to derive from (watch-only xpub or a
-# hardware signer), so it mints a SEPARATE phrase for the blind alone.  The
-# wording has to be blunt: this phrase is not in the user's wallet backup,
-# and losing it loses the identity even though the coins stay spendable.
-BLIND_SEED_BOX_HEADER = (
-    "SAVE THIS — your comet's BLIND RECOVERY PHRASE.",
-    "",
-    "It is NOT your wallet seed, and your wallet does NOT back it up.",
-    "It is REQUIRED to ever prove, re-attest, or recover this comet:",
-    "without it nobody — not even the holder of the wallet seed — can",
-    "open the dat commitment your @p is built from. Treat it as being",
-    "exactly as important as your wallet seed phrase. Write it down.",
-)
-
-
 def print_seed_box(mnemonic: str, *, header: tuple[str, ...] = WALLET_SEED_BOX_HEADER) -> None:
     """Render a mnemonic in a warning box.
 
-    `header` is the text above the words; overridable so the spawn-blind
+    `header` is the text above the words; overridable so any second
     recovery phrase (which is NOT the wallet seed) gets its own wording."""
     words = mnemonic.split()
     width = max(len(w) for w in words) + 4
@@ -3029,34 +2934,21 @@ def confirm_seed_saved(mnemonic: str, *, label: str = "seed phrase",
         print("  That doesn't match. Try again. (Your phrase is above.)")
 
 
-def normalize_blind_mnemonic(supplied: str) -> str:
-    """Validate + normalize a user-supplied blind recovery phrase."""
-    m = " ".join(supplied.split()).lower()
-    if not bip39.mnemonic_is_valid(m):
-        raise ValueError(
-            "not a valid BIP-39 phrase (wrong word, wrong count, or bad checksum)"
-        )
-    return m
-
-
 def mine_comet_from_utxo(
     txid_hex: str,
     vout: int,
     off: int = 0,
-    seed: int = 0,
     miner_bin: str = COMET_MINER_BIN,
     dom: str = PKI_DOM,
 ) -> dict:
-    """Build the kelvin-9 dat expression for the given funding UTXO + blind seed
-    and run the comet miner.
+    """Build the kelvin-9 dat expression for the given funding UTXO and run
+    the comet miner.
 
-    dat = (can 0 (mat dom) (mat 9) [256 d] ~), d hiding the spawn satpoint under
-    blind = H_tag('gw/spawn-blind', seed).  The dat is passed to comet-miner's
-    --tweak flag; the miner varies the ship's own key material to hit the PoW
-    target, so the caller's blind seed must be fixed before mining — and must
-    come from derive_blind_seed(), never from an ephemeral random source, or
-    the resulting comet can never be opened again (see derive_blind_seed)."""
-    tweak_expr = make_dat_expr(txid_hex, vout, off, seed, dom)
+    dat = (can 0 (mat dom) (mat 9) (mat (jam spawn-sont)) ~) -- fixed the
+    moment the funding UTXO is chosen.  The miner varies only the ship's own
+    key material to hit the PoW target; nothing the caller holds enters the
+    tweak but the satpoint."""
+    tweak_expr = make_dat_expr(txid_hex, vout, off, dom)
     return run_comet_miner(tweak_expr, miner_bin)
 
 
@@ -3346,10 +3238,6 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
 @click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
 @click.option("--publish", is_flag=True, default=False,
               help="Public spawn: add an OP_RETURN publication output opening the dat commitment (default off = confidential)")
-@click.option("--blind-mnemonic", default=None,
-              help="Legacy: derive the blind from a phrase minted before the ceremony was "
-                   "retired (re-spawn / recovery). Omit and the blind is fresh entropy "
-                   "recorded in proof.json — the proof + feed are the identity bundle.")
 @click.option("--sponsor", default=None,
               help="Sponsor for the initial snapshot (@p or mnemonym). Peers route to a "
                    "confidential comet through the sponsor committed on-chain.")
@@ -3371,18 +3259,15 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
 @click.option("--out-feed", "out_feed", default=None, metavar="PATH",
               help="Write the boot feed to this file (0600) instead of printing it. A feed is a private key; an argument lands in shell history and in the ship's argv.")
 @click.option("--assume-saved", is_flag=True, default=False,
-              help="No-op in the default flow (the blind phrase ceremony is retired; "
-                   "the blind lives in proof.json). Kept for script compatibility.")
-def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish, blind_mnemonic,
+              help="No-op (there is no phrase to save in this flow). Kept for script compatibility.")
+def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish,
                   sponsor, fief_arg, no_route, utxo_outpoint, signed_psbt, out_feed, assume_saved):
     """Spawn using a user-provided wallet (xpub / descriptor). You sign the PSBT externally.
 
-    Your wallet's seed never reaches Causeway, so the comet's blind — the
-    secret that opens its `dat` commitment — is fresh entropy recorded in the
-    proof file. Your identity bundle is proof.json + the feed file; back both
-    up like a wallet. (--blind-mnemonic re-derives from a legacy phrase.)"""
+    Your wallet's seed never reaches Causeway. Your identity bundle is the
+    proof file + the feed file; back both up like a wallet."""
     run_spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish,
-                      blind_mnemonic=blind_mnemonic, sponsor=sponsor, fief_arg=fief_arg,
+                      sponsor=sponsor, fief_arg=fief_arg,
                       no_route=no_route,
                       utxo_outpoint=utxo_outpoint, signed_psbt=signed_psbt,
                       out_feed=out_feed, assume_saved=assume_saved)
@@ -3420,13 +3305,13 @@ def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_ba
 @click.option("--assume-saved", is_flag=True, default=False,
               help="Skip the seed-phrase read-back prompts. Scripted runs MUST "
                    "capture this command's output — the generated BIP-39 phrase is "
-                   "printed nowhere else, and it backs both the coins and the blind.")
+                   "printed nowhere else, and it controls the coins.")
 def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish, sponsor, fief_arg,
                    no_route, resume, mnemonic_file, out_feed, assume_saved):
     """Generate a fresh BIP-39 wallet, fund it, spawn, and emit a boot one-liner.
 
-    The comet's blind is derived from the generated seed phrase + the funding
-    outpoint, so that one phrase recovers both the coins and the `dat` opening."""
+    The generated seed phrase controls the coins; the comet's identity is the
+    proof file + the feed file."""
     run_spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish,
                        sponsor=sponsor, fief_arg=fief_arg, no_route=no_route,
                        resume=resume, mnemonic_file=mnemonic_file,
@@ -3481,7 +3366,7 @@ def cmd_finalize(proofs, feed, wait, poll_interval, mempool_base,
     the proof, an xtr entry (with the snapshot opening) is jammed per hop, and —
     if --feed is given — the feed is re-encoded with xtr baked into the ring, so
     the booted ship's pass carries its own attestation. Entry 0 (the spawn)
-    additionally opens the hiding dat commitment via its blind-opening. Without
+    additionally names the spawn sat via its spawn-opening. Without
     this step the ship boots fine but serves an empty log until an %anew
     round-trip refreshes it.
     """
@@ -3511,25 +3396,24 @@ def cmd_finalize(proofs, feed, wait, poll_interval, mempool_base,
         opening = dict(
             internal_key=internal_key,
             snapshot=proof["snapshot"],
-            blind_opening=None,
+            spawn_opening=None,
         )
-        # Entry 0 — the spawn — opens the dat commitment via its blind-opening.
+        # Entry 0 — the spawn — names the sat and its start height.  The
+        # satpoint is ALSO in the pass's dat, in plaintext; the verifier
+        # requires the two to agree, so this is a restatement plus the one
+        # datum dat does not carry (the funding block height).
         if idx == 0:
-            blind_hex = proof.get("blind_hex")
-            if blind_hex is None:
-                raise click.UsageError(
-                    f"{path} is the spawn but has no blind_hex — cannot open the dat commitment"
-                )
             f = proof.get("funding", {})
+            if not f.get("txid"):
+                raise click.UsageError(f"{path} is the spawn but records no funding outpoint")
             # start-height names the FUNDING tx's block, never this spawn tx's
             # (`height`) — that is the transaction the verifier fetches first.
             start_height = resolve_start_height(proof, mempool_base=mempool_base)
             proof["start_height"] = start_height
             proof["funding"]["height"] = start_height
-            opening["blind_opening"] = dict(
+            opening["spawn_opening"] = dict(
                 spawn=dict(txid_hex=f["txid"], vout=int(f["vout"]), off=int(f.get("off", 0))),
                 start_height=start_height,
-                blind=bytes.fromhex(blind_hex),
             )
         entries.append(dict(txid_hex=txid, height=height, opening=opening))
         print(f"  {os.path.basename(path)}: confirmed in block {height}")
@@ -3759,15 +3643,15 @@ def cmd_publish(proofs, fee_rate, network, output_dir, mempool_base, pass_hex,
           f"= {last.get('sat_value', '?')} sats")
     print(f"  Life       : {prior_snap.get('life', '?')} → {new_snapshot['life']}")
 
-    #  GUARD 2 — THE TERMINAL OPENING CARRIES NO BLIND-OPENING.  The dat opening
-    #  may sit on entry 0 only (`blind-opening-zero` in +run-checks), and entry 0
+    #  GUARD 2 — THE TERMINAL OPENING CARRIES NO SPAWN-OPENING.  The spawn opening
+    #  may sit on entry 0 only (`spawn-opening-zero` in +run-checks), and entry 0
     #  is inside the xtr above, carrying the real start-height finalize recorded.
     #  This transaction is entry N>0, so its own opening opens nothing.
     pub_pass = pass_with_xtr(pass_atom, xtr)
     pub_opening = {
         "internal_key": int("02" + last["internal_pubkey_hex"], 16),
         "snapshot": new_snapshot,
-        "blind_opening": None,
+        "spawn_opening": None,
     }
 
     #  GUARD 3 — THE CAP, CHECKED BEFORE ANYTHING IS BUILT AND SAID OUT LOUD.
@@ -3966,7 +3850,7 @@ def _build_spawn_psbt_and_proof(
         **change_args,
     )
     # Carry the funding tx's block height into the proof: it IS the
-    # blind-opening's start-height (see resolve_start_height), and knowing it
+    # spawn-opening's start-height (see resolve_start_height), and knowing it
     # here saves finalize a lookup — and saves it entirely if the outpoint is
     # later pruned from the API's view.
     if utxo.get("height"):
@@ -4112,7 +3996,7 @@ def _broadcast_tx(tx_hex: str, *, mempool_base: str = MEMPOOL_API_URL) -> str:
 def resolve_start_height(proof: dict, *, mempool_base: str = MEMPOOL_API_URL) -> int:
     """The block height of the transaction that CREATED the spawn satpoint.
 
-    sur/self-attestation.hoon defines a blind-opening's start-height as "the
+    sur/self-attestation.hoon defines a spawn-opening's start-height as "the
     block containing the transaction that CREATED the spawn satpoint" — i.e.
     the FUNDING tx, the one whose output the spawn spends. That is the first
     transaction the verifier fetches, and it can only fetch by [height txid]
@@ -4143,7 +4027,7 @@ def resolve_start_height(proof: dict, *, mempool_base: str = MEMPOOL_API_URL) ->
     if not status.get("confirmed") or not height:
         raise click.UsageError(
             f"funding tx {txid} is not confirmed; its block height is the "
-            "blind-opening's start-height and must not be guessed"
+            "spawn-opening's start-height and must not be guessed"
         )
     return int(height)
 
@@ -4248,9 +4132,10 @@ def prompt_existing_mnemonic() -> str:
 
     Exists because a spawn can die AFTER the wallet is funded (the first live
     one did), and re-running `spawn generate` mints a FRESH wallet -- leaving
-    the previous run's sats at an address the new run never looks at.  The
-    blind is derived from seed + funding outpoint, so resuming with the same
-    phrase produces the identical comet the first run would have.
+    the previous run's sats at an address the new run never looks at.
+    Resuming with the same phrase finds the same funded UTXO; the comet
+    minted from it is fresh (mining is seeded from system entropy) -- which
+    is fine, since a spawn that died before broadcast minted nothing.
     """
     print("\n  Resuming a previous spawn: enter the seed phrase you wrote down.")
     while True:
@@ -4333,9 +4218,9 @@ def _initial_snapshot(pass_atom: int, sponsor: int | None = None,
     }
 
 
-def _spawn_publication_opening(internal_xonly: bytes, snapshot: dict, utxo: dict, blind: bytes) -> dict:
+def _spawn_publication_opening(internal_xonly: bytes, snapshot: dict, utxo: dict) -> dict:
     """The opening a PUBLIC spawn publishes on-chain: reveals the snapshot and
-    opens the hiding dat commitment via the spawn blind-opening.
+    names the spawn sat (already in the pass's dat) plus its start height.
 
     start_height is the FUNDING transaction's block, and it is REQUIRED.  It
     used to be written as 0 on the theory that a spawn publication rides the
@@ -4357,24 +4242,11 @@ def _spawn_publication_opening(internal_xonly: bytes, snapshot: dict, utxo: dict
     return {
         "internal_key": int.from_bytes(b"\x02" + internal_xonly, "big"),
         "snapshot": snapshot,
-        "blind_opening": {
+        "spawn_opening": {
             "spawn": {"txid_hex": utxo["txid"], "vout": utxo["vout"], "off": 0},
             "start_height": int(height),
-            "blind": blind,
         },
     }
-
-
-BLIND_DERIV_WALLET_SEED = "wallet-seed+outpoint"
-BLIND_DERIV_BLIND_MNEMONIC = "blind-mnemonic+outpoint"
-# The connect-flow default since the phrase ceremony was banished: the blind
-# is fresh entropy, recorded ONLY in proof.json.  Justified by the custody
-# ledger, not convenience: the ring is nondeterministically mined and lives
-# only in the feed, and the snapshot (sponsor/fief, every hop) lives only in
-# the proof chain -- so file custody was already mandatory, and a phrase that
-# recovers one field of a file you must keep anyway is ceremony, not safety.
-# proof.json + feed ARE the identity bundle; both are written 0600.
-BLIND_DERIV_PROOF_FILE = "proof-file-entropy"
 
 
 def _finish_spawn_proof(
@@ -4382,39 +4254,23 @@ def _finish_spawn_proof(
     *,
     comet: str,
     pass_atom: int,
-    blind: bytes,
-    blind_seed: int,
     utxo: dict,
-    blind_derivation: str,
 ) -> None:
     """Attach the kelvin-9 spawn bookkeeping to a freshly built spawn proof.
 
-    `blind_derivation` records WHICH BIP-39 phrase regenerates the blind:
-      "wallet-seed+outpoint"     — the wallet seed printed by `spawn generate`
-      "blind-mnemonic+outpoint"  — the separate blind recovery phrase that
-                                   `spawn connect` prints (or that was passed
-                                   in with --blind-mnemonic)
-    In both cases blind = make_blind(derive_blind_seed(bip39_seed, txid, vout))
-    over this proof's own spawn_sont, so a future reader knows how to recover
-    the opening from the phrase alone."""
+    dat is the plaintext spawn satpoint (plus domain and kelvin), so the
+    proof records the satpoint and the dat it produces, and nothing secret:
+    the identity's only secret is the ring, which lives in the feed."""
     proof["op"] = "spawn"
     proof["patp"] = comet
     proof["dom"] = PKI_DOM
     proof["kelvin"] = KELVIN
     proof["pass_atom_hex"] = hex(pass_atom)
-    # The seed-derived blind + spawn satpoint form the dat opening; store both so
-    # `causeway finalize` can attach entry 0's blind-opening and any peer can
-    # recompute dat = can(0, mat(dom), mat(9), [256 spawn-commit(spawn, blind)]).
-    # Verbatim blind_hex/blind_seed_hex are belt-and-braces: the phrase named by
-    # blind_derivation regenerates both if this file is ever lost.
-    proof["blind_hex"] = blind.hex()
-    proof["blind_seed_hex"] = format(blind_seed, "x")
-    proof["blind_derivation"] = blind_derivation
     proof["spawn_sont"] = {"txid_hex": utxo["txid"], "vout": utxo["vout"], "off": 0}
-    proof["dat_hex"] = hex(build_dat_atom(utxo["txid"], utxo["vout"], 0, blind_seed))
+    proof["dat_hex"] = hex(build_dat_atom(utxo["txid"], utxo["vout"], 0))
 
 
-def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False, blind_mnemonic: str | None = None,
+def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False,
                       sponsor: str | None = None, fief_arg: str | None = None,
                       no_route: bool = False,
                       utxo_outpoint: str | None = None, signed_psbt: str | None = None,
@@ -4424,14 +4280,6 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     print("=" * 60)
     print(f"  CAUSEWAY — {'Public' if publish else 'Confidential'} Comet Spawn (Connect Wallet)")
     print("=" * 60)
-
-    # Validate a supplied blind phrase up front — before any faucet/scan work,
-    # and long before we mine an @p that would bake in the wrong blind.
-    if blind_mnemonic:
-        try:
-            blind_mnemonic = normalize_blind_mnemonic(blind_mnemonic)
-        except ValueError as e:
-            raise SystemExit(f"  --blind-mnemonic: {e}")
 
     # Routing, checked BEFORE any faucet / scan / mining work: an unroutable
     # comet must be refused up front, not after a proof-of-work search and a
@@ -4468,22 +4316,8 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     utxos = scan_addresses(source, mempool_base=mempool_base)
     utxo = pick_utxo_interactive(utxos, select=utxo_outpoint)
 
-    # Seed-derived blind so the dat opening is recoverable.  We hold only an
-    # xpub here, so the blind comes from a dedicated recovery phrase the user
-    # records (or supplies) — never from ephemeral randomness.
-    if blind_mnemonic:
-        # Legacy / deliberate re-spawn from a phrase minted before the
-        # ceremony was retired.  Same derivation as ever.
-        blind_seed, blind = blind_from_mnemonic(blind_mnemonic, utxo["txid"], utxo["vout"])
-        blind_derivation = BLIND_DERIV_BLIND_MNEMONIC
-    else:
-        blind_seed = int.from_bytes(os.urandom(32), "big")
-        blind = make_blind(blind_seed)
-        blind_derivation = BLIND_DERIV_PROOF_FILE
-        print("\n  The comet's blind is fresh entropy, recorded in the proof file.")
-        print("  Your identity bundle is the proof.json + the feed file — back both up.")
     print(f"\n  Mining comet (kelvin-9 dat) from ({utxo['txid']}:{utxo['vout']},0)...")
-    miner_result = mine_comet_from_utxo(utxo["txid"], utxo["vout"], 0, blind_seed, miner)
+    miner_result = mine_comet_from_utxo(utxo["txid"], utxo["vout"], 0, miner)
     comet = miner_result["comet"]
     feed = miner_result["feed"]
     ring_uw = miner_result.get("ring", "")
@@ -4499,7 +4333,7 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     pub_pass = pub_opening = None
     if publish:
         pub_pass = pass_atom
-        pub_opening = _spawn_publication_opening(utxo["xonly"], snapshot, utxo, blind)
+        pub_opening = _spawn_publication_opening(utxo["xonly"], snapshot, utxo)
 
     psbt_obj, proof = _build_spawn_psbt_and_proof(
         utxo=utxo,
@@ -4509,10 +4343,7 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
         publication_pass_atom=pub_pass,
         publication_opening=pub_opening,
     )
-    _finish_spawn_proof(
-        proof, comet=comet, pass_atom=pass_atom, blind=blind, blind_seed=blind_seed,
-        utxo=utxo, blind_derivation=blind_derivation,
-    )
+    _finish_spawn_proof(proof, comet=comet, pass_atom=pass_atom, utxo=utxo)
 
     os.makedirs(output_dir, exist_ok=True)
     pier = comet.lstrip("~")
@@ -4546,11 +4377,7 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
         sys.exit(1)
     print(f"  Broadcast: {tx_link(broadcast_id)}")
 
-    print("\n  Your blind recovery phrase is the ONLY way to reopen this comet's")
-    print(f"  dat commitment if {proof_path} is lost. Check you have it — last chance:")
-    print_seed_box(blind_mnemonic, header=BLIND_SEED_BOX_HEADER)
-    confirm_seed_saved(blind_mnemonic, label="blind recovery phrase", assume_saved=assume_saved)
-
+    print("\n  Your identity bundle is the proof file + the feed file. Back both up.")
     _print_spawn_next_steps(comet, feed, proof_path, out_feed)
 
 
@@ -4613,12 +4440,8 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
         print(f"  No confirmed UTXO yet ({len(utxos)} unconfirmed). Sleeping {POLL_INTERVAL}s...", end="\r")
         time.sleep(POLL_INTERVAL)
 
-    # We generated this wallet, so the blind is derived straight from its
-    # BIP-39 seed + the funding outpoint: the seed phrase printed above is a
-    # complete backup of the dat opening, no extra secret to lose.
-    blind_seed, blind = blind_from_mnemonic(mnemonic, utxo["txid"], utxo["vout"])
     print("\n  Mining comet (kelvin-9 dat)...")
-    miner_result = mine_comet_from_utxo(utxo["txid"], utxo["vout"], 0, blind_seed, miner)
+    miner_result = mine_comet_from_utxo(utxo["txid"], utxo["vout"], 0, miner)
     comet = miner_result["comet"]
     feed = miner_result["feed"]
     ring_uw = miner_result.get("ring", "")
@@ -4634,7 +4457,7 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
     pub_pass = pub_opening = None
     if publish:
         pub_pass = pass_atom
-        pub_opening = _spawn_publication_opening(utxo["xonly"], snapshot, utxo, blind)
+        pub_opening = _spawn_publication_opening(utxo["xonly"], snapshot, utxo)
 
     psbt_obj, proof = _build_spawn_psbt_and_proof(
         utxo=utxo,
@@ -4644,10 +4467,7 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
         publication_pass_atom=pub_pass,
         publication_opening=pub_opening,
     )
-    _finish_spawn_proof(
-        proof, comet=comet, pass_atom=pass_atom, blind=blind, blind_seed=blind_seed,
-        utxo=utxo, blind_derivation=BLIND_DERIV_WALLET_SEED,
-    )
+    _finish_spawn_proof(proof, comet=comet, pass_atom=pass_atom, utxo=utxo)
 
     # Sign the PSBT in-process (we have the seed).
     p_signed = psbt_obj
@@ -4670,8 +4490,8 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
     print(f"  Broadcast: {tx_link(broadcast_id)}")
 
     print("\n  WRITE DOWN YOUR SEED PHRASE AGAIN — last chance.")
-    print("  It backs both the funds and this comet's blind (the dat opening),")
-    print("  so it alone can recover the identity if the proof file is lost:")
+    print("  It controls the funds. Your comet's identity is the proof file +")
+    print("  the feed file; back those up too:")
     print_seed_box(mnemonic)
     confirm_seed_saved(mnemonic, assume_saved=assume_saved)
 

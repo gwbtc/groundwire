@@ -259,7 +259,7 @@
     ::
     ::    WHAT USED TO BE HERE, AND WHY IT IS GONE.  This arm had three
     ::    branches -- ++apply-state for a comet we already tracked,
-    ::    ++apply-spawn for a stranger that opened its blind, and a
+    ::    ++apply-spawn for a stranger that named its spawn sat, and a
     ::    refusal for a stranger that did not -- and between them they
     ::    reimplemented, weakly, most of ++run-checks: the dat opening,
     ::    input-0 continuity, the state-key output commitment, the sat

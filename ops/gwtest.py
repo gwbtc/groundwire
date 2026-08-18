@@ -243,7 +243,7 @@ def cmd_boot(a) -> int:
     tmux("pipe-pane", "-t", a.session, "-o", f"cat >> {log}")
     # `exec` so the pane IS vere: no shell to swallow a signal, and killing the
     # session stops the ship.  NO PIPE -- a pipe is not a tty and vere refuses.
-    send(a.session, f"exec {urbit} -F zod -A {arvo} -B {Path(a.pill).resolve()} -c {pier}")
+    send(a.session, f"exec {urbit} -F zod -L -p 34567 -A {arvo} -B {Path(a.pill).resolve()} -c {pier}")
     print(f"booting ~zod at {pier} (transcript: {log})", flush=True)
     if not wait_for(a.session, "dojo>", a.timeout, poll=5.0):
         raise SystemExit(f"no dojo prompt after {a.timeout}s -- see {log}")
@@ -283,18 +283,24 @@ def cmd_commit(a) -> int:
     if not src.is_dir():
         raise SystemExit(f"{src} is not a directory (run `make build` first?)")
     mount = pier / a.desk
-    # Mount first, create only if that fails.  `|new-desk` on a desk that
-    # already exists opens a "overwrite it?" DIAL PROMPT, and the next line
-    # you send is swallowed answering it -- so a re-run of this command used
-    # to abort the new-desk and silently skip the mount as well.  Ordering it
-    # this way makes the command idempotent, which is what a re-run needs.
-    send(a.session, f"|mount %{a.desk}")
-    if not _wait_dir(mount, 20):
+    # Two traps pull in opposite directions here.  `|new-desk` on a desk that
+    # already exists opens an "overwrite it?" DIAL PROMPT that swallows the
+    # next line sent; `|mount` on a desk that does NOT exist crashes clay on
+    # the CC kernel and leaves the dojo's input wedged (every later keystroke
+    # inserts into a dead line and Enter never fires -- measured 2026-08-18).
+    # So: ask clay whether the desk exists FIRST, via a dojo scry whose
+    # output we can read back, and only then pick the safe order.
+    at0 = transcript_path(pier).stat().st_size
+    send(a.session, f"(~(has in .^((set desk) %cd /(scot %p our)//(scot %da now))) %{a.desk})")
+    time.sleep(6)
+    tail = clean(transcript_path(pier).read_bytes()[at0:])
+    exists = any(l.strip() == "%.y" for l in tail)
+    if not exists:
         send(a.session, f"|new-desk %{a.desk}")
-        time.sleep(8)
-        send(a.session, f"|mount %{a.desk}")
-        if not _wait_dir(mount, 60):
-            raise SystemExit(f"{mount} never appeared -- see {transcript_path(pier)}")
+        time.sleep(10)
+    send(a.session, f"|mount %{a.desk}")
+    if not _wait_dir(mount, 60):
+        raise SystemExit(f"{mount} never appeared -- see {transcript_path(pier)}")
     time.sleep(4)
     # |new-desk seeds a template; the desk we are testing is the source of
     # truth for every file in it.

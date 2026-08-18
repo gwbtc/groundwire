@@ -102,31 +102,41 @@ snapshot = [life=@ud rift=@ud key=@]
   opening's snapshot as authoritative. No fold over deltas, no intermediate
   event semantics.
 
-## 4. `dat`: hiding spawn commitment
+## 4. `dat`: the spawn satpoint, in plaintext
 
 ```
-dat = (cat 0 q:(mat %gw-btc) d)
-d   = H_tag("gw/spawn-commit", (jam spawn-sont) || blind)
+dat = (can 0 (mat %gw-btc) (mat 9) (mat (jam spawn-sont)) ~)
 ```
 
-- `blind` is 32 bytes, required because satpoints are low-entropy (an observer
-  can grind candidate satpoints against a bare hash). Recommended derivation:
-  `blind = H_tag("gw/spawn-blind", seed)` from the ship's master seed, so the
-  opening is recoverable from the seed alone.
-- The opening `(spawn-sont, blind)` is revealed **only** in the ship's own
-  attestations (packet `xtr`, §5) or its own deliberate on-chain publication
-  (§6). It is **not** included when the ship appears as a hop in someone
-  else's sponsor chain (§8.3).
-- Rationale: given a spawn satpoint, the entire custody chain is publicly
-  computable (each hop is the unique transaction spending the previous
-  outpoint). Under the old formats, circulating a sponsor's `dat`
-  transitively deanonymized its whole chain footprint. With a hiding `d`, a
-  hop proof establishes domain membership and name/key binding without
-  disclosing chain position.
-- Ames continues to read only the leading `mat %gw-btc`.
-- This is **the** dat format. It replaces all three legacy encodings. It must
-  be pinned by shared golden vectors across Hoon, TypeScript (Causeway), and
-  Python (onboarding) in the same change that introduces it.
+Three self-delimiting `mat` items: the domain tag, the kelvin, and the spawn
+satpoint's canonical jam. This is the **original** design — Jake and
+Christian's `(cat 0 (mat dom) <spawn satpoint>)` in `sur/stealth.hoon` — plus
+the kelvin. Any holder of a pass reads all three without an opening.
+
+- Ames rubs only the leading `mat %gw-btc` (`+pass-pki-dom`), as before.
+- The verifier rubs the third item to learn which sat the comet claims, and
+  requires entry 0's `$spawn-opening` (§5) to name the **same** satpoint —
+  the `spawn-matches` check. That opening still exists because it carries
+  the one datum `dat` does not: the funding block height, which the
+  height-keyed light client needs to fetch the first transaction.
+- Trailing data after the third item is rejected.
+
+**History (2026-08-03 → 2026-08-18): a hiding commitment sat here.** This
+revision originally replaced the plaintext satpoint with
+`d = H_tag("gw/spawn-commit", (jam spawn-sont) || blind)`, on the argument
+that a bare hash of a low-entropy satpoint could be ground by anyone holding
+a pass. That was reverted, for a reason found by white-hat review and
+confirmed with Jake: **the pass and the attestation are one object.** The
+custody log rides *inside* the pass (`+with-xtr`), and entry 0 of that log
+carries the opening — so every party that holds a pass at all also holds the
+satpoint. No "pass-without-opening" holder exists in the system as built
+(self-attestation, the snapshot service, sponsor relay: all carry the
+opening or carry nothing), and the chain itself shows only an indistinguishable
+P2TR spend. The blind therefore protected nobody, cost users a 32-byte
+secret to lose, and put a `$blind-opening` mold and an entry-0 invariant into
+the verifier that the plaintext form makes unnecessary. Every comet minted
+under the hiding format is an old-format identity and does not verify against
+this codec; that set was dev infrastructure and was retired with the change.
 
 ## 5. Custody and attestation
 
@@ -145,10 +155,10 @@ opening = [internal-key=@ux snapshot blind-opening=(unit [spawn=sont blind=@])]
   from `internal-key` and `snapshot`, and compare against the transaction's
   sat-carrying output script. Entries without openings are plain custody moves
   and change no state.
-- `blind-opening` is present on the entry whose output the `dat` commitment
-  points at (normally entry 0, the spawn): the verifier recomputes `d` from it
-  and checks it against the `dat` in the carried pass. Exactly one entry must
-  open the spawn commitment.
+- `spawn-opening` (`[spawn start-height]`) is present on entry 0, the spawn:
+  the verifier requires its satpoint to equal the one in the carried pass's
+  `dat` (`spawn-matches`), and uses its start-height — the funding block —
+  to fetch the first transaction. Exactly one entry carries it.
 - **Witness discipline**: every hop after the first must be a key-path spend
   of a P2TR prevout (one-element 64/65-byte witness against a P2TR
   scriptPubKey — both conditions, as in the current verifier). The first
@@ -183,7 +193,7 @@ scriptPubKey = OP_RETURN OP_PUSH3 "urb" OP_PUSH1 <ver=0x01> OP_PUSHDATA <payload
 Publication uses, in scope for this revision:
 
 - **(a) Public spawn / onboarding.** The spawn transaction carries the pass
-  and the full `dat` opening (spawn satpoint + blind), making the name
+  and the spawn-opening (satpoint + funding height), making the name
   publicly verifiable and indexable. Public names are public by definition;
   publishing the opening is the point.
 - **(b) Reachability restoration.** A ship that has lost its sponsors and its
@@ -310,7 +320,8 @@ nothing to carry and cannot be repurposed.)
 ## 9. Open questions (to resolve before spec synthesis)
 
 1. Exact tag strings and a registry for them (`gw/state-commit`,
-   `gw/spawn-commit`, `gw/spawn-blind`, `gw/fief`, `gw/consent`), plus a
+   `gw/fief`, `gw/consent`; `gw/spawn-commit` and `gw/spawn-blind` were
+   retired with the hiding dat), plus a
    version byte convention in the OP_RETURN envelope.
 2. Snapshot contents: is `[life rift key]` complete? (Breach semantics under
    the bootstrap-only, no-migration stance; whether `rift` belongs on-chain

@@ -33,7 +33,7 @@
   %+  can  0
   :~  (mat domain:cc)
       (mat kel)
-      [256 0xd0.d0d0.d0d0.d0d0.d0d0.d0d0.d0d0.d0d0.d0d0.d0d0.d0d0.d0d0.d0d0.d0d0]
+      (mat (jam `sont:ord`[txid=0xd0d0.d0d0.d0d0.d0d0 vout=0 off=0]))
   ==
 ::
 ++  kelvin-pass
@@ -919,7 +919,7 @@
   =/  agent  gw-btc
   =^  *      agent  (~(on-load agent bowl0) !>((verify-state ~ ~ ~)))
   =^  cards  agent
-    (~(on-arvo agent bowl0) /verify/(scot %p peer)/0 (failed-sign peer ~['spawn-commit']))
+    (~(on-arvo agent bowl0) /verify/(scot %p peer)/0 (failed-sign peer ~['spawn-matches']))
   =/  out  (app-cards cards)
   ;:  weld
     (expect-eq !>(1) !>((lent out)))

@@ -9,8 +9,7 @@
 |%
 ++  spawn  ^-  sont:ord  [txid=0x1234.5678.9abc.def0 vout=1 off=0]
 ++  seed   0xdead.beef
-++  blind  (make-blind:cc seed)
-++  dat    (make-dat:cc spawn blind)
+++  dat    (make-dat:cc spawn)
 ++  snap   ^-  snapshot:sa  [life=1 rift=0 key=0xabcd sponsor=~ fief=~]
 ++  key
   |=  [sed=@ xtr=@]
@@ -21,20 +20,20 @@
       xtr
   ==
 ::
-++  test-golden-blind
-  %+  expect-eq
-    !>  0xf0de.dc6a.72ec.b8c1.6b5d.af25.2b8d.b53b.2510.4f32.c2d9.e9bc.3459.db71.6535.ef2e
-    !>  blind
-::
-++  test-golden-spawn-commit
-  %+  expect-eq
-    !>  0x134a.ab80.f09d.97d8.0efc.2573.570e.2767.279a.ad7b.43ea.2740.18a7.570d.26fc.57e0
-    !>  (spawn-commit:cc spawn blind)
-::
+::  dat is now (can 0 (mat %gw-btc) (mat 9) (mat (jam spawn)) ~).  The
+::  golden below is what the codec PRODUCES for the fixture spawn; it is
+::  pinned so that a change to the encoding, the domain, the kelvin or the
+::  jam of $sont is a test failure and not a silent protocol change.
 ++  test-golden-dat
   %+  expect-eq
-    !>  0x2.6955.701e.13b2.fb01.df84.ae6a.e1c4.ece4.f355.af68.7d44.e803.14ea.e1a4.df8a.fc12.4637.4622.d776.77c0
+    !>  0x58.c8d1.59e2.6af3.7bc3.b00a.9012.4637.4622.d776.77c0
     !>  `@ux`dat
+::
+++  test-dat-is-plaintext
+  ::  the spawn satpoint is readable straight out of dat, no opening
+  %+  expect-eq
+    !>  spawn
+    !>  spawn:(need (parse-dat:cc dat))
 ::
 ++  test-golden-state-commit
   %+  expect-eq
@@ -57,26 +56,32 @@
 ::
 ++  test-dat-roundtrip
   %+  expect-eq
-    !>(`(unit [dom=@tas kel=@ud d=@ux])``[%gw-btc 9 (spawn-commit:cc spawn blind)])
+    !>(`(unit [dom=@tas kel=@ud spawn=sont:ord])``[%gw-btc 9 spawn])
     !>((parse-dat:cc dat))
 ::
 ++  test-dat-rejects-trailing
   %+  expect-eq
-    !>(*(unit [dom=@tas kel=@ud d=@ux]))
+    !>(*(unit [dom=@tas kel=@ud spawn=sont:ord]))
     !>((parse-dat:cc (can 0 ~[[(met 0 dat) dat] [8 0xab]])))
+::
+++  test-dat-rejects-non-satpoint
+  ::  a third mat item that cues to something that is not a $sont
+  %+  expect-eq
+    !>(*(unit [dom=@tas kel=@ud spawn=sont:ord]))
+    !>((parse-dat:cc (can 0 ~[(mat %gw-btc) (mat 9) (mat (jam [1 2]))])))
 ::
 ++  test-verify-dat
   ;:  weld
-    (expect-eq !>(%.y) !>((verify-dat:cc dat [spawn 0 blind])))
-    (expect-eq !>(%.n) !>((verify-dat:cc dat [spawn 0 +(blind)])))
-    (expect-eq !>(%.n) !>((verify-dat:cc dat [[0x1234.5678.9abc.def0 2 0] 0 blind])))
+    (expect-eq !>(%.y) !>((verify-dat:cc dat spawn)))
+    (expect-eq !>(%.n) !>((verify-dat:cc dat [0x1234.5678.9abc.def0 2 0])))
+    (expect-eq !>(%.n) !>((verify-dat:cc dat [0xffff 1 0])))
   ==
 ::
 ++  test-pass-roundtrip
   =/  pas  (key 'gw-btc-pass' 0x1234)
   %+  expect-eq
-    !>  ^-  (unit [dom=@tas kel=@ud d=@ux xtr=@])
-        `[%gw-btc 9 (spawn-commit:cc spawn blind) 0x1234]
+    !>  ^-  (unit [dom=@tas kel=@ud spawn=sont:ord xtr=@])
+        `[%gw-btc 9 spawn 0x1234]
     !>((parse-pass:cc pas))
 ::
 ++  test-same-key-ignores-xtr
@@ -153,44 +158,15 @@
     5981.461e.9b00.0448.208c.b04b.69dd.4170.9a02.b357.5877.1ba7.b840.3e86.
     f2d1.1450.f26b.623b.bd79.5d07
 ::
-++  test-publication-real-onchain
-  =/  pub  (read-publication:cc c3-onchain-opret)
-  ?~  pub
-    (expect-eq !>('decodes') !>('SHIPPED DECODER CANNOT READ A REAL PUBLICATION'))
-  =*  o    opening.u.pub
-  =/  cic  (com:nu:cric:crypto pass.u.pub)
-  ?.  ?=(%c suite.+<.cic)
-    (expect-eq !>('suite-c') !>('published pass is not suite-C'))
-  ;:  weld
-    ::  the published pass fingerprints to the comet's real @p
-    %+  expect-eq
-      !>  `@p`~ligdes-risbur-folmus-mattyp--firpec-lispec-noddyl-daplyd
-      !>  `@p`fig:ex:cic
-    ::  the blind-opening opens that pass's own hiding dat commitment
-    (expect !>(?=(^ blind-opening.o)))
-    (expect !>((verify-dat:cc dat.tw.pub.+<.cic (need blind-opening.o))))
-    ::  ... to the real spawn satpoint 72340acb...:1
-    %+  expect-eq
-      !>  ^-  sont:ord
-          :+  0x7234.0acb.1b42.16f3.e1ff.0da2.2322.79e4.3326.cd53.0833.31fb.f2ee.7774.daa9.bc54
-            1
-          0
-      !>  spawn:(need blind-opening.o)
-    ::  the published snapshot is life 1 / rift 0 with the messaging key
-    %+  expect-eq
-      !>  ^-  snapshot:sa
-          :*  life=1
-              rift=0
-              key=0xdf30.9632.f565.fddf.5e0c.c5a6.ea6c.c780.9105.6f94.e15f.12d0.e75f.70bc.7ca4.3857
-              sponsor=~
-              fief=~
-          ==
-      !>  snapshot.o
-    ::  and it recomputes the sat output's on-chain P2TR key exactly
-    %+  expect-eq
-      !>  0xca2.828c.764a.0f3e.76e3.3df0.7be9.8703.06ec.5650.af8e.cae8.8f6f.0c64.2ec8.0bee
-      !>  (state-key:cc internal-key.o snapshot.o)
-  ==
+::  RETIRED 2026-08-18: +test-publication-real-onchain decoded the actual
+::  mainnet OP_RETURN of ~ligdes-risbur-folmus-mattyp--firpec-lispec-noddyl-
+::  daplyd.  That comet was minted under the hiding-dat format (d = H_tag(
+::  jam(sont) || blind)), which this codec no longer reads: dat is now the
+::  plaintext satpoint.  The bytes above (+c3-onchain-opret) are kept as a
+::  historical artifact.  Every comet minted before this change is an old-
+::  format identity; the first new-format mainnet publication should be
+::  pinned here in its place.
+::
 ::  ------------------------------------------------------------------
 ::  OP_PUSHDATA2 -- the publication that does not fit in one length byte
 ::
@@ -316,18 +292,18 @@
 ::  Golden vector "pushdata2-fief" (/vectors/gw-kelvin-9.json).
 ::
 ::  A realistic public spawn: a real 108-byte suite-%c pass, a snapshot
-::  committing a fief, a full blind-opening.  269 bytes of payload, so
+::  committing a fief, a spawn-opening.  The payload size and script are
 ::  the script carries OP_PUSHDATA2 `4d 0d 01`.  Causeway desktop
 ::  (Python) and Causeway web (TS) pin the SAME bytes from the SAME JSON
 ::  -- that agreement is the point of the vector.
 ::  ------------------------------------------------------------------
 ++  v2-pass
   ^-  pass
-  0x2aac.0e0b.79f6.b4fc.f9da.c3f6.cf75.f5ba.fdb4.c907.33ed.a811.
-    7d62.eeb8.9440.e15a.4918.dd18.8b5d.d9df.0112.007e.5662.ba9c.
-    7b41.343c.da61.5d33.8992.f009.596a.b8a2.8912.084b.ffd7.93ab.
-    d02b.ae4d.45ed.4517.a917.38d2.eeab.1876.aded.7707.3533.e061.
-    c872.748e.b161.1c02.e4a6.4063
+  0x2c68.6cb0.f539.7d81.c60a.4e92.d71b.5fa3.e428.6cb0.f539.7d81.c60a.
+    4e92.d71b.5fa3.e400.2002.3b00.4918.dd18.8b5d.d9df.01d2.0002.
+    d2a8.8b15.3fb6.31fa.3885.76c7.42e1.1f5c.a4db.e52a.d275.f8d8.
+    9f7e.50ea.af7a.41bb.a753.6364.9318.1b39.d158.0416.eaee.6be0.
+    b213.d4c7.79ee.0649.1c4f.ff3e.8eae.2863
 ::
 ++  v2-snapshot
   ^-  snapshot:sa
@@ -350,51 +326,48 @@
   :*  internal-key=v2-internal-key
       snapshot=v2-snapshot
       :-  ~
-      :+  :+  txid=0xa1b2.c3d4.e5f6.0718.293a.4b5c.6d7e.8f90.
+      :-  :+  txid=0xa1b2.c3d4.e5f6.0718.293a.4b5c.6d7e.8f90.
                        a1b2.c3d4.e5f6.0718.293a.4b5c.6d7e.8f90
             vout=1
           off=0
-        start-height=961.059
-      blind=0x345b.c3c5.fc0e.b35b.ee8d.ce5d.e886.b130.
-               6e79.67e4.e111.b009.ab9e.13d2.2850.6127
+      start-height=961.059
   ==
 ::
 ++  v2-payload
   ^-  hexb:btc
-  :-  269
-  0x1.a0d7.3120.5372.018e.b058.473a.39e4.30f0.999a.83bb.f656.3b8c.
-    5577.699c.8bd4.8ba2.f6a2.26d7.15e8.d5c9.ebff.2504.8944.515c.
-    b5ac.0478.c9c4.99ae.306d.1e9a.a03d.4e5d.312b.3f00.8980.efec.
-    ae45.8c6e.8c24.ad70.204a.5c77.b1be.08d4.f699.8364.da7e.ddfa.
-    ba67.fb61.ed7c.7e5a.fbbc.0507.5635.000a.605e.e05b.6c05.ca67.
-    65a3.38b7.6cf3.6f0a.1c2c.1c3a.578a.8156.b1ee.72e7.fb99.f9e6.
-    599c.01f8.775d.815e.9dbc.fe5f.4290.4814.c555.cb4a.8097.4c9c.
-    e90a.d3e6.a109.dae3.d415.b3f2.6706.3ecd.1cf0.2d1a.c681.40c8.
-    50cc.0220.00e4.a35f.1bd7.924e.0ac6.817d.39f5.b06c.28e4.a35f.
-    1bd7.924e.0ac6.817d.39f5.b06c.686c.401a.5175.00fd.2761.5028.
-    d213.9eab.09b0.11e1.e467.796e.30b1.86e8.5dce.8dee.5bb3.0efc.
-    c5c3.5b34
+  :-  241
+  0x1.a0e3.3114.5747.9fff.278e.2403.f7bc.63ea.0959.f035.7775.0b02.
+    ace8.9c0d.8c49.b2b1.a9d3.dd20.bd57.7528.bf4f.6cfc.3a69.95f2.
+    6d52.ae8f.70a1.63bb.421c.fd18.db9f.8a45.5469.0100.e980.efec.
+    ae45.8c6e.8c24.801d.0110.00f2.d1af.8d6b.4927.05e3.c0be.9c7a.
+    5836.14f2.d1af.8d6b.4927.05e3.c0be.9c7a.5836.3436.000a.605e.
+    e05b.6c05.ca67.65a3.38b7.6cf3.6f0a.1c2c.1c3a.578a.8156.b1ee.
+    72e7.fb99.f9e6.599c.01f8.775d.815e.9dbc.fe5f.4290.4814.c555.
+    cb4a.8097.4c9c.e90a.d3e6.a109.dae3.d415.b3f2.6706.3ecd.1cf0.
+    2d1a.c681.40c8.50cc.0220.00e4.a35f.1bd7.924e.0ac6.817d.39f5.
+    b06c.28e4.a35f.1bd7.924e.0ac6.817d.39f5.b06c.682c.9046.541d
 ::
 ++  v2-script
   ^-  hexb:btc
-  :-  279
-  0x6a.0375.7262.0109.4d0d.0101.a0d7.3120.5372.018e.b058.473a.
-    39e4.30f0.999a.83bb.f656.3b8c.5577.699c.8bd4.8ba2.f6a2.26d7.
-    15e8.d5c9.ebff.2504.8944.515c.b5ac.0478.c9c4.99ae.306d.1e9a.
-    a03d.4e5d.312b.3f00.8980.efec.ae45.8c6e.8c24.ad70.204a.5c77.
-    b1be.08d4.f699.8364.da7e.ddfa.ba67.fb61.ed7c.7e5a.fbbc.0507.
-    5635.000a.605e.e05b.6c05.ca67.65a3.38b7.6cf3.6f0a.1c2c.1c3a.
-    578a.8156.b1ee.72e7.fb99.f9e6.599c.01f8.775d.815e.9dbc.fe5f.
-    4290.4814.c555.cb4a.8097.4c9c.e90a.d3e6.a109.dae3.d415.b3f2.
-    6706.3ecd.1cf0.2d1a.c681.40c8.50cc.0220.00e4.a35f.1bd7.924e.
-    0ac6.817d.39f5.b06c.28e4.a35f.1bd7.924e.0ac6.817d.39f5.b06c.
-    686c.401a.5175.00fd.2761.5028.d213.9eab.09b0.11e1.e467.796e.
-    30b1.86e8.5dce.8dee.5bb3.0efc.c5c3.5b34
+  :-  250
+  0x6a03.7572.6201.094c.f101.a0e3.3114.5747.9fff.278e.2403.f7bc.63ea.
+    0959.f035.7775.0b02.ace8.9c0d.8c49.b2b1.a9d3.dd20.bd57.7528.
+    bf4f.6cfc.3a69.95f2.6d52.ae8f.70a1.63bb.421c.fd18.db9f.8a45.
+    5469.0100.e980.efec.ae45.8c6e.8c24.801d.0110.00f2.d1af.8d6b.
+    4927.05e3.c0be.9c7a.5836.14f2.d1af.8d6b.4927.05e3.c0be.9c7a.
+    5836.3436.000a.605e.e05b.6c05.ca67.65a3.38b7.6cf3.6f0a.1c2c.
+    1c3a.578a.8156.b1ee.72e7.fb99.f9e6.599c.01f8.775d.815e.9dbc.
+    fe5f.4290.4814.c555.cb4a.8097.4c9c.e90a.d3e6.a109.dae3.d415.
+    b3f2.6706.3ecd.1cf0.2d1a.c681.40c8.50cc.0220.00e4.a35f.1bd7.
+    924e.0ac6.817d.39f5.b06c.28e4.a35f.1bd7.924e.0ac6.817d.39f5.
+    b06c.682c.9046.541d
 ::
 ++  test-golden-pushdata2-publication
   =/  script  (make-publication:cc v2-publication)
   ;:  weld
-    ::  the payload is 269 bytes -- past OP_PUSHDATA1's ceiling
+    ::  the payload is 241 bytes: PUSHDATA1 (0x4c), one length byte.  It was
+    ::  269 and PUSHDATA2 while the opening carried a 32-byte blind; the
+    ::  full-packet vector below still exercises PUSHDATA2.
     (expect-eq !>(v2-payload) !>((jam-octs:cc v2-publication)))
     ::  ... and the script is byte-identical to the shared vector
     (expect-eq !>(v2-script) !>(script))
@@ -418,18 +391,14 @@
     :*  internal-key=0x2.cafe
         snapshot=`snapshot:sa`[life=2 rift=0 key=0xabcd sponsor=`~zod fief=~]
         :-  ~
-        :+  [txid=0x1234.5678.9abc.def0 vout=1 off=0]
-          start-height=778.000
-        blind=0xf0de.dc6a.72ec.b8c1.6b5d.af25.2b8d.b53b.
-                 2510.4f32.c2d9.e9bc.3459.db71.6535.ef2e
+        :-  [txid=0x1234.5678.9abc.def0 vout=1 off=0]
+        start-height=778.000
     ==
   %+  expect-eq
     !>  ^-  hexb:btc
-        :-  77
-        0x6a.0375.7262.0109.4501.427f.e577.df56.ef80.e2af.6c21.3320.
-          34af.969a.05d8.e1bd.7935.f1ac.6864.6c40.82f8.5e00.02b8.bcd7.
-          94c5.6d67.d1f0.a667.0bcb.3c41.94ec.d436.ae94.bc76.ad05.e3b2.
-          cba9.717b.c303
+        :-  42
+        0x6a03.7572.6201.0922.0142.7fe5.77df.56ef.80e2.af6c.2133.2034.
+          af96.9a05.d8e1.bd79.35f1.ac68.642c.9020.be17
     !>  (make-publication:cc pub)
 ::
 ::  ------------------------------------------------------------------
@@ -465,23 +434,18 @@
     vout=1
   off=0
 ::
-++  fp-blind
-  ^-  @ux
-  0x345b.c3c5.fc0e.b35b.ee8d.ce5d.e886.b130.
-    6e79.67e4.e111.b009.ab9e.13d2.2850.6127
-::
 ++  fp-snap0
   ^-  snapshot:sa
   [life=1 rift=0 key=fp-key sponsor=~ fief=`[%if .64.227.13.22 35.353]]
 ++  fp-snap6
   ^-  snapshot:sa
   [life=4 rift=1 key=fp-key sponsor=`~zod fief=`[%if .64.227.13.22 35.353]]
-::  entry 0 opens the hiding dat commitment; the terminal opening -- the
-::  hop this transaction performs -- never may.
+::  entry 0 names the spawn sat; the terminal opening -- the hop this
+::  transaction performs -- never may.
 ::
 ++  fp-open0
   ^-  opening:sa
-  [fp-ikey fp-snap0 `[fp-spawn start-height=961.055 fp-blind]]
+  [fp-ikey fp-snap0 `[fp-spawn start-height=961.055]]
 ++  fp-open6  ^-(opening:sa [fp-ikey fp-snap6 ~])
 ::
 ++  fp-log
@@ -497,43 +461,40 @@
 ::
 ++  fp-pass-empty
   ^-  pass
-  0x2aac.0e0b.79f6.b4fc.f9da.c3f6.cf75.f5ba.fdb4.c907.33ed.a811.
-    7d62.eeb8.9440.e15a.4918.dd18.8b5d.d9df.0112.007e.5662.ba9c.
-    7b41.343c.da61.5d33.8992.f009.596a.b8a2.8912.084b.ffd7.93ab.
-    d02b.ae4d.45ed.4517.a917.38d2.eeab.1876.aded.7707.3533.e061.
-    c872.748e.b161.1c02.e4a6.4063
+  0x2c68.6cb0.f539.7d81.c60a.4e92.d71b.5fa3.e428.6cb0.f539.7d81.c60a.
+    4e92.d71b.5fa3.e400.2002.3b00.4918.dd18.8b5d.d9df.01d2.0002.
+    d2a8.8b15.3fb6.31fa.3885.76c7.42e1.1f5c.a4db.e52a.d275.f8d8.
+    9f7e.50ea.af7a.41bb.a753.6364.9318.1b39.d158.0416.eaee.6be0.
+    b213.d4c7.79ee.0649.1c4f.ff3e.8eae.2863
 ::
 ++  fp-script
   ^-  hexb:btc
-  :-  598
-  0x6a03.7572.6201.094d.4c02.0180.991f.0332.2517.e008.8b75.a493.
-    430e.039f.a939.b86b.6fb5.c358.7597.c6b9.48bd.286a.2f6a.725d.
-    815e.9dbc.fe5f.4290.4814.c555.cb4a.8097.4c9c.e90a.d3e6.a109.
-    dae3.d415.b3f2.0390.08f8.ceee.5ac4.e8c6.48d2.0a07.a2c4.7517.
-    eb8b.406d.9f39.48a6.edd7.adaf.7bb6.1fd6.cee7.a7b5.cf5b.7060.
-    550b.c07e.4444.4444.4444.4444.4444.4444.4444.4444.4444.4444.
-    4444.4444.4444.4444.4444.440c.4823.aa9e.0150.00f3.02df.622b.
-    503e.2b1b.c5b9.659b.7f53.e060.e1d0.b952.0cb4.8a75.973b.dfcf.
-    cc37.cfe2.0cc0.bfeb.0af4.eae4.f5ff.1282.44a2.28ae.5a56.02bc.
-    64e2.4c57.9836.0f4d.d01e.a7ae.9895.3f33.f069.e680.6fd1.300e.
-    0442.8662.1600.0120.1ffd.dab8.9674.5230.0eec.cba9.8765.4321.
-    1ffd.dab8.9674.5230.0eec.cba9.8765.4363.03d2.87aa.03e8.3f09.
-    8342.919e.f05c.4d80.8d08.273f.cb73.8389.3544.ef72.6e74.df9a.
-    75e0.2f1e.dea2.0b40.bf88.8888.8888.8888.8888.8888.8888.8888.
-    8888.8888.8888.8888.8888.8888.8888.8888.1890.a054.dd02.d03f.
-    3333.3333.3333.3333.3333.3333.3333.3333.3333.3333.3333.3333.
-    3333.3333.3333.3307.246c.55b7.00fc.1311.1111.1111.1111.1111.
-    1111.1111.1111.1111.1111.1111.1111.1111.1111.1111.1111.0312.
-    dbaa.5b00.feab.aaaa.aaaa.aaaa.aaaa.aaaa.aaaa.aaaa.aaaa.aaaa.
-    aaaa.aaaa.aaaa.aaaa.aaaa.aaaa.aa01.097d.d52d.00ff.6666.6666.
-    6666.6666.6666.6666.6666.6666.6666.6666.6666.6666.6666.6666.
-    6666.66e6.8004.cdea.1a00.0530.2ff0.2db6.02e5.b3b2.519c.5bb6.
-    f937.050e.160e.9d2b.c540.ab58.77b9.f3fd.cc7c.f32c.cc38.00ff.
-    ae2b.d0ab.93d7.ff4b.0812.89a2.b86a.5909.f092.8933.5d61.da3c.
-    3441.7b9c.ba62.56fe.d20c.7c9a.39e0.5b34.8c03.8190.a128
-::
-::  A seven-hop packet, published on chain, byte for byte.
-::
+  :-  570
+  0x6a03.7572.6201.094d.3002.0180.b81e.4371.75f4.f97f.e248.3270.cf3b.
+    a69e.9005.5f73.57b7.20c0.8ace.d9c0.9824.1b9b.3add.0dd2.7b55.
+    87f2.fbc4.c6af.9356.29df.26e5.fa08.173a.b62b.c4d1.8fb1.fda9.
+    5844.9516.0090.0ef8.ceee.5ac4.e8c6.4802.d811.0001.201f.fdda.
+    b896.7452.300e.eccb.a987.6543.211f.fdda.b896.7452.300e.eccb.
+    a987.6543.630b.c07e.4444.4444.4444.4444.4444.4444.4444.4444.
+    4444.4444.4444.4444.4444.4444.4444.440c.4823.aa9e.0150.00f3.
+    02df.622b.503e.2b1b.c5b9.659b.7f53.e060.e1d0.b952.0cb4.8a75.
+    973b.dfcf.cc37.cfe2.0cc0.bfeb.0af4.eae4.f5ff.1282.44a2.28ae.
+    5a56.02bc.64e2.4c57.9836.0f4d.d01e.a7ae.9895.3f33.f069.e680.
+    6fd1.300e.0442.8662.1600.0120.1ffd.dab8.9674.5230.0eec.cba9.
+    8765.4321.1ffd.dab8.9674.5230.0eec.cba9.8765.4363.81f4.a1ea.
+    05a0.5f44.4444.4444.4444.4444.4444.4444.4444.4444.4444.4444.
+    4444.4444.4444.4444.4444.0c48.50aa.6e01.e89f.9999.9999.9999.
+    9999.9999.9999.9999.9999.9999.9999.9999.9999.9999.9999.9999.
+    9903.12b6.aa5b.00fe.8988.8888.8888.8888.8888.8888.8888.8888.
+    8888.8888.8888.8888.8888.8888.8888.8888.0189.6dd5.2d00.ff55.
+    5555.5555.5555.5555.5555.5555.5555.5555.5555.5555.5555.5555.
+    5555.5555.5555.d580.84be.ea16.807f.3333.3333.3333.3333.3333.
+    3333.3333.3333.3333.3333.3333.3333.3333.3333.3333.3373.4082.
+    6675.0d80.0298.17f8.165b.81f2.59d9.28ce.2ddb.fc9b.0207.0b87.
+    ce95.62a0.55ac.bbdc.f97e.66be.7916.661c.807f.d715.e8d5.c9eb.
+    ff25.0489.4451.5cb5.ac04.78c9.c499.ae30.6d1e.9aa0.3d4e.5d31.
+    2b7f.6906.3ecd.1cf0.2d1a.c681.40c8.5014
+
 ++  test-golden-full-packet-publication
   =/  xtr  (jam fp-log)
   =/  full  (need (with-xtr:cc fp-pass-empty xtr))
@@ -543,10 +504,10 @@
   ;:  weld
     ::  the measurements the cap argument rests on
     ::
-    (expect-eq !>(392) !>((met 3 xtr)))
-    (expect-eq !>(108) !>((met 3 fp-pass-empty)))
-    (expect-eq !>(500) !>((met 3 full)))
-    (expect-eq !>(588) !>(wid.payload))
+    (expect-eq !>(358) !>((met 3 xtr)))
+    (expect-eq !>(114) !>((met 3 fp-pass-empty)))
+    (expect-eq !>(471) !>((met 3 full)))
+    (expect-eq !>(560) !>(wid.payload))
     ::  ... which is exactly what 512 could not carry, and 1.024 can
     ::
     (expect !>((gth wid.payload 512)))
@@ -606,7 +567,7 @@
   =/  m2   (need (parse-pass:cc p2))
   ;:  weld
     (expect-eq !>(fig:ex:(com:nu:cric:crypto p)) !>(fig:ex:(com:nu:cric:crypto p2)))
-    (expect-eq !>(d.m) !>(d.m2))
+    (expect-eq !>(spawn.m) !>(spawn.m2))
     (expect-eq !>(dom.m) !>(dom.m2))
     (expect-eq !>(kel.m) !>(kel.m2))
     ::  ... and the new log really is in there

@@ -4,10 +4,9 @@
 ::  OP_RETURN revision (ops/doc/opret-revision/01-spec-revision.md as amended
 ::  by 04-decisions-addendum.md).
 ::
-::  The pass commits immutably -- and hidingly -- to its spawn satpoint:
+::  The pass commits immutably to its spawn satpoint, in plaintext:
 ::
-::      dat = (can 0 (mat %gw-btc) (mat 9) [256 d] ~)
-::      d   = H_tag("gw/spawn-commit", (jam spawn-sont) || blind)
+::      dat = (can 0 (mat %gw-btc) (mat 9) (mat (jam spawn-sont)) ~)
 ::
 ::  Its mutable xtr is the jam of $custody-log, oldest first.  Each entry
 ::  names a transaction spending the current sat through input 0; the sat
@@ -17,8 +16,8 @@
 ::  +state-leaf:gw-btc-pass), tweaked into internal-key, must recompute
 ::  exactly the sat-carrying output's P2TR key.  Entries without an
 ::  opening are plain custody moves.  Exactly one entry -- entry 0, the
-::  spawn -- must additionally open the dat commitment via
-::  $blind-opening.
+::  spawn -- must additionally carry a $spawn-opening naming the sat and
+::  its start height, and that satpoint must equal the one in the pass.
 ::
 ::  All spends after the first hop must be key-path (the commitment leaf
 ::  is unspendable by construction); the first hop spends an arbitrary
@@ -44,15 +43,21 @@
       sponsor=(unit @p)
       fief=(unit fief)
   ==
-::  $blind-opening: opens the pass's hiding dat commitment
+::  $spawn-opening: entry 0's statement of WHERE the sat began
 ::
-::    start-height is transport metadata, not part of the commitment
-::    preimage: it names the block containing the transaction that
-::    CREATED the spawn satpoint, so the verifier's whole fetch path
-::    stays height-based (the light client cannot look transactions up
-::    by bare txid).
+::    The spawn satpoint is also readable straight out of the pass's dat
+::    (+parse-dat:gw-btc-pass), and the verifier requires the two to
+::    agree.  It rides here as well because start-height is needed and
+::    is transport metadata: it names the block containing the
+::    transaction that CREATED the spawn satpoint, so the verifier's whole
+::    fetch path stays height-based (the light client cannot look
+::    transactions up by bare txid).
 ::
-+$  blind-opening  [spawn=sont:ord start-height=@ud blind=@ux]
+::    Formerly $blind-opening, with a 32-byte blind opening a hiding
+::    commitment in dat.  The blind was removed 2026-08-18: it protected
+::    nobody, because every pass-holder also holds this opening.
+::
++$  spawn-opening  [spawn=sont:ord start-height=@ud]
 ::  $opening: reveals the state committed at one custody hop
 ::
 ::    internal-key is the 33-byte compressed P2TR internal key (02/03
@@ -62,7 +67,7 @@
 +$  opening
   $:  internal-key=@ux
       =snapshot
-      blind-opening=(unit blind-opening)
+      spawn-opening=(unit spawn-opening)
   ==
 ::
 +$  custody-entry
@@ -129,7 +134,7 @@
 ::
 ::    A spawn publication is the degenerate case, not a special one:
 ::    xtr is empty, and the completed log is the single entry whose
-::    blind-opening opens the dat commitment.
+::    spawn-opening names the sat the pass commits to.
 ::
 +$  publication  [=pass =opening]
 ::

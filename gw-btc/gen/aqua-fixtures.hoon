@@ -36,7 +36,7 @@
 ::    kernel's suite-%c encoding moved.
 ::
 ::    The %fail fixture is broken deliberately and minimally: its
-::    blind-opening names a satpoint its dat does NOT commit to, so a
+::    spawn-opening names a satpoint its dat does NOT commit to, so a
 ::    real verifier's commitment check -- and only that check -- fails.
 ::    Give it (spawn %fail) below instead and it verifies like %ok.
 ::
@@ -103,7 +103,7 @@
 ++  dat-tail
   |=  which=?(%ok %fail)
   ^-  @
-  =/  real=@  (make-dat:gwp (spawn which) (make-blind:gwp (seed which)))
+  =/  real=@  (make-dat:gwp (spawn which))
   (rsh [0 p:(mat domain:gwp)] real)
 ::  +sed: the 64-byte cric seed of a fixture comet at .lyfe
 ::
@@ -152,17 +152,16 @@
 ::  +log: a fixture comet's custody log, oldest entry first
 ::
 ::    One entry per life.  Entry 0 is the spawn: it alone carries the
-::    $blind-opening that opens the pass's hiding dat commitment.  Later
+::    $spawn-opening naming the sat the pass's dat commits to.  Later
 ::    entries are rekeys, each opening the snapshot committed at that
 ::    custody hop; the newest snapshot is the comet's current state.
 ::
 ++  log
   |=  [which=?(%ok %fail) lyfe=@ud]
   ^-  custody-log:sa
-  =/  open=blind-opening:sa
-    :+  ?:(?=(%ok which) (spawn which) [0x3333 1 0])
-      start-height
-    (make-blind:gwp (seed which))
+  =/  open=spawn-opening:sa
+    :-  ?:(?=(%ok which) (spawn which) [0x3333 1 0])
+    start-height
   =/  idx  (fief-index which)
   %+  turn  (gulf 1 lyfe)
   |=  l=@ud

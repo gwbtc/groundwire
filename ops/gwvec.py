@@ -5,7 +5,7 @@ The Phase-2 matrix (`doc/opret-revision/05-live-test-plan.md`, tests 2.2-2.16)
 needs suite-C passes carrying DELIBERATELY WRONG custody logs, fed straight
 into a live `%gw-btc` as `%jael-writ` pokes.  This builds them.
 
-Nothing here invents chain data.  Every txid, height, blind and snapshot is
+Nothing here invents chain data.  Every txid, height, satpoint and snapshot is
 cued out of a real comet's own on-chain `xtr`; a mutation edits one field of
 that and re-jams it.  Every encoder is causeway's own
 (`build_xtr_atom` -> `append_xtr_to_ring` -> `derive_pass_from_ring`), so a bug
@@ -170,13 +170,16 @@ def build(art):
             f"truncated to {n} entr{'y' if n == 1 else 'ies'}: an OLDER but "
             f"genuine log whose tip was spent by entry {n} (tests 2.8, 5.3/5.4)")
 
-    # 2.6 -- one bit of the blind: spawn-commit can no longer open dat
+    # 2.6 -- entry 0's spawn-opening names a DIFFERENT satpoint than the
+    # pass's plaintext dat: the `spawn-matches` binding fails.  (This was
+    # "one bit of the blind" while dat was a hiding commitment.)
     e0 = unpack(log[0])
     if e0.get("bo"):
-        _, (spawn, (start_h, blind)) = e0["bo"]
-        d = dict(e0, bo=(0, (spawn, (start_h, blind ^ 1))))
-        add("t2.6-blind-bitflip", pass_of(art, [repack(d)] + log[1:]),
-            "one bit flipped in entry 0's blind (test 2.6)")
+        _, (spawn, start_h) = e0["bo"]
+        txid, (vout, off) = spawn
+        d = dict(e0, bo=(0, ((txid, (vout + 1, off)), start_h)))
+        add("t2.6-spawn-mismatch", pass_of(art, [repack(d)] + log[1:]),
+            "entry 0's spawn-opening vout+1: does not match the pass's dat (test 2.6)")
 
     if len(log) > 1:
         e1 = unpack(log[1])

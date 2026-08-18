@@ -1,27 +1,32 @@
 ::  Codec for the suite-%c pass format owned by the %gw-btc PKI domain,
 ::  protocol kelvin 9 (ops/doc/opret-revision/01-spec-revision.md as amended
-::  by 04-decisions-addendum.md).
+::  by 04-decisions-addendum.md, and by the 2026-08-18 reversion of dat to
+::  the original plaintext form).
 ::
 ::  The immutable tweak data is:
 ::
-::      dat   = (can 0 (mat %gw-btc) (mat 9) [256 d] ~)
-::      d     = H_tag("gw/spawn-commit", (jam spawn-sont) || blind)
-::      blind = H_tag("gw/spawn-blind", seed)
+::      dat = (can 0 (mat %gw-btc) (mat 9) (mat (jam spawn-sont)) ~)
 ::
-::  Ames reads only the leading mat to route the pass to %gw-btc.  The
-::  kelvin is plaintext, so any holder of a pass can read a comet's mint
-::  version without an opening.  d is a hiding commitment: the spawn
-::  satpoint is learned only from an explicit $blind-opening (in the
-::  xtr, or in a public OP_RETURN publication), never parsed out of
-::  dat.  Trailing data after d is rejected.  The pass's xtr tail is
-::  excluded from the key tweak and may grow without changing the
-::  comet's name.
+::  Three self-delimiting mat items: the domain tag, the kelvin, and the
+::  spawn satpoint's canonical jam.  This is Jake and Christian's original
+::  design ((cat 0 (mat dom) <spawn satpoint>) in sur/stealth.hoon), plus
+::  the kelvin.  Any holder of a pass can read all three without an
+::  opening: Ames rubs only the leading mat to route the pass to %gw-btc;
+::  the verifier rubs the third to learn WHICH SAT the comet claims, and
+::  then checks the custody log against it.
+::
+::  A HIDING commitment (d = H_tag(jam(sont) || blind)) sat here from the
+::  2026-08-03 opret revision until 2026-08-18.  It was removed because it
+::  protected nobody: the pass and the attestation are one object, so
+::  every pass-holder holds the opening too, and the blind was one more
+::  secret to lose for no privacy gained.  Trailing data after the third
+::  mat is rejected.  The pass's xtr tail is excluded from the key tweak
+::  and may grow without changing the comet's name.
 ::
 ::  Byte conventions, pinned by the shared golden vectors: H_tag is the
 ::  BIP-340 tagged hash (+tagged-hash:taproot) over big-endian byte
 ::  strings; a jammed noun enters a hash message as its minimal
-::  little-endian byte dump (the ordinary serialization of a jam);
-::  blind, d, and all commitment hashes are exactly 32 bytes.
+::  little-endian byte dump; the state commitment c is exactly 32 bytes.
 ::
 /-  ord, sa=self-attestation
 /+  taproot, btc=bitcoin, bcu=bitcoin-utils
@@ -36,67 +41,51 @@
   =/  jm  (jam n)
   =/  wid  (met 3 jm)
   [wid (rev 3 wid jm)]
-::  +make-blind: the recommended seed-derived blind
-::
-::    deterministic from the master seed alone, so the opening is
-::    recoverable without extra stored state.  the seed enters as its
-::    minimal byte dump.
-::
-++  make-blind
-  |=  seed=@
-  ^-  @ux
-  =/  wid  (met 3 seed)
-  (tagged-hash:taproot 'gw/spawn-blind' [wid (rev 3 wid seed)])
-::  +spawn-commit: d, the hiding commitment to the spawn satpoint
-::
-++  spawn-commit
-  |=  [spawn=sont:ord blind=@ux]
-  ^-  @ux
-  %+  tagged-hash:taproot  'gw/spawn-commit'
-  (cat:byt:bcu ~[(jam-octs spawn) [32 blind]])
 ::  +make-dat: the full immutable tweak data
 ::
 ++  make-dat
-  |=  [spawn=sont:ord blind=@ux]
+  |=  spawn=sont:ord
   ^-  @
-  (can 0 ~[(mat domain) (mat kelvin) [256 (spawn-commit spawn blind)]])
-::  +parse-dat: domain tag, kelvin, and commitment -- nothing more
+  (can 0 ~[(mat domain) (mat kelvin) (mat (jam spawn))])
+::  +parse-dat: domain tag, kelvin, and spawn satpoint -- nothing more
 ::
-::    rejects trailing data: a dat must be exactly the two mat items
-::    followed by 256 bits of commitment.
+::    rejects trailing data: a dat must be exactly three mat items.  The
+::    satpoint is cued from its jam and clammed to $sont, so a dat whose
+::    third item is not a well-formed satpoint fails to parse.
 ::
 ++  parse-dat
   |=  dat=@
-  ^-  (unit [dom=@tas kel=@ud d=@ux])
+  ^-  (unit [dom=@tas kel=@ud spawn=sont:ord])
   %-  mole
   |.
   =/  hed  (rub 0 dat)
   =/  kel  (rub p.hed dat)
   =/  pos  (add p.hed p.kel)
-  =/  d  `@ux`(cut 0 [pos 256] dat)
-  ?>  (lte (met 0 dat) (add pos 256))
-  [`@tas`q.hed `@ud`q.kel d]
-::  +verify-dat: check a blind-opening against a dat
+  =/  spn  (rub pos dat)
+  ?>  =((met 0 dat) (add pos p.spn))
+  [`@tas`q.hed `@ud`q.kel ;;(sont:ord (cue q.spn))]
+::  +verify-dat: check that a dat names exactly this domain, kelvin and
+::  spawn satpoint
 ::
 ++  verify-dat
-  |=  [dat=@ open=blind-opening:sa]
+  |=  [dat=@ spawn=sont:ord]
   ^-  ?
   =/  psd  (parse-dat dat)
   ?~  psd  |
   ?&  =(domain dom.u.psd)
       =(kelvin kel.u.psd)
-      =(d.u.psd (spawn-commit spawn.open blind.open))
+      =(spawn spawn.u.psd)
   ==
 ::
 ++  parse-pass
   |=  =pass
-  ^-  (unit [dom=@tas kel=@ud d=@ux xtr=@])
+  ^-  (unit [dom=@tas kel=@ud spawn=sont:ord xtr=@])
   %-  mole
   |.
   =/  cic  (com:nu:cric:crypto pass)
   ?>  ?=(%c suite.+<.cic)
   =/  meta  (need (parse-dat dat.tw.pub.+<.cic))
-  [dom.meta kel.meta d.meta xtr.tw.pub.+<.cic]
+  [dom.meta kel.meta spawn.meta xtr.tw.pub.+<.cic]
 ::  +with-xtr: the same suite-%c pass carrying a different xtr tail
 ::
 ::    This is what a %anew refresh emits: the custody log grows, the NAME

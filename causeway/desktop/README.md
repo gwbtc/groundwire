@@ -10,8 +10,8 @@ compatibility.
 - **Rekey a comet** (rotate the messaging key, optionally breach) via the same signing path.
 - Emit an off-chain **attestation proof** (`comet.proof.json`) alongside the `gw-vere` boot feed.
 
-Confidential = no on-chain payload. The comet's `@p` commits to a **hiding**
-`dat` (the spawn satpoint behind a seed-derived blind), and its per-identity
+Confidential = no on-chain payload. The comet's `@p` commits to its `dat`
+(the spawn satpoint, in plaintext, plus domain and kelvin), and its per-identity
 state (life/rift/messaging-key/sponsor) is committed in the **taproot tweak of
 the sat-carrying output** — a chain observer sees only a plain P2TR key. Peers
 validate the identity from the off-chain `xtr` custody log (or a deliberate
@@ -61,7 +61,7 @@ causeway spawn generate --invite <FAUCET_CODE>
 
 Prints a fresh 12-word seed phrase, derives a P2TR address, requests 1000 sats from the faucet, waits for confirmation, mines a comet under `~daplyd`, signs + broadcasts a single spawn tx (confidential by default; pass `--publish` for a public on-chain publication), then prints the boot command.
 
-That seed phrase is a **complete** backup: the comet's blind is derived from it (see [Recovery](#recovery--keep-the-phrase-not-just-the-file)).
+That seed phrase controls the coins. The comet's identity is the proof file + the feed (see [Custody](#custody-the-identity-bundle)).
 
 ## Quickstart (Connect Wallet)
 
@@ -71,10 +71,8 @@ causeway spawn connect --xpub <YOUR_XPUB>
 
 Same flow, but you sign the PSBT externally (scan a UR animated QR into Passport/Keystone, or load the `.psbt` file in Sparrow/BlueWallet).
 
-Because your wallet never hands over its seed, this path prints a **separate
-12-word blind recovery phrase** and makes you write it back before mining. Keep
-it with the same care as your wallet seed — see below. To re-derive a blind you
-already hold a phrase for, pass `--blind-mnemonic "<12 words>"`.
+Your wallet never hands over its seed, and Causeway needs no secret from it:
+the identity is the proof file + the feed (see [Custody](#custody-the-identity-bundle)).
 
 ### Spawn flags
 
@@ -94,7 +92,7 @@ a fief of its own, because that is how peers reach it — so a sponsor is normal
 minted with `--fief`. If you set one, the ship must actually bind that port
 (`boot.sh --ames-port`), or the fief is a promise it cannot keep.
 
-`spawn connect` additionally takes `--xpub` (required), `--blind-mnemonic`,
+`spawn connect` additionally takes `--xpub` (required),
 `--utxo` and `--signed-psbt`.
 
 ### Custody: the identity bundle
@@ -104,15 +102,12 @@ and any rekey proofs after it) and the feed. Back both up like a wallet.
 
 - The **feed** holds the ring — the ship's networking key. Mining is seeded
   from system entropy, so no phrase regenerates it, ever.
-- The **proof chain** holds the blind (the secret half of the dat opening) and
-  the committed snapshot of every hop — sponsor, fief, life, rift. Choices,
-  not derivations; nothing regenerates them either.
+- The **proof chain** holds the committed snapshot of every hop — sponsor,
+  fief, life, rift. Choices, not derivations; nothing regenerates them.
 
-Both are written 0600. In the generate flow the wallet seed phrase additionally
-re-derives the blind (and controls the coins); in the connect flow your wallet
-seed stays in your wallet, the blind is fresh entropy recorded in the proof,
-and there is no second phrase to keep — the earlier blind-recovery-phrase
-ceremony is retired (`--blind-mnemonic` still accepts one from that era).
+Both are written 0600. The wallet seed phrase (generate flow) or your own
+wallet (connect flow) controls the coins and nothing else: there is no blind
+and no second phrase. The spawn satpoint sits in the pass's `dat` in plaintext.
 
 ### The TUI
 
@@ -158,38 +153,24 @@ headless run must pre-answer every one of them. Three flags do that:
 | --- | --- |
 | `--utxo TXID:VOUT` | "which UTXO do you want to spend?" — must be one the xpub scan found (`spawn connect`) |
 | `--signed-psbt PATH\|-` | "paste the signed PSBT". A named pipe works: the unsigned PSBT is written to `<patp>-spawn.psbt` first (`spawn connect`, also `rekey`) |
-| `--assume-saved` | the seed / blind-phrase read-back. **The phrase is printed nowhere else** — a scripted run MUST capture stdout or the comet is unrecoverable (both spawn commands) |
+| `--assume-saved` | the wallet-seed read-back (`spawn generate`). **The phrase is printed nowhere else** — a scripted run MUST capture stdout or the coins are unrecoverable. No-op on `spawn connect` |
 
 `causeway spawn generate` with no funded UTXO and no `--invite` still waits
 indefinitely for funding; there is no timeout.
 
-## Recovery — keep the phrase, not just the file
+## `dat`, and why there is nothing to recover
 
-A comet's `@p` commits to a hiding `dat` whose spawn satpoint sits behind a
-32-byte `blind`. The `blind` is what lets you *open* that commitment: without it
-you can never prove or re-attest the identity, even holding the wallet seed and
-the coins. So Causeway never picks it randomly — it is always derived from a
-BIP-39 phrase you hold, plus the funding outpoint:
+A comet's `@p` commits to `dat = (can 0 (mat %gw-btc) (mat 9) (mat (jam
+spawn-sont)) ~)`: the domain, the kelvin, and the spawn satpoint **in
+plaintext**. Anyone holding a pass can read the satpoint out of it, and the
+verifier requires entry 0's spawn-opening to name the same one.
 
-```
-blind_seed = sha256(bip39_seed || "gw/spawn-blind-seed" || txid_be32 || vout_le4)
-blind      = H_tag("gw/spawn-blind", minimal_LE_bytes(blind_seed))
-d          = H_tag("gw/spawn-commit", jam(spawn-sont) || blind)
-dat        = (can 0 (mat %gw-btc) (mat 9) [256 d] ~)
-```
-
-| flow | phrase the blind comes from | `blind_derivation` in the proof |
-| --- | --- | --- |
-| `spawn generate` | the wallet seed phrase it printed | `wallet-seed+outpoint` |
-| `spawn connect` | the separate blind recovery phrase | `blind-mnemonic+outpoint` |
-
-Folding the outpoint in means one phrase can safely back several spawns. Each
-`proof.json` still records `blind_hex` and `blind_seed_hex` verbatim
-(belt-and-braces) plus `blind_derivation`, which names *which* phrase
-regenerates them. **The phrase plus the spawn satpoint — which is public,
-on-chain, and in the proof — is enough to rebuild `blind`, `d` and `dat` from
-nothing.** (`tests/test_causeway.py::test_recovery_drill_from_phrase_and_satpoint_alone`
-is that drill.)
+Until 2026-08-18 the satpoint sat behind a 32-byte blind in a hiding
+commitment, and this section was about never losing that blind. The blind was
+removed: the pass and the attestation are one object, so every pass-holder held
+the opening anyway, and the blind protected nobody while being one more secret
+to lose. There is now **no per-identity secret outside the feed** — see
+[Custody](#custody-the-identity-bundle).
 
 ## Management (rekey)
 
@@ -221,7 +202,7 @@ it, omit it to keep whatever the prior snapshot committed.
 
 Once the spawn tx confirms, bake the off-chain custody log (`xtr`) into the feed
 so the booted ship's pass carries its own attestation. Entry 0 (the spawn)
-additionally opens the hiding `dat` commitment via its blind-opening:
+additionally names the spawn sat and its funding block via its spawn-opening:
 
 ```bash
 causeway finalize ~sampel-palnet-spawn.proof.json --feed 0vABC...
@@ -268,8 +249,8 @@ Four things it refuses to do, all before any fee is paid:
 * publish a log that does not **end** at the outpoint input 0 spends — the
   artifact would be short by the hops in between and the packet would fail
   `N-continuity` on chain;
-* put a blind-opening on the terminal opening — the `dat` opening may sit on
-  entry 0 only (`blind-opening-zero`), and entry 0 is inside the `xtr`;
+* put a spawn-opening on the terminal opening — it may sit on entry 0 only
+  (`spawn-opening-zero`), and entry 0 is inside the `xtr`;
 * emit a payload over `MAX_PUBLICATION` (1024 bytes, ~17 hops);
 * broadcast a payload whose pass does **not** carry the log. That last check
   re-reads the payload back out of the script itself, before signing and again
