@@ -89,7 +89,7 @@ onboarding/comet-miner, `[spec]` decision needed first.
 ## 4. Block scanner — `lib/urb-core`, `lib/urb-encoder`, `lib/ord`
 
 - `[hoon]` The scanner stops parsing witnesses entirely. Discovery = grep
-  transaction **outputs** for the `OP_RETURN "urb"` envelope prefix. The
+  transaction **outputs** for the `OP_RETURN "gw"` envelope prefix. The
   envelope codec in `urb-encoder` is rewritten for the output script (the
   `btc-script` OP_IF descriptor round-trip machinery is no longer part of
   consensus parsing). The three crash sites hardened in PR #127 disappear

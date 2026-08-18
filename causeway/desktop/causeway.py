@@ -931,7 +931,7 @@ def push_data(payload: bytes) -> bytes:
 def make_publication_script(pass_atom: int, opening: dict) -> bytes:
     """The OP_RETURN scriptPubKey for a deliberate on-chain publication:
 
-        OP_RETURN PUSH3 'urb' PUSH1 <kelvin> <pushdata payload>
+        OP_RETURN PUSH2 'gw' PUSH1 <kelvin> <pushdata payload>
         payload = (jam [pass opening])
 
     `pass_atom` is the comet's FULL attestation pass (custody log in its
@@ -944,8 +944,8 @@ def make_publication_script(pass_atom: int, opening: dict) -> bytes:
     payload = jam_bytes(publication_noun(pass_atom, opening))
     if len(payload) > MAX_PUBLICATION:
         raise ValueError(f"publication payload {len(payload)} > {MAX_PUBLICATION}")
-    # 6a 03 'urb' 01 <kelvin> — matches +publication-script:gw-btc-pass.
-    return (bytes([0x6A, 0x03, 0x75, 0x72, 0x62, 0x01, KELVIN])
+    # 6a 02 'gw' 01 <kelvin> — matches +publication-script:gw-btc-pass.
+    return (bytes([0x6A, 0x02, 0x67, 0x77, 0x01, KELVIN])
             + push_data(payload) + payload)
 
 
@@ -958,12 +958,12 @@ def parse_publication_script(script: bytes) -> tuple[int, bytes] | None:
     OP_PUSHDATA2 (0x4d, two LITTLE-endian length bytes) — and refuses anything
     else rather than reading some other opcode as a length.  The kelvin is
     RETURNED, not checked, so a caller can say which version it found."""
-    if len(script) < 7:
+    if len(script) < 6:
         return None
-    if script[:5] != bytes([0x6A, 0x03, 0x75, 0x72, 0x62]) or script[5] != 0x01:
+    if script[:4] != bytes([0x6A, 0x02, 0x67, 0x77]) or script[4] != 0x01:
         return None
-    kelvin = script[6]
-    rest = script[7:]
+    kelvin = script[5]
+    rest = script[6:]
     if not rest:
         return None
     opc = rest[0]

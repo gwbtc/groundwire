@@ -513,8 +513,8 @@ def cmd_build(label, publish=False, fief=None, sponsor=None, fee_rate=1,
         pub_spk = dec["vout"][1]["scriptPubKey"]
         expect = C.make_publication_script(pub_pass, pub_open).hex()
         chk("output 1 is the OP_RETURN publication", pub_spk == expect)
-        chk("OP_RETURN envelope 6a 03 'urb' 01 09",
-            pub_spk.startswith("6a0375726201" + "09"))
+        chk("OP_RETURN envelope 6a 02 'gw' 01 09",
+            pub_spk.startswith("6a02677701" + "09"))
         chk("output 1 value == 0", dec["vout"][1]["value"] == 0)
         # envelope = 7 prefix bytes + the pushdata header (1 direct / 2
         # PUSHDATA1 / 3 PUSHDATA2), so measure the payload rather than
@@ -547,7 +547,7 @@ def cmd_build(label, publish=False, fief=None, sponsor=None, fee_rate=1,
             real = C.make_publication_script
             try:
                 C.make_publication_script = (
-                    lambda p, o: bytes([0x6A, 0x03, 0x75, 0x72, 0x62, 0x01, 0x09])
+                    lambda p, o: bytes([0x6A, 0x02, 0x67, 0x77, 0x01, 0x09])
                     + bytes([75]) + b"\x00" * 75)
                 p2, _ = C.build_spawn_psbt(
                     utxo_txid=txid, utxo_vout=vout, utxo_value=value,
@@ -1013,7 +1013,7 @@ def cmd_publish(label, artifact_n, fee_rate=4, fund=False, sat_target=None):
     pub_spk = dec["vout"][1]["scriptPubKey"]
     chk("output 1 is the OP_RETURN publication",
         pub_spk == C.make_publication_script(pub_pass, pub_open).hex())
-    chk("OP_RETURN envelope 6a 03 'urb' 01 09",
+    chk("OP_RETURN envelope 6a 02 'gw' 01 09",
         pub_spk.startswith("6a03757262" + "0109"), pub_spk[:16])
     chk("OP_RETURN value is 0", dec["vout"][1]["value"] == 0)
     # MAX_PUBLICATION payload + 7-byte envelope + up to a 3-byte PUSHDATA2

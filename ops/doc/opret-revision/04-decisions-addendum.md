@@ -700,7 +700,7 @@ its custody transaction (spawn or state update). The confidential path
 never publishes; there is nothing to grep for a confidential comet.
 
 ```
-scriptPubKey = OP_RETURN OP_PUSH3 "urb" OP_PUSH1 <kelvin=0x09> OP_PUSHDATA <payload>
+scriptPubKey = OP_RETURN OP_PUSH2 "gw" OP_PUSH1 <kelvin=0x09> OP_PUSHDATA <payload>
 payload      = (jam publication)
 publication  = [=pass =opening]        :: sur/self-attestation
 opening      = [internal-key=@ux snapshot blind-opening=(unit [spawn blind])]
@@ -765,7 +765,7 @@ never treat `0` as a real height (see `resolve_start_height` in
 correcting it in a transport artifact never invalidates a minted comet.
 
 The scanner (`lib/urb-core`) discovers public comets by grepping
-transaction **outputs** for the `OP_RETURN "urb"` prefix — never by
+transaction **outputs** for the `OP_RETURN "gw"` prefix — never by
 parsing witnesses. Per publication it runs the same verification the
 confidential walk does for one hop: for a spawn, the `pass`↔`dat`
 hiding-commitment binding, the input-0 funding spend, the `state-key`

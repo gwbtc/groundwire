@@ -188,15 +188,15 @@ def test_golden_publication_jam():
 def test_publication_script_shape():
     pub = BASIC["publication"]
     script = cw.make_publication_script(int(pub["pass"], 16), _basic_opening())
-    # OP_RETURN PUSH3 'urb' PUSH1 <kelvin=0x09> then pushdata.
-    assert script[:7] == bytes([0x6A, 0x03, 0x75, 0x72, 0x62, 0x01, 0x09])
+    # OP_RETURN PUSH2 'gw' PUSH1 <kelvin=0x09> then pushdata.
+    assert script[:6] == bytes([0x6A, 0x02, 0x67, 0x77, 0x01, 0x09])
     payload = bytes.fromhex(pub["jam_publication_le"])
     assert len(payload) == 34  # <= 75 -> a direct length push, not PUSHDATA1
-    assert script[7:] == bytes([len(payload)]) + payload
+    assert script[6:] == bytes([len(payload)]) + payload
     # ... and the whole script is pinned in the shared vector
     assert script.hex() == pub["op_return_script"]
     assert len(script) == pub["op_return_script_bytes"]
-    assert script[7:8].hex() == pub["pushdata"]
+    assert script[6:7].hex() == pub["pushdata"]
 
 
 def test_publication_small_payload_uses_direct_push():
@@ -206,7 +206,7 @@ def test_publication_small_payload_uses_direct_push():
     script = cw.make_publication_script(1, opening)
     payload = cw.jam_bytes(cw.publication_noun(1, opening))
     assert len(payload) <= 75
-    assert script[7] == len(payload)  # direct push, not 0x4c
+    assert script[6] == len(payload)  # direct push, not 0x4c
 
 
 # ---------------------------------------------------------------------------
@@ -250,12 +250,12 @@ def test_golden_pushdata2_publication_script():
 
     script = cw.make_publication_script(pass_atom, _pd2_opening())
     assert script.hex() == pub["op_return_script"]
-    assert len(script) == pub["op_return_script_bytes"] == 250
+    assert len(script) == pub["op_return_script_bytes"] == 249
     # envelope, then OP_PUSHDATA1 with a ONE-byte length
-    assert script[:7] == bytes([0x6A, 0x03, 0x75, 0x72, 0x62, 0x01, 0x09])
-    assert script[7:9].hex() == pub["pushdata"] == "4cf1"
-    assert script[8] == 241
-    assert script[9:] == payload
+    assert script[:6] == bytes([0x6A, 0x02, 0x67, 0x77, 0x01, 0x09])
+    assert script[6:8].hex() == pub["pushdata"] == "4cf1"
+    assert script[7] == 241
+    assert script[8:] == payload
 
 
 # ---------------------------------------------------------------------------
@@ -326,9 +326,9 @@ def test_golden_full_packet_publication_script():
 
     script = cw.make_publication_script(pass_full, opening)
     assert script.hex() == FULL["op_return_script"]
-    assert len(script) == FULL["op_return_script_bytes"] == 570
-    assert script[7:10].hex() == FULL["pushdata"] == "4d3002"
-    assert script[8] | (script[9] << 8) == 560
+    assert len(script) == FULL["op_return_script_bytes"] == 569
+    assert script[6:9].hex() == FULL["pushdata"] == "4d3002"
+    assert script[7] | (script[8] << 8) == 560
 
 
 def test_max_publication_is_the_agreed_cap():
@@ -449,7 +449,7 @@ def test_spawn_public_adds_op_return():
                                    publication_pass_atom=0xDEAD, publication_opening=opening)
     op_returns = [o for o in p.tx.vout if o.script_pubkey.data[:1] == b"\x6a"]
     assert len(op_returns) == 1
-    assert op_returns[0].script_pubkey.data[:7] == bytes([0x6A, 0x03, 0x75, 0x72, 0x62, 0x01, 0x09])
+    assert op_returns[0].script_pubkey.data[:6] == bytes([0x6A, 0x02, 0x67, 0x77, 0x01, 0x09])
     assert proof["published"] is True
 
 
@@ -2163,7 +2163,7 @@ def test_parse_publication_script_round_trips_the_golden_script():
 @pytest.mark.parametrize("n", [3, 75, 76, 255, 256, 588])
 def test_parse_publication_reads_every_push_form_push_data_emits(n):
     """Direct push, PUSHDATA1 and PUSHDATA2 all come back out."""
-    body = bytes([0x6A, 0x03, 0x75, 0x72, 0x62, 0x01, cw.KELVIN])
+    body = bytes([0x6A, 0x02, 0x67, 0x77, 0x01, cw.KELVIN])
     payload = bytes(range(256)) * 4
     payload = payload[:n]
     got = cw.parse_publication_script(body + cw.push_data(payload) + payload)
@@ -2176,14 +2176,14 @@ def test_parse_publication_refuses_what_is_not_a_publication():
     assert cw.parse_publication_script(b"") is None
     # a length that does not match the payload actually present
     assert cw.parse_publication_script(
-        bytes([0x6A, 0x03, 0x75, 0x72, 0x62, 0x01, cw.KELVIN, 0x20]) + b"\xab" * 4) is None
+        bytes([0x6A, 0x02, 0x67, 0x77, 0x01, cw.KELVIN, 0x20]) + b"\xab" * 4) is None
 
 
 def test_read_publication_refuses_a_foreign_kelvin():
     """A watcher at another protocol version ignores the output rather than
     mis-parsing it — parse_publication still reports the version it saw."""
     script = bytearray(bytes.fromhex(FULL["op_return_script"]))
-    script[6] = cw.KELVIN + 1
+    script[5] = cw.KELVIN + 1   # kelvin byte follows 6a 02 67 77 01
     assert cw.parse_publication_script(bytes(script))[0] == cw.KELVIN + 1
     assert cw.read_publication_script(bytes(script)) is None
 
@@ -2209,7 +2209,7 @@ def test_recue_guard_rejects_a_boot_pass_publication():
     boot = cw.make_publication_script(_PUB_PASS, opening)
     packet = cw.make_publication_script(cw.pass_with_xtr(_PUB_PASS, xtr), opening)
     # ...and the two really are near-identical on the wire, which is the point
-    assert boot[:7] == packet[:7]
+    assert boot[:6] == packet[:6]
     assert len(packet) - len(boot) == 359   # the 358-byte xtr + one length byte
 
     with pytest.raises(ValueError, match="carries NO custody log"):

@@ -187,8 +187,15 @@ When a ship deliberately publishes, it adds one OP_RETURN output to the same
 custody transaction:
 
 ```
-scriptPubKey = OP_RETURN OP_PUSH3 "urb" OP_PUSH1 <ver=0x01> OP_PUSHDATA <payload>
+scriptPubKey = OP_RETURN OP_PUSH2 "gw" OP_PUSH1 <kelvin=0x09> OP_PUSHDATA <payload>
 ```
+
+> **Amended 2026-08-18.** The envelope tag was `"urb"` (three bytes) from the
+> first draft; the commitment leaf was already `"gw"`. Two protocol tags for
+> one protocol was unrecorded drift, and Groundwire's on-chain footprint is
+> `gw`/`gw-btc` everywhere else. Unified on `"gw"` (two bytes; the script is
+> one byte shorter). No comet minted before this date carries the new
+> envelope; that set was dev infrastructure.
 
 Publication uses, in scope for this revision:
 

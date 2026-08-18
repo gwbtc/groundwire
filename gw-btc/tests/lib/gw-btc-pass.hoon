@@ -180,12 +180,12 @@
 ::  inexpressible cases loud.
 ::  ------------------------------------------------------------------
 ::
-::  +push-hdr: the 3 bytes after the 7-byte OP_RETURN envelope
+::  +push-hdr: the 3 bytes after the 6-byte OP_RETURN envelope
 ++  push-hdr
   |=  n=@ud
   ^-  @ux
   =/  script  (publication-script:cc [n (fil 3 n 0xab)])
-  dat:(take:byt:bcu 3 (drop:byt:bcu 7 script))
+  dat:(take:byt:bcu 3 (drop:byt:bcu 6 script))
 ::
 ::  the minimal push opcode at each boundary, per Bitcoin's own rules
 ++  test-publication-push-opcodes
@@ -239,7 +239,7 @@
     |=  [opc=@ux n=@ud]
     ^-  hexb:btc
     %-  cat:byt:bcu
-    ~[[5 0x6a.0375.7262] [1 0x1] [1 9] [1 opc] [n (fil 3 n 0xab)]]
+    ~[[4 0x6a02.6777] [1 0x1] [1 9] [1 opc] [n (fil 3 n 0xab)]]
   ;:  weld
     (expect-eq !>(*(unit [kel=@ud payload=hexb:btc])) !>((parse-publication:cc (bad 0x4e 78))))
     (expect-eq !>(*(unit [kel=@ud payload=hexb:btc])) !>((parse-publication:cc (bad 0xff 255))))
@@ -265,9 +265,9 @@
     |=  [opc=@ux n=@ud]
     ^-  hexb:btc
     %-  cat:byt:bcu
-    ~[[5 0x6a.0375.7262] [1 0x1] [1 9] [1 opc] [n (fil 3 n 0xab)]]
-  ::  a 7-byte OP_RETURN that is not ours: right length, wrong tag
-  =/  alien  `hexb:btc`[7 0x6a.0311.2233.4455]
+    ~[[4 0x6a02.6777] [1 0x1] [1 9] [1 opc] [n (fil 3 n 0xab)]]
+  ::  a 6-byte OP_RETURN that is not ours: right length, wrong tag
+  =/  alien  `hexb:btc`[6 0x6a02.1122.0109]
   ;:  weld
     ::  OURS, and unreadable.  0x4e is not a push opcode this codec
     ::  emits; 0x4d 77 is a length that lies about its own tail.
@@ -285,7 +285,7 @@
     ::  The filter is TOTAL.  Every output of every transaction in every
     ::  block reaches it, including scripts far too short to slice -- so
     ::  it must answer, not crash.
-    (expect !>(!(publication-envelope:cc `hexb:btc`[3 0x6a.0375])))
+    (expect !>(!(publication-envelope:cc `hexb:btc`[3 0x6a.0267])))
     (expect !>(!(publication-envelope:cc `hexb:btc`[0 0x0])))
   ==
 ::  ------------------------------------------------------------------
@@ -349,8 +349,8 @@
 ::
 ++  v2-script
   ^-  hexb:btc
-  :-  250
-  0x6a03.7572.6201.094c.f101.a0e3.3114.5747.9fff.278e.2403.f7bc.63ea.
+  :-  249
+  0x6a.0267.7701.094c.f101.a0e3.3114.5747.9fff.278e.2403.f7bc.63ea.
     0959.f035.7775.0b02.ace8.9c0d.8c49.b2b1.a9d3.dd20.bd57.7528.
     bf4f.6cfc.3a69.95f2.6d52.ae8f.70a1.63bb.421c.fd18.db9f.8a45.
     5469.0100.e980.efec.ae45.8c6e.8c24.801d.0110.00f2.d1af.8d6b.
@@ -396,9 +396,9 @@
     ==
   %+  expect-eq
     !>  ^-  hexb:btc
-        :-  42
-        0x6a03.7572.6201.0922.0142.7fe5.77df.56ef.80e2.af6c.2133.2034.
-          af96.9a05.d8e1.bd79.35f1.ac68.642c.9020.be17
+        :-  41
+        0x6a.0267.7701.0922.0142.7fe5.77df.56ef.80e2.af6c.2133.2034.af96.
+        9a05.d8e1.bd79.35f1.ac68.642c.9020.be17
     !>  (make-publication:cc pub)
 ::
 ::  ------------------------------------------------------------------
@@ -469,8 +469,8 @@
 ::
 ++  fp-script
   ^-  hexb:btc
-  :-  570
-  0x6a03.7572.6201.094d.3002.0180.b81e.4371.75f4.f97f.e248.3270.cf3b.
+  :-  569
+  0x6a.0267.7701.094d.3002.0180.b81e.4371.75f4.f97f.e248.3270.cf3b.
     a69e.9005.5f73.57b7.20c0.8ace.d9c0.9824.1b9b.3add.0dd2.7b55.
     87f2.fbc4.c6af.9356.29df.26e5.fa08.173a.b62b.c4d1.8fb1.fda9.
     5844.9516.0090.0ef8.ceee.5ac4.e8c6.4802.d811.0001.201f.fdda.

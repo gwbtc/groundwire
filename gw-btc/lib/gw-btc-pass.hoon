@@ -179,7 +179,7 @@
 ::  deliberate on-chain revelation (default off; confidential custody
 ::  transactions carry no publication output at all).
 ::
-::      scriptPubKey = OP_RETURN PUSH3 'urb' PUSH1 <kelvin> <payload>
+::      scriptPubKey = OP_RETURN PUSH2 'gw' PUSH1 <kelvin> <payload>
 ::      payload      = (jam [pass opening])
 ::
 ::  The payload is the FULL ATTESTATION PACKET: .pass is byte-for-byte
@@ -258,7 +258,7 @@
   ~|  [%publication-payload-over-cap wid.payload max-publication]
   ?>  (lte wid.payload max-publication)
   =/  psh=hexb:btc  (push-data payload)
-  (cat:byt:bcu ~[[5 0x6a.0375.7262] [1 0x1] [1 kelvin] psh payload])
+  (cat:byt:bcu ~[[4 0x6a02.6777] [1 0x1] [1 kelvin] psh payload])
 ::  +make-publication: full OP_RETURN scriptPubKey for a $publication
 ::
 ::    The payload is the jam's ORDINARY LITTLE-ENDIAN byte dump, i.e.
@@ -281,7 +281,7 @@
   ^-  (unit publication:sa)
   ::  THE HOT FILTER, and the only silent exit in this arm: it runs on
   ::  every output of every transaction in every block, and virtually
-  ::  none of them is an OP_RETURN "urb" envelope.  Announcing it would
+  ::  none of them is an OP_RETURN "gw" envelope.  Announcing it would
   ::  drown the log in millions of lines a day.
   ::
   ::  It is asked SEPARATELY from parsing, which it was not.  The whole
@@ -338,9 +338,9 @@
 ++  publication-envelope
   |=  script=hexb:btc
   ^-  ?
-  ?&  (gte wid.script 7)
-      =(0x6a.0375.7262 dat:(take:byt:bcu 5 script))
-      =(0x1 dat:(take:byt:bcu 1 (drop:byt:bcu 5 script)))
+  ?&  (gte wid.script 6)
+      =(0x6a02.6777 dat:(take:byt:bcu 4 script))
+      =(0x1 dat:(take:byt:bcu 1 (drop:byt:bcu 4 script)))
   ==
 ::
 ++  parse-publication
@@ -348,9 +348,9 @@
   ^-  (unit [kel=@ud payload=hexb:btc])
   %-  mole
   |.
-  ?>  (gte wid.script 7)
-  ?>  =(0x6a.0375.7262 dat:(take:byt:bcu 5 script))
-  =/  rst  (drop:byt:bcu 5 script)
+  ?>  (gte wid.script 6)
+  ?>  =(0x6a02.6777 dat:(take:byt:bcu 4 script))
+  =/  rst  (drop:byt:bcu 4 script)
   ?>  =(0x1 dat:(take:byt:bcu 1 rst))
   =/  kel  dat:(take:byt:bcu 1 (drop:byt:bcu 1 rst))
   =.  rst  (drop:byt:bcu 2 rst)
