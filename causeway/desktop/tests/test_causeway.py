@@ -3170,3 +3170,10 @@ def test_boot_sh_auto_picks_http_port_and_resumes_a_finished_mint():
     # --remint archives rather than deletes
     assert 'mv "$mintdir" "$GW_DIR/var/mint-$stamp"' in resume
     assert "--remint" in src[:src.index("cmd_mint()")]      # documented in usage
+    # a resume comes back on the release it was minted with, not "latest" --
+    # resolving latest once booted a CC comet onto the daily channel, whose
+    # pill cannot do confidential comets, and baked that kernel into the pier
+    assert 'var/mint/release-tag' in src
+    assert src.index("var/mint/release-tag") < src.index("  resolve_tag")
+    # restarts keep the web port: vere's default is 80, everything printed says 8080
+    assert 'GW_HTTP_PORT="$HTTP_PORT"' in src

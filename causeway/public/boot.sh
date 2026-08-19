@@ -694,6 +694,7 @@ GW_LOG='$GW_LOG'
 GW_SC_LOG='$GW_SC_LOG'
 GW_SIDECAR='${GW_SIDECAR:-}'
 GW_AMES_PORT='$AMES_PORT'
+GW_HTTP_PORT='$HTTP_PORT'
 GW_LOOM='$LOOM'
 EOF
 }
@@ -704,7 +705,7 @@ boot_ship() {
   GW_SC_LOG="$GW_DIR/var/sc-$NAME.log"
   if [ "${HAVE_SIDECAR:-0}" = 1 ]; then GW_SIDECAR="$SIDECAR"; else GW_SIDECAR=""; fi
   export GW_NAME="$NAME" GW_PIER GW_VERE="$VERE" GW_LOG GW_SC_LOG GW_LOOM="$LOOM"
-  export GW_AMES_PORT="$AMES_PORT" GW_SIDECAR GW_DIR SOCK_TOOL
+  export GW_AMES_PORT="$AMES_PORT" GW_HTTP_PORT="$HTTP_PORT" GW_SIDECAR GW_DIR SOCK_TOOL
 
   if [ -n "$(gwl_king_pid)" ] || [ -n "$(gwl_serf_pid)" ]; then
     info "already running (pid $(gwl_king_pid) $(gwl_serf_pid))"
@@ -1085,7 +1086,7 @@ cmd_status() {
   GW_LOG="$GW_DIR/var/$NAME.log"; GW_SC_LOG="$GW_DIR/var/sc-$NAME.log"
   [ -f "$GW_LOG" ] || GW_LOG="$GW_DIR/$NAME.log"
   export GW_NAME="$NAME" GW_PIER GW_VERE="$VERE" GW_LOG GW_SC_LOG GW_DIR
-  export GW_SIDECAR="$SIDECAR" GW_LOOM="$LOOM" GW_AMES_PORT="$AMES_PORT"
+  export GW_SIDECAR="$SIDECAR" GW_LOOM="$LOOM" GW_AMES_PORT="$AMES_PORT" GW_HTTP_PORT="$HTTP_PORT"
   pick_sock_tool
   # shellcheck source=/dev/null
   . "$GW_DIR/lib/gwlib.sh" 2>/dev/null || die "no $GW_DIR/lib/gwlib.sh; re-run an install first"
@@ -1137,7 +1138,7 @@ cmd_stop() {
   locate_pier
   GW_LOG="$GW_DIR/var/$NAME.log"; GW_SC_LOG="$GW_DIR/var/sc-$NAME.log"
   export GW_NAME="$NAME" GW_PIER GW_VERE="$VERE" GW_LOG GW_SC_LOG GW_DIR
-  export GW_SIDECAR="$SIDECAR" GW_LOOM="$LOOM" GW_AMES_PORT="$AMES_PORT"
+  export GW_SIDECAR="$SIDECAR" GW_LOOM="$LOOM" GW_AMES_PORT="$AMES_PORT" GW_HTTP_PORT="$HTTP_PORT"
   pick_sock_tool
   # shellcheck source=/dev/null
   . "$GW_DIR/lib/gwlib.sh" 2>/dev/null || die "no $GW_DIR/lib/gwlib.sh"
@@ -1206,10 +1207,20 @@ cmd_mint() {
 
   detect_platform
   preflight
+  # A comet minted on an RC must not come back on a different channel: the
+  # first real mint resumed without --version, resolved "latest" to the
+  # daily -- a release whose PILL cannot do confidential comets -- and baked
+  # that kernel into the pier.  The mint dir remembers its release; an
+  # explicit --version still wins.
+  if [ "$TAG" = latest ] && [ -s "$GW_DIR/var/mint/release-tag" ]; then
+    TAG="$(tr -d " \t\r\n" < "$GW_DIR/var/mint/release-tag")"
+    info "using the release this mint was made with: $TAG (override with --version)"
+  fi
   resolve_tag
   fetch_release
   install_release
   install_helpers
+  mkdir -p "$GW_DIR/var/mint" && printf '%s\n' "$TAG" > "$GW_DIR/var/mint/release-tag"
 
   # Distinguish the two ways this can be missing.  The first version of this
   # check blamed the release for what was in fact an installer that never
