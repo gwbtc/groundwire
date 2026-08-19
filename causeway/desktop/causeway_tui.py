@@ -82,6 +82,11 @@ class FlowState:
     # A wrapper (boot.sh --mint) launched us and will finalize + boot after we
     # exit; the DoneScreen offers quit-and-continue instead of back-to-landing.
     handoff: bool = False
+    #  An identity this machine already holds (finished mint or booted
+    #  pier), reported by the wrapper so the FIRST question the TUI asks
+    #  is the real one: boot it, or mint another?
+    existing_comet: str = ""
+    existing_kind: str = ""  # "mint" | "pier"
     confirm_height: Optional[int] = None
     psbt_b64_unsigned: Optional[str] = None
     psbt_b64_signed: Optional[str] = None
@@ -115,6 +120,58 @@ class BaseScreen(Screen):
 # ---------------------------------------------------------------------------
 # Landing
 # ---------------------------------------------------------------------------
+
+
+class ExistingShipScreen(BaseScreen):
+    """The first question, when there is something to ask it about.
+
+    A machine that already holds an identity should not make its owner
+    reason about flags before the UI even opens: the choice IS the UI.
+    "Boot it" hands the decision back to the wrapper by DISK (the
+    .boot-existing marker in the output dir -- exit codes from a
+    full-screen app are not evidence); "mint another" continues into the
+    normal spawn flow, exactly as if the machine were fresh."""
+
+    CSS = """
+    Screen { align: center middle; }
+    #panel { max-width: 100%; max-height: 100%; overflow-y: auto; width: 76; border: round #ff6a00; padding: 2 4; }
+    #title { content-align: center middle; color: #ff6a00; text-style: bold; }
+    #who { content-align: center middle; color: #ff6a00; padding: 1 0; }
+    .hint { color: #888; }
+    Button { width: 64; margin: 1 0; }
+    """
+
+    def compose(self) -> ComposeResult:
+        state: FlowState = self.app.state  # type: ignore[attr-defined]
+        kind = ("minted and finalized" if state.existing_kind == "mint"
+                else "already booted on this machine")
+        yield Header()
+        yield Vertical(
+            Static("YOU ALREADY HAVE A SHIP", id="title"),
+            Static(state.existing_comet, id="who"),
+            Static(f"({kind})", classes="hint"),
+            Button(f"Boot {state.existing_comet[:30]}…" if len(state.existing_comet) > 31
+                   else f"Boot {state.existing_comet}", id="boot-existing", variant="primary"),
+            Button("Mint a NEW comet (costs sats; a second identity)", id="mint-new"),
+            Static("Q to quit — nothing happens until you choose", classes="hint"),
+            id="panel",
+        )
+        yield Footer()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        state: FlowState = self.app.state  # type: ignore[attr-defined]
+        if event.button.id == "boot-existing":
+            try:
+                os.makedirs(state.output_dir, exist_ok=True)
+                with open(os.path.join(state.output_dir, ".boot-existing"), "w") as fh:
+                    fh.write(state.existing_comet + "\n")
+            except OSError as e:
+                self.notify(f"could not write the handback marker: {e}", severity="error")
+                return
+            self.app.exit()
+            return
+        if event.button.id == "mint-new":
+            self.app.push_screen(LandingScreen())
 
 
 class LandingScreen(BaseScreen):
@@ -1368,6 +1425,8 @@ def env_prefill(state: "FlowState") -> "FlowState":
     state.fief_input = os.environ.get("CAUSEWAY_FIEF", state.fief_input)
     state.output_dir = os.environ.get("CAUSEWAY_OUTPUT_DIR", state.output_dir)
     state.handoff = os.environ.get("CAUSEWAY_HANDOFF", "") == "1"
+    state.existing_comet = os.environ.get("CAUSEWAY_EXISTING_COMET", "")
+    state.existing_kind = os.environ.get("CAUSEWAY_EXISTING_KIND", "")
     return state
 
 
@@ -1381,7 +1440,10 @@ class CausewayApp(App):
         self.state = env_prefill(FlowState())
 
     def on_mount(self) -> None:
-        self.push_screen(LandingScreen())
+        if self.state.existing_comet:
+            self.push_screen(ExistingShipScreen())
+        else:
+            self.push_screen(LandingScreen())
 
 
 def main() -> None:

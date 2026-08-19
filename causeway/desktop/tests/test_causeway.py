@@ -3241,10 +3241,77 @@ def test_boot_sh_flagless_is_the_front_door():
     res = src[src.index('if [ -z "$MODE" ]; then'):]
     assert 'MODE="install"; else MODE="mint"' in res[:200]   # comet -> install, bare -> mint
     pier = src[src.index("no finished mint, but a pier?"):src.index("---- which face?")]
-    assert 'if [ -z "$REMINT" ]' in pier                     # --remint skips straight to minting
+    assert '[ -z "$REMINT" ]' in pier                       # --remint skips straight to minting
     assert "cmd_install" in pier and "more than one pier" in pier
     assert "! -name '*.*'" in pier                           # archives are invisible
     assert '--remint)     REMINT=1; MODE="mint"' in src      # boot.sh --remint alone works
     feed = src[src.index('"")\n      # A RESTART reads nothing'):]
     assert "restarts without one" in feed[:900]
     assert "THE FLAGLESS COMMAND" in src                     # usage teaches it
+
+
+def test_tui_opens_on_the_existing_ship_chooser(monkeypatch, tmp_path):
+    """A machine that already holds an identity gets asked, in the UI, the
+    only question that matters: boot it, or mint another?  Driven live
+    under the pilot: the app opens on the chooser, "Boot" writes the
+    .boot-existing marker (the disk handback boot.sh reads) and exits;
+    "Mint a NEW comet" continues into the normal landing flow."""
+    import asyncio
+    import causeway_tui as tui
+
+    monkeypatch.setenv("CAUSEWAY_EXISTING_COMET", "~sampel-palnet-sampel-palnet")
+    monkeypatch.setenv("CAUSEWAY_EXISTING_KIND", "mint")
+    monkeypatch.setenv("CAUSEWAY_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("CAUSEWAY_HANDOFF", "1")
+
+    async def drive_boot():
+        app = tui.CausewayApp()
+        async with app.run_test(size=(110, 40)) as pilot:
+            await pilot.pause(0.3)
+            assert isinstance(app.screen_stack[-1], tui.ExistingShipScreen)
+            await pilot.click("#boot-existing")
+            await pilot.pause(0.3)
+        assert (tmp_path / ".boot-existing").read_text().strip() == "~sampel-palnet-sampel-palnet"
+    asyncio.run(drive_boot())
+
+    (tmp_path / ".boot-existing").unlink()
+
+    async def drive_mint_new():
+        app = tui.CausewayApp()
+        async with app.run_test(size=(110, 40)) as pilot:
+            await pilot.pause(0.3)
+            await pilot.click("#mint-new")
+            await pilot.pause(0.3)
+            assert isinstance(app.screen_stack[-1], tui.LandingScreen)
+        assert not (tmp_path / ".boot-existing").exists()
+    asyncio.run(drive_mint_new())
+
+    # and a fresh machine never sees the chooser
+    monkeypatch.delenv("CAUSEWAY_EXISTING_COMET")
+    monkeypatch.delenv("CAUSEWAY_EXISTING_KIND")
+
+    async def drive_fresh():
+        app = tui.CausewayApp()
+        async with app.run_test(size=(110, 40)) as pilot:
+            await pilot.pause(0.3)
+            assert isinstance(app.screen_stack[-1], tui.LandingScreen)
+    asyncio.run(drive_fresh())
+
+
+def test_boot_sh_lets_the_tui_own_the_existing_ship_choice():
+    """At a terminal the bash resume/lone-pier short-circuits stand DOWN
+    and the TUI asks; the .boot-existing marker (newer than the launch
+    marker) is the handback.  Headless keeps the bash logic."""
+    boot = pathlib.Path(cw.__file__).parent.parent / "public" / "boot.sh"
+    if not boot.exists():
+        pytest.skip("boot.sh not beside the desktop tree")
+    src = boot.read_text()
+    assert 'CAUSEWAY_EXISTING_COMET="$existing_comet"' in src
+    # the capability check keeps old TUIs on the bash path
+    gate = src[src.index("local tui_chooses="):]
+    assert 'grep -q "CAUSEWAY_EXISTING_COMET"' in gate[:600]
+    assert '[ -z "$tui_chooses" ] && [ -s "$baked" ]' in src
+    assert '[ -z "$tui_chooses" ] && [ -z "$REMINT" ]' in src
+    mark = src[src.index('.boot-existing" ] && ['):]
+    assert '-nt "$marker"' in mark[:80]                      # stale markers are dead
+    assert "Booting the ship you already have" in src

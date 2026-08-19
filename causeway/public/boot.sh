@@ -1318,6 +1318,30 @@ cmd_mint() {
 
   local raw="$mintdir/spawn.feed" baked="$mintdir/boot.feed"
 
+  # ---- which face decides the "you already have a ship" question?
+  # At a terminal with a chooser-capable TUI, the TUI does -- reasoning
+  # about --remint on the command line when there is a whole UI was
+  # backwards.  Headless (or an old TUI) keeps the bash logic below.
+  local tui_chooses=""
+  if [ -z "$REMINT" ] && [ "$MINT_UI" = tui ] && [ -e /dev/tty ]      && [ "$MINT_RESUME" != 1 ] && [ -z "$MINT_XPUB" ]      && grep -q "CAUSEWAY_EXISTING_COMET" "$GW_DIR/causeway-src/causeway_tui.py" 2>/dev/null; then
+    tui_chooses=1
+  fi
+
+  # What exists?  A finished mint outranks a bare pier.
+  local existing_comet="" existing_kind=""
+  if [ -s "$baked" ]; then
+    local eproof
+    eproof="$(ls -t "$mintdir"/*-spawn*.proof.json 2>/dev/null | head -1 || true)"
+    [ -n "$eproof" ] && existing_comet="$(sed -n 's/.*"patp"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$eproof" | head -1)"
+    [ -n "$existing_comet" ] && existing_kind="mint"
+  fi
+  if [ -z "$existing_comet" ]; then
+    local eplist epcount
+    eplist="$(find "$GW_DIR/piers" -mindepth 1 -maxdepth 1 -type d ! -name '*.*' -exec basename {} \; 2>/dev/null)"
+    epcount="$(printf '%s' "$eplist" | grep -c . || true)"
+    if [ "$epcount" = 1 ]; then existing_comet="~$eplist"; existing_kind="pier"; fi
+  fi
+
   # ---- already minted?  A mint's outputs are durable (proof + baked feed),
   # and a previous run can die AFTER them -- a port collision at boot did
   # exactly this on the first real run.  Re-running must keep the promise
@@ -1330,7 +1354,7 @@ cmd_mint() {
     info "--remint: previous mint archived to $GW_DIR/var/mint-$stamp"
     mkdir -p "$mintdir"; chmod 700 "$mintdir"
   fi
-  if [ -s "$baked" ]; then
+  if [ -z "$tui_chooses" ] && [ -s "$baked" ]; then
     local prior
     prior="$(ls -t "$mintdir"/*-spawn*.proof.json 2>/dev/null | head -1 || true)"
     if [ -n "$prior" ]; then
@@ -1355,7 +1379,7 @@ cmd_mint() {
   # than one: make them say which.  --remint has already archived the
   # mint dir by this point, but it must not boot an old pier either --
   # the operator asked for a fresh comet.
-  if [ -z "$REMINT" ]; then
+  if [ -z "$tui_chooses" ] && [ -z "$REMINT" ]; then
     local plist pcount
     plist="$(find "$GW_DIR/piers" -mindepth 1 -maxdepth 1 -type d ! -name '*.*' -exec basename {} \; 2>/dev/null)"
     pcount="$(printf '%s' "$plist" | grep -c . || true)"
@@ -1403,7 +1427,25 @@ cmd_mint() {
     touch "$marker"; sleep 1
     CAUSEWAY_SPONSOR="$MINT_SPONSOR" CAUSEWAY_FIEF="$MINT_FIEF" \
       CAUSEWAY_OUTPUT_DIR="$mintdir" CAUSEWAY_HANDOFF=1 \
+      CAUSEWAY_EXISTING_COMET="$existing_comet" CAUSEWAY_EXISTING_KIND="$existing_kind" \
       "$cw" tui </dev/tty >/dev/tty 2>&1 || true
+    # The chooser's answer comes back by DISK like everything else: the
+    # .boot-existing marker (newer than the launch marker) means "boot
+    # the ship I already have" -- baked feed for a finished mint, plain
+    # restart for a bare pier.
+    if [ -f "$mintdir/.boot-existing" ] && [ "$mintdir/.boot-existing" -nt "$marker" ]; then
+      COMET="$(tr -d " \t\r\n" < "$mintdir/.boot-existing")"
+      rm -f "$mintdir/.boot-existing"
+      step "Booting the ship you already have"
+      good "$COMET"
+      if [ "$existing_kind" = mint ]; then
+        FEED_FILE="$baked"
+        PROOF="$(ls -t "$mintdir"/*-spawn*.proof.json 2>/dev/null | head -1 || true)"
+      fi
+      MODE="install"
+      cmd_install
+      return
+    fi
     # Both proof spellings: the CLI writes <name>-spawn.proof.json, the TUI
     # writes <name>-spawn-<txid>.proof.json.  The narrow glob missed the
     # TUI's, which would fail a SUCCESSFUL spawn as "exited without
