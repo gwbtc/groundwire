@@ -87,6 +87,7 @@ fi
 # ---------------------------------------------------------------- defaults --
 GW_DIR="${GROUNDWIRE_DIR:-$HOME/.groundwire}"
 HTTP_PORT="${GROUNDWIRE_PORT:-8080}"
+PORT_EXPLICIT="${GROUNDWIRE_PORT:+1}"
 AMES_PORT=""
 TAG="${GROUNDWIRE_VERSION:-latest}"
 LOOM="${GROUNDWIRE_LOOM:-32}"
@@ -103,6 +104,7 @@ MINT_FIEF=""
 MINT_RESUME=0
 MINT_UI=tui
 MINT_ARGS=""
+REMINT=""
 DO_BITCOIN=1
 DO_SUPERVISOR=1
 DO_WAIT=1
@@ -142,6 +144,9 @@ MINT MODE (--mint)
   --fief <IP:PORT>   commit a static endpoint. Implies --ames-port <PORT>,
                      because a fief the ship does not bind is a lie. A comet
                      that others will name as their sponsor needs one.
+  --remint           ignore a finished mint in var/mint (archived, not deleted)
+                     and mint a fresh comet. Without it, re-running --mint after
+                     a completed mint boots the comet you already have.
   --resume           a previous mint died after you funded the wallet: re-enter
                      that run's seed phrase instead of minting a fresh wallet,
                      and the spawn picks up your already-funded address.
@@ -240,10 +245,11 @@ while [ $# -gt 0 ]; do
     --sponsor)    [ $# -ge 2 ] || usagedie "--sponsor needs a value"; MINT_SPONSOR="$2"; shift 2 ;;
     --fief)       [ $# -ge 2 ] || usagedie "--fief needs a value"; MINT_FIEF="$2"; shift 2 ;;
     --resume)     MINT_RESUME=1; shift ;;
+    --remint)     REMINT=1; shift ;;
     --headless)   MINT_UI=cli; shift ;;
     --proof)      [ $# -ge 2 ] || usagedie "--proof needs a value"; PROOF="$2"; shift 2 ;;
     --dir)        [ $# -ge 2 ] || usagedie "--dir needs a value"; GW_DIR="$2"; shift 2 ;;
-    --port)       [ $# -ge 2 ] || usagedie "--port needs a value"; HTTP_PORT="$2"; shift 2 ;;
+    --port)       [ $# -ge 2 ] || usagedie "--port needs a value"; HTTP_PORT="$2"; PORT_EXPLICIT=1; shift 2 ;;
     --ames-port)  [ $# -ge 2 ] || usagedie "--ames-port needs a value"; AMES_PORT="$2"; shift 2 ;;
     --version)    [ $# -ge 2 ] || usagedie "--version needs a value"; TAG="$2"; shift 2 ;;
     --sha256)     [ $# -ge 2 ] || usagedie "--sha256 needs a value"; EXPECT_SHA="$2"; shift 2 ;;
@@ -733,7 +739,26 @@ check_ports() {
   local r
   r=0; port_busy TCP "$HTTP_PORT" || r=$?
   if [ "$r" = 0 ]; then
-    die "TCP port $HTTP_PORT is already in use. Pass --port <n> with a free one."
+    # The HTTP port is a loopback convenience -- nothing on chain or in the
+    # PKI names it (unlike an ames port pinned by a fief).  So when the user
+    # did not pick it, a squatter on 8080 is OUR problem, not theirs: scan
+    # forward and take the first free port.  An explicit --port stays an
+    # explicit promise and a collision on it is still fatal.
+    if [ "$PORT_EXPLICIT" = 1 ]; then
+      die "TCP port $HTTP_PORT is already in use and you pinned it with --port.
+    Pass a free port, or drop --port to let the installer pick one."
+    fi
+    local try
+    for try in $(seq $((HTTP_PORT+1)) $((HTTP_PORT+50))); do
+      if ! port_busy TCP "$try"; then
+        info "port $HTTP_PORT is in use; using $try for HTTP instead"
+        HTTP_PORT="$try"
+        break
+      fi
+    done
+    if port_busy TCP "$HTTP_PORT"; then
+      die "no free TCP port found in $((HTTP_PORT-50))-$HTTP_PORT for the ship's HTTP listener."
+    fi
   fi
   if [ -n "$AMES_PORT" ]; then
     r=0; port_busy UDP "$AMES_PORT" || r=$?
@@ -1207,6 +1232,37 @@ cmd_mint() {
   mkdir -p "$mintdir"; chmod 700 "$mintdir"
 
   local raw="$mintdir/spawn.feed" baked="$mintdir/boot.feed"
+
+  # ---- already minted?  A mint's outputs are durable (proof + baked feed),
+  # and a previous run can die AFTER them -- a port collision at boot did
+  # exactly this on the first real run.  Re-running must keep the promise
+  # the TUI makes ("re-running the installer picks up from here"): boot the
+  # comet that exists instead of minting a second one.  --remint archives
+  # the finished mint and starts over on purpose.
+  if [ "$REMINT" = 1 ] && [ -e "$baked" ]; then
+    local stamp; stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    mv "$mintdir" "$GW_DIR/var/mint-$stamp"
+    info "--remint: previous mint archived to $GW_DIR/var/mint-$stamp"
+    mkdir -p "$mintdir"; chmod 700 "$mintdir"
+  fi
+  if [ -s "$baked" ]; then
+    local prior
+    prior="$(ls -t "$mintdir"/*-spawn*.proof.json 2>/dev/null | head -1 || true)"
+    if [ -n "$prior" ]; then
+      COMET="$(sed -n 's/.*"patp"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$prior" | head -1)"
+    fi
+    if [ -n "${COMET:-}" ]; then
+      step "Resuming a finished mint"
+      info "found $COMET already minted and finalized (proof + baked feed)."
+      info "booting it. To mint a DIFFERENT comet instead, re-run with --remint."
+      printf '\n'
+      FEED_FILE="$baked"
+      PROOF="$prior"
+      MODE="install"
+      cmd_install
+      return
+    fi
+  fi
 
   # ---- which face?  The TUI is the default for a person at a terminal; the
   # CLI prompts remain for --headless, for --resume (not yet a TUI flow), for

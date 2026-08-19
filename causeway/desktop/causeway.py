@@ -3579,7 +3579,7 @@ def cmd_finalize(proofs, feed, wait, poll_interval, mempool_base,
         if out_feed:
             written = write_feed_file(out_feed, new_feed)
             print(f"\n  Baked feed written to {written} (0600)")
-            print(f"  Boot with:  boot.sh --comet '{patp}' --feed-file {written}")
+            print(f"  Boot with:  {boot_sh()} --comet '{patp}' --feed-file {written}")
         else:
             print("\n  Boot with the xtr-baked feed:")
             _print_boot_oneliner(patp, new_feed, proofs[-1])
@@ -4329,6 +4329,22 @@ def resolve_sponsor(sponsor: str | None) -> int | None:
         raise click.UsageError(f"--sponsor {sponsor!r}: {e}")
 
 
+def boot_sh() -> str:
+    """A RUNNABLE path to boot.sh for printed hints.
+
+    `boot.sh` bare is not on anyone's PATH -- printing it produced
+    "zsh: command not found: boot.sh" for the first user who pasted the
+    hint.  An installed Causeway (GROUNDWIRE_HOME set by the launcher)
+    has the real copy next to it; otherwise fall back to the documented
+    install location, and only then to the bare name."""
+    home = os.environ.get("GROUNDWIRE_HOME", "")
+    for base in ([home] if home else []) + [os.path.expanduser("~/.groundwire")]:
+        cand = os.path.join(base, "boot.sh")
+        if os.path.isfile(cand):
+            return cand.replace(os.path.expanduser("~"), "~", 1)
+    return "boot.sh"
+
+
 def write_feed_file(path: str, feed: str) -> str:
     """Write a boot feed to `path` with 0600, and return the path.
 
@@ -4807,11 +4823,11 @@ def _print_spawn_next_steps(comet: str, feed: str, proof_path: str,
     if out_feed:
         print(f"    causeway finalize {proof_path} \\")
         print(f"      --feed-file {out_feed} --out-feed {out_feed}.baked")
-        print(f"    boot.sh --comet '{comet}' --feed-file {out_feed}.baked")
+        print(f"    {boot_sh()} --comet '{comet}' --feed-file {out_feed}.baked")
     else:
         print(f"    causeway finalize {proof_path} --feed <the feed above> \\")
         print(f"      --out-feed ./{pier}.feed")
-        print(f"    boot.sh --comet '{comet}' --feed-file ./{pier}.feed")
+        print(f"    {boot_sh()} --comet '{comet}' --feed-file ./{pier}.feed")
     print()
 
 

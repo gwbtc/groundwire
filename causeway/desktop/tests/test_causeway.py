@@ -3127,3 +3127,46 @@ def test_tui_psbt_screen_live_watches_the_chain_and_advances_once(monkeypatch, t
             assert state.commit_txid == "sent-late"          # the late path ran through
             assert len(app.screen_stack) == depth            # ...and did not double-advance
     asyncio.run(drive())
+
+
+def test_boot_hints_print_a_runnable_path(monkeypatch, tmp_path):
+    """`boot.sh` bare is on nobody's PATH: the first user to paste the
+    baked-feed hint got 'zsh: command not found: boot.sh'.  Every printed
+    boot command goes through boot_sh(), which names the installed copy."""
+    (tmp_path / "boot.sh").write_text("#!/bin/bash\n")
+    monkeypatch.setenv("GROUNDWIRE_HOME", str(tmp_path))
+    got = cw.boot_sh()
+    assert got.endswith("/boot.sh") and got != "boot.sh"
+    monkeypatch.delenv("GROUNDWIRE_HOME")
+    monkeypatch.setattr(cw.os.path, "expanduser",
+                        lambda p: p.replace("~", str(tmp_path), 1))
+    (tmp_path / ".groundwire").mkdir()
+    (tmp_path / ".groundwire" / "boot.sh").write_text("#!/bin/bash\n")
+    assert cw.boot_sh() == "~/.groundwire/boot.sh"   # ~-relative, pasteable
+    # and no printed hint bypasses the helper
+    import inspect
+    src = inspect.getsource(cw)
+    assert "  boot.sh --comet" not in src.replace("{boot_sh()}", "")
+
+
+def test_boot_sh_auto_picks_http_port_and_resumes_a_finished_mint():
+    """Source pins for the two behaviors the first real mint run hit:
+    a squatter on 8080 must not kill the boot (auto-pick unless --port was
+    explicit), and re-running --mint after a completed mint must boot the
+    existing comet (the TUI promises exactly this), with --remint as the
+    deliberate way to start over."""
+    boot = pathlib.Path(cw.__file__).parent.parent / "public" / "boot.sh"
+    if not boot.exists():
+        pytest.skip("boot.sh not beside the desktop tree")
+    src = boot.read_text()
+    # auto-pick: explicit pin stays fatal, unpinned scans forward
+    assert 'PORT_EXPLICIT=1' in src and 'you pinned it with --port' in src
+    assert "using $try for HTTP instead" in src
+    # resume: baked feed + proof -> straight to install, before any TUI/CLI face
+    resume = src[src.index("---- already minted?"):src.index("---- which face?")]
+    for pin in ('[ -s "$baked" ]', "*-spawn*.proof.json", 'MODE="install"',
+                "cmd_install", "--remint"):
+        assert pin in resume, pin
+    # --remint archives rather than deletes
+    assert 'mv "$mintdir" "$GW_DIR/var/mint-$stamp"' in resume
+    assert "--remint" in src[:src.index("cmd_mint()")]      # documented in usage
