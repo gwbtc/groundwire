@@ -277,6 +277,31 @@ def confirm_master_ticket(ticket: str, *, assume_saved: bool = False) -> None:
         print("  Please re-enter it exactly:")
 
 
+def paste_from_clipboard() -> str | None:
+    """Read the system clipboard, or None.  Mirror of copy_to_clipboard: a
+    full-screen TUI owns the mouse, so a signed PSBT is as unpasteable as
+    the unsigned one was uncopyable."""
+    system = platform.system()
+    cmds = []
+    if system == "Darwin":
+        cmds.append(["pbpaste"])
+    elif system == "Linux":
+        if "microsoft" in platform.uname().release.lower():
+            cmds.append(["powershell.exe", "-command", "Get-Clipboard"])
+        if os.environ.get("WAYLAND_DISPLAY"):
+            cmds.append(["wl-paste", "--no-newline"])
+        cmds.append(["xclip", "-selection", "clipboard", "-o"])
+        cmds.append(["xsel", "--clipboard", "--output"])
+    for cmd in cmds:
+        if shutil.which(cmd[0]):
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=5)
+                return r.stdout
+            except (subprocess.SubprocessError, OSError):
+                continue
+    return None
+
+
 def copy_to_clipboard(text: str) -> bool:
     """Copy text to the system clipboard. Returns True on success."""
     system = platform.system()

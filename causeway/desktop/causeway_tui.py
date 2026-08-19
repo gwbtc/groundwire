@@ -676,6 +676,8 @@ class PsbtBuildScreen(BaseScreen):
     Button { margin-right: 2; }
     #actions { padding-top: 1; }
     #status { color: #888; padding-top: 1; }
+    .hint { color: #888; }
+    #clip { padding-top: 0; }
     """
 
     def compose(self) -> ComposeResult:
@@ -684,7 +686,13 @@ class PsbtBuildScreen(BaseScreen):
             Static("BUILD & SIGN COMMIT PSBT", id="title"),
             Static("", id="psbt-copy"),
             TextArea(id="b64", read_only=True),
-            Static("Signed PSBT:"),
+            Static("", id="psbt-file", classes="hint"),
+            Horizontal(
+                Button("Copy unsigned PSBT", id="copy-psbt"),
+                Button("Paste signed PSBT", id="paste-signed"),
+                id="clip",
+            ),
+            Static("Signed PSBT (paste here, or load the .psbt file your wallet wrote):"),
             TextArea(id="signed-in"),
             Static("Status: —", id="status"),
             Horizontal(
@@ -758,6 +766,23 @@ class PsbtBuildScreen(BaseScreen):
                 proof["op"] = state.op_name
                 proof["patp"] = state.point or ""
             state.psbt_b64_unsigned = p.to_base64()
+            # A ~600-char base64 blob is the one thing on this screen that
+            # cannot be selected by mouse in a TUI, so it also goes to DISK:
+            # every external wallet (Sparrow, BlueWallet, Passport, Keystone)
+            # opens a .psbt file, and Sparrow writes its signed result back
+            # beside it.  Named for the comet/point so two spawns don't clash.
+            try:
+                os.makedirs(state.output_dir, exist_ok=True)
+                who = (state.comet or state.point or "unknown").lstrip("~")
+                self._psbt_path = os.path.join(state.output_dir, f"{who}-{state.op_name}.psbt")
+                with open(self._psbt_path, "wb") as fh:
+                    fh.write(p.serialize())
+                self.query_one("#psbt-file", Static).update(
+                    f"Also written as a file: {self._psbt_path}  (open it in your wallet; "
+                    f"a signed .psbt saved next to it can be pasted below)")
+            except OSError as e:
+                self._psbt_path = ""
+                self.query_one("#psbt-file", Static).update(f"(could not write .psbt file: {e})")
             # stash proof temporarily in state via a closure
             self._pending_proof = proof  # type: ignore[attr-defined]
             self.query_one("#b64", TextArea).text = state.psbt_b64_unsigned
@@ -784,10 +809,32 @@ class PsbtBuildScreen(BaseScreen):
         except Exception as e:
             self.query_one("#status", Static).update(f"build failed: {e}")
 
+    _psbt_path: str = ""
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         state: FlowState = self.app.state  # type: ignore[attr-defined]
         if event.button.id == "back":
             self.app.pop_screen()
+            return
+        if event.button.id == "copy-psbt":
+            b64 = state.psbt_b64_unsigned or ""
+            if not b64:
+                self.notify("no PSBT built yet", severity="warning")
+            elif cw.copy_to_clipboard(b64):
+                self.notify(f"unsigned PSBT copied ({len(b64)} chars)")
+            else:
+                self.app.copy_to_clipboard(b64)
+                self.notify("sent via OSC 52 (terminal-dependent)")
+            return
+        if event.button.id == "paste-signed":
+            # The inverse problem: a signed PSBT is just as unpasteable by
+            # mouse.  Read the system clipboard into the box.
+            txt = cw.paste_from_clipboard()
+            if txt:
+                self.query_one("#signed-in", TextArea).text = txt.strip()
+                self.notify(f"pasted {len(txt.strip())} chars from clipboard")
+            else:
+                self.notify("clipboard empty or unreadable — type/paste manually", severity="warning")
             return
         if event.button.id == "self-sign":
             if state.mnemonic is None:
@@ -804,10 +851,25 @@ class PsbtBuildScreen(BaseScreen):
                 self.query_one("#status", Static).update(f"self-sign failed: {e}")
             return
         if event.button.id == "broadcast":
-            b64 = self.query_one("#signed-in", TextArea).text.strip()
-            if not b64:
-                self.query_one("#status", Static).update("paste a signed PSBT first")
+            raw = self.query_one("#signed-in", TextArea).text.strip()
+            if not raw:
+                self.query_one("#status", Static).update(
+                    "paste a signed PSBT first (base64, or the path to a signed .psbt file)")
                 return
+            # Accept a FILE PATH as well as base64: Sparrow and friends save a
+            # signed .psbt next to the one they opened, and typing a short
+            # path is the one thing that IS easy in a TUI.  Binary or base64
+            # inside the file, either is fine.
+            b64 = raw
+            if os.path.isfile(os.path.expanduser(raw)):
+                data = open(os.path.expanduser(raw), "rb").read()
+                if data[:5] == b"psbt\xff":
+                    import base64 as _b64
+                    b64 = _b64.b64encode(data).decode()
+                else:
+                    b64 = data.decode("ascii", "ignore").strip()
+                self.query_one("#signed-in", TextArea).text = b64
+                self.notify(f"loaded signed PSBT from {raw}")
             state.psbt_b64_signed = b64
             self.broadcast_worker()
 
