@@ -104,6 +104,7 @@ MINT_FIEF=""
 MINT_RESUME=0
 MINT_UI=tui
 MINT_ARGS=""
+DETACH=""
 REMINT=""
 DO_BITCOIN=1
 DO_SUPERVISOR=1
@@ -130,6 +131,9 @@ USAGE
 
   boot.sh --status                 report on an existing install and exit
   boot.sh --code                   print the web login code (+code) and exit
+  --detach           finish with the ship in the background under a supervisor
+                     instead of handing this terminal to the dojo. Implied when
+                     there is no terminal (servers, cron, curl-into-nothing).
   boot.sh --stop                   stop a running ship, in the safe order
 
 MINT MODE (--mint)
@@ -261,6 +265,7 @@ while [ $# -gt 0 ]; do
     --redownload) FORCE_REDOWNLOAD=1; shift ;;
     --status)     MODE="status"; shift ;;
     --code)       MODE="code"; shift ;;
+    --detach)     DETACH=1; shift ;;
     --stop)       MODE="stop"; shift ;;
     -h|--help)    usage; exit 0 ;;
     *) usagedie "unknown argument: $1" ;;
@@ -1462,8 +1467,23 @@ cmd_install() {
   fi
   start_sidecar
   ensure_agents
-  [ "$DO_SUPERVISOR" = 1 ] && start_supervisor
+  # In the dojo ending the supervisor must not exist -- it would see the
+  # handoff's stop as VERE-DOWN and relaunch a background ship to fight
+  # the foreground one.
+  if [ -n "$DETACH" ] || [ ! -e /dev/tty ]; then
+    [ "$DO_SUPERVISOR" = 1 ] && start_supervisor
+  fi
   seed_peers || true
+
+  # ---- the ending.  At a terminal the ship IS the product: hand the
+  # user their dojo (gw-onboard did exactly this and it was right).
+  # --detach, --headless minting, or no tty keep the supervised
+  # background shape, which is what servers want.
+  if [ -z "$DETACH" ] && [ -e /dev/tty ]; then
+    summary_lines
+    handoff_dojo
+    # not reached: handoff_dojo execs vere
+  fi
 
   if [ "$DO_WAIT" = 1 ]; then
     watch_sync
@@ -1472,6 +1492,29 @@ cmd_install() {
     info "sync is under way; check on it with:  $SELF --status --comet '$COMET'"
   fi
   summary_lines
+}
+
+# Stop the detached ship and replace this process with vere attached to
+# the real terminal: the user lands in their dojo, and quitting it
+# (Ctrl-D) stops the ship -- the same contract gw-onboard had.  The
+# supervisor must not be running here or it would fight the foreground
+# vere; in the dojo path it was never started.
+handoff_dojo() {
+  step "Handing you the dojo"
+  info "your ship restarts attached to this terminal (one short replay)."
+  info "type +code in the dojo for your web login key."
+  info "Ctrl-D quits the dojo and stops the ship; restart with"
+  info "  $GW_DIR/boot.sh --comet '$COMET'"
+  printf '\n'
+  local p
+  for p in $(gwl_king_pid); do kill "$p" 2>/dev/null || true; done
+  local waited=0
+  while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$waited" -lt 60 ]; do
+    sleep 1; waited=$((waited+1))
+  done
+  rm -f "$GW_PIER/.vere.lock"
+  # shellcheck disable=SC2086
+  exec "$VERE" --loom "$LOOM" --http-port "$HTTP_PORT" ${AMES_PORT:+-p $AMES_PORT} "$GW_PIER" </dev/tty >/dev/tty 2>&1
 }
 
 summary_lines() {
@@ -1506,7 +1549,8 @@ Your Groundwire ship: $COMET
   status:  $GW_DIR/boot.sh --status --comet '$COMET'
   web login code (the key for the web address): $GW_DIR/boot.sh --code --comet '$COMET'
   stop:    $GW_DIR/boot.sh --stop   --comet '$COMET'
-  start:   $GW_DIR/boot.sh --comet '$COMET'$feedline
+  start (dojo in this terminal):   $GW_DIR/boot.sh --comet '$COMET'$feedline
+  start (background + supervisor): $GW_DIR/boot.sh --detach --comet '$COMET'$feedline
 
 The ship runs detached with a supervisor that restarts it if it crashes.
 It does NOT survive a reboot of this machine: run the start line above.

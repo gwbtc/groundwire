@@ -3197,3 +3197,28 @@ def test_boot_sh_surfaces_the_web_login_code():
     assert "boot.sh --code" in src[:src.index("cmd_mint()")]   # in usage
     # the code itself is never written to disk -- README carries the command only
     assert "gwl_code" not in readme
+
+
+def test_boot_sh_ends_in_the_dojo_at_a_terminal():
+    """gw-onboard's contract, restored: at a terminal the install's last act
+    is exec-ing vere attached, so the user lands in their dojo and quitting
+    it stops the ship.  --detach (or no tty) keeps the supervised
+    background shape servers need -- and in the dojo ending the supervisor
+    must never have started, or it would relaunch a background ship to
+    fight the foreground one."""
+    boot = pathlib.Path(cw.__file__).parent.parent / "public" / "boot.sh"
+    if not boot.exists():
+        pytest.skip("boot.sh not beside the desktop tree")
+    src = boot.read_text()
+    body = src[src.index("handoff_dojo() {"):src.index('case "$MODE" in')]
+    assert 'exec "$VERE"' in body and "</dev/tty" in body   # becomes vere, on the real tty
+    assert "+code in the dojo" in body                      # the key, where it now lives
+    # the dojo path is the DEFAULT at a tty and skips the supervisor
+    tail = src[src.index('if [ -z "$DETACH" ] && [ -e /dev/tty ]; then'):]
+    assert "handoff_dojo" in tail[:400]
+    sup = src[src.index("the supervisor must not exist"):]
+    assert 'if [ -n "$DETACH" ] || [ ! -e /dev/tty ]; then' in sup[:300]
+    assert '--detach)     DETACH=1' in src
+    # README teaches both endings
+    readme = src[src.index("write_ship_readme() {"):]
+    assert "start (dojo in this terminal)" in readme and "--detach" in readme
