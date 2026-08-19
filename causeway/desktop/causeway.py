@@ -4316,6 +4316,24 @@ def assert_routable(snapshot: dict, no_route: bool = False) -> None:
     raise click.UsageError(NO_ROUTE_MESSAGE)
 
 
+#  Groundwire's own sponsor comet: minted publicly on mainnet (spawn tx
+#  48c2ea65... @ 963.104), fief 146.190.199.0:34344 (a reserved IP), run
+#  by the project.  It is a CONVENIENCE DEFAULT, never a silent one: both
+#  faces show it and say whose it is before anything is spent.
+DEFAULT_SPONSOR = "~barmul-bolmet-ronlus-lighul--rovtun-satryc-moclug-daplyd"
+
+
+def apply_default_sponsor(sponsor: str | None, fief_arg: str | None,
+                          no_route: bool) -> tuple[str | None, bool]:
+    """The routing default: a spawn that names no sponsor, no fief and did
+    not ask for --no-route gets Groundwire's sponsor instead of a refusal.
+    Returns (sponsor, defaulted) so callers can SAY so out loud -- a user
+    must never discover whose sponsor they got from the chain."""
+    if sponsor is None and not fief_arg and not no_route:
+        return DEFAULT_SPONSOR, True
+    return sponsor, False
+
+
 def resolve_sponsor(sponsor: str | None) -> int | None:
     """Parse a --sponsor option (mnemonym or @p) into a ship atom."""
     if sponsor is None:
@@ -4556,6 +4574,13 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
     # Routing, checked BEFORE any faucet / scan / mining work: an unroutable
     # comet must be refused up front, not after a proof-of-work search and a
     # broadcast the user cannot take back.
+    sponsor, defaulted = apply_default_sponsor(sponsor, fief_arg, no_route)
+    if defaulted:
+        click.echo(click.style(
+            f"\n  No sponsor given: using Groundwire's default sponsor\n"
+            f"    {DEFAULT_SPONSOR}\n"
+            f"  (pass --sponsor to choose your own, or --no-route for none)",
+            fg="yellow"))
     sponsor_atom = resolve_sponsor(sponsor)
     try:
         parsed_fief = parse_fief_arg(fief_arg)
@@ -4672,6 +4697,13 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
     print("=" * 60)
 
     # Refuse an unroutable mint before generating a wallet or asking for funds.
+    sponsor, defaulted = apply_default_sponsor(sponsor, fief_arg, no_route)
+    if defaulted:
+        click.echo(click.style(
+            f"\n  No sponsor given: using Groundwire's default sponsor\n"
+            f"    {DEFAULT_SPONSOR}\n"
+            f"  (pass --sponsor to choose your own, or --no-route for none)",
+            fg="yellow"))
     sponsor_atom = resolve_sponsor(sponsor)
     try:
         parsed_fief = parse_fief_arg(fief_arg)

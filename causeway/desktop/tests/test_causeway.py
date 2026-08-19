@@ -890,24 +890,22 @@ def test_resolve_sponsor_accepts_a_patp():
 
 
 def test_spawn_refuses_an_unroutable_comet_before_doing_any_work(monkeypatch):
-    """The refusal must land BEFORE the faucet / UTXO scan / proof-of-work, so
-    an operator never burns a mine (or a broadcast) on a stranded identity."""
+    """Since the default sponsor landed, a bare spawn is never unroutable --
+    it gets Groundwire's sponsor (loudly).  What must survive: the default
+    is applied BEFORE any network or mining work (the boom stubs prove the
+    flow passed the gate carrying it), and +assert_routable itself still
+    refuses a snapshot with neither sponsor nor fief -- the belt for the
+    paths that do not run through the CLI defaulting."""
     def boom(*a, **k):
-        raise AssertionError("must not touch the network / miner")
-
+        raise AssertionError("reached the work stage (gate passed)")
     monkeypatch.setattr(cw, "parse_key_source", boom)
-    monkeypatch.setattr(cw, "scan_addresses", boom)
     monkeypatch.setattr(cw, "mine_comet_from_utxo", boom)
     monkeypatch.setattr(cw, "generate_new_mnemonic", boom)
-
-    with pytest.raises(Exception) as e:
+    monkeypatch.setattr(cw, "require_miner", lambda *a, **k: None)
+    with pytest.raises(AssertionError, match="gate passed"):
         cw.run_spawn_connect("xpub-does-not-matter", None, 2, "main", ".", FAKE_MINER, "stub")
-    assert "neither a sponsor nor a fief" in str(e.value)
-
-    with pytest.raises(Exception) as e:
-        cw.run_spawn_generate(None, 2, "main", ".", FAKE_MINER, "stub")
-    assert "neither a sponsor nor a fief" in str(e.value)
-
+    with pytest.raises(Exception, match="neither a sponsor nor a fief"):
+        cw.assert_routable({"sponsor": None, "fief": None}, False)
 
 def test_spawn_with_a_sponsor_passes_the_routability_gate(monkeypatch):
     """With --sponsor the gate lets the flow proceed; it stops at the first
@@ -2655,8 +2653,12 @@ def test_tui_handoff_never_defaults_on():
     import causeway_tui as tui
     for var in ("CAUSEWAY_SPONSOR", "CAUSEWAY_FIEF", "CAUSEWAY_OUTPUT_DIR", "CAUSEWAY_HANDOFF"):
         os.environ.pop(var, None)
+    for var in ("CAUSEWAY_EXISTING_COMET", "CAUSEWAY_EXISTING_KIND"):
+        os.environ.pop(var, None)
     st = tui.env_prefill(tui.FlowState())
-    assert st.handoff is False and st.sponsor_input == ""
+    #  handoff must never default on; the sponsor field defaults to the
+    #  visible Groundwire prefill (test_default_sponsor_is_loud_and_editable)
+    assert st.handoff is False and st.sponsor_input == cw.DEFAULT_SPONSOR
 
 
 def test_qr_ascii_renders_an_address():
@@ -3282,7 +3284,7 @@ def test_tui_opens_on_the_existing_ship_chooser(monkeypatch, tmp_path):
             await pilot.pause(0.3)
             await pilot.click("#mint-new")
             await pilot.pause(0.3)
-            assert isinstance(app.screen_stack[-1], tui.LandingScreen)
+            assert isinstance(app.screen_stack[-1], tui.SpawnMethodScreen)
         assert not (tmp_path / ".boot-existing").exists()
     asyncio.run(drive_mint_new())
 
@@ -3315,3 +3317,28 @@ def test_boot_sh_lets_the_tui_own_the_existing_ship_choice():
     mark = src[src.index('.boot-existing" ] && ['):]
     assert '-nt "$marker"' in mark[:80]                      # stale markers are dead
     assert "Booting the ship you already have" in src
+
+
+def test_default_sponsor_is_loud_and_editable(monkeypatch):
+    """The routing default: no sponsor, no fief, no --no-route -> Groundwire's
+    sponsor, ANNOUNCED (CLI) or VISIBLE in the field (TUI) -- a user must
+    never learn whose sponsor they got from the chain.  Anything explicit
+    wins; --no-route still means none."""
+    assert cw.apply_default_sponsor(None, None, False) == (cw.DEFAULT_SPONSOR, True)
+    assert cw.apply_default_sponsor("~zod", None, False) == ("~zod", False)
+    assert cw.apply_default_sponsor(None, "1.2.3.4:5", False) == (None, False)
+    assert cw.apply_default_sponsor(None, None, True) == (None, False)
+    # the default resolves to a real ship atom (a typo here strands every mint)
+    assert cw.resolve_sponsor(cw.DEFAULT_SPONSOR) is not None
+    # TUI: prefilled when nothing else set; env still wins
+    import causeway_tui as tui
+    for var in ("CAUSEWAY_SPONSOR", "CAUSEWAY_FIEF", "CAUSEWAY_OUTPUT_DIR",
+                "CAUSEWAY_HANDOFF", "CAUSEWAY_EXISTING_COMET", "CAUSEWAY_EXISTING_KIND"):
+        monkeypatch.delenv(var, raising=False)
+    assert tui.env_prefill(tui.FlowState()).sponsor_input == cw.DEFAULT_SPONSOR
+    monkeypatch.setenv("CAUSEWAY_SPONSOR", "~sampel-palnet")
+    assert tui.env_prefill(tui.FlowState()).sponsor_input == "~sampel-palnet"
+    # both CLI flows run the default through the same helper
+    import inspect
+    src = inspect.getsource(cw)
+    assert src.count("apply_default_sponsor(sponsor, fief_arg, no_route)") == 2

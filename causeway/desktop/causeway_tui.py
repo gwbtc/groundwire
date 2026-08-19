@@ -153,6 +153,7 @@ class ExistingShipScreen(BaseScreen):
             Button(f"Boot {state.existing_comet[:30]}…" if len(state.existing_comet) > 31
                    else f"Boot {state.existing_comet}", id="boot-existing", variant="primary"),
             Button("Mint a NEW comet (costs sats; a second identity)", id="mint-new"),
+            Button("Manage / inspect (advanced: rekey, proofs)", id="manage-existing"),
             Static("Q to quit — nothing happens until you choose", classes="hint"),
             id="panel",
         )
@@ -171,6 +172,9 @@ class ExistingShipScreen(BaseScreen):
             self.app.exit()
             return
         if event.button.id == "mint-new":
+            self.app.push_screen(SpawnMethodScreen())
+            return
+        if event.button.id == "manage-existing":
             self.app.push_screen(LandingScreen())
 
 
@@ -232,7 +236,8 @@ class SpawnMethodScreen(BaseScreen):
                 "that any Bitcoin wallet can sign."
             ),
             Static(" "),
-            Static("Sponsor (@p or mnemonym) — peers route to your comet through it:", classes="hint"),
+            Static("Sponsor (@p or mnemonym) — peers route to your comet through it. "
+                   "Pre-filled with Groundwire's own sponsor; edit it to use yours:", classes="hint"),
             Input(placeholder="~sampel-palnet", id="sponsor",
                   value=self.app.state.sponsor_input),  # type: ignore[attr-defined]
             Static(" "),
@@ -1422,6 +1427,11 @@ def env_prefill(state: "FlowState") -> "FlowState":
                             the wrapper can finalize and boot
     """
     state.sponsor_input = os.environ.get("CAUSEWAY_SPONSOR", state.sponsor_input)
+    #  Groundwire's sponsor as a VISIBLE, EDITABLE prefill -- the field
+    #  shows exactly what will be committed and whose it is; clearing it
+    #  and ticking no-route is still one keystroke away.
+    if not state.sponsor_input:
+        state.sponsor_input = cw.DEFAULT_SPONSOR
     state.fief_input = os.environ.get("CAUSEWAY_FIEF", state.fief_input)
     state.output_dir = os.environ.get("CAUSEWAY_OUTPUT_DIR", state.output_dir)
     state.handoff = os.environ.get("CAUSEWAY_HANDOFF", "") == "1"
