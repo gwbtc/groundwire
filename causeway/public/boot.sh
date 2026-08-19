@@ -392,10 +392,21 @@ preflight() {
   local gb
   gb="$(free_gb "$GW_DIR")"
   if [ -n "$gb" ] && [ "$gb" -lt "$MIN_FREE_GB" ]; then
-    die "only ${gb} GB free where $GW_DIR will live; ${MIN_FREE_GB} GB is the
+    # The minimum protects the CREATION of a ~2.2 GB pier.  Restarting a
+    # pier that already exists allocates almost nothing, and dying here
+    # locked a user out of their own running-yesterday ship over a
+    # threshold their disk had already crossed.  Fatal only when the
+    # pier would be new.
+    if [ -n "$COMET" ] && [ -d "$GW_DIR/piers/${COMET#"~"}/.urb" ]; then
+      warn "only ${gb} GB free (documented minimum ${MIN_FREE_GB} GB, OPERATIONS.md 2).
+    Continuing because this pier already exists -- but make room soon; a
+    full disk wedges the ship mid-write."
+    else
+      die "only ${gb} GB free where $GW_DIR will live; ${MIN_FREE_GB} GB is the
     documented minimum (OPERATIONS.md 2). A synced pier is ~2.2 GB, and a
     full disk blocks every tool on the box including df.
     Free some space, or point --dir at a bigger filesystem."
+    fi
   fi
   info "free disk     ${gb:-?} GB"
 
@@ -1171,22 +1182,42 @@ cmd_stop() {
   . "$GW_DIR/lib/gwlib.sh" 2>/dev/null || die "no $GW_DIR/lib/gwlib.sh"
 
   step "Stopping ~$NAME"
-  local p
-  p="$(cat "$GW_DIR/var/sup-$NAME.lock/pid" 2>/dev/null || echo)"
-  if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then
+  # Kill EVERY supervisor for this pier and VERIFY each death.  The old
+  # form killed only the lockfile's pid, checked nothing, and removed the
+  # lock -- while a supervisor whose TERM trap did not exit (fixed in
+  # gwsup.sh, but old installs keep the old copy) lived on and relaunched
+  # the ship seconds after "stopped" was printed.  Verify the effect,
+  # not the exit code.
+  local p any=""
+  for p in $(pgrep -f "gwsup.sh $NAME" 2>/dev/null; cat "$GW_DIR/var/sup-$NAME.lock/pid" 2>/dev/null); do
+    kill -0 "$p" 2>/dev/null || continue
+    any=1
     kill "$p" 2>/dev/null || true
-    sleep 2
+    local waited=0
+    while kill -0 "$p" 2>/dev/null && [ "$waited" -lt 5 ]; do sleep 1; waited=$((waited+1)); done
+    if kill -0 "$p" 2>/dev/null; then
+      kill -9 "$p" 2>/dev/null || true
+      sleep 1
+    fi
+    if kill -0 "$p" 2>/dev/null; then
+      die "could not stop supervisor pid $p; refusing to pretend otherwise"
+    fi
     info "supervisor stopped (pid $p)"
-  else
-    info "no supervisor running"
-  fi
+  done
+  [ -n "$any" ] || info "no supervisor running"
   rm -rf "$GW_DIR/var/sup-$NAME.lock"
 
   for p in $(gwl_king_pid); do
     kill "$p" 2>/dev/null || true
     info "SIGTERM to vere (pid $p); the serf exits with it and the pier replays"
   done
-  sleep 5
+  local vwait=0
+  while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$vwait" -lt 60 ]; do
+    sleep 1; vwait=$((vwait+1))
+  done
+  if [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ]; then
+    warn "vere is still exiting after 60s (snapshot write); it will finish on its own"
+  fi
   for p in $(gwl_sidecar_pids); do
     kill "$p" 2>/dev/null || true
     info "stopped sidecar (pid $p)"
