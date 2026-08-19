@@ -3177,3 +3177,23 @@ def test_boot_sh_auto_picks_http_port_and_resumes_a_finished_mint():
     assert src.index("var/mint/release-tag") < src.index("  resolve_tag")
     # restarts keep the web port: vere's default is 80, everything printed says 8080
     assert 'GW_HTTP_PORT="$HTTP_PORT"' in src
+
+
+def test_boot_sh_surfaces_the_web_login_code():
+    """The ship runs -t, so the dojo answer to "what is my access key" does
+    not exist; boot.sh --code is the user-shaped replacement (bare code on
+    stdout, via the control socket).  The install summary and the durable
+    README both point at it -- verified live against a running comet."""
+    boot = pathlib.Path(cw.__file__).parent.parent / "public" / "boot.sh"
+    if not boot.exists():
+        pytest.skip("boot.sh not beside the desktop tree")
+    src = boot.read_text()
+    assert 'code)   cmd_code ;;' in src and '--code)       MODE="code"' in src
+    body = src[src.index("cmd_code() {"):src.index("cmd_status() {")]
+    assert "attach_ship" in body and "gwl_code" in body
+    assert "is not running" in body                      # a dead ship gets a real error
+    readme = src[src.index("write_ship_readme() {"):]
+    assert "--code --comet" in readme                    # durable pointer, not the secret
+    assert "boot.sh --code" in src[:src.index("cmd_mint()")]   # in usage
+    # the code itself is never written to disk -- README carries the command only
+    assert "gwl_code" not in readme

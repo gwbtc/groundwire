@@ -129,6 +129,7 @@ USAGE
       --comet '~sampel-palnet-...' --feed-file ./my.feed
 
   boot.sh --status                 report on an existing install and exit
+  boot.sh --code                   print the web login code (+code) and exit
   boot.sh --stop                   stop a running ship, in the safe order
 
 MINT MODE (--mint)
@@ -259,6 +260,7 @@ while [ $# -gt 0 ]; do
     --no-wait)    DO_WAIT=0; shift ;;
     --redownload) FORCE_REDOWNLOAD=1; shift ;;
     --status)     MODE="status"; shift ;;
+    --code)       MODE="code"; shift ;;
     --stop)       MODE="stop"; shift ;;
     -h|--help)    usage; exit 0 ;;
     *) usagedie "unknown argument: $1" ;;
@@ -1066,7 +1068,10 @@ watch_sync() {
 }
 
 # ================================================================== status ==
-cmd_status() {
+# Resolve the comet, locate the pier, export the gwl environment and
+# source the helpers -- the shared preamble for every command that talks
+# to an installed ship (status, code).
+attach_ship() {
   [ -d "$GW_DIR" ] || die "no install at $GW_DIR"
   if [ -z "$COMET" ]; then
     local n
@@ -1090,7 +1095,24 @@ cmd_status() {
   pick_sock_tool
   # shellcheck source=/dev/null
   . "$GW_DIR/lib/gwlib.sh" 2>/dev/null || die "no $GW_DIR/lib/gwlib.sh; re-run an install first"
+}
 
+# The web login code (+code).  The ship runs with -t, so the dojo answer
+# to "what is my access key" does not exist here; this is the same scry,
+# through the control socket.  Bare on stdout, script-friendly.
+cmd_code() {
+  attach_ship
+  [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] || die "the ship is not running; start it first:
+    $GW_DIR/boot.sh --comet '$COMET'"
+  local code
+  code="$(gwl_code 90)"
+  [ -n "$code" ] || die "could not read the code from the ship (it may still be booting).
+    Try again in a minute, or check $GW_DIR/boot.sh --status --comet '$COMET'"
+  printf '%s\n' "$code"
+}
+
+cmd_status() {
+  attach_ship
   step "Status of ~$NAME"
   [ -f "$GW_DIR/var/release.txt" ] && sed 's/^/    /' "$GW_DIR/var/release.txt"
   info "pier          $GW_PIER"
@@ -1460,6 +1482,7 @@ summary_lines() {
   [ -f "$GW_DIR/var/sup-$NAME.log" ] && info "supervisor  $GW_DIR/var/sup-$NAME.log"
   info "http        http://127.0.0.1:$HTTP_PORT"
   info ""
+  info "web login   $GW_DIR/boot.sh --code --comet '$COMET'   (key for the http address above)"
   info "status      $GW_DIR/boot.sh --status --comet '$COMET'"
   info "stop        $GW_DIR/boot.sh --stop --comet '$COMET'"
   info "runbook     ops/doc/OPERATIONS.md"
@@ -1481,6 +1504,7 @@ Your Groundwire ship: $COMET
   web:                             http://127.0.0.1:$HTTP_PORT
 
   status:  $GW_DIR/boot.sh --status --comet '$COMET'
+  web login code (the key for the web address): $GW_DIR/boot.sh --code --comet '$COMET'
   stop:    $GW_DIR/boot.sh --stop   --comet '$COMET'
   start:   $GW_DIR/boot.sh --comet '$COMET'$feedline
 
@@ -1497,6 +1521,7 @@ EOF
 
 case "$MODE" in
   status) cmd_status ;;
+  code)   cmd_code ;;
   stop)   cmd_stop ;;
   mint)   cmd_mint ;;
   *)      cmd_install ;;
