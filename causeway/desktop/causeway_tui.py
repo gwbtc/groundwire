@@ -10,11 +10,13 @@ import asyncio
 import json
 import os
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Optional
 
 from textual import work
+from textual.worker import get_current_worker
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -692,7 +694,7 @@ class PsbtBuildScreen(BaseScreen):
                 Button("Paste signed PSBT", id="paste-signed"),
                 id="clip",
             ),
-            Static("Signed PSBT (paste here, or load the .psbt file your wallet wrote):"),
+            Static("", id="signed-label"),
             TextArea(id="signed-in"),
             Static("Status: —", id="status"),
             Horizontal(
@@ -714,11 +716,15 @@ class PsbtBuildScreen(BaseScreen):
         if state.mnemonic is None:
             self.query_one("#self-sign", Button).display = False
             self.query_one("#psbt-copy", Static).update(
-                "Unsigned PSBT (base64) — load into your wallet, sign, paste the signed version below:")
+                "Unsigned PSBT (base64) — load it into your wallet, review, sign, and BROADCAST it there:")
+            self.query_one("#signed-label", Static).update(
+                "Only if your wallet cannot broadcast: paste the signed PSBT or signed transaction "
+                "here (or type the path of the file it saved) and Causeway broadcasts it:")
         else:
             self.query_one("#self-sign", Button).display = False
             self.query_one("#psbt-copy", Static).update(
                 "Spawn transaction (signed by the generated wallet — shown for inspection):")
+            self.query_one("#signed-label", Static).update("Signed transaction:")
 
     def build_psbt(self) -> None:
         state: FlowState = self.app.state  # type: ignore[attr-defined]
@@ -783,8 +789,26 @@ class PsbtBuildScreen(BaseScreen):
             except OSError as e:
                 self._psbt_path = ""
                 self.query_one("#psbt-file", Static).update(f"(could not write .psbt file: {e})")
-            # stash proof temporarily in state via a closure
+            # The proof and the feed go to disk NOW, before anyone signs.  A
+            # segwit txid is fixed before signing, so the proof can already
+            # name it -- and it must: the wallet that signs normally
+            # broadcasts too, and from that moment the sat is spent.  The
+            # proof is the only record of what was committed; the feed is the
+            # comet's private key.  Neither is regenerable, and until this
+            # was written here a crash anywhere in the 10-60 minute wait for
+            # confirmation lost the feed of a comet already on chain.
+            commit_txid = p.tx.txid().hex()
+            proof["commit_txid"] = commit_txid
             self._pending_proof = proof  # type: ignore[attr-defined]
+            os.makedirs(state.output_dir, exist_ok=True)
+            pier = (state.comet or state.point or "unknown").lstrip("~")
+            proof_path = os.path.join(
+                state.output_dir, f"{pier}-{state.op_name}-{commit_txid[:10]}.proof.json")
+            cw.write_proof_json(proof, proof_path)
+            state.proof_path = proof_path
+            state.commit_txid = commit_txid
+            if state.op_name == "spawn" and state.feed:
+                cw.write_feed_file(os.path.splitext(proof_path)[0] + ".feed", state.feed)
             self.query_one("#b64", TextArea).text = state.psbt_b64_unsigned
             if state.mnemonic is not None:
                 # Generate-Wallet flow: Causeway holds the seed that owns the
@@ -805,15 +829,62 @@ class PsbtBuildScreen(BaseScreen):
                     self.query_one("#status", Static).update(f"self-sign failed: {e}")
             else:
                 self.query_one("#status", Static).update(
-                    "PSBT built — sign in YOUR wallet, paste the signed version below")
+                    f"watching the chain for {commit_txid[:16]}… — sign and broadcast in your "
+                    "wallet; this screen moves on by itself once the network has it")
+                self.watch_chain_worker()
         except Exception as e:
             self.query_one("#status", Static).update(f"build failed: {e}")
 
     _psbt_path: str = ""
+    _advance_lock = threading.Lock()
+    _advanced: bool = False
+    WATCH_POLL_SECONDS: int = 20
+
+    def _advance_once(self, next_screen) -> bool:
+        """Push the next screen exactly once, whichever route got there
+        first: the chain watcher, or a paste-and-broadcast."""
+        with self._advance_lock:
+            if self._advanced:
+                return False
+            self._advanced = True
+        # push first: this may be running ON the watch worker being cancelled
+        self.app.call_from_thread(self.app.push_screen, next_screen())
+        self.workers.cancel_group(self, "watch")
+        return True
+
+    @work(exclusive=True, thread=True, group="watch", exit_on_error=False)
+    def watch_chain_worker(self) -> None:
+        """Connect flow: the wallet signs AND broadcasts, so all Causeway has
+        to do is notice.  Polls the network for the txid the proof already
+        names; a paste in the box below is the alternative, not the rule."""
+        state: FlowState = self.app.state  # type: ignore[attr-defined]
+        status = self.query_one("#status", Static)
+        worker = get_current_worker()
+        txid = state.commit_txid or ""
+        start = time.monotonic()
+        while not worker.is_cancelled:
+            try:
+                seen = bool(cw.tx_hex_if_seen(txid, mempool_base=state.mempool_base))
+            except Exception:  # noqa: BLE001 -- a watcher must never take the app down
+                seen = False
+            if seen:
+                self.app.call_from_thread(status.update, f"seen on the network: {txid}")
+                self._advance_once(ConfirmWaitScreen if state.op_name == "spawn" else DoneScreen)
+                return
+            mins = int(time.monotonic() - start) // 60
+            self.app.call_from_thread(
+                status.update,
+                f"watching the chain for {txid[:16]}… ({mins} min) — sign and broadcast in "
+                "your wallet, or paste the signed tx below")
+            for _ in range(self.WATCH_POLL_SECONDS):
+                if worker.is_cancelled:
+                    return
+                time.sleep(1)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         state: FlowState = self.app.state  # type: ignore[attr-defined]
         if event.button.id == "back":
+            self.workers.cancel_group(self, "watch")
             self.app.pop_screen()
             return
         if event.button.id == "copy-psbt":
@@ -830,7 +901,7 @@ class PsbtBuildScreen(BaseScreen):
             # The inverse problem: a signed PSBT is just as unpasteable by
             # mouse.  Read the system clipboard into the box.
             txt = cw.paste_from_clipboard()
-            b64 = cw.psbt_bytes_to_base64((txt or "").encode())
+            b64 = cw.signed_input_to_base64((txt or "").encode())
             if b64:
                 self.query_one("#signed-in", TextArea).text = b64
                 self.notify(f"pasted a PSBT ({len(b64)} chars) from clipboard")
@@ -866,59 +937,44 @@ class PsbtBuildScreen(BaseScreen):
             b64 = raw
             if os.path.isfile(os.path.expanduser(raw)):
                 data = open(os.path.expanduser(raw), "rb").read()
-                b64 = cw.psbt_bytes_to_base64(data)
+                b64 = cw.signed_input_to_base64(data)
                 if not b64:
                     self.query_one("#status", Static).update(
-                        f"{raw}: not a PSBT in any form I know (binary, base64, or hex). "
-                        "In Sparrow use Save Transaction and pick the .psbt format.")
+                        f"{raw}: not a signed PSBT (binary/base64/hex) nor a signed raw transaction.")
                     return
                 self.query_one("#signed-in", TextArea).text = b64
                 self.notify(f"loaded signed PSBT from {raw}")
             else:
                 # pasted text: base64 with any whitespace/newlines, or hex
-                b64 = cw.psbt_bytes_to_base64(raw.encode()) or ""
+                b64 = cw.signed_input_to_base64(raw.encode()) or ""
                 if not b64:
                     self.query_one("#status", Static).update(
-                        "that is not a PSBT (expected base64 starting cHNidP8 or hex starting 70736274ff)")
+                        "not a signed PSBT (base64 cHNidP8... / hex 70736274ff...) "
+                        "nor a signed raw transaction (hex 0200...)")
                     return
             state.psbt_b64_signed = b64
             self.broadcast_worker()
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, thread=True, group="broadcast")
     def broadcast_worker(self) -> None:
         state: FlowState = self.app.state  # type: ignore[attr-defined]
         status = self.query_one("#status", Static)
         try:
-            # The signed tx's txid is deterministic (segwit), so we know the
-            # commit_txid before broadcasting. Persist the proof FIRST — it is
-            # the only durable record of the snapshot (choice data no phrase
-            # regenerates); if we broadcast first and then crash
-            # before writing it, an already-spent sat is left with no proof.
-            # ... and before any of that, check the signer handed back the
-            # transaction we built.  The paste box accepts any PSBT; a
+            # The proof was written when the PSBT was built (see build_psbt);
+            # what is left is to check the signer handed back the transaction
+            # that proof describes -- the paste box accepts anything, and a
             # segwit txid does not change under signing, so one comparison
-            # settles it.  Without this the proof written below can describe
-            # a transaction that was never broadcast.
+            # settles it -- and to send it.  _broadcast_tx treats "the
+            # network already has it" as success, so a wallet that broadcast
+            # on its own a moment ago is not an error here.
             cw.assert_signed_is_what_we_built(
                 state.psbt_b64_unsigned or "", state.psbt_b64_signed or ""
             )
             commit_txid, tx_hex = cw._extract_tx_from_psbt(state.psbt_b64_signed or "")
-            proof = getattr(self, "_pending_proof", None) or {}
-            proof["commit_txid"] = commit_txid
-            os.makedirs(state.output_dir, exist_ok=True)
-            pier = (state.comet or state.point or "unknown").lstrip("~")
-            suffix = f"{pier}-{state.op_name}-{commit_txid[:10]}.proof.json"
-            proof_path = os.path.join(state.output_dir, suffix)
-            cw.write_proof_json(proof, proof_path)
-            state.proof_path = proof_path
-
-            self.app.call_from_thread(status.update, f"proof saved — broadcasting {commit_txid}")
+            self.app.call_from_thread(status.update, f"broadcasting {commit_txid}")
             broadcast_id = cw._broadcast_tx(tx_hex, mempool_base=state.mempool_base)
             state.commit_txid = broadcast_id
-            if state.op_name == "spawn":
-                self.app.call_from_thread(self.app.push_screen, ConfirmWaitScreen())
-            else:
-                self.app.call_from_thread(self.app.push_screen, DoneScreen())
+            self._advance_once(ConfirmWaitScreen if state.op_name == "spawn" else DoneScreen)
         except Exception as e:
             self.app.call_from_thread(status.update, f"broadcast failed: {e}")
 
@@ -942,7 +998,7 @@ class ConfirmWaitScreen(BaseScreen):
         yield Header()
         yield Vertical(
             Static("WAITING FOR SPAWN CONFIRMATION", id="title"),
-            Static("Your spawn transaction is broadcast. Nothing else to do or keep."),
+            Static("The network has your spawn transaction. Nothing else to do or keep."),
             Static(state.commit_txid or "", id="txid"),
             Static("checking…", id="progress"),
             Static("Usually 10\u201360 minutes. Quitting is safe: the proof and feed are "

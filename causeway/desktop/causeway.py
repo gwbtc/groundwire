@@ -277,6 +277,50 @@ def confirm_master_ticket(ticket: str, *, assume_saved: bool = False) -> None:
         print("  Please re-enter it exactly:")
 
 
+RAW_TX_PREFIX = "rawtx:"
+
+
+def _looks_like_raw_tx(raw: bytes) -> bool:
+    """A finalized bitcoin transaction, not a PSBT: version LE32 (1 or 2),
+    then either the segwit marker 00 01 or an input count."""
+    if len(raw) < 60:
+        return False
+    ver = int.from_bytes(raw[:4], "little")
+    return ver in (1, 2) and (raw[4:6] == b"\x00\x01" or 1 <= raw[4] <= 0x10)
+
+
+def signed_input_to_base64(data: bytes) -> str | None:
+    """Like psbt_bytes_to_base64, but ALSO accepts a fully-signed raw
+    transaction (what Sparrow's Save Transaction emits once every input is
+    signed) and returns it as RAW_TX_PREFIX + hex.
+
+    A signed tx is strictly better than a signed PSBT for us -- it is the
+    thing _extract_tx_from_psbt exists to produce -- so refusing it was
+    silly.  The txid comparison against what we built still runs on it."""
+    b64 = psbt_bytes_to_base64(data)
+    if b64:
+        return b64
+    if not data:
+        return None
+    raw = data
+    if not _looks_like_raw_tx(raw):
+        txt = "".join(data.decode("ascii", "ignore").split())
+        if txt and all(c in "0123456789abcdefABCDEF" for c in txt) and len(txt) % 2 == 0:
+            try:
+                raw = bytes.fromhex(txt)
+            except ValueError:
+                return None
+        else:
+            return None
+    if _looks_like_raw_tx(raw):
+        try:
+            Transaction.parse(raw)          # embit must agree it is a tx
+        except Exception:  # noqa: BLE001
+            return None
+        return RAW_TX_PREFIX + raw.hex()
+    return None
+
+
 def psbt_bytes_to_base64(data: bytes) -> str | None:
     """Normalize a PSBT in ANY of the forms a wallet emits into clean base64,
     or None if it is not a PSBT at all.
@@ -3079,8 +3123,9 @@ _MGMT_PRIOR_PROOF_HELP = (
               help="Allow a new snapshot with no sponsor and no fief (outbound-only). "
                    "Without this, a state update that would strand the comet is refused.")
 @click.option("--signed-psbt", default=None, metavar="PATH|-",
-              help="Read the signed PSBT from a file (or `-` for stdin) instead of "
-                   "prompting. A named pipe works: the unsigned PSBT is written to "
+              help="Read the signed PSBT (or signed raw transaction) from a file "
+                   "(or `-` for stdin) instead of watching the chain / prompting. "
+                   "A named pipe works: the unsigned PSBT is written to "
                    "<patp>-rekey.psbt first.")
 @click.option("--fund-xpub", default=None,
               help="TOP-UP: taproot xpub or descriptor of a wallet holding sats to "
@@ -3265,22 +3310,27 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
         fg="yellow",
     ))
 
-    signed_b64 = _await_signed_psbt(unsigned_b64, signed_psbt)
-    try:
-        commit_txid, tx_hex = _extract_tx_from_psbt(signed_b64)
-    except Exception as e:
-        click.echo(click.style(f"\n  Error extracting signed tx: {e}", fg="red"))
-        sys.exit(1)
-
-    #  Before the proof is written, not after: the proof is the durable
-    #  record the next state update chains off, so a wrong one is worse
-    #  than a wrong broadcast.
-    assert_signed_is_what_we_built(unsigned_b64, signed_b64)
-
+    #  The proof is written BEFORE the wallet is asked to sign: the wallet
+    #  normally broadcasts too, and a segwit txid is fixed before signing, so
+    #  the record can -- and must -- exist before the transaction can land.
+    #  It is the durable record the next state update chains off.
+    commit_txid = psbt_obj.tx.txid().hex()
     proof["commit_txid"] = commit_txid
     proof_path = os.path.join(output_dir, f"{pier}-rekey-{commit_txid[:12]}.proof.json")
     write_proof_json(proof, proof_path)
     print(f"  Wrote proof: {proof_path}")
+
+    signed_b64 = _await_signed_psbt(unsigned_b64, signed_psbt,
+                                    mempool_base=mempool_base, proof_path=proof_path)
+    try:
+        signed_txid, tx_hex = _extract_tx_from_psbt(signed_b64)
+    except Exception as e:
+        click.echo(click.style(f"\n  Error extracting signed tx: {e}", fg="red"))
+        sys.exit(1)
+
+    #  The signer (or the chain) handed back a transaction; make sure it is
+    #  the one the proof above describes before anything is broadcast.
+    assert_signed_is_what_we_built(unsigned_b64, signed_b64)
 
     print("\n  Broadcasting rekey...")
     try:
@@ -3330,8 +3380,9 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
               help="Spend this outpoint instead of prompting for one. It must be "
                    "among the UTXOs the xpub scan finds.")
 @click.option("--signed-psbt", default=None, metavar="PATH|-",
-              help="Read the signed PSBT from a file (or `-` for stdin) instead of "
-                   "prompting. A named pipe works: the unsigned PSBT is written to "
+              help="Read the signed PSBT (or signed raw transaction) from a file "
+                   "(or `-` for stdin) instead of watching the chain / prompting. "
+                   "A named pipe works: the unsigned PSBT is written to "
                    "<patp>-spawn.psbt first.")
 @click.option("--out-feed", "out_feed", default=None, metavar="PATH",
               help="Write the boot feed to this file (0600) instead of printing it. A feed is a private key; an argument lands in shell history and in the ship's argv.")
@@ -3616,8 +3667,9 @@ def _resolve_publication_pass(chain: list[dict], proofs, pass_hex: str | None,
 @click.option("--no-route", is_flag=True, default=False,
               help="Publish even though the snapshot has neither sponsor nor fief.")
 @click.option("--signed-psbt", default=None, metavar="PATH|-",
-              help="Read the signed PSBT from a file (or `-` for stdin) instead of "
-                   "prompting. A named pipe works: the unsigned PSBT is written to "
+              help="Read the signed PSBT (or signed raw transaction) from a file "
+                   "(or `-` for stdin) instead of watching the chain / prompting. "
+                   "A named pipe works: the unsigned PSBT is written to "
                    "<patp>-publish.psbt first.")
 @click.option("--dry-run", is_flag=True, default=False,
               help="Build the transaction, run every gate and write the unsigned "
@@ -3814,9 +3866,17 @@ def cmd_publish(proofs, fee_rate, network, output_dir, mempool_base, pass_hex,
         "  and every custody hop since, in public, forever.",
         fg="red"))
 
-    signed_b64 = _await_signed_psbt(unsigned_b64, signed_psbt)
+    #  Proof first (see the rekey flow): the wallet may broadcast on its own.
+    commit_txid = psbt_obj.tx.txid().hex()
+    proof["commit_txid"] = commit_txid
+    proof_path = os.path.join(output_dir, f"{pier}-publish-{commit_txid[:12]}.proof.json")
+    write_proof_json(proof, proof_path)
+    print(f"  Wrote proof: {proof_path}")
+
+    signed_b64 = _await_signed_psbt(unsigned_b64, signed_psbt,
+                                    mempool_base=mempool_base, proof_path=proof_path)
     try:
-        commit_txid, tx_hex = _extract_tx_from_psbt(signed_b64)
+        signed_txid, tx_hex = _extract_tx_from_psbt(signed_b64)
     except Exception as e:
         click.echo(click.style(f"\n  Error extracting signed tx: {e}", fg="red"))
         sys.exit(1)
@@ -3840,11 +3900,6 @@ def cmd_publish(proofs, fee_rate, network, output_dir, mempool_base, pass_hex,
             f"\n  GATE FAILED — NOT BROADCASTING: {e}\n"
             f"  Signed tx hex (unbroadcast): {tx_hex}", fg="red"))
         sys.exit(1)
-
-    proof["commit_txid"] = commit_txid
-    proof_path = os.path.join(output_dir, f"{pier}-publish-{commit_txid[:12]}.proof.json")
-    write_proof_json(proof, proof_path)
-    print(f"  Wrote proof: {proof_path}")
 
     print("\n  Broadcasting publication...")
     try:
@@ -3955,30 +4010,59 @@ def _load_signed_psbt(spec: str) -> str:
             f"--signed-psbt {spec!r}: empty "
             f"({'stdin' if spec == '-' else 'file'} contained nothing)"
         )
-    entry = psbt_bytes_to_base64(data)
+    entry = signed_input_to_base64(data)
     if not entry:
         raise SystemExit(
-            f"--signed-psbt {spec!r}: not a PSBT in any form (binary psbt\\xff, "
-            "base64 starting cHNidP8, or hex starting 70736274ff)")
-    try:
-        psbt.PSBT.from_base64(entry)
-    except Exception as e:
-        raise SystemExit(f"--signed-psbt {spec!r}: not a valid PSBT ({e})")
+            f"--signed-psbt {spec!r}: not a signed PSBT (binary psbt\\xff, base64 "
+            "cHNidP8..., hex 70736274ff...) nor a signed raw transaction (hex 0200...)")
+    if not entry.startswith(RAW_TX_PREFIX):
+        try:
+            psbt.PSBT.from_base64(entry)
+        except Exception as e:
+            raise SystemExit(f"--signed-psbt {spec!r}: not a valid PSBT ({e})")
     print(f"\n  Read signed PSBT from {'stdin' if spec == '-' else spec}.")
     return entry
 
 
-def _await_signed_psbt(unsigned_b64: str, signed_psbt: str | None = None) -> str:
-    """Prompt the user to paste the signed PSBT back. Returns signed-psbt base64.
+def _await_signed_psbt(unsigned_b64: str, signed_psbt: str | None = None, *,
+                       mempool_base: str = MEMPOOL_API_URL,
+                       poll: int = 20,
+                       proof_path: str | None = None) -> str:
+    """Hand the unsigned PSBT to the operator's wallet and wait for the
+    signed transaction to come back BY EITHER ROUTE:
 
-    `signed_psbt` is the --signed-psbt flag (path, or `-` for stdin); when it is
-    given nothing is read from the terminal."""
+      * the wallet broadcasts it itself -- the normal case; Sparrow and
+        friends sign-and-send in one motion.  A segwit txid is fixed before
+        signing, so Causeway already knows what to look for and simply
+        watches the chain.  Returns RAW_TX_PREFIX + hex, fetched from the
+        network.
+      * the wallet can only sign (air-gapped, or the operator prefers it):
+        the signed PSBT or signed raw transaction is pasted / loaded here and
+        Causeway broadcasts it.  Returns the signed PSBT base64 or
+        RAW_TX_PREFIX + hex.
+
+    `signed_psbt` is the --signed-psbt flag (path, or `-` for stdin); when it
+    is given nothing is read from the terminal.  Without a terminal and
+    without the flag, only the chain is watched.
+
+    `proof_path`: the proof written for this transaction BEFORE the wait
+    (it has to exist before the wallet can broadcast, or a crash mid-wait
+    would leave a spent sat with no record).  On Ctrl-C / EOF, if the chain
+    has not seen the transaction, that proof is removed again so a stale
+    record of a never-broadcast tx cannot be picked up as a --prior-proof.
+    """
+    txid = psbt.PSBT.from_base64(unsigned_b64).tx.txid().hex()
     print()
     print("  Next steps:")
     print("    1. Load the unsigned PSBT below into your Bitcoin wallet (Sparrow, BlueWallet,")
     print("       Passport, Keystone, Coldcard, etc).")
-    print("    2. Review + sign.")
-    print("    3. Paste the signed PSBT back here (base64).")
+    print("    2. Review, sign, and BROADCAST it from the wallet.")
+    print()
+    print(f"  Causeway is watching the chain for  {txid}")
+    print("  and continues by itself as soon as the network has it.")
+    print()
+    print("  If your wallet can only sign, paste the signed PSBT (or the signed raw")
+    print("  transaction) here instead and Causeway will broadcast it.")
     print()
     print("  Unsigned PSBT:")
     print()
@@ -3986,16 +4070,74 @@ def _await_signed_psbt(unsigned_b64: str, signed_psbt: str | None = None) -> str
     print()
     if signed_psbt is not None:
         return _load_signed_psbt(signed_psbt)
-    while True:
-        entry = prompt("  Signed PSBT (base64) > ", what="the signed PSBT",
-                       flag="--signed-psbt <path|->").strip()
-        if not entry:
-            continue
-        try:
-            psbt.PSBT.from_base64(entry)
-            return entry
-        except Exception as e:
-            print(f"  That doesn't look like a valid PSBT ({e}). Try again.")
+
+    def _abort() -> None:
+        seen = tx_hex_if_seen(txid, mempool_base=mempool_base)
+        if seen:
+            print(f"  {txid} is on chain; keeping {proof_path or 'the proof'}.", file=sys.stderr)
+        elif proof_path and os.path.exists(proof_path):
+            os.remove(proof_path)
+            print(f"  nothing broadcast; removed {proof_path}", file=sys.stderr)
+        raise SystemExit(INTERRUPT_EXIT_CODE)
+
+    tty = _stdin_is_tty()
+    if not tty:
+        print("  (no terminal: watching the chain only; pass --signed-psbt to hand over a signed PSBT)")
+    else:
+        print("  Signed PSBT / tx (optional) > ", end="", flush=True)
+    try:
+        import select as _select
+    except ImportError:  # pragma: no cover
+        _select = None
+    pending = ""
+    try:
+        while True:
+            seen = tx_hex_if_seen(txid, mempool_base=mempool_base)
+            if seen:
+                print(f"\n  Seen on the network: {tx_link(txid)}")
+                return RAW_TX_PREFIX + seen
+            if not tty or _select is None:
+                time.sleep(poll)
+                continue
+            try:
+                ready, _, _ = _select.select([sys.stdin], [], [], poll)
+            except (OSError, ValueError):
+                # No select on this stdin (Windows console): fall back to a
+                # blocking read; the chain is checked once the paste lands.
+                line = sys.stdin.readline()
+                if line == "":
+                    _abort()
+                ready = [True]
+                pending += line
+            else:
+                if not ready:
+                    continue
+                line = sys.stdin.readline()
+                if line == "":
+                    _abort()
+                pending += line
+                # a wrapped paste arrives as several lines in one burst
+                while True:
+                    more, _, _ = _select.select([sys.stdin], [], [], 0.2)
+                    if not more:
+                        break
+                    extra = sys.stdin.readline()
+                    if extra == "":
+                        break
+                    pending += extra
+            entry = signed_input_to_base64(pending.strip().encode())
+            if entry:
+                return entry
+            if pending.strip():
+                print("  That doesn't look like a signed PSBT or transaction. Try again --")
+                print("  or just broadcast from your wallet; the chain is being watched.")
+                print("  Signed PSBT / tx (optional) > ", end="", flush=True)
+            pending = ""
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        print("causeway: interrupted while waiting for the signed transaction", file=sys.stderr)
+        _abort()
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def assert_signed_is_what_we_built(unsigned_b64: str, signed_b64: str) -> str:
@@ -4038,7 +4180,13 @@ def assert_signed_is_what_we_built(unsigned_b64: str, signed_b64: str) -> str:
 
 
 def _extract_tx_from_psbt(signed_b64: str) -> tuple[str, str]:
-    """Finalize and extract raw tx hex from a signed PSBT. Returns (txid, tx_hex)."""
+    """Finalize and extract raw tx hex from a signed PSBT. Returns (txid, tx_hex).
+
+    Also accepts RAW_TX_PREFIX + hex -- an already-finalized transaction --
+    and returns it as-is; there is nothing to extract."""
+    if signed_b64.startswith(RAW_TX_PREFIX):
+        tx_hex = signed_b64[len(RAW_TX_PREFIX):]
+        return Transaction.parse(bytes.fromhex(tx_hex)).txid().hex(), tx_hex
     p = psbt.PSBT.from_base64(signed_b64)
     # Manual finalization for P2TR key-path spends: if taproot_key_sig is set on an input,
     # its witness is just [sig]. embit may not auto-finalize; we do it by hand.
@@ -4067,11 +4215,38 @@ def _extract_tx_from_psbt(signed_b64: str) -> tuple[str, str]:
     return txid, tx_hex
 
 
+def tx_hex_if_seen(txid: str, *, mempool_base: str = MEMPOOL_API_URL) -> str | None:
+    """The raw hex of `txid` if the network has it (mempool or a block), else
+    None.  A 404 is the normal "not yet"; any other failure is also None --
+    callers poll, and a blip must not read as an answer."""
+    try:
+        r = requests.get(f"{mempool_base}/tx/{txid}/hex", timeout=20)
+    except requests.RequestException:
+        return None
+    if r.status_code != 200:
+        return None
+    body = r.text.strip()
+    if not body or any(c not in "0123456789abcdefABCDEF" for c in body):
+        return None
+    return body
+
+
 def _broadcast_tx(tx_hex: str, *, mempool_base: str = MEMPOOL_API_URL) -> str:
+    """Broadcast, and treat "the network already has it" as success.
+
+    The wallet that signed the transaction is normally the one that
+    broadcasts it (Causeway just watches the chain), and a previous run may
+    have got this far too.  mempool.space answers those with a 400 whose
+    text varies ('Transaction already in block chain',
+    'txn-already-in-mempool', ...); rather than pattern-match it, ask the
+    chain for the txid, which is known before broadcasting."""
     r = requests.post(f"{mempool_base}/tx", data=tx_hex, timeout=30)
-    if not r.ok:
-        raise RuntimeError(f"broadcast failed: {r.status_code} {r.text}")
-    return r.text.strip()
+    if r.ok:
+        return r.text.strip()
+    txid = Transaction.parse(bytes.fromhex(tx_hex)).txid().hex()
+    if tx_hex_if_seen(txid, mempool_base=mempool_base):
+        return txid
+    raise RuntimeError(f"broadcast failed: {r.status_code} {r.text}")
 
 
 def resolve_start_height(proof: dict, *, mempool_base: str = MEMPOOL_API_URL) -> int:
@@ -4437,18 +4612,27 @@ def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network:
         f.write("\n")
     print(f"\n  Wrote unsigned PSBT: {psbt_path}")
 
-    signed_b64 = _await_signed_psbt(unsigned_b64, signed_psbt)
+    #  Proof AND feed on disk before the wallet is asked to sign.  The wallet
+    #  normally broadcasts as well, and from that moment the sat is spent:
+    #  the proof is the record of what was committed and the feed is the
+    #  comet's private key -- neither is regenerable, and a crash between
+    #  the wallet's send and our noticing it must not lose either.
+    commit_txid = psbt_obj.tx.txid().hex()
+    proof["commit_txid"] = commit_txid
+    write_proof_json(proof, proof_path)
+    print(f"  Wrote proof: {proof_path}")
+    if out_feed:
+        print(f"  Wrote feed:  {write_feed_file(out_feed, feed)} (0600, NOT yet xtr-baked)")
+
+    signed_b64 = _await_signed_psbt(unsigned_b64, signed_psbt,
+                                    mempool_base=mempool_base, proof_path=proof_path)
     try:
-        commit_txid, tx_hex = _extract_tx_from_psbt(signed_b64)
+        signed_txid, tx_hex = _extract_tx_from_psbt(signed_b64)
     except Exception as e:
         click.echo(click.style(f"\n  Error extracting signed tx: {e}", fg="red"))
         sys.exit(1)
 
     assert_signed_is_what_we_built(unsigned_b64, signed_b64)
-
-    proof["commit_txid"] = commit_txid
-    write_proof_json(proof, proof_path)
-    print(f"  Wrote proof: {proof_path}")
 
     print("\n  Broadcasting spawn...")
     try:

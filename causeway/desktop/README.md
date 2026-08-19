@@ -69,7 +69,7 @@ That seed phrase controls the coins. The comet's identity is the proof file + th
 causeway spawn connect --xpub <YOUR_XPUB>
 ```
 
-Same flow, but you sign the PSBT externally (scan a UR animated QR into Passport/Keystone, or load the `.psbt` file in Sparrow/BlueWallet).
+Same flow, but you sign the PSBT externally (scan a UR animated QR into Passport/Keystone, or load the `.psbt` file in Sparrow/BlueWallet) — and **broadcast it from that wallet too**. Causeway already knows the transaction's txid (a segwit txid is fixed before signing) and just watches the chain; it moves on by itself when the network has it. Nothing needs to be pasted back. If your wallet can only sign, paste the signed PSBT or signed transaction (or the path to the file it saved) into the prompt / the TUI's box instead, and Causeway broadcasts it. Either way the proof and the feed are on disk before your wallet is asked to sign, so nothing is lost if the wallet broadcasts and Causeway is closed.
 
 Your wallet never hands over its seed, and Causeway needs no secret from it:
 the identity is the proof file + the feed (see [Custody](#custody-the-identity-bundle)).

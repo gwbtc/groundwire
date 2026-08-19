@@ -94,6 +94,7 @@ EXPECT_SHA="${GROUNDWIRE_SHA256:-}"
 COMET=""
 FEED=""
 FEED_FILE=""
+MEMPOOL_API="${MEMPOOL_API:-https://mempool.space/api}"
 PROOF=""
 MODE="install"
 MINT_XPUB=""
@@ -1240,10 +1241,44 @@ cmd_mint() {
     # writes <name>-spawn-<txid>.proof.json.  The narrow glob missed the
     # TUI's, which would fail a SUCCESSFUL spawn as "exited without
     # completing" -- found by reading, unreachable by the headless harness.
-    proof="$(find "$mintdir" -maxdepth 1 -name '*-spawn*.proof.json' -newer "$marker" 2>/dev/null | head -1)"
-    [ -n "$proof" ] || die "the TUI exited without completing a spawn.
+    #
+    # The TUI writes the proof and the raw feed the moment the spawn
+    # transaction is BUILT -- before the wallet signs it -- because the
+    # wallet normally broadcasts too and nothing may be lost if it does.
+    # So a proof on disk means "built", not "sent": ask the chain which of
+    # the candidate transactions actually exists (mempool or block).  Newest
+    # first; a Back-and-rebuild leaves an older proof for a tx that never
+    # went anywhere.
+    local cand txid seen=""
+    proof=""
+    # shellcheck disable=SC2045,SC2046  # names are <patp>-spawn-<txid>.proof.json: no spaces
+    for cand in $(ls -t $(find "$mintdir" -maxdepth 1 -name '*-spawn*.proof.json' -newer "$marker" 2>/dev/null) 2>/dev/null); do
+      [ -s "${cand%.json}.feed" ] || continue
+      txid="$(sed -n 's/.*"commit_txid"[[:space:]]*:[[:space:]]*"\([0-9a-f]*\)".*/\1/p' "$cand" | head -1)"
+      [ -n "$txid" ] || continue
+      if curl -fsS --max-time 10 "$MEMPOOL_API/tx/$txid/status" >/dev/null 2>&1; then
+        proof="$cand"; seen="$txid"; break
+      fi
+      [ -z "$proof" ] && proof="$cand"   # remember the newest, in case the network is unreachable
+    done
+    if [ -z "$proof" ]; then
+      die "the TUI exited without completing a spawn.
     Nothing was booted. Re-run to try again, or add --headless for the
     prompt-based flow."
+    fi
+    if [ -z "$seen" ]; then
+      txid="$(sed -n 's/.*"commit_txid"[[:space:]]*:[[:space:]]*"\([0-9a-f]*\)".*/\1/p' "$proof" | head -1)"
+      if curl -fsS --max-time 10 "$MEMPOOL_API/blocks/tip/height" >/dev/null 2>&1; then
+        die "the spawn transaction was built but the network has not seen it:
+      $txid
+    Nothing was spent and nothing was booted.  If your wallet DID just
+    broadcast it, give it a minute and finish by hand:
+      $GW_DIR/causeway finalize $proof --feed-file ${proof%.json}.feed --out-feed $baked
+    then boot with --comet '<the @p in $proof>' --feed-file $baked.
+    Otherwise re-run this installer to start over."
+      fi
+      warn "cannot reach $MEMPOOL_API to check the spawn transaction; continuing with the newest proof"
+    fi
     # The TUI writes the raw feed beside the proof: <name>-spawn.proof.feed
     raw="${proof%.json}.feed"
     [ -s "$raw" ] || die "the TUI wrote a proof but no feed file ($raw).
