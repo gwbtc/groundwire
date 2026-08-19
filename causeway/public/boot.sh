@@ -1460,9 +1460,39 @@ summary_lines() {
   [ -f "$GW_DIR/var/sup-$NAME.log" ] && info "supervisor  $GW_DIR/var/sup-$NAME.log"
   info "http        http://127.0.0.1:$HTTP_PORT"
   info ""
-  info "status      $SELF --status --comet '$COMET'"
-  info "stop        $SELF --stop --comet '$COMET'"
+  info "status      $GW_DIR/boot.sh --status --comet '$COMET'"
+  info "stop        $GW_DIR/boot.sh --stop --comet '$COMET'"
   info "runbook     ops/doc/OPERATIONS.md"
+
+  # The printout above is gone with the scrollback; the same answers,
+  # durable.  "How do I turn it off" must never require finding this
+  # script's output again.
+  write_ship_readme
+}
+
+write_ship_readme() {
+  local feedline=""
+  [ -n "${FEED_FILE:-}" ] && feedline=" --feed-file $FEED_FILE"
+  cat > "$GW_DIR/README" <<EOF
+Your Groundwire ship: $COMET
+
+  pier (the ship; all its state):  $GW_PIER
+  ship log:                        $GW_LOG
+  web:                             http://127.0.0.1:$HTTP_PORT
+
+  status:  $GW_DIR/boot.sh --status --comet '$COMET'
+  stop:    $GW_DIR/boot.sh --stop   --comet '$COMET'
+  start:   $GW_DIR/boot.sh --comet '$COMET'$feedline
+
+The ship runs detached with a supervisor that restarts it if it crashes.
+It does NOT survive a reboot of this machine: run the start line above.
+Stopping is always safe; the pier holds everything.
+
+Identity custody: the proof.json + feed files (see $GW_DIR/var/mint/).
+Back those up; everything else here is replaceable.
+EOF
+  info ""
+  info "the above is saved in $GW_DIR/README"
 }
 
 case "$MODE" in

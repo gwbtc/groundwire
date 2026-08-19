@@ -1537,7 +1537,31 @@
           ?:  syn
             "%gw-btc: light client is SYNCED; confidential verification enabled"
           "%gw-btc: light client is NOT synced; holding all attestations (no verdicts)"
-      `this(synced syn)
+      =/  new  this(synced syn)
+      ::  EPOCH AUTO-BOOTSTRAP.  The first time the client reports
+      ::  synced on a chain that has reached the kelvin-9 epoch, a
+      ::  VIRGIN index (cursor never moved, nothing indexed -- the same
+      ::  evidence the %gw-index-from guard reads, so a bootstrap that
+      ::  already happened, by poke or by this arm, refuses here too)
+      ::  starts itself from +gw-epoch.  Without this every fresh ship
+      ::  held an empty public index until an operator poked it, and
+      ::  could not resolve even the sponsor its own snapshot names.
+      ::
+      =/  virgin=?
+        ?&  syn
+            !indexing
+            =(0 num.block-id.urb-state)
+            =(~ unv-ids.urb-state)
+        ==
+      ?.  ?&(virgin ?=(^ best) (gte num.u.best gw-epoch))
+        `new
+      %-  %-  slog  :_  ~
+          leaf+"%gw-btc: public index: auto-bootstrap from the kelvin-9 epoch, block {<gw-epoch>}"
+      :_  %=  new
+            urb-state  [[0x0 (dec gw-epoch)] *sont-map:ord *insc-ids:ord *unv-ids:urb]
+            indexing   %.y
+          ==
+      ~[[%pass /timer %arvo %b %wait now.bowl]]
     ==
   ::
       [%best-block ~]
@@ -1821,6 +1845,22 @@
 ::
 ::  +block-confirmations: blocks behind the tip the scanner stays
 ++  block-confirmations  1  :: 1 for alpha
+::
+::  +gw-epoch: the first mainnet block that can contain a kelvin-9
+::  %gw-btc publication -- the block of the first one ever minted (the
+::  ~barmul sponsor spawn, tx 48c2ea65..., block 963.104).  A virgin
+::  index that starts here provably misses nothing, so the agent
+::  bootstraps itself from it the first time the light client reports
+::  synced (see the /is-synced %fact arm) and no operator poke is needed.
+::  Found live: a fresh comet could not resolve its own SPONSOR -- and a
+::  sponsor could not resolve ITSELF ([??] sponsor-known, UNDETERMINED
+::  forever) -- because nothing ever started the scanner.
+::
+::  On a chain that has not reached the epoch (regtest, the test
+::  harness) the auto-bootstrap simply never fires and %gw-index-from
+::  remains the way to choose a start, exactly as before.
+::
+++  gw-epoch  963.104
 ::
 ::  +scan-batch: most blocks one run of the block thread will process
 ::

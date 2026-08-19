@@ -664,6 +664,58 @@
     ::  and the block timer is armed immediately
     (expect-eq !>(1) !>((lent (app-cards cards))))
   ==
+::  EPOCH AUTO-BOOTSTRAP.  A virgin index starts itself from +gw-epoch
+::  the first time the light client reports synced on a chain that has
+::  reached it.  Found live: a fresh comet could not resolve its own
+::  sponsor, and a sponsor could not resolve ITSELF, because nothing
+::  ever started the scanner (issue #92's real shape).
+::
+++  test-epoch-auto-bootstrap-on-first-sync
+  =/  agent  gw-btc
+  =^  *  agent  ~(on-init agent bowl0)
+  =^  *  agent  (~(on-agent agent bowl0) /best-block (new-block-sign 963.150))
+  =^  cards  agent
+    (~(on-agent agent bowl0) /is-synced [%fact %bitcoin-client-is-synced !>(&)])
+  =/  bid  (peek-noun (~(on-peek agent bowl0) /x/block-id))
+  =/  rdy  (peek-noun (~(on-peek agent bowl0) /x/ready))
+  ;:  weld
+    ::  the cursor lands one below the epoch, exactly as a poke would put it
+    (expect-eq !>(`id:block:bitcoin`[0x0 963.103]) !>(;;(id:block:bitcoin bid)))
+    ::  ... the agent is synced AND indexing
+    (expect-eq !>(`*`[%.y [~ 963.150] %.y]) !>(`*`rdy))
+    ::  ... and the block timer is armed immediately
+    (expect-eq !>(1) !>((lent (app-cards cards))))
+  ==
+::  ... but never on a chain that has not reached the epoch: regtest and
+::  the harness keep the explicit-poke behavior.
+::
+++  test-epoch-auto-bootstrap-waits-for-the-epoch
+  =/  agent  gw-btc
+  =^  *  agent  ~(on-init agent bowl0)
+  =^  *  agent  (~(on-agent agent bowl0) /best-block (new-block-sign 500))
+  =^  cards  agent
+    (~(on-agent agent bowl0) /is-synced [%fact %bitcoin-client-is-synced !>(&)])
+  =/  bid  (peek-noun (~(on-peek agent bowl0) /x/block-id))
+  ;:  weld
+    (expect-eq !>(`id:block:bitcoin`[0x0 0]) !>(;;(id:block:bitcoin bid)))
+    (expect-eq !>(0) !>((lent (app-cards cards))))
+  ==
+::  ... and never over an index that exists: an operator who chose a
+::  start point keeps it, and a second sync transition cannot rewind a
+::  scanner that has already moved.
+::
+++  test-epoch-auto-bootstrap-defers-to-an-existing-index
+  =/  agent  gw-btc
+  =^  *  agent  ~(on-init agent bowl0)
+  =^  *  agent  (~(on-poke agent bowl0) %gw-index-from !>(`@ud`961.055))
+  =^  *  agent  (~(on-agent agent bowl0) /best-block (new-block-sign 963.150))
+  =^  cards  agent
+    (~(on-agent agent bowl0) /is-synced [%fact %bitcoin-client-is-synced !>(&)])
+  =/  bid  (peek-noun (~(on-peek agent bowl0) /x/block-id))
+  ;:  weld
+    (expect-eq !>(`id:block:bitcoin`[0x0 961.054]) !>(;;(id:block:bitcoin bid)))
+    (expect-eq !>(0) !>((lent (app-cards cards))))
+  ==
 ::  Bootstrap is one-shot: a second poke must not silently rewind the
 ::  cursor (it would mix two index epochs).
 ::
