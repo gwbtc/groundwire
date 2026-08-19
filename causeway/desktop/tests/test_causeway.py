@@ -2807,3 +2807,38 @@ def test_canonical_check_is_kelvin_agnostic():
     dom, kel, spawn = cw.parse_dat_atom(w.to_int())
     assert (dom, kel) == ("gw-btc", cw.KELVIN + 1)
     assert spawn == cw.spawn_sont_noun(txid, 2, 0)
+
+
+def test_psbt_bytes_to_base64_accepts_every_wallet_export_form():
+    """Sparrow's Save Transaction writes RAW BINARY for .psbt; other paths give
+    base64 (possibly line-wrapped) or hex.  The TUI once emptied its own box
+    on the binary case and reported embit's error for an empty string --
+    'Invalid PSBT magic' -- which named the symptom and hid the cause."""
+    import base64
+    from embit import psbt as P
+    from embit.transaction import Transaction, TransactionInput, TransactionOutput
+    from embit.script import Script
+    tx = Transaction(vin=[TransactionInput(bytes(32), 0)],
+                     vout=[TransactionOutput(1000, Script(b"\x51\x20" + b"\x11" * 32))])
+    raw = P.PSBT(tx).serialize()
+    b64 = base64.b64encode(raw).decode()
+    wrapped = ("\n".join(b64[i:i + 64] for i in range(0, len(b64), 64)) + "  \n").encode()
+    for form in (raw, b64.encode(), wrapped, raw.hex().encode(), raw.hex().upper().encode()):
+        assert cw.psbt_bytes_to_base64(form) == b64
+    assert cw.psbt_bytes_to_base64(b"") is None
+    assert cw.psbt_bytes_to_base64(b"hello world") is None
+    assert cw.psbt_bytes_to_base64(b"   \n") is None
+
+
+def test_load_signed_psbt_reads_sparrow_binary(tmp_path):
+    """--signed-psbt on a raw-binary .psbt (what Sparrow saves) must load; it
+    used to be opened in TEXT mode and fail as garbage."""
+    import base64
+    from embit import psbt as P
+    from embit.transaction import Transaction, TransactionInput, TransactionOutput
+    from embit.script import Script
+    tx = Transaction(vin=[TransactionInput(bytes(32), 0)],
+                     vout=[TransactionOutput(1000, Script(b"\x51\x20" + b"\x11" * 32))])
+    raw = P.PSBT(tx).serialize()
+    f = tmp_path / "signed.psbt"; f.write_bytes(raw)
+    assert cw._load_signed_psbt(str(f)) == base64.b64encode(raw).decode()

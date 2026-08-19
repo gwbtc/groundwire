@@ -277,6 +277,44 @@ def confirm_master_ticket(ticket: str, *, assume_saved: bool = False) -> None:
         print("  Please re-enter it exactly:")
 
 
+def psbt_bytes_to_base64(data: bytes) -> str | None:
+    """Normalize a PSBT in ANY of the forms a wallet emits into clean base64,
+    or None if it is not a PSBT at all.
+
+    Wallets disagree: Sparrow's Save Transaction writes raw binary
+    (`psbt\xff...`) for .psbt, base64 text for "as text", and hex in some
+    export paths; a clipboard paste arrives with newlines and stray spaces.
+    The TUI once emptied its own input box on the binary case and then
+    reported "Invalid PSBT magic" -- embit's message for an EMPTY string --
+    which named the symptom and hid the cause.  One normalizer, and the
+    caller says which form it saw."""
+    import base64 as _b64
+    if not data:
+        return None
+    if data[:5] == b"psbt\xff":
+        return _b64.b64encode(data).decode()
+    txt = data.decode("ascii", "ignore")
+    compact = "".join(txt.split())
+    if not compact:
+        return None
+    # hex?
+    if all(c in "0123456789abcdefABCDEF" for c in compact) and len(compact) % 2 == 0:
+        try:
+            raw = bytes.fromhex(compact)
+            if raw[:5] == b"psbt\xff":
+                return _b64.b64encode(raw).decode()
+        except ValueError:
+            pass
+    # base64?
+    try:
+        raw = _b64.b64decode(compact + "=" * (-len(compact) % 4), validate=False)
+        if raw[:5] == b"psbt\xff":
+            return _b64.b64encode(raw).decode()
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 def paste_from_clipboard() -> str | None:
     """Read the system clipboard, or None.  Mirror of copy_to_clipboard: a
     full-screen TUI owns the mouse, so a signed PSBT is as unpasteable as
@@ -3906,18 +3944,22 @@ def _load_signed_psbt(spec: str) -> str:
     signer picks it up and writes the signed one back into the FIFO."""
     try:
         if spec == "-":
-            data = sys.stdin.read()
+            data = sys.stdin.buffer.read()
         else:
-            with open(spec, "r") as f:
+            with open(spec, "rb") as f:          # BINARY: Sparrow's .psbt is raw
                 data = f.read()
     except OSError as e:
         raise SystemExit(f"--signed-psbt {spec!r}: {e}")
-    entry = "".join(data.split())  # tolerate line-wrapped base64
-    if not entry:
+    if not data.strip():
         raise SystemExit(
             f"--signed-psbt {spec!r}: empty "
-            f"({'stdin' if spec == '-' else 'file'} contained no base64)"
+            f"({'stdin' if spec == '-' else 'file'} contained nothing)"
         )
+    entry = psbt_bytes_to_base64(data)
+    if not entry:
+        raise SystemExit(
+            f"--signed-psbt {spec!r}: not a PSBT in any form (binary psbt\\xff, "
+            "base64 starting cHNidP8, or hex starting 70736274ff)")
     try:
         psbt.PSBT.from_base64(entry)
     except Exception as e:

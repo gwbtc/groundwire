@@ -830,11 +830,14 @@ class PsbtBuildScreen(BaseScreen):
             # The inverse problem: a signed PSBT is just as unpasteable by
             # mouse.  Read the system clipboard into the box.
             txt = cw.paste_from_clipboard()
-            if txt:
-                self.query_one("#signed-in", TextArea).text = txt.strip()
-                self.notify(f"pasted {len(txt.strip())} chars from clipboard")
+            b64 = cw.psbt_bytes_to_base64((txt or "").encode())
+            if b64:
+                self.query_one("#signed-in", TextArea).text = b64
+                self.notify(f"pasted a PSBT ({len(b64)} chars) from clipboard")
+            elif txt and txt.strip():
+                self.notify("clipboard has text but it is not a PSBT (base64/hex)", severity="warning")
             else:
-                self.notify("clipboard empty or unreadable — type/paste manually", severity="warning")
+                self.notify("clipboard empty or unreadable — type a .psbt path instead", severity="warning")
             return
         if event.button.id == "self-sign":
             if state.mnemonic is None:
@@ -863,13 +866,21 @@ class PsbtBuildScreen(BaseScreen):
             b64 = raw
             if os.path.isfile(os.path.expanduser(raw)):
                 data = open(os.path.expanduser(raw), "rb").read()
-                if data[:5] == b"psbt\xff":
-                    import base64 as _b64
-                    b64 = _b64.b64encode(data).decode()
-                else:
-                    b64 = data.decode("ascii", "ignore").strip()
+                b64 = cw.psbt_bytes_to_base64(data)
+                if not b64:
+                    self.query_one("#status", Static).update(
+                        f"{raw}: not a PSBT in any form I know (binary, base64, or hex). "
+                        "In Sparrow use Save Transaction and pick the .psbt format.")
+                    return
                 self.query_one("#signed-in", TextArea).text = b64
                 self.notify(f"loaded signed PSBT from {raw}")
+            else:
+                # pasted text: base64 with any whitespace/newlines, or hex
+                b64 = cw.psbt_bytes_to_base64(raw.encode()) or ""
+                if not b64:
+                    self.query_one("#status", Static).update(
+                        "that is not a PSBT (expected base64 starting cHNidP8 or hex starting 70736274ff)")
+                    return
             state.psbt_b64_signed = b64
             self.broadcast_worker()
 
