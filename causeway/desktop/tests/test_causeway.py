@@ -3222,3 +3222,29 @@ def test_boot_sh_ends_in_the_dojo_at_a_terminal():
     # README teaches both endings
     readme = src[src.index("write_ship_readme() {"):]
     assert "start (dojo in this terminal)" in readme and "--detach" in readme
+
+
+def test_boot_sh_flagless_is_the_front_door():
+    """boot.sh with no arguments must do the right thing end to end: boot
+    the comet you have (finished mint first, else a lone pier), or mint one
+    if the machine has none.  --remint stays the explicit way to mint a
+    SECOND comet, because its failure mode costs sats and an identity; two
+    piers demand --comet; archived piers (dot-suffixed) are invisible; and
+    a pier that already exists restarts WITHOUT the feed -- -G matters only
+    at creation, and demanding it forced everyone to keep handing their
+    private key to a restart."""
+    boot = pathlib.Path(cw.__file__).parent.parent / "public" / "boot.sh"
+    if not boot.exists():
+        pytest.skip("boot.sh not beside the desktop tree")
+    src = boot.read_text()
+    assert 'MODE=""' in src                                  # no hardcoded default
+    res = src[src.index('if [ -z "$MODE" ]; then'):]
+    assert 'MODE="install"; else MODE="mint"' in res[:200]   # comet -> install, bare -> mint
+    pier = src[src.index("no finished mint, but a pier?"):src.index("---- which face?")]
+    assert 'if [ -z "$REMINT" ]' in pier                     # --remint skips straight to minting
+    assert "cmd_install" in pier and "more than one pier" in pier
+    assert "! -name '*.*'" in pier                           # archives are invisible
+    assert '--remint)     REMINT=1; MODE="mint"' in src      # boot.sh --remint alone works
+    feed = src[src.index('"")\n      # A RESTART reads nothing'):]
+    assert "restarts without one" in feed[:900]
+    assert "THE FLAGLESS COMMAND" in src                     # usage teaches it

@@ -97,7 +97,7 @@ FEED=""
 FEED_FILE=""
 MEMPOOL_API="${MEMPOOL_API:-https://mempool.space/api}"
 PROOF=""
-MODE="install"
+MODE=""
 MINT_XPUB=""
 MINT_SPONSOR=""
 MINT_FIEF=""
@@ -135,6 +135,12 @@ USAGE
                      instead of handing this terminal to the dojo. Implied when
                      there is no terminal (servers, cron, curl-into-nothing).
   boot.sh --stop                   stop a running ship, in the safe order
+
+THE FLAGLESS COMMAND
+  boot.sh with no arguments does the right thing end to end: boots the
+  comet you already have (a finished mint, or an existing pier), or --
+  if this machine has none -- mints one and boots it.  --mint means the
+  same thing; --remint deliberately mints ANOTHER comet.
 
 MINT MODE (--mint)
   Installs the release, runs Causeway to spawn a comet, waits for the spawn
@@ -250,7 +256,7 @@ while [ $# -gt 0 ]; do
     --sponsor)    [ $# -ge 2 ] || usagedie "--sponsor needs a value"; MINT_SPONSOR="$2"; shift 2 ;;
     --fief)       [ $# -ge 2 ] || usagedie "--fief needs a value"; MINT_FIEF="$2"; shift 2 ;;
     --resume)     MINT_RESUME=1; shift ;;
-    --remint)     REMINT=1; shift ;;
+    --remint)     REMINT=1; MODE="mint"; shift ;;
     --headless)   MINT_UI=cli; shift ;;
     --proof)      [ $# -ge 2 ] || usagedie "--proof needs a value"; PROOF="$2"; shift 2 ;;
     --dir)        [ $# -ge 2 ] || usagedie "--dir needs a value"; GW_DIR="$2"; shift 2 ;;
@@ -329,7 +335,17 @@ validate_feed() {
     [ -n "$FEED" ] || usagedie "--feed-file is empty: $FEED_FILE"
   fi
   case "$FEED" in
-    "") usagedie "--feed or --feed-file is required (from \`causeway finalize\`)" ;;
+    "")
+      # A RESTART reads nothing from the feed: vere boots the pier's own
+      # event log; -G matters only at pier creation.  Demanding the feed
+      # here forced everyone to keep passing their private key to
+      # restart a ship that already exists.
+      if [ -n "$COMET" ] && [ -d "$GW_DIR/piers/${COMET#"~"}/.urb" ]; then
+        return 0
+      fi
+      usagedie "--feed or --feed-file is required (from \`causeway finalize\`)
+    (a pier that already exists restarts without one)"
+      ;;
     0w*) : ;;
     0v*) usagedie "--feed must be a @uw (0w...), not a @uv (0v...).
     vere parses the feed with (slaw %uw ...); a 0v atom is refused at boot.
@@ -1333,6 +1349,32 @@ cmd_mint() {
     fi
   fi
 
+  # ---- no finished mint, but a pier?  A user who re-runs the installer
+  # wants THEIR ship back, not a surprise second identity that costs
+  # sats.  One pier: restart it (the restart path needs no feed).  More
+  # than one: make them say which.  --remint has already archived the
+  # mint dir by this point, but it must not boot an old pier either --
+  # the operator asked for a fresh comet.
+  if [ -z "$REMINT" ]; then
+    local plist pcount
+    plist="$(find "$GW_DIR/piers" -mindepth 1 -maxdepth 1 -type d ! -name '*.*' -exec basename {} \; 2>/dev/null)"
+    pcount="$(printf '%s' "$plist" | grep -c . || true)"
+    if [ "$pcount" = 1 ]; then
+      COMET="~$plist"
+      step "Found your ship"
+      info "$COMET is already booted on this machine; starting it."
+      info "To mint a DIFFERENT comet instead, re-run with --remint."
+      printf '\n'
+      MODE="install"
+      cmd_install
+      return
+    fi
+    if [ "$pcount" -gt 1 ]; then
+      die "more than one pier under $GW_DIR/piers; say which with
+    $GW_DIR/boot.sh --comet '<@p>'   (or mint another with --remint)"
+    fi
+  fi
+
   # ---- which face?  The TUI is the default for a person at a terminal; the
   # CLI prompts remain for --headless, for --resume (not yet a TUI flow), for
   # --xpub, and for any environment without a tty.  The TUI takes its
@@ -1593,6 +1635,14 @@ EOF
   info ""
   info "the above is saved in $GW_DIR/README"
 }
+
+# The flagless command is the front door: with no mode and no --comet,
+# do the sensible thing end to end -- boot the comet you have (finished
+# mint or existing pier), or mint one if you have nothing.  Naming a
+# --comet keeps the explicit install/restart path.
+if [ -z "$MODE" ]; then
+  if [ -n "$COMET" ]; then MODE="install"; else MODE="mint"; fi
+fi
 
 case "$MODE" in
   status) cmd_status ;;
