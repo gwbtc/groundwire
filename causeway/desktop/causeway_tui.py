@@ -733,10 +733,10 @@ class MiningScreen(BaseScreen):
 class PsbtBuildScreen(BaseScreen):
     CSS = """
     Screen { align: center middle; }
-    #panel { max-width: 100%; max-height: 100%; overflow-y: auto; width: 100; height: 40; border: round #ff6a00; padding: 1 2; }
+    #panel { max-width: 100%; max-height: 100%; overflow-y: auto; width: 100; height: auto; border: round #ff6a00; padding: 1 2; }
     #title { content-align: center middle; color: #ff6a00; text-style: bold; }
-    #b64 { height: 10; border: round #888; }
-    #signed-in { height: 8; border: round #888; }
+    #b64 { height: 7; border: round #888; }
+    #signed-in { height: 6; border: round #888; }
     Button { margin-right: 2; }
     #actions { padding-top: 1; }
     #status { color: #888; padding-top: 1; }
@@ -776,12 +776,17 @@ class PsbtBuildScreen(BaseScreen):
         # the copy says broadcast.  Connect flow: external signing is the
         # point; the self-sign button is impossible and hidden.
         if state.mnemonic is None:
+            #  The wallet signs AND broadcasts -- every real wallet does both
+            #  in one motion, and this screen watches the chain.  The paste
+            #  path earned its removal: there was no circumstance left where
+            #  a wallet could sign but not send.  (Scripts and air-gapped
+            #  rigs still have the CLI's --signed-psbt.)
             self.query_one("#self-sign", Button).display = False
+            for wid in ("#signed-in", "#signed-label", "#paste-signed", "#broadcast"):
+                self.query_one(wid).display = False
             self.query_one("#psbt-copy", Static).update(
-                "Unsigned PSBT (base64) — load it into your wallet, review, sign, and BROADCAST it there:")
-            self.query_one("#signed-label", Static).update(
-                "Only if your wallet cannot broadcast: paste the signed PSBT or signed transaction "
-                "here (or type the path of the file it saved) and Causeway broadcasts it:")
+                "Unsigned PSBT (base64) — load it into your wallet, review, sign, and "
+                "BROADCAST it there. This screen continues by itself once the network has it:")
         else:
             self.query_one("#self-sign", Button).display = False
             self.query_one("#psbt-copy", Static).update(
@@ -891,8 +896,8 @@ class PsbtBuildScreen(BaseScreen):
                     self.query_one("#status", Static).update(f"self-sign failed: {e}")
             else:
                 self.query_one("#status", Static).update(
-                    f"watching the chain for {commit_txid[:16]}… — sign and broadcast in your "
-                    "wallet; this screen moves on by itself once the network has it")
+                    f"watching the chain for {commit_txid[:16]}… — sign and broadcast "
+                    "in your wallet; this screen moves on by itself")
                 self.watch_chain_worker()
         except Exception as e:
             self.query_one("#status", Static).update(f"build failed: {e}")
@@ -936,8 +941,8 @@ class PsbtBuildScreen(BaseScreen):
             mins = int(time.monotonic() - start) // 60
             self.app.call_from_thread(
                 status.update,
-                f"watching the chain for {txid[:16]}… ({mins} min) — sign and broadcast in "
-                "your wallet, or paste the signed tx below")
+                f"watching the chain for {txid[:16]}… ({mins} min) — sign and "
+                "broadcast in your wallet")
             for _ in range(self.WATCH_POLL_SECONDS):
                 if worker.is_cancelled:
                     return

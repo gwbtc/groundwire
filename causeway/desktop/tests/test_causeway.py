@@ -3342,3 +3342,42 @@ def test_default_sponsor_is_loud_and_editable(monkeypatch):
     import inspect
     src = inspect.getsource(cw)
     assert src.count("apply_default_sponsor(sponsor, fief_arg, no_route)") == 2
+
+
+def test_connect_flow_psbt_screen_is_watch_only(monkeypatch, tmp_path):
+    """The connect flow's PSBT screen: the wallet signs AND broadcasts, so
+    there is no paste path -- no signed box, no paste button, no broadcast
+    button -- and the whole panel (auto-height now, not a fixed 40 rows)
+    fits a 24-row window with the Copy button on screen.  Found live: a
+    short terminal hid the Copy button below the fold."""
+    import asyncio
+    import causeway_tui as tui
+    from embit import ec
+    monkeypatch.setattr(cw, "tx_hex_if_seen", lambda *a, **k: None)
+    xonly = ec.PrivateKey(b"\x42" * 32).get_public_key().xonly()
+    st = tui.FlowState()
+    st.op_name = "spawn"; st.mnemonic = None; st.output_dir = str(tmp_path)
+    st.picked_utxo = dict(txid="ab" * 32, vout=0, value=10_000, height=900000,
+                          scriptpubkey=bytes([0x51, 0x20]) + xonly, xonly=xonly, path="m/86'/0'/0'/0/3")
+    st.source = cw.KeySource(xpub="", master_fingerprint=b"\xaa\xbb\xcc\xdd",
+                             account_path="m/86'/0'/0'", network="main")
+    st.snapshot = {"life": 1, "rift": 0, "key": 0xABCD, "sponsor": None, "fief": None}
+    st.comet = "~sampel-palnet-sampel-palnet"; st.feed = "0w1.abcde"; st.pass_atom = 0x1234
+
+    class T(tui.CausewayApp):
+        def __init__(self):
+            super().__init__(); self.state = st
+
+    async def drive():
+        app = T()
+        async with app.run_test(size=(110, 24)) as pilot:
+            await pilot.pause(0.3)
+            app.push_screen(tui.PsbtBuildScreen())
+            await pilot.pause(0.6)
+            scr = app.screen_stack[-1]
+            for wid in ("#signed-in", "#signed-label", "#paste-signed", "#broadcast"):
+                assert not scr.query_one(wid).display, wid
+            copy = scr.query_one("#copy-psbt")
+            assert copy.display and copy.region.height > 0
+            assert copy.region.y + copy.region.height <= 24, copy.region
+    asyncio.run(drive())
