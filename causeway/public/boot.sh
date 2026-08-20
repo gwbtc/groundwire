@@ -137,10 +137,11 @@ USAGE
   boot.sh --stop                   stop a running ship, in the safe order
 
 THE FLAGLESS COMMAND
-  boot.sh with no arguments does the right thing end to end: boots the
-  comet you already have (a finished mint, or an existing pier), or --
-  if this machine has none -- mints one and boots it.  --mint means the
-  same thing; --remint deliberately mints ANOTHER comet.
+  Running a ship and minting one are separate jobs.  To RUN (or resume)
+  a ship you already have:  boot.sh --comet '<@p>'  -- it boots off the
+  pier, no feed needed.  boot.sh with NO arguments is a convenience: it
+  runs your ship if this machine has exactly one, and mints a new comet
+  only if it has none.  To mint another comet deliberately, use --mint.
 
 MINT MODE (--mint)
   Installs the release, runs Causeway to spawn a comet, waits for the spawn
@@ -155,9 +156,9 @@ MINT MODE (--mint)
   --fief <IP:PORT>   commit a static endpoint. Implies --ames-port <PORT>,
                      because a fief the ship does not bind is a lie. A comet
                      that others will name as their sponsor needs one.
-  --remint           ignore a finished mint in var/mint (archived, not deleted)
-                     and mint a fresh comet. Without it, re-running --mint after
-                     a completed mint boots the comet you already have.
+  --remint           set aside prior mint artifacts (archived, not deleted)
+                     before minting. Mostly cosmetic now: --mint always
+                     mints a NEW comet -- it never resumes an existing one.
   --resume           a previous mint died after you funded the wallet: re-enter
                      that run's seed phrase instead of minting a fresh wallet,
                      and the spawn picks up your already-funded address.
@@ -1318,85 +1319,21 @@ cmd_mint() {
 
   local raw="$mintdir/spawn.feed" baked="$mintdir/boot.feed"
 
-  # ---- which face decides the "you already have a ship" question?
-  # At a terminal with a chooser-capable TUI, the TUI does -- reasoning
-  # about --remint on the command line when there is a whole UI was
-  # backwards.  Headless (or an old TUI) keeps the bash logic below.
-  local tui_chooses=""
-  if [ -z "$REMINT" ] && [ "$MINT_UI" = tui ] && [ -e /dev/tty ]      && [ "$MINT_RESUME" != 1 ] && [ -z "$MINT_XPUB" ]      && grep -q "CAUSEWAY_EXISTING_COMET" "$GW_DIR/causeway-src/causeway_tui.py" 2>/dev/null; then
-    tui_chooses=1
-  fi
-
-  # What exists?  A finished mint outranks a bare pier.
-  local existing_comet="" existing_kind=""
-  if [ -s "$baked" ]; then
-    local eproof
-    eproof="$(ls -t "$mintdir"/*-spawn*.proof.json 2>/dev/null | head -1 || true)"
-    [ -n "$eproof" ] && existing_comet="$(sed -n 's/.*"patp"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$eproof" | head -1)"
-    [ -n "$existing_comet" ] && existing_kind="mint"
-  fi
-  if [ -z "$existing_comet" ]; then
-    local eplist epcount
-    eplist="$(find "$GW_DIR/piers" -mindepth 1 -maxdepth 1 -type d ! -name '*.*' -exec basename {} \; 2>/dev/null)"
-    epcount="$(printf '%s' "$eplist" | grep -c . || true)"
-    if [ "$epcount" = 1 ]; then existing_comet="~$eplist"; existing_kind="pier"; fi
-  fi
-
-  # ---- already minted?  A mint's outputs are durable (proof + baked feed),
-  # and a previous run can die AFTER them -- a port collision at boot did
-  # exactly this on the first real run.  Re-running must keep the promise
-  # the TUI makes ("re-running the installer picks up from here"): boot the
-  # comet that exists instead of minting a second one.  --remint archives
-  # the finished mint and starts over on purpose.
+  # Minting is minting: cmd_mint always creates a NEW comet.  It does not
+  # resume or boot an existing one -- that is the runner's job
+  # (`boot.sh --comet <@p>`, off the pier).  The old "resume a finished
+  # mint" path here paired the newest var/mint proof with the shared
+  # boot.feed, which belong to different comets once you have minted more
+  # than once; it booted ~libpub's feed under ~motryc's name.  Gone.
+  #
+  # --remint just sets aside prior mint artifacts so a fresh run starts on
+  # a clean var/mint (cosmetic now -- the completion below only ever uses
+  # the proof+feed THIS run produces, matched as siblings).
   if [ "$REMINT" = 1 ] && [ -e "$baked" ]; then
     local stamp; stamp="$(date -u +%Y%m%dT%H%M%SZ)"
     mv "$mintdir" "$GW_DIR/var/mint-$stamp"
     info "--remint: previous mint archived to $GW_DIR/var/mint-$stamp"
     mkdir -p "$mintdir"; chmod 700 "$mintdir"
-  fi
-  if [ -z "$tui_chooses" ] && [ -s "$baked" ]; then
-    local prior
-    prior="$(ls -t "$mintdir"/*-spawn*.proof.json 2>/dev/null | head -1 || true)"
-    if [ -n "$prior" ]; then
-      COMET="$(sed -n 's/.*"patp"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$prior" | head -1)"
-    fi
-    if [ -n "${COMET:-}" ]; then
-      step "Resuming a finished mint"
-      info "found $COMET already minted and finalized (proof + baked feed)."
-      info "booting it. To mint a DIFFERENT comet instead, re-run with --remint."
-      printf '\n'
-      FEED_FILE="$baked"
-      PROOF="$prior"
-      MODE="install"
-      cmd_install
-      return
-    fi
-  fi
-
-  # ---- no finished mint, but a pier?  A user who re-runs the installer
-  # wants THEIR ship back, not a surprise second identity that costs
-  # sats.  One pier: restart it (the restart path needs no feed).  More
-  # than one: make them say which.  --remint has already archived the
-  # mint dir by this point, but it must not boot an old pier either --
-  # the operator asked for a fresh comet.
-  if [ -z "$tui_chooses" ] && [ -z "$REMINT" ]; then
-    local plist pcount
-    plist="$(find "$GW_DIR/piers" -mindepth 1 -maxdepth 1 -type d ! -name '*.*' -exec basename {} \; 2>/dev/null)"
-    pcount="$(printf '%s' "$plist" | grep -c . || true)"
-    if [ "$pcount" = 1 ]; then
-      COMET="~$plist"
-      step "Found your ship"
-      info "$COMET is already booted on this machine; starting it."
-      info "To mint a DIFFERENT comet instead, re-run with --remint."
-      printf '\n'
-      MODE="install"
-      cmd_install
-      return
-    fi
-    if [ "$pcount" -gt 1 ]; then
-      die "more than one pier under $GW_DIR/piers; say which with
-    $GW_DIR/boot.sh --comet '<@p>'   (or mint another with --remint)"
-    fi
   fi
 
   # ---- which face?  The TUI is the default for a person at a terminal; the
@@ -1427,25 +1364,7 @@ cmd_mint() {
     touch "$marker"; sleep 1
     CAUSEWAY_SPONSOR="$MINT_SPONSOR" CAUSEWAY_FIEF="$MINT_FIEF" \
       CAUSEWAY_OUTPUT_DIR="$mintdir" CAUSEWAY_HANDOFF=1 \
-      CAUSEWAY_EXISTING_COMET="$existing_comet" CAUSEWAY_EXISTING_KIND="$existing_kind" \
       "$cw" tui </dev/tty >/dev/tty 2>&1 || true
-    # The chooser's answer comes back by DISK like everything else: the
-    # .boot-existing marker (newer than the launch marker) means "boot
-    # the ship I already have" -- baked feed for a finished mint, plain
-    # restart for a bare pier.
-    if [ -f "$mintdir/.boot-existing" ] && [ "$mintdir/.boot-existing" -nt "$marker" ]; then
-      COMET="$(tr -d " \t\r\n" < "$mintdir/.boot-existing")"
-      rm -f "$mintdir/.boot-existing"
-      step "Booting the ship you already have"
-      good "$COMET"
-      if [ "$existing_kind" = mint ]; then
-        FEED_FILE="$baked"
-        PROOF="$(ls -t "$mintdir"/*-spawn*.proof.json 2>/dev/null | head -1 || true)"
-      fi
-      MODE="install"
-      cmd_install
-      return
-    fi
     # Both proof spellings: the CLI writes <name>-spawn.proof.json, the TUI
     # writes <name>-spawn-<txid>.proof.json.  The narrow glob missed the
     # TUI's, which would fail a SUCCESSFUL spawn as "exited without
@@ -1652,8 +1571,6 @@ summary_lines() {
 }
 
 write_ship_readme() {
-  local feedline=""
-  [ -n "${FEED_FILE:-}" ] && feedline=" --feed-file $FEED_FILE"
   cat > "$GW_DIR/README" <<EOF
 Your Groundwire ship: $COMET
 
@@ -1664,8 +1581,9 @@ Your Groundwire ship: $COMET
   status:  $GW_DIR/boot.sh --status --comet '$COMET'
   web login code (the key for the web address): $GW_DIR/boot.sh --code --comet '$COMET'
   stop:    $GW_DIR/boot.sh --stop   --comet '$COMET'
-  start (dojo in this terminal):   $GW_DIR/boot.sh --comet '$COMET'$feedline
-  start (background + supervisor): $GW_DIR/boot.sh --detach --comet '$COMET'$feedline
+  run this ship (dojo in this terminal):   $GW_DIR/boot.sh --comet '$COMET'
+  run in the background (supervised):      $GW_DIR/boot.sh --detach --comet '$COMET'
+  (resuming needs no feed -- it boots off the pier that is already here)
 
 The ship runs detached with a supervisor that restarts it if it crashes.
 It does NOT survive a reboot of this machine: run the start line above.
@@ -1683,7 +1601,27 @@ EOF
 # mint or existing pier), or mint one if you have nothing.  Naming a
 # --comet keeps the explicit install/restart path.
 if [ -z "$MODE" ]; then
-  if [ -n "$COMET" ]; then MODE="install"; else MODE="mint"; fi
+  if [ -n "$COMET" ]; then
+    MODE="install"
+  else
+    # The flagless front door.  Running a ship and minting one are separate
+    # jobs (see cmd_mint): the runner is `boot.sh --comet <@p>`, and it
+    # resumes off the PIER, which IS an identity -- unambiguous.  With no
+    # --comet we do the friendly thing: resume a LONE existing pier (still
+    # by pier, never by reconstructing a boot from loose var/mint files --
+    # that pairing bug booted one comet's feed under another's name), and
+    # mint only when there is no ship here at all.
+    _fd_piers="$(find "$GW_DIR/piers" -mindepth 1 -maxdepth 1 -type d ! -name '*.*' -exec basename {} \; 2>/dev/null)"
+    _fd_n="$(printf '%s' "$_fd_piers" | grep -c . || true)"
+    if [ "${_fd_n:-0}" = 1 ]; then
+      COMET="~$_fd_piers"; MODE="install"
+    elif [ "${_fd_n:-0}" -gt 1 ] 2>/dev/null; then
+      die "more than one ship under $GW_DIR/piers; name the one to run:
+    $GW_DIR/boot.sh --comet '<@p>'   (or mint a new one with --mint)"
+    else
+      MODE="mint"
+    fi
+  fi
 fi
 
 case "$MODE" in
