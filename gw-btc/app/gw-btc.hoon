@@ -475,6 +475,20 @@
           (extend-log:lsa (base-chain our.bowl now.bowl) entry.pok)
         ==
       [-.res this(state +.res)]
+    ::  %gevulot hands us a peer attestation to install WITHOUT verifying
+    ::  it on chain -- our sponsor already did, and %gevulot (local) has
+    ::  checked it came from our sponsor with our opt-in on.  We still do
+    ::  the OFFLINE self-check (+pass-attestation: @p == fingerprint, and
+    ::  the custody log decodes) and build the jael point from the latest
+    ::  opening's snapshot; we fetch nothing.  It is idempotent and cannot
+    ::  emit a NEGATIVE verdict (a bad pass yields ~ and no card), so a
+    ::  duplicate -- the same peer heard twice, or heard then later seen on
+    ::  chain -- never snubs.  This is the sync-wait-free discovery path.
+    ::
+    ?:  ?=([%gw-trusted-peer *] q.vase)
+      =/  tp  ;;([%gw-trusted-peer who=ship =pass] q.vase)
+      :_  this
+      (install-trusted-peer who.tp pass.tp)
     =/  poke  ;;(jael-poke:urb q.vase)
     ?-    -.poke
         %jael-writ
@@ -2852,6 +2866,51 @@
       `who
       fief.net.pt
   ==
+::
+::  +install-trusted-peer: install a peer's point into jael on TRUST,
+::  offline, for %gevulot's sponsor-mediated discovery.  Returns the cards
+::  (a single positive %verdict) or ~ if the pass does not survive the
+::  offline self-check.  It NEVER returns a negative verdict, so it cannot
+::  snub: a malformed or duplicate packet is simply a no-op here (jael
+::  installing keys it already holds is idempotent).  No chain fetch, so
+::  this works before the light client has synced -- the whole point.
+::
+++  install-trusted-peer
+  |=  [who=ship =pass]
+  ^-  (list card)
+  ?~  sat=(pass-attestation domain:cc who pass)  ~
+  ?~  pt=(offline-point u.sat who)  ~
+  ~[(verdict-card domain:cc who `(urb-point-to-jael u.pt who))]
+::
+::  +offline-point: build a $point:urb from a decoded self-attestation
+::  WITHOUT walking the chain.  The current on-chain state is the snapshot
+::  in the NEWEST custody-log opening; +urb-point-to-jael reads only .net
+::  (rift, life, pass, sponsor, fief), so a bunt sat and ~ provenance are
+::  fine -- we never store this point in our own index, only hand it to
+::  jael.  An absent sponsor projects to the peer itself, as everywhere.
+::
+++  offline-point
+  |=  [sat=self-attestation:sa who=ship]
+  ^-  (unit point:urb)
+  =/  snap=(unit snapshot:sa)
+    =/  entries=(list custody-entry:sa)  (flop chain.sat)
+    |-  ^-  (unit snapshot:sa)
+    ?~  entries  ~
+    ?~  opening.i.entries  $(entries t.entries)
+    `snapshot.u.opening.i.entries
+  ?~  snap  ~
+  :-  ~
+  ^-  point:urb
+  :+  [*sont:ord ~]
+    :*  rift.u.snap
+        life.u.snap
+        pass.sat
+        ?~  sponsor.u.snap  [%.n who]
+        [%.y u.sponsor.u.snap]
+        ~
+        fief.u.snap
+    ==
+  ~
 ::
 ++  listen-to-urb
   |=  [ships=(set ship) =source:point:jael]

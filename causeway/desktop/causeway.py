@@ -4545,6 +4545,7 @@ def _finish_spawn_proof(
     comet: str,
     pass_atom: int,
     utxo: dict,
+    peer_discovery: bool = True,
 ) -> None:
     """Attach the kelvin-9 spawn bookkeeping to a freshly built spawn proof.
 
@@ -4558,6 +4559,9 @@ def _finish_spawn_proof(
     proof["pass_atom_hex"] = hex(pass_atom)
     proof["spawn_sont"] = {"txid_hex": utxo["txid"], "vout": utxo["vout"], "off": 0}
     proof["dat_hex"] = hex(build_dat_atom(utxo["txid"], utxo["vout"], 0))
+    #  boot.sh reads this after boot to enable (or not) %gevulot peer
+    #  discovery.  Absent is treated as on, so this only ever turns it OFF.
+    proof["peer_discovery"] = peer_discovery
 
 
 def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False,

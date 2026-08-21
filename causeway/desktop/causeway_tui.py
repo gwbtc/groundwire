@@ -79,6 +79,10 @@ class FlowState:
     fief_input: str = ""
     fief_noun: Optional[tuple] = None
     no_route: bool = False
+    #  Peer discovery (default on): after boot, Causeway asks %gevulot to
+    #  accept the attestations this comet's sponsor pushes, so it reaches
+    #  peers without waiting for its own light client to sync.
+    peer_discovery: bool = True
     # A wrapper (boot.sh --mint) launched us and will finalize + boot after we
     # exit; the DoneScreen offers quit-and-continue instead of back-to-landing.
     handoff: bool = False
@@ -187,6 +191,8 @@ class SpawnMethodScreen(BaseScreen):
             Input(placeholder="203.0.113.7:34343", id="fief",
                   value=self.app.state.fief_input),  # type: ignore[attr-defined]
             Checkbox("no-route: mint with NO sponsor and NO fief (outbound-only)", id="no-route"),
+            Checkbox("Peer discovery: learn peers from your sponsor without waiting to sync (recommended)",
+                     value=True, id="peer-discovery"),
             Static(" "),
             Button("Connect Wallet  (paste xpub, sign PSBT externally)", id="connect", variant="primary"),
             Button("Generate New Wallet  (fresh BIP-39 seed in memory)", id="generate"),
@@ -208,6 +214,7 @@ class SpawnMethodScreen(BaseScreen):
         state.sponsor_input = self.query_one("#sponsor", Input).value.strip()
         state.fief_input = self.query_one("#fief", Input).value.strip()
         state.no_route = self.query_one("#no-route", Checkbox).value
+        state.peer_discovery = self.query_one("#peer-discovery", Checkbox).value
         try:
             state.sponsor_atom = cw.resolve_sponsor(state.sponsor_input or None)
             state.fief_noun = cw.parse_fief_arg(state.fief_input or None)
@@ -763,6 +770,9 @@ class PsbtBuildScreen(BaseScreen):
                 cw._finish_spawn_proof(
                     proof, comet=state.comet or "", pass_atom=state.pass_atom or 0, utxo=u,
                 )
+                #  boot.sh reads this to decide whether to enable %gevulot
+                #  peer discovery once the ship is up (default on).
+                proof["peer_discovery"] = state.peer_discovery
             else:
                 # Rekey: spend the point's current sat output key-path, identified
                 # by --prior-proof (build_rekey_psbt).
