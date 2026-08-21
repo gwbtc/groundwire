@@ -1481,6 +1481,10 @@ cmd_mint() {
   FEED_FILE="$baked"
   PROOF="$proof"
   good "custody log baked; booting"
+  # Evan's model: mint and run are two separate acts.  Boot only long
+  # enough to run the one-time setup pokes, then stop and hand the user
+  # the run command -- no finicky live dojo handoff at the end of a mint.
+  MINT_STOP=1
   MODE="install"
   cmd_install
 }
@@ -1505,6 +1509,31 @@ cmd_install() {
   save_proof
   boot_ship
   export_env
+
+  # A fresh mint stops here.  boot_ship already ran the one-time setup
+  # (the peer-discovery poke into %gevulot); the ship has done its job
+  # for now.  Stop it and give the user the run command, rather than the
+  # finicky live dojo handoff.  Running it is their separate, deliberate
+  # act -- exactly the shape the old install.sh had and it was right.
+  if [ "${MINT_STOP:-0}" = 1 ]; then
+    step "Setup done -- stopping the ship"
+    info "your comet is minted, on chain, and its peer-discovery opt-in is set."
+    local mp mwaited=0
+    for mp in $(gwl_king_pid); do kill "$mp" 2>/dev/null || true; done
+    while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$mwaited" -lt 60 ]; do
+      sleep 1; mwaited=$((mwaited+1))
+    done
+    rm -f "$GW_PIER/.vere.lock"
+    write_ship_readme
+    printf '\n'
+    good "$COMET is ready.  It is NOT running right now."
+    info "start it yourself, whenever you want it up:"
+    info "  $GW_DIR/boot.sh --comet '$COMET'            (dojo in this terminal)"
+    info "  $GW_DIR/boot.sh --detach --comet '$COMET'   (background, supervised)"
+    info ""
+    info "the same lines are saved to $GW_DIR/README"
+    exit 0
+  fi
 
   if [ "$DO_BITCOIN" = 0 ]; then
     step "Done (--no-bitcoin)"
