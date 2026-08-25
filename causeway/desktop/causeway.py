@@ -2819,7 +2819,15 @@ def parse_key_source(input_str: str, network: str = "main") -> KeySource:
         kind = m.group(1)
         if kind != "tr":
             raise ValueError(f"only taproot (tr) descriptors are supported; got {kind}")
-        fpr_hex = m.group(2) or "00000000"
+        fpr_hex = m.group(2)
+        if not fpr_hex:
+            raise ValueError(
+                "the descriptor is missing its key origin [fingerprint/derivation]. "
+                "A later rekey PSBT must name your wallet's master fingerprint or no "
+                "signer (Bitcoin Core included) can match it to your seed, so paste the "
+                "FULL output descriptor your wallet exports, e.g. "
+                "tr([f3d36842/86h/0h/0h]xpub.../<0;1>/*)"
+            )
         origin_path_str = m.group(3) or ""
         xpub_str = m.group(4)
         # child_pattern intentionally ignored — we always derive /<change>/<index> below
@@ -2833,11 +2841,15 @@ def parse_key_source(input_str: str, network: str = "main") -> KeySource:
         xpub = bip32.HDKey.from_base58(s)
     except Exception as e:
         raise ValueError(f"not a valid descriptor or xpub: {e}") from e
-    # Infer a default origin: BIP-86 m/86'/0'/0' on main, m/86'/1'/0' on testnet.
-    # Note: fingerprint is unknown for bare-xpub mode.
-    default_coin = 0 if network == "main" else 1
-    account_path = [_hardened(86), _hardened(default_coin), _hardened(0)]
-    return KeySource(xpub=xpub, master_fingerprint=b"\x00\x00\x00\x00", account_path=account_path, network=network)
+    # A bare xpub carries no master fingerprint. Without it a later rekey PSBT names
+    # fingerprint 00000000, which no signer (Core included) can match to a seed -- so
+    # the comet could never be re-keyed. Require the full descriptor with origin.
+    raise ValueError(
+        "a bare xpub has no master fingerprint, which a later rekey needs in order to "
+        "sign. Paste the FULL output descriptor with origin instead, e.g. "
+        "tr([fingerprint/86h/0h/0h]xpub.../<0;1>/*) -- your wallet can export it "
+        "(Sparrow: right-click the wallet -> Export Wallet... -> Output Descriptor)."
+    )
 
 
 # =========================================================================

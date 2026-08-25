@@ -266,13 +266,15 @@ class XpubInputScreen(BaseScreen):
         yield Vertical(
             Static("KEY SOURCE", id="title"),
             Static(
-                "Paste an xpub or a BIP-380 output descriptor such as "
-                "[i]tr([fpr/86h/0h/0h]xpub...)[/i]. The descriptor form is strongly preferred — "
-                "it includes the master fingerprint your signer needs.",
+                "Paste your wallet's full output descriptor, e.g. "
+                "[i]tr([fpr/86h/0h/0h]xpub.../<0;1>/*)[/i]. It MUST include the "
+                "[b][origin fingerprint][/b] — a later rekey can't be signed without it, "
+                "so a bare xpub is refused. (Sparrow: right-click the wallet -> Export "
+                "Wallet... -> Output Descriptor.)",
                 markup=True,
             ),
-            Static("Xpub / descriptor:", classes="label"),
-            Input(placeholder="xpub... or tr([fpr/86h/0h/0h]xpub...)", id="xpub"),
+            Static("Output descriptor:", classes="label"),
+            Input(placeholder="tr([fpr/86h/0h/0h]xpub.../<0;1>/*)", id="xpub"),
             Static("Faucet invite (optional, sends 1000 sats to your first address):", classes="label"),
             Input(placeholder="blank to skip", id="invite"),
             Horizontal(

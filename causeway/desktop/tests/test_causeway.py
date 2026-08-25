@@ -621,10 +621,16 @@ BIP86_XPUB = (
 )
 
 
-def test_parse_key_source_bare_xpub():
-    src = cw.parse_key_source(BIP86_XPUB, network="main")
-    assert src.master_fingerprint == b"\x00\x00\x00\x00"
-    assert src.account_path == [0x80000000 | 86, 0x80000000, 0x80000000]
+def test_parse_key_source_rejects_bare_xpub():
+    # A bare xpub carries no master fingerprint, which a later rekey needs to sign;
+    # the full descriptor with origin is required.
+    with pytest.raises(ValueError, match="fingerprint"):
+        cw.parse_key_source(BIP86_XPUB, network="main")
+
+
+def test_parse_key_source_rejects_originless_descriptor():
+    with pytest.raises(ValueError, match="origin"):
+        cw.parse_key_source(f"tr({BIP86_XPUB}/0/*)", network="main")
 
 
 def test_parse_key_source_descriptor_with_origin():
@@ -640,7 +646,7 @@ def test_parse_key_source_rejects_non_tr_descriptor():
 
 
 def test_derive_address_yields_mainnet_bech32m():
-    src = cw.parse_key_source(BIP86_XPUB, network="main")
+    src = cw.parse_key_source(f"tr([abcd1234/86h/0h/0h]{BIP86_XPUB}/0/*)", network="main")
     addr, spk, xonly, path = src.derive_address(0, 0)
     assert addr.startswith("bc1p"), f"expected bc1p prefix, got {addr}"
     assert len(spk) == 34
