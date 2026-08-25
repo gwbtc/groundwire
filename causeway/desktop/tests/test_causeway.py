@@ -3308,3 +3308,46 @@ def test_connect_flow_psbt_screen_is_watch_only(monkeypatch, tmp_path):
             assert copy.display and copy.region.height > 0
             assert copy.region.y + copy.region.height <= 24, copy.region
     asyncio.run(drive())
+
+
+def test_rekey_psbt_signs_and_finalizes_with_merkle_tweak():
+    """Proof a real wallet CAN sign a custody move.
+
+    Build a spawn funded by an HD-derived key, chain a rekey, then sign the
+    rekey's tweaked identity input with the seed root.  The signature only
+    verifies if the signer applies PSBT_IN_TAP_MERKLE_ROOT as the taproot
+    tweak, so a successful finalize proves the PSBT Causeway hands to an
+    external wallet is genuinely key-path-signable — not merely well-labelled.
+    (Whether a given wallet UI chooses to sign an input outside its own
+    descriptor is that wallet's policy; the artifact itself is correct.)
+    """
+    from embit import psbt as _psbt
+    mnemonic = ("abandon abandon abandon abandon abandon abandon abandon abandon "
+                "abandon abandon abandon about")
+    root = cw.mnemonic_to_hdkey(mnemonic, network="main")
+    fp = cw.hdkey_fingerprint(root)
+    acct = root.derive("m/86h/0h/0h").to_public()
+    src = cw.KeySource(xpub=acct, master_fingerprint=fp,
+                       account_path=[0x80000000 + n for n in (86, 0, 0)], network="main")
+    _addr, spk, xonly, path = src.derive_address(0, 3)  # funding at m/86'/0'/0'/0/3
+
+    p_spawn, proof = cw.build_spawn_psbt(
+        utxo_txid="ab" * 32, utxo_vout=0, utxo_value=10_000,
+        utxo_script_pubkey=spk, funding_internal_xonly=xonly,
+        funding_path=path, funding_fingerprint=fp,
+        snapshot={"life": 1, "rift": 0, "key": 0xABCD, "sponsor": None, "fief": None},
+        network="main")
+    proof["commit_txid"] = p_spawn.tx.txid().hex()  # the TUI stamps this post-build
+
+    new_snap = dict(proof["snapshot"], life=2, key=0x1234)
+    p_rekey, _ = cw.build_rekey_psbt(prior_proof=proof, new_snapshot=new_snap)
+
+    inp = p_rekey.inputs[0]
+    assert inp.taproot_merkle_root == bytes.fromhex(proof["leaf_hash_hex"])
+    deriv = list(inp.taproot_bip32_derivations.values())[0]
+    assert deriv[1].fingerprint == fp  # names the funding wallet, not 00000000
+
+    signed = _psbt.PSBT.from_base64(p_rekey.to_base64())
+    assert signed.sign_with(root) == 1  # the seed signs the tweaked identity input
+    txid, _tx_hex = cw._extract_tx_from_psbt(signed.to_base64())  # finalizes -> valid tx
+    assert txid == p_rekey.tx.txid().hex()  # segwit txid unchanged by signing
