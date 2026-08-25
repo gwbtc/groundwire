@@ -769,6 +769,19 @@ boot_ship() {
   fi
   wait_for_ship
   check_identity
+  # Causeway's peer-discovery opt-in (default on): the moment the ship is
+  # up, tell %gevulot to accept attestations its sponsor pushes, so the
+  # comet discovers peers without waiting for its own light client to
+  # sync.  Only on a fresh mint (PEER_DISCOVERY set), never a plain
+  # restart, and never if the user unticked the box.
+  if [ "${PEER_DISCOVERY:-0}" = 1 ]; then
+    if gwl_poke gevulot noun '!>([%set-receive %.y])' 30 >/dev/null 2>&1; then
+      info "peer discovery: enabled (%gevulot will accept your sponsor's pushes)"
+    else
+      warn "could not enable peer discovery in %gevulot; toggle it on later in the Gevulot app"
+    fi
+    PEER_DISCOVERY=0
+  fi
 }
 
 check_ports() {
@@ -1445,6 +1458,12 @@ cmd_mint() {
   COMET="$(sed -n 's/.*"patp"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$proof" | head -1)"
   [ -n "$COMET" ] || die "could not read the comet @p out of $proof"
   good "minted $COMET"
+  # peer discovery: on unless the Causeway checkbox wrote "peer_discovery": false
+  if grep -q '"peer_discovery"[[:space:]]*:[[:space:]]*false' "$proof" 2>/dev/null; then
+    PEER_DISCOVERY=0
+  else
+    PEER_DISCOVERY=1
+  fi
 
   step "Baking the custody log into the boot feed"
   info "instant if Causeway already saw the confirmation; otherwise this"
@@ -1462,6 +1481,10 @@ cmd_mint() {
   FEED_FILE="$baked"
   PROOF="$proof"
   good "custody log baked; booting"
+  # Evan's model: mint and run are two separate acts.  Boot only long
+  # enough to run the one-time setup pokes, then stop and hand the user
+  # the run command -- no finicky live dojo handoff at the end of a mint.
+  MINT_STOP=1
   MODE="install"
   cmd_install
 }
@@ -1486,6 +1509,31 @@ cmd_install() {
   save_proof
   boot_ship
   export_env
+
+  # A fresh mint stops here.  boot_ship already ran the one-time setup
+  # (the peer-discovery poke into %gevulot); the ship has done its job
+  # for now.  Stop it and give the user the run command, rather than the
+  # finicky live dojo handoff.  Running it is their separate, deliberate
+  # act -- exactly the shape the old install.sh had and it was right.
+  if [ "${MINT_STOP:-0}" = 1 ]; then
+    step "Setup done -- stopping the ship"
+    info "your comet is minted, on chain, and its peer-discovery opt-in is set."
+    local mp mwaited=0
+    for mp in $(gwl_king_pid); do kill "$mp" 2>/dev/null || true; done
+    while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$mwaited" -lt 60 ]; do
+      sleep 1; mwaited=$((mwaited+1))
+    done
+    rm -f "$GW_PIER/.vere.lock"
+    write_ship_readme
+    printf '\n'
+    good "$COMET is ready.  It is NOT running right now."
+    info "start it yourself, whenever you want it up:"
+    info "  $GW_DIR/boot.sh --comet '$COMET'            (dojo in this terminal)"
+    info "  $GW_DIR/boot.sh --detach --comet '$COMET'   (background, supervised)"
+    info ""
+    info "the same lines are saved to $GW_DIR/README"
+    exit 0
+  fi
 
   if [ "$DO_BITCOIN" = 0 ]; then
     step "Done (--no-bitcoin)"
