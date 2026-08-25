@@ -93,12 +93,13 @@ class FlowState:
     proof_path: Optional[str] = None
     op_name: str = "spawn"
 
-    # Manage context (kelvin-9: rekey is the only on-chain management op;
-    # sponsorship + escape are off-chain).  A rekey spends the point's current
+    # Manage context (kelvin-9: rekey is the only on-chain management op; its
+    # state update also commits the sponsor + fief).  A rekey spends the current
     # sat-carrying output key-path, identified by --prior-proof.
     point: Optional[str] = None
     new_pass_hex: Optional[str] = None
     prior_proof: Optional[dict] = None
+    prior_proof_path: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -717,6 +718,9 @@ class PsbtBuildScreen(BaseScreen):
 
     def on_mount(self) -> None:
         state: FlowState = self.app.state  # type: ignore[attr-defined]
+        #  Name the op on the title — this screen serves spawn AND rekey.
+        op = "SPAWN" if state.op_name == "spawn" else state.op_name.upper()
+        self.query_one("#title", Static).update(f"BUILD & SIGN {op} TRANSACTION")
         self.build_psbt()
         # Generate flow: Causeway signs; the manual button is redundant and
         # the copy says broadcast.  Connect flow: external signing is the
@@ -1100,19 +1104,38 @@ class DoneScreen(BaseScreen):
             )
         else:
             point_mnemo = cw.patp_to_mnemonym(state.point) if state.point else "?"
+            prior_txid = (state.prior_proof or {}).get("commit_txid", "") or ""
+            new_txid = state.commit_txid or ""
+            #  In-band apply, at parity with the CLI rekey's closing message:
+            #  finalize bakes the new xtr entry, then you paste the
+            #  %gw-custody-entry line into your RUNNING ship -- no reboot.
+            self._cmd = (
+                f"~/.groundwire/causeway finalize "
+                f"{state.prior_proof_path or '<spawn.proof.json>'} {state.proof_path}"
+            )
             yield Vertical(
                 Static(f"{state.op_name.upper()} BROADCAST", id="title"),
                 Static(f"Point: {point_mnemo}", classes="label"),
                 Static(f"@p:    {state.point}", classes="label"),
-                Static(f"Commit txid: {state.commit_txid}", classes="label"),
+                Static(f"Custody chain: {prior_txid[:10]}..:0 → {new_txid[:10]}..:0",
+                       classes="label"),
                 Static(f"Proof: {state.proof_path}", classes="label"),
                 Static(
-                    "After it confirms, hand the new xtr entry + opening to your\n"
-                    "ship's %gw-btc agent (the %anew poke) so peers can re-verify\n"
-                    f"you. Keep {state.proof_path} as --prior-proof for the next op.",
+                    "Apply it to your RUNNING ship once it confirms (no reboot):\n"
+                    f"  1. {self._cmd}\n"
+                    "     (pass every proof for this point, oldest first, if you\n"
+                    "      have rekeyed before)\n"
+                    "  2. paste the `:gw-btc &noun [%gw-custody-entry ...]` line it\n"
+                    "     prints into your ship's dojo. %gw-btc re-verifies the\n"
+                    "     whole custody log on-chain, then refreshes your pass\n"
+                    "     via jael's %anew -- no reboot, no hand-crafted ring.\n"
+                    f"  Keep {state.proof_path} as --prior-proof for the next op.",
                     classes="label",
                 ),
-                Button("Done  →  back to landing", id="home", variant="primary"),
+                Horizontal(
+                    Button("Copy finalize command", id="copy-cmd"),
+                    Button("Done  →  back to landing", id="home", variant="primary"),
+                ),
                 id="panel",
             )
         yield Footer()
@@ -1160,7 +1183,8 @@ class ManagePickOpScreen(BaseScreen):
             Static("MANAGE — pick an operation", id="title"),
             Static(
                 "kelvin-9: rekey (messaging-key rotation / breach) is the only\n"
-                "on-chain management op. Sponsorship and escape are off-chain.",
+                "on-chain management op. Its state update also commits your\n"
+                "sponsor and fief \u2014 set them on the next screen.",
                 classes="label",
             ),
             RadioSet(
@@ -1253,6 +1277,7 @@ class ManageFormScreen(BaseScreen):
             return
         try:
             state.prior_proof = cw.load_proof_json(prior_path)
+            state.prior_proof_path = prior_path
             if not state.prior_proof.get("commit_txid"):
                 err.update("prior proof has no commit_txid — was its tx broadcast?")
                 return
