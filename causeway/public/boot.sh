@@ -98,7 +98,6 @@ FEED_FILE=""
 MEMPOOL_API="${MEMPOOL_API:-https://mempool.space/api}"
 PROOF=""
 MODE=""
-MINT_XPUB=""
 MINT_SPONSOR=""
 MINT_FIEF=""
 MINT_RESUME=0
@@ -149,8 +148,6 @@ MINT MODE (--mint)
   Interactive: it asks you to fund an address and to write down a recovery
   phrase.
 
-  --xpub <descriptor> sign with your own wallet instead of one Causeway
-                     generates (a BIP-380 taproot descriptor or xpub)
   --sponsor <@p>     sponsor to commit in the initial snapshot. Peers reach a
                      confidential comet through its sponsor.
   --fief <IP:PORT>   commit a static endpoint. Implies --ames-port <PORT>,
@@ -165,7 +162,7 @@ MINT MODE (--mint)
                      (Implies --headless for now.)
   --headless         use the plain prompt-based flow instead of the TUI.
                      The default at a terminal is the TUI; no terminal, or
-                     --resume/--xpub, falls back to prompts automatically.
+                     --resume falls back to prompts automatically.
 
 REQUIRED (for an install)
   --comet <@p>       the comet Causeway minted for you, with the leading ~.
@@ -253,7 +250,6 @@ while [ $# -gt 0 ]; do
     --feed)       [ $# -ge 2 ] || usagedie "--feed needs a value"; FEED="$2"; shift 2 ;;
     --feed-file)  [ $# -ge 2 ] || usagedie "--feed-file needs a value"; FEED_FILE="$2"; shift 2 ;;
     --mint)       MODE="mint"; shift ;;
-    --xpub)       [ $# -ge 2 ] || usagedie "--xpub needs a value"; MINT_XPUB="$2"; shift 2 ;;
     --sponsor)    [ $# -ge 2 ] || usagedie "--sponsor needs a value"; MINT_SPONSOR="$2"; shift 2 ;;
     --fief)       [ $# -ge 2 ] || usagedie "--fief needs a value"; MINT_FIEF="$2"; shift 2 ;;
     --resume)     MINT_RESUME=1; shift ;;
@@ -1350,8 +1346,8 @@ cmd_mint() {
   fi
 
   # ---- which face?  The TUI is the default for a person at a terminal; the
-  # CLI prompts remain for --headless, for --resume (not yet a TUI flow), for
-  # --xpub, and for any environment without a tty.  The TUI takes its
+  # CLI prompts remain for --headless, for --resume (not yet a TUI flow),
+  # and for any environment without a tty.  The TUI takes its
   # arguments through CAUSEWAY_* env vars -- a full-screen app has no flags --
   # and hands back by DISK: it writes the proof and the raw feed into
   # $mintdir and exits.  Exit codes from a full-screen app are not evidence
@@ -1360,7 +1356,6 @@ cmd_mint() {
   local ui="$MINT_UI"
   [ -e /dev/tty ] || ui=cli
   [ "$MINT_RESUME" = 1 ] && ui=cli
-  [ -n "$MINT_XPUB" ] && ui=cli
   # A release older than the handoff contract has a TUI that ignores the env
   # vars entirely -- it would open on a blank spawn form and never hand back.
   if [ "$ui" = tui ] && ! grep -q "CAUSEWAY_HANDOFF" "$GW_DIR/causeway-src/causeway_tui.py" 2>/dev/null; then
@@ -1425,8 +1420,7 @@ cmd_mint() {
     [ -s "$raw" ] || die "the TUI wrote a proof but no feed file ($raw).
     Treat this as a bug; finish by hand with 'causeway finalize'."
   else
-    local args=(spawn)
-    if [ -n "$MINT_XPUB" ]; then args+=(connect --xpub "$MINT_XPUB"); else args+=(generate); fi
+    local args=(spawn generate)
     args+=(--output-dir "$mintdir" --out-feed "$raw")
     # Explicit, even though the launcher also exports GROUNDWIRE_HOME: two
     # independent routes to the same binary, either alone sufficient.
@@ -1436,8 +1430,8 @@ cmd_mint() {
     # --resume: a previous run died after the wallet was funded.  Causeway
     # prompts for the phrase from that run instead of minting a fresh wallet
     # (which would strand the previous run's sats at an address nothing
-    # watches).  generate-flow only; a connect flow re-runs with the same xpub.
-    [ "$MINT_RESUME" = 1 ] && [ -z "$MINT_XPUB" ] && args+=(--resume)
+    # watches).
+    [ "$MINT_RESUME" = 1 ] && args+=(--resume)
 
     step "Minting a confidential comet with Causeway"
     info "this is interactive: it will ask you to fund an address and to write"

@@ -2179,7 +2179,7 @@ def build_rekey_psbt(
                 f"sats of funding = {total_in}")
         raise RuntimeError(
             f"{have} too small: need >= {P2TR_DUST} + {fee} (fee). "
-            f"Add a funding input (rekey --fund-xpub/--fund-utxo) or lower the "
+            f"Add a funding input (rekey --top-up) or lower the "
             f"fee-rate."
         )
 
@@ -2807,56 +2807,6 @@ def _hardened(n: int) -> int:
     return n | 0x80000000
 
 
-def parse_key_source(input_str: str, network: str = "main") -> KeySource:
-    """Accepts either a bare xpub (in which case BIP-86 path is assumed) or a BIP-380
-    output descriptor with origin info like `tr([fingerprint/86h/0h/0h]xpub...)/0/*`."""
-    s = input_str.strip()
-    if not s:
-        raise ValueError("empty key source")
-
-    m = _DESCRIPTOR_RE.match(s)
-    if m:
-        kind = m.group(1)
-        if kind != "tr":
-            raise ValueError(f"only taproot (tr) descriptors are supported; got {kind}")
-        fpr_hex = m.group(2)
-        if not fpr_hex:
-            raise ValueError(
-                "the descriptor is missing its key origin [fingerprint/derivation]. "
-                "A later rekey PSBT must name your wallet's master fingerprint or no "
-                "signer (Bitcoin Core included) can match it to your seed, so paste the "
-                "FULL output descriptor your wallet exports, e.g. "
-                "tr([f3d36842/86h/0h/0h]xpub.../<0;1>/*)"
-            )
-        origin_path_str = m.group(3) or ""
-        xpub_str = m.group(4)
-        # child_pattern intentionally ignored — we always derive /<change>/<index> below
-        master_fpr = bytes.fromhex(fpr_hex)
-        account_path = _parse_path(origin_path_str) if origin_path_str else [_hardened(86), _hardened(0 if network == "main" else 1), _hardened(0)]
-        xpub = bip32.HDKey.from_base58(xpub_str)
-        return KeySource(xpub=xpub, master_fingerprint=master_fpr, account_path=account_path, network=network)
-
-    # Bare xpub. Reject if it's tpub on mainnet or xpub on testnet (mismatch).
-    try:
-        xpub = bip32.HDKey.from_base58(s)
-    except Exception as e:
-        raise ValueError(f"not a valid descriptor or xpub: {e}") from e
-    # A bare xpub carries no master fingerprint. Without it a later rekey PSBT names
-    # fingerprint 00000000, which no signer (Core included) can match to a seed -- so
-    # the comet could never be re-keyed. Require the full descriptor with origin.
-    raise ValueError(
-        "a bare xpub has no master fingerprint, which a later rekey needs in order to "
-        "sign. Paste the FULL output descriptor with origin instead, e.g. "
-        "tr([fingerprint/86h/0h/0h]xpub.../<0;1>/*) -- your wallet can export it "
-        "(Sparrow: right-click the wallet -> Export Wallet... -> Output Descriptor)."
-    )
-
-
-# =========================================================================
-#  UTXO discovery — scan xpub-derived addresses against mempool.space
-# =========================================================================
-
-
 def mempool_get(path: str, *, base: str = MEMPOOL_API_URL) -> list | dict:
     r = requests.get(f"{base}{path}", timeout=20)
     r.raise_for_status()
@@ -3134,29 +3084,30 @@ _MGMT_PRIOR_PROOF_HELP = (
 @click.option("--no-route", is_flag=True, default=False,
               help="Allow a new snapshot with no sponsor and no fief (outbound-only). "
                    "Without this, a state update that would strand the comet is refused.")
-@click.option("--signed-psbt", default=None, metavar="PATH|-",
-              help="Read the signed PSBT (or signed raw transaction) from a file "
-                   "(or `-` for stdin) instead of watching the chain / prompting. "
-                   "A named pipe works: the unsigned PSBT is written to "
-                   "<patp>-rekey.psbt first.")
-@click.option("--fund-xpub", default=None,
-              help="TOP-UP: taproot xpub or descriptor of a wallet holding sats to "
-                   "add to the identity output. Without this a state update pays "
-                   "its fee out of the identity sat, which shrinks every time and "
-                   "eventually prices the comet out of its own identity.")
+@click.option("--mnemonic-file", "mnemonic_file", default=None, metavar="PATH",
+              help="File holding the BIP-39 phrase of the Causeway wallet that "
+                   "funded this comet's spawn. Omitted: prompted for interactively "
+                   "(hidden input). The rekey is signed in-process; no external "
+                   "wallet is involved.")
+@click.option("--top-up", is_flag=True, default=False,
+              help="Add a funding input from the same wallet so the identity "
+                   "output is topped up instead of shrinking by the fee. Without "
+                   "this a state update pays its fee out of the identity sat, "
+                   "which shrinks every time and eventually prices the comet out "
+                   "of its own identity.")
 @click.option("--fund-utxo", default=None, metavar="TXID:VOUT",
-              help="Which --fund-xpub UTXO to spend as the funding input. Omit to "
-                   "pick interactively from the scan.")
+              help="Which wallet UTXO to spend as the --top-up funding input. "
+                   "Omit to pick interactively from the scan.")
 @click.option("--sat-target", type=int, default=None,
               help="Value the identity output should end up holding, in sats. "
                    "Default: everything the inputs carry after the fee (no change).")
 def cmd_rekey(point, prior_proof, new_pass_hex, breach, fee_rate, network, output_dir, mempool_base,
-              sponsor, fief_arg, no_route, signed_psbt, fund_xpub, fund_utxo, sat_target):
+              sponsor, fief_arg, no_route, mnemonic_file, top_up, fund_utxo, sat_target):
     """Rotate a comet's messaging key — a state update committed in the sat
     output's taproot tweak. Spends the current sat-carrying UTXO key-path;
     chains off --prior-proof.
 
-    Pass --fund-xpub to add a funding input AFTER the identity sat and top the
+    Pass --top-up to add a funding input AFTER the identity sat and top the
     identity output up instead of shrinking it by the fee.
     """
     point = int_to_patp(resolve_id(point))  # accept mnemonym or @p
@@ -3164,35 +3115,37 @@ def cmd_rekey(point, prior_proof, new_pass_hex, breach, fee_rate, network, outpu
     new_key = messaging_key_from_pass(new_pass)
     _run_rekey_op(point, prior_proof, new_key, breach, fee_rate, network, output_dir, mempool_base,
                   sponsor=sponsor, fief_arg=fief_arg,
-                  no_route=no_route, signed_psbt=signed_psbt,
-                  fund_xpub=fund_xpub, fund_utxo=fund_utxo, sat_target=sat_target,
+                  no_route=no_route, mnemonic_file=mnemonic_file,
+                  top_up=top_up, fund_utxo=fund_utxo, sat_target=sat_target,
                   new_pass=new_pass)
 
 
-def _resolve_rekey_funding(*, fund_xpub: str | None, fund_utxo: str | None,
-                           sat_target: int | None, network: str,
+def _resolve_rekey_funding(*, source: "KeySource | None", fund_utxo: str | None,
+                           sat_target: int | None,
                            mempool_base: str) -> dict:
-    """Turn --fund-xpub/--fund-utxo/--sat-target into build_rekey_psbt kwargs.
+    """Turn --top-up/--fund-utxo/--sat-target into build_rekey_psbt kwargs.
 
-    Returns {} when no funding was asked for, so an ordinary rekey calls the
-    builder exactly as it always did.  Change (needed only when --sat-target
-    leaves a remainder) is derived from the same xpub at m/<account>/1/0, the
-    same place a spawn puts its change, and is appended LAST so it can never
-    displace the sat-carrying output 0.
+    `source` is the signing wallet's own KeySource (or None when no top-up was
+    asked for); the funding UTXO comes from the SAME wallet that signs, since
+    the Causeway-generated wallet is the only one in the picture.  Returns {}
+    when no funding was asked for, so an ordinary rekey calls the builder
+    exactly as it always did.  Change (needed only when --sat-target leaves a
+    remainder) is derived at m/<account>/1/0, the same place a spawn puts its
+    change, and is appended LAST so it can never displace the sat-carrying
+    output 0.
     """
-    if fund_xpub is None:
+    if source is None:
         if fund_utxo is not None:
-            raise SystemExit("--fund-utxo needs --fund-xpub to know whose UTXO it is")
+            raise SystemExit("--fund-utxo needs --top-up to add a funding input")
         if sat_target is not None:
             raise SystemExit(
                 "--sat-target only means something with a funding input; "
-                "pass --fund-xpub (without funding, output 0 is whatever the "
+                "pass --top-up (without funding, output 0 is whatever the "
                 "identity sat has left after the fee)"
             )
         return {}
 
-    source = parse_key_source(fund_xpub, network=network)
-    print("\n  Scanning --fund-xpub for a funding UTXO...")
+    print("\n  Scanning the wallet for a funding UTXO...")
     utxos = scan_addresses(source, mempool_base=mempool_base)
     utxo = pick_utxo_interactive(utxos, min_value=P2TR_DUST, select=fund_utxo)
     print(f"  Funding input: {utxo['txid']}:{utxo['vout']}  {utxo['value']} sat "
@@ -3220,11 +3173,68 @@ def _resolve_rekey_funding(*, fund_xpub: str | None, fund_utxo: str | None,
     return kwargs
 
 
+def _mnemonic_for_signing(mnemonic_file: str | None) -> str:
+    """The signing wallet's BIP-39 phrase: --mnemonic-file, or a hidden prompt.
+
+    Causeway-generated wallets are the only custody path, so every on-chain
+    management op signs in-process with this phrase."""
+    if mnemonic_file:
+        return read_mnemonic_file(mnemonic_file)
+    phrase = _normalize_mnemonic(click.prompt(
+        "Wallet seed phrase (the BIP-39 phrase that funded this comet's spawn)",
+        hide_input=True))
+    try:
+        mnemonic_to_hdkey(phrase, network="main")
+    except Exception as e:  # noqa: BLE001
+        raise click.UsageError(f"not a valid BIP-39 phrase ({e})")
+    return phrase
+
+
+def _wallet_from_mnemonic(mnemonic: str, network: str) -> tuple:
+    """(root HDKey, account KeySource) for the standard BIP-86 account."""
+    root = mnemonic_to_hdkey(mnemonic, network=network)
+    account_path = [_hardened(86), _hardened(0 if network == "main" else 1), _hardened(0)]
+    source = KeySource(xpub=root.derive(_path_to_str(account_path)),
+                       master_fingerprint=hdkey_fingerprint(root),
+                       account_path=account_path, network=network)
+    return root, source
+
+
+def _backfill_funding_fingerprint(prior: dict, wallet: "KeySource") -> None:
+    """Make the prior proof's funding fingerprint agree with the signing seed.
+
+    Old proofs recorded 00000000 (pre-require-fingerprint builds); embit's
+    sign_with matches derivations by fingerprint, so a mismatch would sign
+    nothing.  The seed in hand is the authority: it either controls the sat
+    (the signature verifies) or _selfsign_psbt refuses loudly."""
+    fu = dict(prior.get("funding") or {})
+    ours = wallet.master_fingerprint.hex()
+    if fu.get("fingerprint_hex") not in (None, ours):
+        click.echo(click.style(
+            f"  note: prior proof recorded funding fingerprint "
+            f"{fu.get('fingerprint_hex')}; using this seed's {ours}", fg="yellow"))
+    fu["fingerprint_hex"] = ours
+    prior["funding"] = fu
+
+
+def _selfsign_psbt(unsigned_b64: str, root) -> str:
+    """Sign every input the seed controls; refuse if none matched."""
+    from embit import psbt as _psbt
+    p = _psbt.PSBT.from_base64(unsigned_b64)
+    n = p.sign_with(root)
+    if not n:
+        raise SystemExit(
+            "the seed phrase signed nothing — it does not control this comet's "
+            "identity sat (wrong wallet, or a funding path this seed never had)")
+    print(f"  Signed in-process ({n} input{'s' if n != 1 else ''}).")
+    return p.to_base64()
+
+
 def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool, fee_rate: int, network: str, output_dir: str, mempool_base: str,
                   sponsor: str | None = None, fief_arg: str | None = None,
                   no_route: bool = False,
-                  signed_psbt: str | None = None,
-                  fund_xpub: str | None = None, fund_utxo: str | None = None,
+                  mnemonic_file: str | None = None, top_up: bool = False,
+                  fund_utxo: str | None = None,
                   sat_target: int | None = None,
                   new_pass: int | None = None) -> None:
     """Spend the point's current sat-carrying output key-path, commit a new
@@ -3235,8 +3245,11 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
     is an on-chain state update.  The sponsor/fief carry forward from the prior
     snapshot unchanged.
 
-    `fund_xpub`/`fund_utxo` add a funding input AFTER the identity sat so the
-    identity output can be topped up rather than shrinking by the fee."""
+    The rekey is signed IN-PROCESS with the Causeway wallet's own seed phrase
+    (--mnemonic-file, or an interactive hidden prompt); external wallets are
+    not part of the picture.  `top_up`/`fund_utxo` add a funding input AFTER
+    the identity sat so the identity output can be topped up rather than
+    shrinking by the fee."""
     print()
     print("=" * 60)
     print(f"  CAUSEWAY — kelvin-9 REKEY for {patp_to_mnemonym(point)}")
@@ -3275,9 +3288,12 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
           f"sat={str(prior_txid)[:16]}..:{prior.get('sat_vout', 0)} "
           f"value={prior.get('sat_value', '?')}  life {prior_snap.get('life','?')}→{new_snapshot['life']}")
 
+    mnemonic = _mnemonic_for_signing(mnemonic_file)
+    root, wallet = _wallet_from_mnemonic(mnemonic, network)
+    _backfill_funding_fingerprint(prior, wallet)
     fund_kwargs = _resolve_rekey_funding(
-        fund_xpub=fund_xpub, fund_utxo=fund_utxo, sat_target=sat_target,
-        network=network, mempool_base=mempool_base,
+        source=wallet if top_up else None, fund_utxo=fund_utxo,
+        sat_target=sat_target, mempool_base=mempool_base,
     )
 
     psbt_obj, proof = build_rekey_psbt(
@@ -3314,13 +3330,6 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
     with open(psbt_path, "w") as f:
         f.write(unsigned_b64 + "\n")
     print(f"\n  Wrote unsigned PSBT: {psbt_path}")
-    click.echo(click.style(
-        "\n  Note: this PSBT's input has PSBT_IN_TAP_MERKLE_ROOT set (= the\n"
-        "  current snapshot's state leaf hash) so your signer can compute the\n"
-        "  taproot key-path tweak. BIP-371 software signers (Sparrow-class,\n"
-        "  Core descriptor wallets) support this.",
-        fg="yellow",
-    ))
 
     #  The proof is written BEFORE the wallet is asked to sign: the wallet
     #  normally broadcasts too, and a segwit txid is fixed before signing, so
@@ -3332,8 +3341,7 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
     write_proof_json(proof, proof_path)
     print(f"  Wrote proof: {proof_path}")
 
-    signed_b64 = _await_signed_psbt(unsigned_b64, signed_psbt,
-                                    mempool_base=mempool_base, proof_path=proof_path)
+    signed_b64 = _selfsign_psbt(unsigned_b64, root)
     try:
         signed_txid, tx_hex = _extract_tx_from_psbt(signed_b64)
     except Exception as e:
@@ -3365,52 +3373,6 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
         f"  jael's %anew -- no reboot, no hand-crafted ring.\n",
         fg="yellow",
     ))
-
-
-@spawn.command("connect")
-@click.option("--xpub", required=True, help="Taproot xpub, zpub, or BIP-380 descriptor (tr([fp/86h/0h/0h]xpub...)/0/*)")
-@click.option("--invite", default=None, help="Optional faucet invite code (sends 1000 sats to your wallet)")
-@click.option("--fee-rate", type=int, default=2, show_default=True, help="sat/vbyte")
-@click.option("--network", type=click.Choice(["main", "testnet"]), default="main", show_default=True)
-@click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".", show_default=True, help="Directory to write psbt + proof files")
-@click.option("--miner", default=COMET_MINER_BIN, show_default=True, help="Path to comet_miner binary")
-@click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
-@click.option("--publish", is_flag=True, default=False,
-              help="Public spawn: add an OP_RETURN publication output (default off = confidential)")
-@click.option("--sponsor", default=None,
-              help="Sponsor for the initial snapshot (@p or mnemonym). Peers route to a "
-                   "confidential comet through the sponsor committed on-chain.")
-@click.option("--fief", "fief_arg", default=None, metavar="IP:PORT",
-              help="Static endpoint to commit in the initial snapshot. A comet with "
-                   "a fief is reachable at exactly this IP:port, so the ship MUST "
-                   "actually bind it (boot.sh --ames-port). Required in practice for "
-                   "a comet other comets will name as their sponsor.")
-@click.option("--no-route", is_flag=True, default=False,
-              help="Deliberately mint an UNROUTABLE comet (no sponsor, no fief). "
-                   "Outbound-only: no peer will ever be able to contact it first.")
-@click.option("--utxo", "utxo_outpoint", default=None, metavar="TXID:VOUT",
-              help="Spend this outpoint instead of prompting for one. It must be "
-                   "among the UTXOs the xpub scan finds.")
-@click.option("--signed-psbt", default=None, metavar="PATH|-",
-              help="Read the signed PSBT (or signed raw transaction) from a file "
-                   "(or `-` for stdin) instead of watching the chain / prompting. "
-                   "A named pipe works: the unsigned PSBT is written to "
-                   "<patp>-spawn.psbt first.")
-@click.option("--out-feed", "out_feed", default=None, metavar="PATH",
-              help="Write the boot feed to this file (0600) instead of printing it. A feed is a private key; an argument lands in shell history and in the ship's argv.")
-@click.option("--assume-saved", is_flag=True, default=False,
-              help="No-op (there is no phrase to save in this flow). Kept for script compatibility.")
-def spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish,
-                  sponsor, fief_arg, no_route, utxo_outpoint, signed_psbt, out_feed, assume_saved):
-    """Spawn using a user-provided wallet (xpub / descriptor). You sign the PSBT externally.
-
-    Your wallet's seed never reaches Causeway. Your identity bundle is the
-    proof file + the feed file; back both up like a wallet."""
-    run_spawn_connect(xpub, invite, fee_rate, network, output_dir, miner, mempool_base, publish,
-                      sponsor=sponsor, fief_arg=fief_arg,
-                      no_route=no_route,
-                      utxo_outpoint=utxo_outpoint, signed_psbt=signed_psbt,
-                      out_feed=out_feed, assume_saved=assume_saved)
 
 
 @spawn.command("generate")
@@ -3664,30 +3626,27 @@ def _resolve_publication_pass(chain: list[dict], proofs, pass_hex: str | None,
               help="The comet's current pass atom, if no proof here records one. "
                    "`0x…` is read as an atom (the proofs' `pass_atom_hex`), bare "
                    "hex as a little-endian byte dump (rekey's --new-pass-hex).")
-@click.option("--fund-xpub", default=None,
-              help="Taproot xpub / descriptor to take a FUNDING input from, added "
-                   "AFTER the identity sat so the fee tops the identity output up "
-                   "instead of shrinking it. A packet publication runs ~400 vB and "
-                   "an identity sat may not cover it.")
+@click.option("--mnemonic-file", "mnemonic_file", default=None, metavar="PATH",
+              help="File holding the BIP-39 phrase of the Causeway wallet that "
+                   "funded this comet's spawn. Omitted: prompted for interactively "
+                   "(hidden input). The publication is signed in-process.")
+@click.option("--top-up", is_flag=True, default=False,
+              help="Add a funding input from the same wallet so the identity "
+                   "output is topped up instead of shrinking by the fee.")
 @click.option("--fund-utxo", default=None, metavar="TXID:VOUT",
               help="Use this outpoint as the funding input instead of prompting. "
-                   "Must be among the UTXOs the --fund-xpub scan finds.")
+                   "Must be among the UTXOs the wallet scan finds.")
 @click.option("--sat-target", type=int, default=None,
               help="Value the identity output should end up holding. Needs "
-                   "--fund-xpub; the remainder goes to change at m/<account>/1/0, "
+                   "--top-up; the remainder goes to change at m/<account>/1/0, "
                    "appended LAST so it can never displace output 0.")
 @click.option("--no-route", is_flag=True, default=False,
               help="Publish even though the snapshot has neither sponsor nor fief.")
-@click.option("--signed-psbt", default=None, metavar="PATH|-",
-              help="Read the signed PSBT (or signed raw transaction) from a file "
-                   "(or `-` for stdin) instead of watching the chain / prompting. "
-                   "A named pipe works: the unsigned PSBT is written to "
-                   "<patp>-publish.psbt first.")
 @click.option("--dry-run", is_flag=True, default=False,
               help="Build the transaction, run every gate and write the unsigned "
                    "PSBT, then stop. Nothing is signed and nothing is broadcast.")
 def cmd_publish(proofs, fee_rate, network, output_dir, mempool_base, pass_hex,
-                fund_xpub, fund_utxo, sat_target, no_route, signed_psbt, dry_run):
+                mnemonic_file, top_up, fund_utxo, sat_target, no_route, dry_run):
     """Publish a comet's attestation packet on chain — declassify it.
 
     Give every proof.json for the point, OLDEST FIRST, exactly as `finalize`
@@ -3810,9 +3769,16 @@ def cmd_publish(proofs, fee_rate, network, output_dir, mempool_base, pass_hex,
             f"transaction and cannot be published as it stands."
         )
 
+    #  --dry-run without --top-up needs no seed: it validates the build and
+    #  gates and returns before signing, so don't demand a phrase for it.
+    root = wallet = None
+    if top_up or not dry_run:
+        mnemonic = _mnemonic_for_signing(mnemonic_file)
+        root, wallet = _wallet_from_mnemonic(mnemonic, network)
+        _backfill_funding_fingerprint(last, wallet)
     fund_kwargs = _resolve_rekey_funding(
-        fund_xpub=fund_xpub, fund_utxo=fund_utxo, sat_target=sat_target,
-        network=network, mempool_base=mempool_base,
+        source=wallet if top_up else None, fund_utxo=fund_utxo,
+        sat_target=sat_target, mempool_base=mempool_base,
     )
 
     psbt_obj, proof = build_rekey_psbt(
@@ -3843,7 +3809,7 @@ def cmd_publish(proofs, fee_rate, network, output_dir, mempool_base, pass_hex,
     elif int(proof["sat_value"]) < int(last.get("sat_value", 0)):
         click.echo(click.style(
             f"  Identity output: {last.get('sat_value')} → {proof['sat_value']} sats "
-            f"(the fee comes out of the identity sat; --fund-xpub tops it up "
+            f"(the fee comes out of the identity sat; --top-up tops it up "
             f"instead)", fg="yellow"))
 
     #  GUARD 4, FIRST PASS — on the transaction we are about to ask a human to
@@ -3858,12 +3824,6 @@ def cmd_publish(proofs, fee_rate, network, output_dir, mempool_base, pass_hex,
     with open(psbt_path, "w") as f:
         f.write(unsigned_b64 + "\n")
     print(f"\n  Wrote unsigned PSBT: {psbt_path}")
-    click.echo(click.style(
-        "\n  Note: this PSBT's input 0 has PSBT_IN_TAP_MERKLE_ROOT set (= the\n"
-        "  current snapshot's state leaf hash) so your signer can compute the\n"
-        "  taproot key-path tweak. BIP-371 software signers (Sparrow-class,\n"
-        "  Core descriptor wallets) support this.",
-        fg="yellow"))
 
     if dry_run:
         click.echo(click.style(
@@ -3885,8 +3845,7 @@ def cmd_publish(proofs, fee_rate, network, output_dir, mempool_base, pass_hex,
     write_proof_json(proof, proof_path)
     print(f"  Wrote proof: {proof_path}")
 
-    signed_b64 = _await_signed_psbt(unsigned_b64, signed_psbt,
-                                    mempool_base=mempool_base, proof_path=proof_path)
+    signed_b64 = _selfsign_psbt(unsigned_b64, root)
     try:
         signed_txid, tx_hex = _extract_tx_from_psbt(signed_b64)
     except Exception as e:
@@ -3949,7 +3908,7 @@ def _assert_publication_output(tx, *, xtr: int, entries: int) -> None:
 
 
 # =========================================================================
-#  Spawn flow orchestration — shared between `spawn connect` and `spawn generate`
+#  Spawn flow orchestration for `spawn generate` (the only custody path)
 # =========================================================================
 
 
@@ -4003,155 +3962,6 @@ def _build_spawn_psbt_and_proof(
     return psbt_obj, proof
 
 
-def _load_signed_psbt(spec: str) -> str:
-    """--signed-psbt <path|-> -> validated signed-PSBT base64.
-
-    `-` reads stdin to EOF. A path may be a named pipe, which is how a scripted
-    run bridges the gap: Causeway writes the unsigned PSBT to disk, an external
-    signer picks it up and writes the signed one back into the FIFO."""
-    try:
-        if spec == "-":
-            data = sys.stdin.buffer.read()
-        else:
-            with open(spec, "rb") as f:          # BINARY: Sparrow's .psbt is raw
-                data = f.read()
-    except OSError as e:
-        raise SystemExit(f"--signed-psbt {spec!r}: {e}")
-    if not data.strip():
-        raise SystemExit(
-            f"--signed-psbt {spec!r}: empty "
-            f"({'stdin' if spec == '-' else 'file'} contained nothing)"
-        )
-    entry = signed_input_to_base64(data)
-    if not entry:
-        raise SystemExit(
-            f"--signed-psbt {spec!r}: not a signed PSBT (binary psbt\\xff, base64 "
-            "cHNidP8..., hex 70736274ff...) nor a signed raw transaction (hex 0200...)")
-    if not entry.startswith(RAW_TX_PREFIX):
-        try:
-            psbt.PSBT.from_base64(entry)
-        except Exception as e:
-            raise SystemExit(f"--signed-psbt {spec!r}: not a valid PSBT ({e})")
-    print(f"\n  Read signed PSBT from {'stdin' if spec == '-' else spec}.")
-    return entry
-
-
-def _await_signed_psbt(unsigned_b64: str, signed_psbt: str | None = None, *,
-                       mempool_base: str = MEMPOOL_API_URL,
-                       poll: int = 20,
-                       proof_path: str | None = None) -> str:
-    """Hand the unsigned PSBT to the operator's wallet and wait for the
-    signed transaction to come back BY EITHER ROUTE:
-
-      * the wallet broadcasts it itself -- the normal case; Sparrow and
-        friends sign-and-send in one motion.  A segwit txid is fixed before
-        signing, so Causeway already knows what to look for and simply
-        watches the chain.  Returns RAW_TX_PREFIX + hex, fetched from the
-        network.
-      * the wallet can only sign (air-gapped, or the operator prefers it):
-        the signed PSBT or signed raw transaction is pasted / loaded here and
-        Causeway broadcasts it.  Returns the signed PSBT base64 or
-        RAW_TX_PREFIX + hex.
-
-    `signed_psbt` is the --signed-psbt flag (path, or `-` for stdin); when it
-    is given nothing is read from the terminal.  Without a terminal and
-    without the flag, only the chain is watched.
-
-    `proof_path`: the proof written for this transaction BEFORE the wait
-    (it has to exist before the wallet can broadcast, or a crash mid-wait
-    would leave a spent sat with no record).  On Ctrl-C / EOF, if the chain
-    has not seen the transaction, that proof is removed again so a stale
-    record of a never-broadcast tx cannot be picked up as a --prior-proof.
-    """
-    txid = psbt.PSBT.from_base64(unsigned_b64).tx.txid().hex()
-    print()
-    print("  Next steps:")
-    print("    1. Load the unsigned PSBT below into your Bitcoin wallet (Sparrow, BlueWallet,")
-    print("       Passport, Keystone, Coldcard, etc).")
-    print("    2. Review, sign, and BROADCAST it from the wallet.")
-    print()
-    print(f"  Causeway is watching the chain for  {txid}")
-    print("  and continues by itself as soon as the network has it.")
-    print()
-    print("  If your wallet can only sign, paste the signed PSBT (or the signed raw")
-    print("  transaction) here instead and Causeway will broadcast it.")
-    print()
-    print("  Unsigned PSBT:")
-    print()
-    print(f"    {unsigned_b64}")
-    print()
-    if signed_psbt is not None:
-        return _load_signed_psbt(signed_psbt)
-
-    def _abort() -> None:
-        seen = tx_hex_if_seen(txid, mempool_base=mempool_base)
-        if seen:
-            print(f"  {txid} is on chain; keeping {proof_path or 'the proof'}.", file=sys.stderr)
-        elif proof_path and os.path.exists(proof_path):
-            os.remove(proof_path)
-            print(f"  nothing broadcast; removed {proof_path}", file=sys.stderr)
-        raise SystemExit(INTERRUPT_EXIT_CODE)
-
-    tty = _stdin_is_tty()
-    if not tty:
-        print("  (no terminal: watching the chain only; pass --signed-psbt to hand over a signed PSBT)")
-    else:
-        print("  Signed PSBT / tx (optional) > ", end="", flush=True)
-    try:
-        import select as _select
-    except ImportError:  # pragma: no cover
-        _select = None
-    pending = ""
-    try:
-        while True:
-            seen = tx_hex_if_seen(txid, mempool_base=mempool_base)
-            if seen:
-                print(f"\n  Seen on the network: {tx_link(txid)}")
-                return RAW_TX_PREFIX + seen
-            if not tty or _select is None:
-                time.sleep(poll)
-                continue
-            try:
-                ready, _, _ = _select.select([sys.stdin], [], [], poll)
-            except (OSError, ValueError):
-                # No select on this stdin (Windows console): fall back to a
-                # blocking read; the chain is checked once the paste lands.
-                line = sys.stdin.readline()
-                if line == "":
-                    _abort()
-                ready = [True]
-                pending += line
-            else:
-                if not ready:
-                    continue
-                line = sys.stdin.readline()
-                if line == "":
-                    _abort()
-                pending += line
-                # a wrapped paste arrives as several lines in one burst
-                while True:
-                    more, _, _ = _select.select([sys.stdin], [], [], 0.2)
-                    if not more:
-                        break
-                    extra = sys.stdin.readline()
-                    if extra == "":
-                        break
-                    pending += extra
-            entry = signed_input_to_base64(pending.strip().encode())
-            if entry:
-                return entry
-            if pending.strip():
-                print("  That doesn't look like a signed PSBT or transaction. Try again --")
-                print("  or just broadcast from your wallet; the chain is being watched.")
-                print("  Signed PSBT / tx (optional) > ", end="", flush=True)
-            pending = ""
-    except KeyboardInterrupt:
-        print(file=sys.stderr)
-        print("causeway: interrupted while waiting for the signed transaction", file=sys.stderr)
-        _abort()
-    raise AssertionError("unreachable")  # pragma: no cover
-
-
 def assert_signed_is_what_we_built(unsigned_b64: str, signed_b64: str) -> str:
     """Refuse to broadcast a transaction we did not build. Returns the txid.
 
@@ -4163,7 +3973,7 @@ def assert_signed_is_what_we_built(unsigned_b64: str, signed_b64: str) -> str:
 
     Without it, every broadcast path except `publish` sent whatever came
     back from the signer. Reproduced with the broadcast stubbed: hand
-    `rekey --signed-psbt` a PSBT that sweeps the same identity outpoint
+    hand the rekey a signed PSBT that sweeps the same identity outpoint
     to an unrelated address and it exits 0, broadcasts, and then writes
     a proof file asserting a `sat_script_pubkey_hex` that is not on
     chain. The proof outlives the transaction -- it is what the next
@@ -4172,7 +3982,7 @@ def assert_signed_is_what_we_built(unsigned_b64: str, signed_b64: str) -> str:
 
     This does not need a malicious signer. `<patp>-rekey.psbt` is a
     fixed filename that every run overwrites, so a stale or wrong
-    `--signed-psbt` reaches exactly the same place.
+    any signed artifact reaches exactly the same place.
     """
     want = psbt.PSBT.from_base64(unsigned_b64).tx.txid().hex()
     got, _ = _extract_tx_from_psbt(signed_b64)
@@ -4185,7 +3995,7 @@ def assert_signed_is_what_we_built(unsigned_b64: str, signed_b64: str) -> str:
             "  A segwit txid does not change when a transaction is signed, so "
             "these differ\n"
             "  only if the inputs or outputs differ. Check you passed the "
-            "right --signed-psbt;\n"
+            "right signed transaction;\n"
             "  the filename is reused across runs and a stale one lands here."
         )
     return got
@@ -4574,133 +4384,6 @@ def _finish_spawn_proof(
     #  boot.sh reads this after boot to enable (or not) %gevulot peer
     #  discovery.  Absent is treated as on, so this only ever turns it OFF.
     proof["peer_discovery"] = peer_discovery
-
-
-def run_spawn_connect(xpub_str: str, invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False,
-                      sponsor: str | None = None, fief_arg: str | None = None,
-                      no_route: bool = False,
-                      utxo_outpoint: str | None = None, signed_psbt: str | None = None,
-                      out_feed: str | None = None,
-                      assume_saved: bool = False) -> None:
-    print()
-    print("=" * 60)
-    print(f"  CAUSEWAY — {'Public' if publish else 'Confidential'} Comet Spawn (Connect Wallet)")
-    print("=" * 60)
-
-    # Routing, checked BEFORE any faucet / scan / mining work: an unroutable
-    # comet must be refused up front, not after a proof-of-work search and a
-    # broadcast the user cannot take back.
-    sponsor, defaulted = apply_default_sponsor(sponsor, fief_arg, no_route)
-    if defaulted:
-        click.echo(click.style(
-            f"\n  No sponsor given: using Groundwire's default sponsor\n"
-            f"    {DEFAULT_SPONSOR}\n"
-            f"  (pass --sponsor to choose your own, or --no-route for none)",
-            fg="yellow"))
-    sponsor_atom = resolve_sponsor(sponsor)
-    try:
-        parsed_fief = parse_fief_arg(fief_arg)
-    except ValueError as e:
-        raise click.UsageError(f"--fief: {e}")
-    assert_routable({"sponsor": sponsor_atom, "fief": parsed_fief}, no_route)
-    require_miner(miner)
-
-    source = parse_key_source(xpub_str, network=network)
-    print(f"\n  Parsed key source: network={source.network}, account={_path_to_str(source.account_path)}")
-    print(f"  Master fingerprint: {source.master_fingerprint.hex()}")
-    if source.master_fingerprint == b"\x00\x00\x00\x00":
-        click.echo(click.style(
-            "\n  WARNING: no master fingerprint. Provide a BIP-380 descriptor\n"
-            "  (e.g. tr([abcd1234/86h/0h/0h]xpub...)/0/*) so your signer can match keys.",
-            fg="yellow",
-        ))
-
-    # Optionally fund via faucet (we show the first receive address).
-    first_addr, _spk, _xonly, _p = source.derive_address(0, 0)
-    if invite:
-        print(f"\n  Requesting 1000 sats from faucet → {first_addr}")
-        fxid = request_faucet(first_addr, invite=invite)
-        if fxid:
-            print(f"  Faucet sent: {tx_link(fxid)}")
-        else:
-            print("  Faucet failed (continuing anyway — you can fund manually).")
-
-    print("\n  Scanning for UTXOs...")
-    utxos = scan_addresses(source, mempool_base=mempool_base)
-    utxo = pick_utxo_interactive(utxos, select=utxo_outpoint)
-
-    print(f"\n  Mining comet (kelvin-9 dat) from ({utxo['txid']}:{utxo['vout']},0)...")
-    miner_result = mine_comet_from_utxo(utxo["txid"], utxo["vout"], 0, miner)
-    comet = miner_result["comet"]
-    feed = miner_result["feed"]
-    ring_uw = miner_result.get("ring", "")
-    print(f"  Mined: {patp_to_mnemonym(comet)}")
-    print(f"         @p {comet}")
-
-    pass_atom = derive_pass_from_ring(ring_uw)
-    snapshot = _initial_snapshot(pass_atom, sponsor_atom, parsed_fief)
-    # Re-check against the real snapshot (belt-and-braces: the early check
-    # above is what saves the user's time, this one is what saves the comet).
-    assert_routable(snapshot, no_route)
-
-    pub_pass = pub_opening = None
-    if publish:
-        pub_pass = pass_atom
-        pub_opening = _spawn_publication_opening(utxo["xonly"], snapshot, utxo)
-
-    psbt_obj, proof = _build_spawn_psbt_and_proof(
-        utxo=utxo,
-        source=source,
-        snapshot=snapshot,
-        fee_rate=fee_rate,
-        publication_pass_atom=pub_pass,
-        publication_opening=pub_opening,
-    )
-    _finish_spawn_proof(proof, comet=comet, pass_atom=pass_atom, utxo=utxo)
-
-    os.makedirs(output_dir, exist_ok=True)
-    pier = comet.lstrip("~")
-    psbt_path = os.path.join(output_dir, f"{pier}-spawn.psbt")
-    proof_path = os.path.join(output_dir, f"{pier}-spawn.proof.json")
-
-    unsigned_b64 = psbt_obj.to_base64()
-    with open(psbt_path, "w") as f:
-        f.write(unsigned_b64)
-        f.write("\n")
-    print(f"\n  Wrote unsigned PSBT: {psbt_path}")
-
-    #  Proof AND feed on disk before the wallet is asked to sign.  The wallet
-    #  normally broadcasts as well, and from that moment the sat is spent:
-    #  the proof is the record of what was committed and the feed is the
-    #  comet's private key -- neither is regenerable, and a crash between
-    #  the wallet's send and our noticing it must not lose either.
-    commit_txid = psbt_obj.tx.txid().hex()
-    proof["commit_txid"] = commit_txid
-    write_proof_json(proof, proof_path)
-    print(f"  Wrote proof: {proof_path}")
-    if out_feed:
-        print(f"  Wrote feed:  {write_feed_file(out_feed, feed)} (0600, NOT yet xtr-baked)")
-
-    signed_b64 = _await_signed_psbt(unsigned_b64, signed_psbt,
-                                    mempool_base=mempool_base, proof_path=proof_path)
-    try:
-        signed_txid, tx_hex = _extract_tx_from_psbt(signed_b64)
-    except Exception as e:
-        click.echo(click.style(f"\n  Error extracting signed tx: {e}", fg="red"))
-        sys.exit(1)
-
-    assert_signed_is_what_we_built(unsigned_b64, signed_b64)
-
-    print("\n  Broadcasting spawn...")
-    try:
-        broadcast_id = _broadcast_tx(tx_hex, mempool_base=mempool_base)
-    except Exception as e:
-        click.echo(click.style(f"  Broadcast failed: {e}\n  Signed tx hex: {tx_hex}", fg="red"))
-        sys.exit(1)
-    print(f"  Broadcast: {tx_link(broadcast_id)}")
-
-    print("\n  Your identity bundle is the proof file + the feed file. Back both up.")
-    _print_spawn_next_steps(comet, feed, proof_path, out_feed)
 
 
 def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False,

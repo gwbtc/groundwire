@@ -621,32 +621,11 @@ BIP86_XPUB = (
 )
 
 
-def test_parse_key_source_rejects_bare_xpub():
-    # A bare xpub carries no master fingerprint, which a later rekey needs to sign;
-    # the full descriptor with origin is required.
-    with pytest.raises(ValueError, match="fingerprint"):
-        cw.parse_key_source(BIP86_XPUB, network="main")
-
-
-def test_parse_key_source_rejects_originless_descriptor():
-    with pytest.raises(ValueError, match="origin"):
-        cw.parse_key_source(f"tr({BIP86_XPUB}/0/*)", network="main")
-
-
-def test_parse_key_source_descriptor_with_origin():
-    desc = f"tr([abcd1234/86h/0h/0h]{BIP86_XPUB}/0/*)"
-    src = cw.parse_key_source(desc, network="main")
-    assert src.master_fingerprint == bytes.fromhex("abcd1234")
-    assert src.account_path == [0x80000000 | 86, 0x80000000, 0x80000000]
-
-
-def test_parse_key_source_rejects_non_tr_descriptor():
-    with pytest.raises(ValueError, match="taproot"):
-        cw.parse_key_source(f"wpkh([abcd1234/84h/0h/0h]{BIP86_XPUB})", network="main")
-
-
 def test_derive_address_yields_mainnet_bech32m():
-    src = cw.parse_key_source(f"tr([abcd1234/86h/0h/0h]{BIP86_XPUB}/0/*)", network="main")
+    src = cw.KeySource(xpub=cw.bip32.HDKey.from_base58(BIP86_XPUB),
+                       master_fingerprint=bytes.fromhex("abcd1234"),
+                       account_path=[0x80000000 | 86, 0x80000000, 0x80000000],
+                       network="main")
     addr, spk, xonly, path = src.derive_address(0, 0)
     assert addr.startswith("bc1p"), f"expected bc1p prefix, got {addr}"
     assert len(spk) == 34
@@ -904,40 +883,41 @@ def test_spawn_refuses_an_unroutable_comet_before_doing_any_work(monkeypatch):
     paths that do not run through the CLI defaulting."""
     def boom(*a, **k):
         raise AssertionError("reached the work stage (gate passed)")
-    monkeypatch.setattr(cw, "parse_key_source", boom)
     monkeypatch.setattr(cw, "mine_comet_from_utxo", boom)
     monkeypatch.setattr(cw, "generate_new_mnemonic", boom)
     monkeypatch.setattr(cw, "require_miner", lambda *a, **k: None)
     with pytest.raises(AssertionError, match="gate passed"):
-        cw.run_spawn_connect("xpub-does-not-matter", None, 2, "main", ".", FAKE_MINER, "stub")
+        cw.run_spawn_generate(None, 2, "main", ".", FAKE_MINER, "stub")
     with pytest.raises(Exception, match="neither a sponsor nor a fief"):
         cw.assert_routable({"sponsor": None, "fief": None}, False)
 
 def test_spawn_with_a_sponsor_passes_the_routability_gate(monkeypatch):
     """With --sponsor the gate lets the flow proceed; it stops at the first
     real step instead (proving the gate, not the network, was the blocker)."""
-    sentinel = RuntimeError("reached parse_key_source")
+    sentinel = RuntimeError("reached the wallet stage")
 
     def stop(*a, **k):
         raise sentinel
 
-    monkeypatch.setattr(cw, "parse_key_source", stop)
+    monkeypatch.setattr(cw, "generate_new_mnemonic", stop)
+    monkeypatch.setattr(cw, "require_miner", lambda *a, **k: None)
     with pytest.raises(RuntimeError) as e:
-        cw.run_spawn_connect("xpub", None, 2, "main", ".", FAKE_MINER, "stub",
-                             sponsor=SPONSOR_PATP)
+        cw.run_spawn_generate(None, 2, "main", ".", FAKE_MINER, "stub",
+                              sponsor=SPONSOR_PATP)
     assert e.value is sentinel
 
 
 def test_spawn_no_route_flag_passes_the_gate(monkeypatch):
-    sentinel = RuntimeError("reached parse_key_source")
+    sentinel = RuntimeError("reached the wallet stage")
 
     def stop(*a, **k):
         raise sentinel
 
-    monkeypatch.setattr(cw, "parse_key_source", stop)
+    monkeypatch.setattr(cw, "generate_new_mnemonic", stop)
+    monkeypatch.setattr(cw, "require_miner", lambda *a, **k: None)
     with pytest.raises(RuntimeError) as e:
-        cw.run_spawn_connect("xpub", None, 2, "main", ".", FAKE_MINER, "stub",
-                             no_route=True)
+        cw.run_spawn_generate(None, 2, "main", ".", FAKE_MINER, "stub",
+                              no_route=True)
     assert e.value is sentinel
 
 
@@ -979,6 +959,7 @@ def test_rekey_carries_the_prior_sponsor_forward(tmp_path, monkeypatch):
         raise RuntimeError("stop after the snapshot")
 
     monkeypatch.setattr(cw, "build_rekey_psbt", capture)
+    monkeypatch.setattr(cw, "_mnemonic_for_signing", lambda mf: ("abandon " * 11 + "about").strip())
     with pytest.raises(RuntimeError):
         cw._run_rekey_op("~sampel-palnet", _rekey_prior(tmp_path, sponsor=1234), 9,
                          False, 2, "main", str(tmp_path), "stub")
@@ -994,6 +975,7 @@ def test_rekey_sponsor_flag_sets_a_new_sponsor(tmp_path, monkeypatch):
         raise RuntimeError("stop after the snapshot")
 
     monkeypatch.setattr(cw, "build_rekey_psbt", capture)
+    monkeypatch.setattr(cw, "_mnemonic_for_signing", lambda mf: ("abandon " * 11 + "about").strip())
     with pytest.raises(RuntimeError):
         cw._run_rekey_op("~sampel-palnet", _rekey_prior(tmp_path), 9, False, 2,
                          "main", str(tmp_path), "stub", sponsor=SPONSOR_PATP)
@@ -1008,6 +990,7 @@ def test_rekey_no_route_allows_a_deliberate_strand(tmp_path, monkeypatch):
         raise RuntimeError("stop after the snapshot")
 
     monkeypatch.setattr(cw, "build_rekey_psbt", capture)
+    monkeypatch.setattr(cw, "_mnemonic_for_signing", lambda mf: ("abandon " * 11 + "about").strip())
     with pytest.raises(RuntimeError):
         cw._run_rekey_op("~sampel-palnet", _rekey_prior(tmp_path), 9, False, 2,
                          "main", str(tmp_path), "stub", no_route=True)
@@ -1703,12 +1686,13 @@ def test_rekey_funding_flags_reach_the_builder(tmp_path, monkeypatch):
         raise RuntimeError("stop after the builder call")
 
     monkeypatch.setattr(cw, "build_rekey_psbt", capture)
+    monkeypatch.setattr(cw, "_mnemonic_for_signing", lambda mf: ("abandon " * 11 + "about").strip())
     monkeypatch.setattr(cw, "_resolve_rekey_funding",
                         lambda **kw: {"funding_inputs": [_fund(20_000)]})
     with pytest.raises(RuntimeError):
         cw._run_rekey_op("~sampel-palnet", _rekey_prior(tmp_path, sponsor=1234), 9,
                          False, 2, "main", str(tmp_path), "stub",
-                         fund_xpub="tr(xpub)", sat_target=None)
+                         top_up=True, sat_target=None)
     assert seen["funding_inputs"][0]["value"] == 20_000
 
 
@@ -1720,32 +1704,33 @@ def test_rekey_without_funding_calls_the_builder_exactly_as_before(tmp_path, mon
         raise RuntimeError("stop")
 
     monkeypatch.setattr(cw, "build_rekey_psbt", capture)
+    monkeypatch.setattr(cw, "_mnemonic_for_signing", lambda mf: ("abandon " * 11 + "about").strip())
     with pytest.raises(RuntimeError):
         cw._run_rekey_op("~sampel-palnet", _rekey_prior(tmp_path, sponsor=1234), 9,
                          False, 2, "main", str(tmp_path), "stub")
     assert seen["extra"] == {}, "an unfunded rekey must pass no funding kwargs"
 
 
-def test_sat_target_without_fund_xpub_is_refused():
+def test_sat_target_without_top_up_is_refused():
     with pytest.raises(SystemExit, match="only means something with a funding input"):
-        cw._resolve_rekey_funding(fund_xpub=None, fund_utxo=None, sat_target=5_000,
-                                  network="main", mempool_base="stub")
+        cw._resolve_rekey_funding(source=None, fund_utxo=None, sat_target=5_000,
+                                  mempool_base="stub")
 
 
-def test_fund_utxo_without_fund_xpub_is_refused():
-    with pytest.raises(SystemExit, match="needs --fund-xpub"):
-        cw._resolve_rekey_funding(fund_xpub=None, fund_utxo="ab" * 32 + ":0",
-                                  sat_target=None, network="main", mempool_base="stub")
+def test_fund_utxo_without_top_up_is_refused():
+    with pytest.raises(SystemExit, match="needs --top-up"):
+        cw._resolve_rekey_funding(source=None, fund_utxo="ab" * 32 + ":0",
+                                  sat_target=None, mempool_base="stub")
 
 
 def test_no_funding_flags_means_no_builder_kwargs():
-    assert cw._resolve_rekey_funding(fund_xpub=None, fund_utxo=None, sat_target=None,
-                                     network="main", mempool_base="stub") == {}
+    assert cw._resolve_rekey_funding(source=None, fund_utxo=None, sat_target=None,
+                                     mempool_base="stub") == {}
 
 
 def test_rekey_cli_exposes_the_funding_flags():
     names = {o.name for o in cw.cmd_rekey.params}
-    assert {"fund_xpub", "fund_utxo", "sat_target"} <= names
+    assert {"mnemonic_file", "top_up", "fund_utxo", "sat_target"} <= names
 
 
 # ---------------------------------------------------------------------------
@@ -2396,7 +2381,9 @@ def test_publish_puts_the_funding_input_behind_the_identity_sat(tmp_path, monkey
             "xonly": b"\x22" * 32, "path": "m/86h/0h/0h/0/0",
             "fingerprint": b"\xaa\xbb\xcc\xdd",
         }]})
-    res = _publish(tmp_path, paths, "--fund-xpub", "xpub-stub")
+    monkeypatch.setattr(cw, "_mnemonic_for_signing",
+                        lambda mf: ("abandon " * 11 + "about").strip())
+    res = _publish(tmp_path, paths, "--top-up")
     assert res.exit_code == 0, res.output
 
     from embit import psbt as _p
@@ -2421,6 +2408,7 @@ def test_rekey_records_the_pass_it_rotates_to(tmp_path, monkeypatch):
         raise RuntimeError("stop before the PSBT")
 
     monkeypatch.setattr(cw, "build_rekey_psbt", capture)
+    monkeypatch.setattr(cw, "_mnemonic_for_signing", lambda mf: ("abandon " * 11 + "about").strip())
     with pytest.raises(RuntimeError):
         cw._run_rekey_op("~sampel-palnet", _rekey_prior(tmp_path, sponsor=1234),
                          cw.messaging_key_from_pass(_PUB_PASS), False, 2, "main",
@@ -2838,29 +2826,6 @@ def test_psbt_bytes_to_base64_accepts_every_wallet_export_form():
     assert cw.psbt_bytes_to_base64(b"   \n") is None
 
 
-def test_load_signed_psbt_reads_sparrow_binary(tmp_path):
-    """--signed-psbt on a raw-binary .psbt (what Sparrow saves) must load; it
-    used to be opened in TEXT mode and fail as garbage."""
-    import base64
-    from embit import psbt as P
-    from embit.transaction import Transaction, TransactionInput, TransactionOutput
-    from embit.script import Script
-    tx = Transaction(vin=[TransactionInput(bytes(32), 0)],
-                     vout=[TransactionOutput(1000, Script(b"\x51\x20" + b"\x11" * 32))])
-    raw = P.PSBT(tx).serialize()
-    f = tmp_path / "signed.psbt"; f.write_bytes(raw)
-    assert cw._load_signed_psbt(str(f)) == base64.b64encode(raw).decode()
-    # and a wallet that saved the FINAL transaction instead (Sparrow, once
-    # every input is signed) is accepted through the same flag
-    from embit.script import Witness
-    tx.vin[0].witness = Witness([b"\x22" * 64])
-    g = tmp_path / "signed.txn"; g.write_text(tx.serialize().hex() + "\n")
-    assert cw._load_signed_psbt(str(g)) == cw.RAW_TX_PREFIX + tx.serialize().hex()
-    h = tmp_path / "junk.psbt"; h.write_text("not a transaction")
-    with pytest.raises(SystemExit, match="nor a signed raw transaction"):
-        cw._load_signed_psbt(str(h))
-
-
 # ---------------------------------------------------------------------------
 # The wallet broadcasts; Causeway watches the chain
 # ---------------------------------------------------------------------------
@@ -2935,104 +2900,37 @@ def test_broadcast_is_idempotent_when_the_network_already_has_it(monkeypatch):
         cw._broadcast_tx(tx.serialize().hex(), mempool_base="http://m/api")
 
 
-def test_await_signed_psbt_returns_when_the_chain_has_the_tx(monkeypatch, capsys):
-    """Headless, no --signed-psbt: the wait watches the chain and returns the
-    network's copy of the transaction (RAW_TX_PREFIX + hex) once it appears.
-    Nothing is read from a terminal that isn't there."""
-    from embit import psbt as P
-    tx = _tiny_signed_tx()
-    unsigned = P.PSBT(_tiny_signed_tx()).to_base64()
-    txid = P.PSBT.from_base64(unsigned).tx.txid().hex()
-    seen = iter([None, None, tx.serialize().hex()])
-    monkeypatch.setattr(cw, "_stdin_is_tty", lambda: False)
-    monkeypatch.setattr(cw, "tx_hex_if_seen", lambda t, mempool_base=None: (assert_(t == txid), next(seen))[1])
-    monkeypatch.setattr(cw.time, "sleep", lambda s: None)
-    got = cw._await_signed_psbt(unsigned, None, mempool_base="http://m/api", poll=0)
-    assert got == cw.RAW_TX_PREFIX + tx.serialize().hex()
-    out = capsys.readouterr().out
-    assert txid in out and "BROADCAST it from the wallet" in out
-    # the round trip through the shared extractor agrees with the proof's txid
-    assert cw._extract_tx_from_psbt(got)[0] == txid
-
-
-def assert_(cond):
-    assert cond
-
-
-def test_await_signed_psbt_unwinds_the_early_proof_on_abort(monkeypatch, tmp_path):
-    """The proof is written BEFORE the wait so a wallet broadcast can never
-    outrun it.  Ctrl-C with nothing on chain must therefore remove that proof
-    again -- a record of a never-sent tx would otherwise be a valid-looking
-    --prior-proof for the next op.  With the tx on chain it is kept."""
-    from embit import psbt as P
-    tx = _tiny_signed_tx()
-    unsigned = P.PSBT(_tiny_signed_tx()).to_base64()
-    proof = tmp_path / "x-rekey-abc.proof.json"
-    monkeypatch.setattr(cw, "_stdin_is_tty", lambda: False)
-
-    def sleep_then_interrupt(s):
-        raise KeyboardInterrupt
-    monkeypatch.setattr(cw.time, "sleep", sleep_then_interrupt)
-
-    # not on chain: proof removed
-    proof.write_text("{}")
-    monkeypatch.setattr(cw, "tx_hex_if_seen", lambda t, mempool_base=None: None)
-    with pytest.raises(SystemExit) as e:
-        cw._await_signed_psbt(unsigned, None, mempool_base="http://m/api", poll=0, proof_path=str(proof))
-    assert e.value.code == cw.INTERRUPT_EXIT_CODE and not proof.exists()
-
-    # on chain by the time of the abort: proof kept
-    proof.write_text("{}")
-    calls = {"n": 0}
-
-    def seen_second_time(t, mempool_base=None):
-        calls["n"] += 1
-        return None if calls["n"] == 1 else tx.serialize().hex()
-    monkeypatch.setattr(cw, "tx_hex_if_seen", seen_second_time)
-    with pytest.raises(SystemExit):
-        cw._await_signed_psbt(unsigned, None, mempool_base="http://m/api", poll=0, proof_path=str(proof))
-    assert proof.exists()
-
-
-def test_cli_flows_write_the_proof_before_asking_the_wallet_to_sign():
-    """Source-level pin on the ordering that makes wallet-broadcast safe: in
-    every flow that hands a PSBT to an external signer, write_proof_json comes
-    BEFORE _await_signed_psbt, and the wait is told which proof to unwind."""
+def test_cli_flows_write_the_proof_before_signing():
+    """Source-level pin: in every on-chain management flow the proof hits disk
+    BEFORE the seed signs — a crash mid-sign must not lose the record of what
+    was committed (the segwit txid is fixed before signing)."""
     import inspect
     src = inspect.getsource(cw)
-    for anchor in ('f"{pier}-rekey.psbt"', 'f"{pier}-publish.psbt"', 'f"{pier}-spawn.psbt"'):
+    for anchor in ('f"{pier}-rekey.psbt"', 'f"{pier}-publish.psbt"'):
         i = src.index(anchor)
         window = src[i:i + 4000]
-        wait = window.index("_await_signed_psbt(")
-        assert 0 <= window.index("write_proof_json(") < wait, anchor
-        assert "proof_path=proof_path" in window[wait:wait + 300], anchor
+        sign = window.index("_selfsign_psbt(")
+        assert 0 <= window.index("write_proof_json(") < sign, anchor
 
 
 def test_tui_psbt_screen_writes_proof_and_feed_at_build_and_watches_the_chain():
     """The TUI's PSBT screen: proof + feed hit disk when the transaction is
-    BUILT (the wallet may broadcast the moment it has signed; a crash in the
-    10-60 minute confirmation wait used to lose the feed of a comet already
-    on chain), the connect flow starts a chain watcher instead of demanding a
-    paste, and both routes to the next screen go through one guard so the
-    watcher and a paste-and-broadcast cannot double-advance."""
+    BUILT (a crash in the 10-60 minute confirmation wait used to lose the
+    feed of a comet already on chain), and Causeway signs in-process with the
+    generated wallet — the only custody path."""
     import causeway_tui as tui
     import inspect
     src = inspect.getsource(tui.PsbtBuildScreen)
     build = src[src.index("def build_psbt"):src.index("def _advance_once")]
     assert "p.tx.txid().hex()" in build and "cw.write_proof_json(proof, proof_path)" in build
     assert "cw.write_feed_file(" in build and "state.feed" in build
-    assert "self.watch_chain_worker()" in build
-    # the watcher polls the shared helper and advances through the guard
-    watch = src[src.index("def watch_chain_worker"):src.index("def on_button_pressed")]
-    assert "cw.tx_hex_if_seen(" in watch and "self._advance_once(" in watch
-    assert "exit_on_error=False" in src[src.index("@work") if False else src.index("def watch_chain_worker") - 120:src.index("def watch_chain_worker")]
-    # broadcast no longer writes the proof (it is already there) and also
-    # goes through the guard
+    # Causeway holds the only seed, so the screen signs in-process
+    assert "sign_with(root)" in build
+    assert "watch_chain_worker" not in src   # external-wallet watcher is gone
+    # broadcast does not re-write the proof (it is already there) and goes
+    # through the single-advance guard
     bcast = src[src.index("def broadcast_worker"):]
     assert "write_proof_json" not in bcast and "self._advance_once(" in bcast
-    # Back cancels the watcher so it cannot advance a screen the user left
-    back = src[src.index('== "back"'):src.index('== "copy-psbt"')]
-    assert 'cancel_group(self, "watch")' in back
 
 
 def test_boot_sh_judges_tui_completion_by_the_chain():
@@ -3045,96 +2943,12 @@ def test_boot_sh_judges_tui_completion_by_the_chain():
     if not boot.exists():
         pytest.skip("boot.sh not beside the desktop tree")
     src = boot.read_text()
-    tui_block = src[src.index('if [ "$ui" = tui ]; then'):src.index("  else\n    local args=(spawn)")]
+    tui_block = src[src.index('if [ "$ui" = tui ]; then'):src.index("  else\n    local args=(spawn generate)")]
     assert '$MEMPOOL_API/tx/$txid/status' in tui_block
     assert "ls -t $(find" in tui_block                       # newest first
     assert "the network has not seen it" in tui_block        # refuses
     assert "causeway finalize $proof --feed-file" in tui_block  # recovery
     assert 'MEMPOOL_API="${MEMPOOL_API:-https://mempool.space/api}"' in src
-
-
-def test_tui_psbt_screen_live_watches_the_chain_and_advances_once(monkeypatch, tmp_path):
-    """The real PsbtBuildScreen under Textual's pilot, connect flow, with the
-    chain faked to report the transaction on the second poll.
-
-    Proves the wiring, not just the source: proof and feed (0600) are on disk
-    the moment the screen mounts, the watcher moves the flow to
-    ConfirmWaitScreen by itself and is torn down, and a paste-and-broadcast
-    that arrives afterwards sends idempotently and does NOT push a second
-    screen."""
-    import asyncio, json, stat, time as _time
-    import causeway_tui as tui
-    from embit import ec, psbt as P
-    from embit.script import Witness
-
-    polls = {"n": 0}
-    state = tui.FlowState()
-
-    def fake_seen(txid, mempool_base=None):
-        polls["n"] += 1
-        assert txid == state.commit_txid
-        if polls["n"] >= 2:
-            return P.PSBT.from_base64(state.psbt_b64_unsigned).tx.serialize().hex()
-        return None
-    monkeypatch.setattr(cw, "tx_hex_if_seen", fake_seen)
-    monkeypatch.setattr(cw, "_broadcast_tx", lambda tx_hex, mempool_base=None: "sent-late")
-    monkeypatch.setattr(tui.PsbtBuildScreen, "WATCH_POLL_SECONDS", 1)
-    # ConfirmWaitScreen's own poller must not touch the network from a test,
-    # and its 30 s sleep must not hold the app's teardown hostage.
-    def no_network(path, base=None):
-        raise RuntimeError("offline test")
-    monkeypatch.setattr(cw, "mempool_get", no_network)
-    real_sleep = _time.sleep
-    monkeypatch.setattr(tui.time, "sleep", lambda s: real_sleep(min(s, 0.05)))
-
-    xonly = ec.PrivateKey(b"\x42" * 32).get_public_key().xonly()
-    state.op_name = "spawn"; state.mnemonic = None; state.output_dir = str(tmp_path)
-    state.picked_utxo = dict(txid="ab" * 32, vout=0, value=10_000, height=900000,
-                             scriptpubkey=bytes([0x51, 0x20]) + xonly, xonly=xonly, path="m/86'/0'/0'/0/3")
-    state.source = cw.KeySource(xpub="", master_fingerprint=b"\xaa\xbb\xcc\xdd",
-                                account_path="m/86'/0'/0'", network="main")
-    state.snapshot = {"life": 1, "rift": 0, "key": 0xABCD, "sponsor": None, "fief": None}
-    state.comet = "~sampel-palnet-sampel-palnet"; state.feed = "0w1.abcde"; state.pass_atom = 0x1234
-
-    class T(tui.CausewayApp):
-        def __init__(self):
-            super().__init__(); self.state = state
-
-    async def drive():
-        app = T()
-        async with app.run_test(size=(120, 50)) as pilot:
-            await pilot.pause(0.2)
-            app.push_screen(tui.PsbtBuildScreen())
-            await pilot.pause(0.3)
-            # (with the fast poll the watcher may already have advanced;
-            # the build-time writes are what is checked here)
-            proof = state.proof_path
-            assert proof and os.path.exists(proof)
-            feed = os.path.splitext(proof)[0] + ".feed"
-            assert os.path.exists(feed) and stat.S_IMODE(os.stat(feed).st_mode) == 0o600
-            assert json.load(open(proof))["commit_txid"] == state.commit_txid
-            deadline = _time.monotonic() + 15
-            while _time.monotonic() < deadline and not isinstance(app.screen_stack[-1], tui.ConfirmWaitScreen):
-                await pilot.pause(0.25)
-            assert isinstance(app.screen_stack[-1], tui.ConfirmWaitScreen), (app.screen_stack, polls)
-            assert polls["n"] == 2
-            # the watcher advanced from its own thread and then cancelled its
-            # group; give it a beat to unwind, then it must be gone for good
-            for _ in range(20):
-                if not [w for w in app.workers if w.group == "watch"]:
-                    break
-                await pilot.pause(0.1)
-            assert not [w for w in app.workers if w.group == "watch"]
-            depth = len(app.screen_stack)
-            psbt_screen = app.screen_stack[-2]
-            p = P.PSBT.from_base64(state.psbt_b64_unsigned)
-            p.inputs[0].final_scriptwitness = Witness([b"\x22" * 64])
-            state.psbt_b64_signed = p.to_base64()
-            psbt_screen.broadcast_worker()
-            await pilot.pause(1.0)
-            assert state.commit_txid == "sent-late"          # the late path ran through
-            assert len(app.screen_stack) == depth            # ...and did not double-advance
-    asyncio.run(drive())
 
 
 def test_boot_hints_print_a_runnable_path(monkeypatch, tmp_path):
@@ -3274,46 +3088,7 @@ def test_default_sponsor_is_loud_and_editable(monkeypatch):
     # both CLI flows run the default through the same helper
     import inspect
     src = inspect.getsource(cw)
-    assert src.count("apply_default_sponsor(sponsor, fief_arg, no_route)") == 2
-
-
-def test_connect_flow_psbt_screen_is_watch_only(monkeypatch, tmp_path):
-    """The connect flow's PSBT screen: the wallet signs AND broadcasts, so
-    there is no paste path -- no signed box, no paste button, no broadcast
-    button -- and the whole panel (auto-height now, not a fixed 40 rows)
-    fits a 24-row window with the Copy button on screen.  Found live: a
-    short terminal hid the Copy button below the fold."""
-    import asyncio
-    import causeway_tui as tui
-    from embit import ec
-    monkeypatch.setattr(cw, "tx_hex_if_seen", lambda *a, **k: None)
-    xonly = ec.PrivateKey(b"\x42" * 32).get_public_key().xonly()
-    st = tui.FlowState()
-    st.op_name = "spawn"; st.mnemonic = None; st.output_dir = str(tmp_path)
-    st.picked_utxo = dict(txid="ab" * 32, vout=0, value=10_000, height=900000,
-                          scriptpubkey=bytes([0x51, 0x20]) + xonly, xonly=xonly, path="m/86'/0'/0'/0/3")
-    st.source = cw.KeySource(xpub="", master_fingerprint=b"\xaa\xbb\xcc\xdd",
-                             account_path="m/86'/0'/0'", network="main")
-    st.snapshot = {"life": 1, "rift": 0, "key": 0xABCD, "sponsor": None, "fief": None}
-    st.comet = "~sampel-palnet-sampel-palnet"; st.feed = "0w1.abcde"; st.pass_atom = 0x1234
-
-    class T(tui.CausewayApp):
-        def __init__(self):
-            super().__init__(); self.state = st
-
-    async def drive():
-        app = T()
-        async with app.run_test(size=(110, 24)) as pilot:
-            await pilot.pause(0.3)
-            app.push_screen(tui.PsbtBuildScreen())
-            await pilot.pause(0.6)
-            scr = app.screen_stack[-1]
-            for wid in ("#signed-in", "#signed-label", "#paste-signed", "#broadcast"):
-                assert not scr.query_one(wid).display, wid
-            copy = scr.query_one("#copy-psbt")
-            assert copy.display and copy.region.height > 0
-            assert copy.region.y + copy.region.height <= 24, copy.region
-    asyncio.run(drive())
+    assert src.count("apply_default_sponsor(sponsor, fief_arg, no_route)") == 1
 
 
 def test_rekey_psbt_signs_and_finalizes_with_merkle_tweak():

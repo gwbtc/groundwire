@@ -342,17 +342,12 @@ build and broadcast a single commit transaction. **There is no
 `causeway mine` subcommand.**
 
 ```sh
-# you hold the wallet:
-causeway spawn connect --xpub <XPUB_OR_DESCRIPTOR> \
-                       [--sponsor <SPONSOR_PATP>] \
-                       [--publish] \
-                       [--utxo <TXID>:<VOUT>] \
-                       [--signed-psbt <PATH|->] \
-                       [--assume-saved] \
-                       [--miner /path/to/comet_miner]
-
-# causeway generates the wallet:
-causeway spawn generate [--invite <FAUCET_CODE>] [--sponsor <SPONSOR_PATP>] …
+# causeway generates the wallet (the only custody path — external wallets
+# cannot sign the tweaked identity outputs and are not supported):
+causeway spawn generate [--invite <FAUCET_CODE>] [--sponsor <SPONSOR_PATP>] \
+                        [--publish] [--assume-saved] \
+                        [--mnemonic-file <PATH>] [--resume] \
+                        [--miner /path/to/comet_miner]
 ```
 
 - **Omit `--publish` for a confidential comet.** `--publish` adds the
@@ -399,8 +394,8 @@ causeway spawn generate [--invite <FAUCET_CODE>] [--sponsor <SPONSOR_PATP>] …
   does **not** answer prompts: the `isatty()` check fires before `input()`, so
   every prompt must be pre-answered by a flag. One of `--sponsor` / `--no-route`
   is likewise mandatory or the command aborts.
-- Full headless operation needs `--utxo`, `--signed-psbt` and
-  `--assume-saved`; without them the flow prompts. `prompt()` now aborts
+- Full headless operation needs `--assume-saved` (spawn) and
+  `--mnemonic-file` (rekey/publish); without them the flow prompts. `prompt()` now aborts
   non-zero on any non-TTY stdin naming the flag to pass, so a piped run
   fails loudly rather than hanging.
 - `spawn generate` with no funding still **waits forever**. Not automated.
@@ -1401,7 +1396,7 @@ the code.
 |---|---|---|
 | light-client sync is "~8 min, ~850 MB pier" | `doc/opret-revision/05-live-test-plan.md` Phase 0 | ~2.5 h, ~2.2 GB. Measured twice. |
 | `%gw-btc` scries `%light-client` | scattered comments, older results docs | the agent is `%bitcoin-client`; `%gw-btc` reaches it through `++light-client-agent:lca`. Fixed as Phase 2 finding B5. |
-| `causeway` has a `mine` subcommand | folklore | it does not. Mining happens inside `spawn generate`/`spawn connect` via the external `comet_miner` binary (`--miner`). |
+| `causeway` has a `mine` subcommand | folklore | it does not. Mining happens inside `spawn generate` via the external `comet_miner` binary (`--miner`). |
 | the pier liveness signal is `<PIER>/.urb/log` mtime | early briefs | inert; measured 21 h stale on a live ship. Use `<PIER>/.urb/log/*/data.mdb`. |
 | "there is no local pill build" | **this runbook**, §3.2 and §11 | false, and false when written: every campaign has run on a locally built solid pill. `+pill/solid` the *generator* is broken; `fyrd`-ing the `solid:pill` *gate* is not. Rebuilt from `hd/cc-kernel@de3222d36a` in ~6 min on 2026-08-06. §3.2 rewritten. |
 | "a confidential comet cannot become public" | **this runbook**, §10 and §5.2 | false since `d63e28a`, and since 2026-08-10 a STRANGER's publication is admitted too: the payload is the whole attestation packet and goes to the same `+verify-lc` a packet does. `+apply-spawn`/`+apply-state`/`+index-point` and the funding-satpoint gate are deleted. §10 rewritten twice. |

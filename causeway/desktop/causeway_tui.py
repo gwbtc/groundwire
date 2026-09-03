@@ -176,8 +176,9 @@ class SpawnMethodScreen(BaseScreen):
         yield Vertical(
             Static("SPAWN", id="title"),
             Static(
-                "Two ways to spawn. Either produces a single confidential commit tx "
-                "that any Bitcoin wallet can sign."
+                "Causeway generates a fresh wallet for your comet and signs its "
+                "single confidential commit tx itself. WRITE DOWN the seed phrase "
+                "it shows you: it is the only key to your comet's identity sat."
             ),
             Static(" "),
             Static("Sponsor (@p or mnemonym) — peers route to your comet through it. "
@@ -195,10 +196,7 @@ class SpawnMethodScreen(BaseScreen):
             Checkbox("Peer discovery: learn peers from your sponsor without waiting to sync (recommended)",
                      value=True, id="peer-discovery"),
             Static(" "),
-            Button("Connect Wallet  (paste xpub, sign PSBT externally)", id="connect", variant="primary"),
-            Button("Generate New Wallet  (fresh BIP-39 seed in memory)", id="generate"),
-            Static(" "),
-            Static("Connect Wallet is recommended if you already hold BTC in Sparrow, Passport, Keystone, etc.", classes="hint"),
+            Button("Generate New Wallet  (fresh BIP-39 seed in memory)", id="generate", variant="primary"),
             Static("", id="err"),
             id="panel",
         )
@@ -206,7 +204,7 @@ class SpawnMethodScreen(BaseScreen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         state: FlowState = self.app.state  # type: ignore[attr-defined]
-        if event.button.id not in ("connect", "generate"):
+        if event.button.id != "generate":
             return
         state.op_name = "spawn"
         # Routing gate, BEFORE any wallet/faucet/mining work: refuse to mint a
@@ -232,81 +230,7 @@ class SpawnMethodScreen(BaseScreen):
         state.mnemonic = None
         state.source = None
         state.picked_utxo = None
-        if event.button.id == "connect":
-            self.app.push_screen(XpubInputScreen(mode="connect"))
-        else:
-            self.app.push_screen(GenerateSeedScreen())
-
-
-# ---------------------------------------------------------------------------
-# Xpub / descriptor input — shared by spawn-connect and manage-*
-# ---------------------------------------------------------------------------
-
-
-class XpubInputScreen(BaseScreen):
-    CSS = """
-    Screen { align: center middle; }
-    #panel { max-width: 100%; max-height: 100%; overflow-y: auto; width: 88; border: round #ff6a00; padding: 2 4; }
-    #title { content-align: center middle; color: #ff6a00; text-style: bold; padding-bottom: 1; }
-    .label { color: #bbb; padding-top: 1; }
-    .hint { color: #888; padding-top: 1; }
-    Input { width: 100%; }
-    #invite { width: 40; }
-    #actions { padding-top: 1; }
-    Button { margin-right: 2; }
-    #err { color: red; padding-top: 1; }
-    """
-
-    def __init__(self, *, mode: str = "connect") -> None:
-        super().__init__()
-        self.mode = mode
-
-    def compose(self) -> ComposeResult:
-        yield Header()
-        yield Vertical(
-            Static("KEY SOURCE", id="title"),
-            Static(
-                "Paste your wallet's full output descriptor, e.g. "
-                "[i]tr([fpr/86h/0h/0h]xpub.../<0;1>/*)[/i]. It MUST include the "
-                "[b][origin fingerprint][/b] — a later rekey can't be signed without it, "
-                "so a bare xpub is refused. (Sparrow: right-click the wallet -> Export "
-                "Wallet... -> Output Descriptor.)",
-                markup=True,
-            ),
-            Static("Output descriptor:", classes="label"),
-            Input(placeholder="tr([fpr/86h/0h/0h]xpub.../<0;1>/*)", id="xpub"),
-            Static("Faucet invite (optional, sends 1000 sats to your first address):", classes="label"),
-            Input(placeholder="blank to skip", id="invite"),
-            Horizontal(
-                Button("Continue →", id="continue", variant="primary"),
-                Button("Back", id="back"),
-                id="actions",
-            ),
-            Static("", id="err"),
-            id="panel",
-        )
-        yield Footer()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "back":
-            self.app.pop_screen()
-            return
-        if event.button.id != "continue":
-            return
-        state: FlowState = self.app.state  # type: ignore[attr-defined]
-        xpub_val = self.query_one("#xpub", Input).value.strip()
-        invite_val = self.query_one("#invite", Input).value.strip() or None
-        if not xpub_val:
-            self.query_one("#err", Static).update("xpub/descriptor is required")
-            return
-        try:
-            state.source = cw.parse_key_source(xpub_val, network=state.network)
-        except Exception as e:
-            self.query_one("#err", Static).update(f"could not parse: {e}")
-            return
-        state.xpub_input = xpub_val
-        state.faucet_invite = invite_val
-        self.app.push_screen(UtxoPickerScreen())
+        self.app.push_screen(GenerateSeedScreen())
 
 
 # ---------------------------------------------------------------------------
@@ -702,7 +626,6 @@ class PsbtBuildScreen(BaseScreen):
             Static("", id="psbt-file", classes="hint"),
             Horizontal(
                 Button("Copy unsigned PSBT", id="copy-psbt"),
-                Button("Paste signed PSBT", id="paste-signed"),
                 id="clip",
             ),
             Static("", id="signed-label"),
@@ -724,26 +647,12 @@ class PsbtBuildScreen(BaseScreen):
         op = "SPAWN" if state.op_name == "spawn" else state.op_name.upper()
         self.query_one("#title", Static).update(f"BUILD & SIGN {op} TRANSACTION")
         self.build_psbt()
-        # Generate flow: Causeway signs; the manual button is redundant and
-        # the copy says broadcast.  Connect flow: external signing is the
-        # point; the self-sign button is impossible and hidden.
-        if state.mnemonic is None:
-            #  The wallet signs AND broadcasts -- every real wallet does both
-            #  in one motion, and this screen watches the chain.  The paste
-            #  path earned its removal: there was no circumstance left where
-            #  a wallet could sign but not send.  (Scripts and air-gapped
-            #  rigs still have the CLI's --signed-psbt.)
-            self.query_one("#self-sign", Button).display = False
-            for wid in ("#signed-in", "#signed-label", "#paste-signed", "#broadcast"):
-                self.query_one(wid).display = False
-            self.query_one("#psbt-copy", Static).update(
-                "Unsigned PSBT (base64) — load it into your wallet, review, sign, and "
-                "BROADCAST it there. This screen continues by itself once the network has it:")
-        else:
-            self.query_one("#self-sign", Button).display = False
-            self.query_one("#psbt-copy", Static).update(
-                "Spawn transaction (signed by the generated wallet — shown for inspection):")
-            self.query_one("#signed-label", Static).update("Signed transaction:")
+        #  Causeway holds the seed that owns the sats (the only custody path),
+        #  so it signs in-process; the manual self-sign button is redundant.
+        self.query_one("#self-sign", Button).display = False
+        self.query_one("#psbt-copy", Static).update(
+            f"{op.capitalize()} transaction (signed by the Causeway wallet — shown for inspection):")
+        self.query_one("#signed-label", Static).update("Signed transaction:")
 
     def build_psbt(self) -> None:
         state: FlowState = self.app.state  # type: ignore[attr-defined]
@@ -795,10 +704,9 @@ class PsbtBuildScreen(BaseScreen):
                 proof["patp"] = state.point or ""
             state.psbt_b64_unsigned = p.to_base64()
             # A ~600-char base64 blob is the one thing on this screen that
-            # cannot be selected by mouse in a TUI, so it also goes to DISK:
-            # every external wallet (Sparrow, BlueWallet, Passport, Keystone)
-            # opens a .psbt file, and Sparrow writes its signed result back
-            # beside it.  Named for the comet/point so two spawns don't clash.
+            # cannot be selected by mouse in a TUI, so it also goes to DISK
+            # for inspection.  Named for the comet/point so two spawns don't
+            # clash.
             try:
                 os.makedirs(state.output_dir, exist_ok=True)
                 who = (state.comet or state.point or "unknown").lstrip("~")
@@ -806,8 +714,7 @@ class PsbtBuildScreen(BaseScreen):
                 with open(self._psbt_path, "wb") as fh:
                     fh.write(p.serialize())
                 self.query_one("#psbt-file", Static).update(
-                    f"Also written as a file: {self._psbt_path}  (open it in your wallet; "
-                    f"a signed .psbt saved next to it can be pasted below)")
+                    f"Also written as a file: {self._psbt_path}  (for inspection)")
             except OSError as e:
                 self._psbt_path = ""
                 self.query_one("#psbt-file", Static).update(f"(could not write .psbt file: {e})")
@@ -832,12 +739,11 @@ class PsbtBuildScreen(BaseScreen):
             if state.op_name == "spawn" and state.feed:
                 cw.write_feed_file(os.path.splitext(proof_path)[0] + ".feed", state.feed)
             self.query_one("#b64", TextArea).text = state.psbt_b64_unsigned
-            if state.mnemonic is not None:
-                # Generate-Wallet flow: Causeway holds the seed that owns the
-                # sats, so it signs.  Prompting a user to carry this PSBT to
-                # "their wallet" was a hand-off to a wallet that does not
-                # exist -- the paste UI is the CONNECT flow's, where the seed
-                # deliberately lives elsewhere.
+            if state.mnemonic is None:
+                self.query_one("#status", Static).update(
+                    "no wallet seed in memory — go back and enter the phrase")
+            else:
+                # Causeway holds the seed that owns the sats, so it signs.
                 try:
                     from embit import psbt as _psbt
                     root = cw.mnemonic_to_hdkey(state.mnemonic, network=state.network)
@@ -849,11 +755,6 @@ class PsbtBuildScreen(BaseScreen):
                         "signed with the generated wallet — click Broadcast")
                 except Exception as e:  # noqa: BLE001
                     self.query_one("#status", Static).update(f"self-sign failed: {e}")
-            else:
-                self.query_one("#status", Static).update(
-                    f"watching the chain for {commit_txid[:16]}… — sign and broadcast "
-                    "in your wallet; this screen moves on by itself")
-                self.watch_chain_worker()
         except Exception as e:
             self.query_one("#status", Static).update(f"build failed: {e}")
 
@@ -874,35 +775,6 @@ class PsbtBuildScreen(BaseScreen):
         self.workers.cancel_group(self, "watch")
         return True
 
-    @work(exclusive=True, thread=True, group="watch", exit_on_error=False)
-    def watch_chain_worker(self) -> None:
-        """Connect flow: the wallet signs AND broadcasts, so all Causeway has
-        to do is notice.  Polls the network for the txid the proof already
-        names; a paste in the box below is the alternative, not the rule."""
-        state: FlowState = self.app.state  # type: ignore[attr-defined]
-        status = self.query_one("#status", Static)
-        worker = get_current_worker()
-        txid = state.commit_txid or ""
-        start = time.monotonic()
-        while not worker.is_cancelled:
-            try:
-                seen = bool(cw.tx_hex_if_seen(txid, mempool_base=state.mempool_base))
-            except Exception:  # noqa: BLE001 -- a watcher must never take the app down
-                seen = False
-            if seen:
-                self.app.call_from_thread(status.update, f"seen on the network: {txid}")
-                self._advance_once(ConfirmWaitScreen if state.op_name == "spawn" else DoneScreen)
-                return
-            mins = int(time.monotonic() - start) // 60
-            self.app.call_from_thread(
-                status.update,
-                f"watching the chain for {txid[:16]}… ({mins} min) — sign and "
-                "broadcast in your wallet")
-            for _ in range(self.WATCH_POLL_SECONDS):
-                if worker.is_cancelled:
-                    return
-                time.sleep(1)
-
     def on_button_pressed(self, event: Button.Pressed) -> None:
         state: FlowState = self.app.state  # type: ignore[attr-defined]
         if event.button.id == "back":
@@ -918,19 +790,6 @@ class PsbtBuildScreen(BaseScreen):
             else:
                 self.app.copy_to_clipboard(b64)
                 self.notify("sent via OSC 52 (terminal-dependent)")
-            return
-        if event.button.id == "paste-signed":
-            # The inverse problem: a signed PSBT is just as unpasteable by
-            # mouse.  Read the system clipboard into the box.
-            txt = cw.paste_from_clipboard()
-            b64 = cw.signed_input_to_base64((txt or "").encode())
-            if b64:
-                self.query_one("#signed-in", TextArea).text = b64
-                self.notify(f"pasted a PSBT ({len(b64)} chars) from clipboard")
-            elif txt and txt.strip():
-                self.notify("clipboard has text but it is not a PSBT (base64/hex)", severity="warning")
-            else:
-                self.notify("clipboard empty or unreadable — type a .psbt path instead", severity="warning")
             return
         if event.button.id == "self-sign":
             if state.mnemonic is None:
@@ -1239,6 +1098,9 @@ class ManageFormScreen(BaseScreen):
             Input(placeholder="/path/to/~sampel-palnet-spawn.proof.json", id="prior-proof"),
             Static("New pass (hex — your ship's new ring's pass):", classes="label"),
             Input(placeholder="deadbeef...", id="new-pass-hex"),
+            Static("Wallet seed phrase — the BIP-39 phrase Causeway generated at this "
+                   "comet's spawn. The rekey is signed in-process with it:", classes="label"),
+            Input(placeholder="twelve words ...", password=True, id="mnemonic"),
             Static("Breach (bump rift as well as life)?", classes="label"),
             Checkbox("breach", id="breach"),
             Static("Sponsor for the NEW snapshot (blank = keep the current one):", classes="label"),
@@ -1293,6 +1155,21 @@ class ManageFormScreen(BaseScreen):
         except Exception as e:
             err.update(f"bad hex: {e}")
             return
+        phrase = " ".join(self.query_one("#mnemonic", Input).value.strip().lower().split())
+        if not phrase:
+            err.update("the wallet seed phrase is required — the rekey is signed with it")
+            return
+        try:
+            root = cw.mnemonic_to_hdkey(phrase, network=state.network)
+        except Exception as e:  # noqa: BLE001
+            err.update(f"not a valid BIP-39 phrase: {e}")
+            return
+        state.mnemonic = phrase
+        #  Old proofs recorded fingerprint 00000000; embit matches derivations
+        #  by fingerprint, so align the proof with the seed actually signing.
+        fu = dict(state.prior_proof.get("funding") or {})
+        fu["fingerprint_hex"] = cw.hdkey_fingerprint(root).hex()
+        state.prior_proof["funding"] = fu
         breach = self.query_one("#breach", Checkbox).value
         state.no_route = self.query_one("#no-route", Checkbox).value
         try:

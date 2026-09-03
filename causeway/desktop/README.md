@@ -35,7 +35,6 @@ causeway-tui              # Textual terminal UI
 | command | what it does |
 | --- | --- |
 | `causeway spawn generate` | mint a wallet, fund it, spawn a comet, print the boot one-liner |
-| `causeway spawn connect --xpub …` | same, but you sign the PSBT externally |
 | `causeway rekey` | rotate the messaging key on an existing point (the only on-chain management op) |
 | `causeway finalize <proof…>` | bake the `xtr` custody log into the proofs and, with `--feed`, into the boot feed |
 | `causeway publish <proof…>` | declassify: put the comet's whole attestation packet on chain in an OP_RETURN |
@@ -43,8 +42,8 @@ causeway-tui              # Textual terminal UI
 | `causeway proof verify <path>` | check a `proof.json` for internal consistency and (by default) against its on-chain tx |
 | `causeway-tui` | Textual terminal UI over the same flows |
 
-There is **no `causeway mine`** — mining happens inside `spawn generate` /
-`spawn connect`, via the external `comet_miner` binary (see `--miner`).
+There is **no `causeway mine`** — mining happens inside `spawn generate`,
+via the external `comet_miner` binary (see `--miner`).
 
 `--miner` defaults to `./comet-miner/zig-out/<zig-target-triple>/comet_miner`,
 resolved by probing the triples zig actually emits: `aarch64-macos-none` /
@@ -62,17 +61,6 @@ causeway spawn generate --invite <FAUCET_CODE>
 Prints a fresh 12-word seed phrase, derives a P2TR address, requests 1000 sats from the faucet, waits for confirmation, mines a comet under `~daplyd`, signs + broadcasts a single spawn tx (confidential by default; pass `--publish` for a public on-chain publication), then prints the boot command.
 
 That seed phrase controls the coins. The comet's identity is the proof file + the feed (see [Custody](#custody-the-identity-bundle)).
-
-## Quickstart (Connect Wallet)
-
-```bash
-causeway spawn connect --xpub <YOUR_XPUB>
-```
-
-Same flow, but you sign the PSBT externally (scan a UR animated QR into Passport/Keystone, or load the `.psbt` file in Sparrow/BlueWallet) — and **broadcast it from that wallet too**. Causeway already knows the transaction's txid (a segwit txid is fixed before signing) and just watches the chain; it moves on by itself when the network has it. Nothing needs to be pasted back. If your wallet can only sign, paste the signed PSBT or signed transaction (or the path to the file it saved) into the prompt / the TUI's box instead, and Causeway broadcasts it. Either way the proof and the feed are on disk before your wallet is asked to sign, so nothing is lost if the wallet broadcasts and Causeway is closed.
-
-Your wallet never hands over its seed, and Causeway needs no secret from it:
-the identity is the proof file + the feed (see [Custody](#custody-the-identity-bundle)).
 
 ### Spawn flags
 
@@ -92,9 +80,6 @@ a fief of its own, because that is how peers reach it — so a sponsor is normal
 minted with `--fief`. If you set one, the ship must actually bind that port
 (`boot.sh --ames-port`), or the fief is a promise it cannot keep.
 
-`spawn connect` additionally takes `--xpub` (required),
-`--utxo` and `--signed-psbt`.
-
 ### Custody: the identity bundle
 
 Your comet's identity is **two files**: the proof (`<patp>-spawn.proof.json`
@@ -105,9 +90,8 @@ and any rekey proofs after it) and the feed. Back both up like a wallet.
 - The **proof chain** holds the committed snapshot of every hop — sponsor,
   fief, life, rift. Choices, not derivations; nothing regenerates them.
 
-Both are written 0600. The wallet seed phrase (generate flow) or your own
-wallet (connect flow) controls the coins and nothing else: there is no blind
-and no second phrase. The spawn satpoint sits in the pass's `dat` in plaintext.
+Both are written 0600. The wallet seed phrase controls the coins and nothing
+else: there is no blind and no second phrase. The spawn satpoint sits in the pass's `dat` in plaintext.
 
 ### The TUI
 
@@ -116,7 +100,7 @@ it is the **default face of `boot.sh --mint`** at a terminal: the installer
 launches it with the sponsor/fief/work-dir passed through `CAUSEWAY_*`
 environment variables, you complete the spawn in the interface, and when you
 quit, the installer picks the proof and feed off disk and carries on with
-finalize + boot. `--headless`, `--resume`, `--xpub`, or the absence of a tty
+finalize + boot. `--headless`, `--resume`, or the absence of a tty
 all fall back to the prompt-based CLI flow below.
 
 ### Headless / agent use
@@ -151,9 +135,8 @@ headless run must pre-answer every one of them. Three flags do that:
 
 | flag | replaces the prompt for |
 | --- | --- |
-| `--utxo TXID:VOUT` | "which UTXO do you want to spend?" — must be one the xpub scan found (`spawn connect`) |
-| `--signed-psbt PATH\|-` | "paste the signed PSBT". A named pipe works: the unsigned PSBT is written to `<patp>-spawn.psbt` first (`spawn connect`, also `rekey`) |
-| `--assume-saved` | the wallet-seed read-back (`spawn generate`). **The phrase is printed nowhere else** — a scripted run MUST capture stdout or the coins are unrecoverable. No-op on `spawn connect` |
+| `--mnemonic-file PATH` | the wallet-seed prompt (`rekey`, `publish`; also resumes `spawn generate`). The file holds the BIP-39 phrase; a phrase on a command line lands in shell history |
+| `--assume-saved` | the wallet-seed read-back (`spawn generate`). **The phrase is printed nowhere else** — a scripted run MUST capture stdout or the coins are unrecoverable |
 
 `causeway spawn generate` with no funded UTXO and no `--invite` still waits
 indefinitely for funding; there is no timeout.
@@ -194,8 +177,9 @@ entry + opening to your ship's `%gw-btc` agent (the `%anew` poke) so peers can
 re-verify you.
 
 Other rekey flags: `--fee-rate`, `--network`, `--output-dir`, `--mempool-base`,
-`--sponsor`, `--fief IP:PORT`, `--no-route`, and `--signed-psbt PATH|-` for an
-unattended run. `--sponsor` and `--fief` are set-or-carry: pass one to change
+`--sponsor`, `--fief IP:PORT`, `--no-route`, `--mnemonic-file PATH` for an
+unattended run, and `--top-up` to add a funding input from the same wallet so
+the identity output grows instead of shrinking by the fee. `--sponsor` and `--fief` are set-or-carry: pass one to change
 it, omit it to keep whatever the prior snapshot committed.
 
 ## Finalize — bake the custody log into your boot feed
@@ -226,8 +210,8 @@ causeway publish spawn.proof.json rekey.proof.json --fee-rate 2
 # see what would go on chain without signing or broadcasting anything:
 causeway publish spawn.proof.json rekey.proof.json --dry-run
 # scripted, and topping the identity sat up instead of shrinking it:
-causeway publish spawn.proof.json --fund-xpub "$XPUB" --fund-utxo TXID:VOUT \
-                 --signed-psbt /tmp/signed.fifo
+causeway publish spawn.proof.json --top-up --fund-utxo TXID:VOUT \
+                 --mnemonic-file ~/comet-seed.txt
 ```
 
 **Publishing is one way.** The packet names the comet, its spawn satpoint and
@@ -259,7 +243,7 @@ Four things it refuses to do, all before any fee is paid:
   ~200 bytes shorter — and the difference is only whether anyone can verify it.
 
 A packet publication runs ~400 vB, so ~1,000 sats at 2 sat/vB. An identity sat
-may not cover that; `--fund-xpub` adds a funding input **after** input 0 (sats
+may not cover that; `--top-up` adds a funding input **after** input 0 (sats
 are assigned to outputs in input order, so an input behind the identity cannot
 move it) and the identity output is topped up rather than shrunk.
 
