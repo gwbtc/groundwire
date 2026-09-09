@@ -1,14 +1,26 @@
 # Causeway (Desktop)
 
 CLI + TUI for Groundwire comet spawning and management on the **kelvin-9**
-(`%gw-btc`, OP_RETURN) confidential-comets protocol, for air-gapped signing
-compatibility.
+(`%gw-btc`, OP_RETURN) confidential-comets protocol.
+
+Causeway **generates and holds the wallet itself** and signs every transaction
+in-process. External wallets are not part of the signing path: a comet's
+sat-carrying output commits state in a taproot key-path tweak, and no consumer
+or hardware wallet will sign that (only Bitcoin Core and Keystone honour the
+merkle-root PSBT field, and neither is worth a dependency) — so the seed phrase
+Causeway prints at spawn is the one and only custody of the identity sat.
+**Write it down.** External wallets are still fine for *funding* — you send BTC
+to the address Causeway shows you — they just never sign.
 
 ## What it does
 
-- **Spawn a comet** from an air-gapped environment by signing a single standard P2TR transaction in any Bitcoin wallet (Sparrow, BlueWallet, Passport, Keystone, Coldcard, Ledger, etc).
-- **Rekey a comet** (rotate the messaging key, optionally breach) via the same signing path.
-- Emit an off-chain **attestation proof** (`comet.proof.json`) alongside the `gw-vere` boot feed.
+- **Spawn a comet**: Causeway mines it, generates a BIP-39 wallet, shows you an
+  address to fund, then signs + broadcasts a single standard P2TR transaction
+  with the generated seed.
+- **Rekey a comet** (rotate the messaging key, optionally breach) — signed
+  in-process with the same seed phrase (`--mnemonic-file`, or a hidden prompt).
+- Emit an off-chain **attestation proof** (`comet.proof.json`) alongside the
+  `gw-vere` boot feed.
 
 Confidential = no on-chain payload. The comet's `@p` commits to its `dat`
 (the spawn satpoint, in plaintext, plus domain and kelvin), and its per-identity
