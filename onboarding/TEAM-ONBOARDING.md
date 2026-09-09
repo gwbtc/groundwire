@@ -125,7 +125,8 @@ In the dojo (`boot.sh --comet '<@p>'` attaches, or via the control socket):
 - This is **not** fully autonomous: step 2 blocks until Trent funds the address.
   Relay the address to Trent, then wait — `boot.sh` continues on its own once
   the funding tx confirms. Do not fabricate the funding.
-- Capture stdout: the recovery phrase and address are printed once. Keep the
+- Read `~/mint.log` on the droplet (the wrapper tees everything there): the
+  recovery phrase and address appear once, in that order. Keep the
   phrase somewhere Trent can retrieve it (a `0600` file on the droplet is fine
   for a test comet); never put it on a command line.
 - Everything else — install, mine, sign, broadcast, finalize, boot — needs no
