@@ -111,6 +111,9 @@ What happens, in order:
 ```bash
 bash boot.sh --status              # ship up? which comet? sync state?
 bash boot.sh --code                # web login code (+code) for Landscape
+# the web UI is http://<DROPLET_IP>:<port>; read the port off the running ship
+# (boot.sh picks a nearby free port if 8080 is busy, so don't assume it):
+pgrep -a -f gw-vere | grep -o -- '--http-port [0-9]*'
 ```
 
 In the dojo (`boot.sh --comet '<@p>'` attaches, or via the control socket):

@@ -34,7 +34,15 @@ droplet's address and `<KEY>` with the SSH private key authorized on it.
 > - After boot the Bitcoin light-client sync takes a **few hours** — expected,
 >   not a hang.
 >
-> When done, report: the comet's **@p** (and mnemonym), the **web login code**
-> (`ssh … 'bash ~/boot.sh --code'`), and confirm `bash ~/boot.sh --status` shows
-> the ship up with `%gw-btc` syncing. If anything is ambiguous, ask me rather
-> than guessing.
+> When done, report:
+> - the comet's **@p** (and mnemonym);
+> - the **web UI URL**: `http://<DROPLET_IP>:<port>`, where `<port>` is the
+>   `--http-port` value on the running ship's command line — read it with
+>   `ssh … "pgrep -a -f gw-vere | grep -o -- '--http-port [0-9]*'"` rather than
+>   assuming 8080 (boot.sh picks a nearby free port if 8080 is taken);
+> - the **web login code** (`ssh … 'bash ~/boot.sh --code'`) — I paste it at
+>   that URL to log in;
+> - and confirm `bash ~/boot.sh --status` shows the ship up with `%gw-btc`
+>   syncing.
+>
+> If anything is ambiguous, ask me rather than guessing.
