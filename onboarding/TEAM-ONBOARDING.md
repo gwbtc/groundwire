@@ -43,21 +43,51 @@ so a future change to the default can't silently repoint you:
 > blind-`dat` format and is refused by the current verifier. `~barmul` is the
 > only live sponsor.
 
-## The flow (headless — best over SSH and for a driving agent)
+## The flow (a local Claude driving the droplet over SSH)
 
-The TUI (`boot.sh --mint` at a real terminal) exists and is worth trying once,
-but over an SSH pipe it has no interactive terminal. Use headless:
+The intended model: **your Claude runs on your laptop and SSHes into the
+droplet** — it does not run on the droplet. Trent boots the droplet and
+authorizes your Claude's SSH public key on it; you get back an IP.
+
+One hard constraint shapes the recipe: `boot.sh --mint` reads its prompts from
+`/dev/tty` — it **needs a real terminal**, so a plain `ssh host 'boot.sh
+--mint'` fails, and it does not forward `--assume-saved`. Run the mint inside a
+**tmux session on the droplet**: tmux provides the terminal, the session
+survives your SSH connection, and your Claude drives it with `send-keys` and
+reads it from a log. (This is exactly how the ops campaign drove ships.)
 
 ```bash
-# 1. get boot.sh straight from the branch (the website copy isn't published yet)
-curl -fsSL -o boot.sh \
-  https://raw.githubusercontent.com/gwbtc/groundwire/hd/cc-landing/causeway/public/boot.sh
+H=root@<DROPLET_IP>; K=~/.ssh/<your-claude-key>
+S="ssh -o BatchMode=yes -i $K $H"
 
-# 2. mint + boot: pinned to the RC, headless, detached under a supervisor,
-#    sponsor explicit. Replace the RC tag with the one found above.
-bash boot.sh --mint --headless --detach \
+# 1. one-time setup on the droplet: tmux + boot.sh from the branch
+$S 'command -v tmux >/dev/null || (apt-get update -qq && apt-get install -y -qq tmux)
+    curl -fsSL -o ~/boot.sh https://raw.githubusercontent.com/gwbtc/groundwire/hd/cc-landing/causeway/public/boot.sh'
+
+# 2. a wrapper script, so the sponsor's leading ~ is quoted once and never
+#    tilde-expanded by a shell (a bare ~barmul... is "no such user" to bash)
+$S 'cat > ~/mint.sh <<'"'"'EOF'"'"'
+bash ~/boot.sh --mint --headless --detach \
   --version groundwire-rc-2026.9.9 \
-  --sponsor '~barmul-bolmet-ronlus-lighul--rovtun-satryc-moclug-daplyd'
+  --sponsor "~barmul-bolmet-ronlus-lighul--rovtun-satryc-moclug-daplyd" 2>&1 | tee ~/mint.log
+EOF
+chmod +x ~/mint.sh'
+
+# 3. start the mint in tmux (gives it the tty it needs; survives disconnects)
+$S 'tmux new -d -s mint && tmux send-keys -t mint "bash ~/mint.sh" Enter'
+
+# 4. drive it by polling the log (read-only) and answering with send-keys
+$S 'tail -40 ~/mint.log'
+#   a) it prints a 12-word RECOVERY PHRASE, then "Please re-enter your seed
+#      phrase to confirm you wrote it down" -> save the words, then type them back:
+$S 'tmux send-keys -t mint "<the twelve words>" Enter'
+#   b) it prints a bc1p... FUNDING ADDRESS, then "Waiting for funding
+#      transaction to confirm..." -> hand the address to Trent; keep polling
+#      the log every few minutes. Nothing to type: it watches the chain itself.
+#   c) on confirmation it mines, spawns, bakes the feed, boots --detach, and exits.
+
+# 5. verify
+$S 'bash ~/boot.sh --status; bash ~/boot.sh --code'
 ```
 
 What happens, in order:
