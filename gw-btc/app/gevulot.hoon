@@ -41,19 +41,30 @@
 /+  default-agent, dbug, server, schooner, cc=gw-btc-pass, lsa=self-attestation
 ::
 |%
-+$  versioned-state  $%(state-0)
++$  versioned-state  $%(state-0 state-1)
 +$  state-0
   $:  %0
+      receive=?
+      serving=?
+      roster=(set @p)
+      installed=(map @p peer:gev)
+  ==
+::  state-1: the roster keeps each announced sponsee's PASS.  A sponsor
+::  cannot read a sponsee's pass back from jael (%deed is own-only for
+::  comets), so the pass a sponsee announces with is what gets broadcast.
+::
++$  state-1
+  $:  %1
       receive=?               :: sponsee: accept pushes from our sponsor?  (default no)
       serving=?               :: sponsor: run the distribution service?    (default yes)
-      roster=(set @p)         :: sponsor: sponsees who asked to be broadcast
+      roster=(map @p pass)    :: sponsor: announced sponsees, each with the pass to push
       installed=(map @p peer:gev) :: sponsee: peers we installed, with provenance
   ==
 +$  card  card:agent:gall
 +$  ready  [synced=? tip=(unit @) indexing=?]  :: shape of %gw-btc /x/ready
 --
 ::
-=|  state-0
+=|  state-1
 =*  state  -
 %-  agent:dbug
 ^-  agent:gall
@@ -75,7 +86,14 @@
 ++  on-load
   |=  old=vase
   ^-  (quip card _this)
-  `this(state !<(versioned-state old))
+  =/  ver  !<(versioned-state old)
+  ?-  -.ver
+    %1  `this(state ver)
+    ::  0 -> 1: the old roster held ships without passes, and there is no
+    ::  way to recover them (see state-1).  Start it empty; every sponsee
+    ::  re-announces on boot (boot.sh's %distribute) and can from the pane.
+    %0  `this(state [%1 receive.ver serving.ver ~ installed.ver])
+  ==
 ::
 ++  on-poke
   |=  [=mark =vase]
@@ -154,12 +172,10 @@
   =/  s=@p
     .^(@p %j /(scot %p our.bowl)/sein/(scot %da now.bowl)/(scot %p our.bowl))
   ?.  =(our.bowl s)  `s
+  =/  pas=(unit pass)  our-pass
+  ?~  pas  ~
   =/  res
     %-  mule  |.
-    =/  lyf=@ud
-      .^(@ud %j /(scot %p our.bowl)/life/(scot %da now.bowl)/(scot %p our.bowl))
-    =/  pas=(unit pass)  (pass-of our.bowl lyf)
-    ?~  pas  ~
     =/  sat  (from-xtr:lsa our.bowl u.pas)
     ?~  sat  ~
     ?~  chain.u.sat  ~
@@ -168,6 +184,41 @@
     sponsor.snapshot.u.opening.last
   ?:  ?=(%| -.res)  ~
   p.res
+::
+::  +our-pass: OUR attestation pass at our current life -- the pass with
+::  the xtr custody log that finalize baked into the boot feed, which is
+::  what ames serves and what we announce to our sponsor.  jael's %deed
+::  serves this for `our` at any life it holds.
+::
+::  SCRY DISCIPLINE, learned the hard way: on this kernel a scry that
+::  answers [~ ~] or blocks does NOT come back through +mule as %| -- it
+::  blocks the whole event (an eyre request 500s with the scry path; a
+::  remote poke nacks).  So every scry here must be one the vane always
+::  answers for the path we ask: jael's %life and %deed for our own ship,
+::  and %gw-btc's whole-map paths (/sponsees, /points, ...).  Never scry
+::  another comet's %deed (own-only) or /point/<ship> (withheld when the
+::  ship is confidential or unknown).
+::
+++  our-pass
+  ^-  (unit pass)
+  =/  res
+    %-  mule  |.
+    =/  lyf=@ud
+      .^(@ud %j /(scot %p our.bowl)/life/(scot %da now.bowl)/(scot %p our.bowl))
+    ;;  [lyf=@ud =pass rest=*]
+    .^(* %j /(scot %p our.bowl)/deed/(scot %da now.bowl)/(scot %p our.bowl)/(scot %ud lyf))
+  ?:  ?=(%| -.res)  ~
+  `pass.p.res
+::
+::  +fingerprint: the @p a pass is the attestation OF.  A pass binds its
+::  own identity (the comet's @p is derived from it), so this is how a
+::  hand-pasted pass names its ship and how a sponsor checks that an
+::  announcing sponsee sent its own pass and not someone else's.
+::
+++  fingerprint
+  |=  =pass
+  ^-  @p
+  `@p`fig:ex:(com:nu:cric:crypto pass)
 ::
 ::  +our-sponsees: the comets %gw-btc says we sponsor, with each life
 ::  (so we can read its pass from jael's %deed, which is keyed by life).
@@ -231,16 +282,21 @@
   p.res
 ::
 ::  +gw-point-public: does %gw-btc hold a PUBLIC on-chain point for .who?
-::  (Confidential peers answer ~ here and show up in +gw-confidential
-::  instead.)  A blocked scry -- confidential or unknown -- reads as no.
+::  (Confidential peers are withheld from /points and show up in
+::  +gw-confidential instead.)  Read as membership in the whole /points
+::  map, which always answers; /point/<ship> is [~ ~] for a confidential
+::  or unknown ship and that blocks the event (see +our-pass) -- it took
+::  the pane down the moment a fresh comet learned its sponsor.
 ::
 ++  gw-point-public
   |=  who=@p
   ^-  ?
   =/  res
     %-  mule  |.
-    .^(point:urb %gx /(scot %p our.bowl)/gw-btc/(scot %da now.bowl)/point/(scot %p who)/urb-point)
-  ?=(%& -.res)
+    ;;  (map @p *)
+    .^(* %gx /(scot %p our.bowl)/gw-btc/(scot %da now.bowl)/points/noun)
+  ?:  ?=(%| -.res)  %.n
+  (~(has by p.res) who)
 ::
 ::  +peer-confirmed: has %gw-btc verified .who on chain, publicly or
 ::  confidentially?
@@ -265,21 +321,6 @@
   ?.  synced  %syncing
   ?:  (gte tries.p max-tries)  %failed
   %pending
-::
-::  +pass-of: the attestation pass jael holds for .who at .life.  This is
-::  the pass %gw-btc installed when it verified .who, so it carries the
-::  xtr custody log a trusted install needs.  jael's %deed answers
-::  [life pass (unit @)].
-::
-++  pass-of
-  |=  [who=@p life=@ud]
-  ^-  (unit pass)
-  =/  res
-    %-  mule  |.
-    ;;  [lyf=@ud =pass rest=*]
-    .^(* %j /(scot %p our.bowl)/deed/(scot %da now.bowl)/(scot %p who)/(scot %ud life))
-  ?:  ?=(%| -.res)  ~
-  `pass.p.res
 ::
 ::  +poke-gw-install: hand a trusted peer pass to %gw-btc for an
 ::  offline (no-fetch, never-snub) install into jael.
@@ -340,11 +381,14 @@
       %set-serving   `state(serving on.act)
   ::
       %distribute
-    ::  ask our sponsor to broadcast us.  Harmless if we have no sponsor.
+    ::  ask our sponsor to broadcast us, sending the attestation we want
+    ::  broadcast.  Harmless if we have no sponsor (or, absurdly, no pass).
     =/  spo=(unit @p)  our-sponsor
     ?~  spo  `state
+    =/  pas=(unit pass)  our-pass
+    ?~  pas  `state
     :_  state
-    ~[(wire-to u.spo %announce ~)]
+    ~[(wire-to u.spo %announce u.pas)]
   ::
       %withdraw
     =/  spo=(unit @p)  our-sponsor
@@ -357,8 +401,7 @@
     ::  fingerprint; a wrong paste is a silent no-op in %gw-btc.  A paste
     ::  carries no sponsor's word, so it is verified on chain as soon as we
     ::  can rather than merely trusted.
-    =/  who=@p  `@p`fig:ex:(com:nu:cric:crypto pass.act)
-    (install-peer who pass.act %paste)
+    (install-peer (fingerprint pass.act) pass.act %paste)
   ::
       %forget-peer
     ::  drop it from OUR list only; we do not un-tell jael (harmless to keep).
@@ -408,21 +451,24 @@
   |=  [src=@p =wire:gev]
   ^-  (quip card _state)
   ?-    -.wire
-      ::  A SPONSEE asks us (its sponsor) to broadcast it.  Ignore unless
-      ::  we are serving AND src really is a current sponsee of ours -- the
-      ::  sponsor is the source of truth, a stranger cannot inject itself.
-      ::  We read src's pass from OUR jael (we verified it), add it to the
-      ::  roster, push it to every current sponsee, and send src the whole
-      ::  roster so a just-booted sponsee learns everyone already in.
+      ::  A SPONSEE asks us (its sponsor) to broadcast it, with the pass to
+      ::  broadcast.  Ignore unless we are serving, the pass is src's OWN
+      ::  (its fingerprint is src -- ames authenticated src, so a sponsee
+      ::  can only ever announce itself), AND src really is a current
+      ::  sponsee of ours per %gw-btc's on-chain view -- the sponsor is the
+      ::  source of truth, a stranger cannot inject itself.  Then add it to
+      ::  the roster, push it to every current sponsee, and send src the
+      ::  whole roster so a just-booted sponsee learns everyone already in.
       %announce
     ?.  serving  `state
+    ?.  =(src (fingerprint pass.wire))  `state
     ?.  (~(has by our-sponsees) src)  `state
-    =.  roster  (~(put in roster) src)
+    =.  roster  (~(put by roster) src pass.wire)
     :_  state
-    (broadcast-announce src)
+    (broadcast-announce src pass.wire)
   ::
       %withdraw
-    `state(roster (~(del in roster) src))
+    `state(roster (~(del by roster) src))
   ::
       ::  OUR sponsor pushes us a peer to install.  Accept iff we opted in
       ::  AND src is actually our sponsor.  +install-peer verifies it on
@@ -436,34 +482,29 @@
     (install-peer who.wire pass.wire %sponsor)
   ==
 ::
-::  +broadcast-announce: cards to send when .newcomer announces:
+::  +broadcast-announce: cards to send when .newcomer announces with .pas:
 ::    - push .newcomer's pass to every OTHER current sponsee;
-::    - push every roster member's pass (incl. newcomer) to .newcomer.
-::  A missing pass (jael does not hold it) drops that one peer silently.
+::    - push every other roster member's pass to .newcomer.
+::  Only current sponsees get pushed; a roster member that is no longer
+::  one (rekeyed away, breached) is skipped, not forgotten.
 ::
 ++  broadcast-announce
-  |=  newcomer=@p
+  |=  [newcomer=@p pas=pass]
   ^-  (list card)
   =/  spees  our-sponsees                :: (map @p @ud) — @p -> life
-  =/  members=(list @p)  ~(tap in roster)
   ;:  weld
     ::  newcomer -> every other current sponsee
-    =/  nl  (~(get by spees) newcomer)
-    ?~  nl  ~
-    ?~  np=(pass-of newcomer u.nl)  ~
     %+  murn  ~(tap in ~(key by spees))
     |=  s=@p
     ?:  =(s newcomer)  ~
-    `(wire-to s %peer newcomer u.np)
+    `(wire-to s %peer newcomer pas)
   ::
-    ::  every roster member -> newcomer
-    %+  murn  members
-    |=  m=@p
+    ::  every other roster member -> newcomer
+    %+  murn  ~(tap by roster)
+    |=  [m=@p mp=pass]
     ?:  =(m newcomer)  ~
-    =/  ml  (~(get by spees) m)
-    ?~  ml  ~
-    ?~  mp=(pass-of m u.ml)  ~
-    `(wire-to newcomer %peer m u.mp)
+    ?.  (~(has by spees) m)  ~
+    `(wire-to newcomer %peer m mp)
   ==
 ::
 ::  =====================================================================
@@ -678,7 +719,7 @@
   ^-  manx
   ;div.card
     ;h2: As a sponsor
-    ;p: You sponsor {(scow %ud ~(wyt by spees))} comet(s); {(scow %ud ~(wyt in roster))} in the broadcast roster.
+    ;p: You sponsor {(scow %ud ~(wyt by spees))} comet(s); {(scow %ud ~(wyt by roster))} in the broadcast roster.
     ;div.row
       ;form(method "post", action "/apps/gevulot")
         ;input(type "hidden", name "act", value "set-serving");
@@ -698,7 +739,7 @@
 ++  roster-list
   |=  spees=(map @p @ud)
   ^-  manx
-  =/  rs  ~(tap in roster)
+  =/  rs  ~(tap in ~(key by roster))
   ?~  rs
     ;p.empty: No sponsees have asked to be broadcast yet.
   ;div.peers
@@ -744,7 +785,7 @@
       ==
       ;div.statrow
         ;span.k: broadcast roster
-        ;span.v: {<~(tap in roster)>}
+        ;span.v: {<~(tap in ~(key by roster))>}
       ==
       ;div.statrow
         ;span.k: receive / serving

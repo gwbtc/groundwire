@@ -58,14 +58,19 @@
 ::    Rides the %noun mark (as %gw-btc's %jael-writ does), so no mark file
 ::    is needed and the receiver mold-casts with `;;`.
 ::
-::    %announce carries NO pass: the sponsor already holds the announcing
-::    sponsee's pass in its own jael (it verified it before sponsoring), so
-::    it reads that back rather than trusting a sender-supplied packet --
-::    the sender can only ask to be broadcast, not choose what is broadcast.
-::    %peer carries the peer's pass for a sponsee to install.
+::    %announce CARRIES the announcer's pass.  It used to carry none, on the
+::    theory that the sponsor reads the sponsee's pass back from its own
+::    jael -- but jael serves a comet's %deed only for `our` (any other
+::    comet's is [~ ~], which blocks the whole event: the first real
+::    announce nacked, 2026-09-10).  So the sponsee sends its attestation
+::    the way its ames packets do, and the sponsor checks two things
+::    before broadcasting it: the pass is src's own (its fingerprint IS
+::    src's @p, so a sender can only ever announce itself) and src is a
+::    current sponsee per %gw-btc's on-chain view.  %peer carries the
+::    peer's pass for a sponsee to install.
 ::
 +$  wire
-  $%  [%announce ~]              :: sponsee -> sponsor: please broadcast me
+  $%  [%announce =pass]          :: sponsee -> sponsor: please broadcast me (my pass)
       [%withdraw ~]              :: sponsee -> sponsor: stop broadcasting me
       [%peer who=@p =pass]       :: sponsor -> sponsee: install this peer
   ==
