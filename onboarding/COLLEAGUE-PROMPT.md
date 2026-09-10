@@ -48,7 +48,13 @@ droplet's address and `<KEY>` with the SSH private key authorized on it.
 >   count over-reads by one. Look at `ps -eo pid,etime,args` and reason about
 >   the actual pids before touching anything.
 > - After boot the Bitcoin light-client sync takes a **few hours** — expected,
->   not a hang.
+>   not a hang. **While it runs the whole ship is slow**: an Urbit ship is one
+>   event loop, and the sync pins it (measured: ~90% of a core for hours), so
+>   the web UI and every app (Drive, chat) will lag or stall until it finishes.
+>   Do not restart the ship, kill anything, or "fix" performance over this.
+>   It is done when the ship's log (`~/.groundwire/var/<comet>.log`) prints
+>   `%gw-btc: light client is SYNCED` — or the Gevulot pane at
+>   `http://<DROPLET_IP>:<port>/apps/gevulot` says "light client synced".
 >
 > When done, report:
 > - the comet's **@p** (and mnemonym);
@@ -58,7 +64,10 @@ droplet's address and `<KEY>` with the SSH private key authorized on it.
 >   assuming 8080 (boot.sh picks a nearby free port if 8080 is taken);
 > - the **web login code** (`ssh … 'bash ~/boot.sh --code'`) — I paste it at
 >   that URL to log in;
-> - and confirm `bash ~/boot.sh --status` shows the ship up with `%gw-btc`
->   syncing.
+> - confirm `bash ~/boot.sh --status` shows the ship up with `%gw-btc`
+>   syncing;
+> - and **tell me plainly that the ship will be slow for the next few hours**
+>   while the light client syncs, that this is expected, and how I can tell
+>   when it's finished (the log line or the Gevulot pane above).
 >
 > If anything is ambiguous, ask me rather than guessing.

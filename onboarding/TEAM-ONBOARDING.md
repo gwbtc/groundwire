@@ -160,6 +160,14 @@ In the dojo (`boot.sh --comet '<@p>'` attaches, or via the control socket):
 
 - `%gw-btc` is installed and syncing its light client (first sync is slow —
   low hours; that's expected, not a hang).
+- **Expect the whole ship to be sluggish until that sync finishes.** A ship is a
+  single event loop and the sync pins it (measured on the first real mint: the
+  vere worker at ~90% of a core for hours, memory and disk idle), so the web
+  UI, Drive and chat queue behind it. Don't restart or tune anything for this;
+  it clears on its own. Done = the ship log
+  (`~/.groundwire/var/<comet>.log`) prints
+  `%gw-btc: light client is SYNCED; confidential verification enabled`, or the
+  Gevulot pane (`/apps/gevulot`) reads "light client synced".
 - Once synced, you and the other team comets should discover each other through
   the sponsor (see the note below).
 
