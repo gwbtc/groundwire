@@ -125,9 +125,9 @@ the funded address.
 **Before ever killing a process on the droplet, look at `ps` first.** A
 `pgrep -c` count includes the `bash -c` wrapper that ssh itself runs, so "more
 than one" does not mean a stale copy exists. And check `pgrep -a -f 'gw-vere -t'`
-before a second `boot.sh --comet`: `boot.sh --stop` currently reports "stopped"
-after a 60 s grace even when vere is still exiting, and two boots on one pier
-collide on port 8080.
+before a second `boot.sh --comet`: two boots on one pier collide on port 8080.
+(The branch's `boot.sh` now waits for and verifies vere's exit before saying
+"stopped"; a `boot.sh` from an RC older than 2026.9.10 did not.)
 
 What happens, in order:
 
