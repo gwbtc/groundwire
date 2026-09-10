@@ -25,7 +25,7 @@ confidential comets):
 
 ```bash
 gh release list -R gwbtc/urbit | grep groundwire-rc | head -1
-# e.g. groundwire-rc-2026.9.9
+# e.g. groundwire-rc-2026.9.10
 ```
 
 ## The sponsor — nothing to memorize
@@ -56,6 +56,11 @@ One hard constraint shapes the recipe: `boot.sh --mint` reads its prompts from
 survives your SSH connection, and your Claude drives it with `send-keys` and
 reads it from a log. (This is exactly how the ops campaign drove ships.)
 
+**Use `groundwire-rc-2026.9.10` or newer.** Earlier RCs ship a `gwlib.sh` whose
+peer seeding pokes a renamed mark; the light client never gets a peer, sync
+never starts, and the Gevulot pane reads "SPONSOR none" forever. (2026.9.10
+fixes the mark and makes boot.sh fail loudly on a seeding nack.)
+
 **Droplet prerequisites** (learned the hard way on the first real run): a stock
 4 GB DigitalOcean droplet is *not* enough on its own. The comet miner maps an
 **8 GB** loom and the ship another 4 GB, so add **8 GB of swap**; and Causeway
@@ -84,7 +89,7 @@ S 'apt-get update -qq && apt-get install -y -qq tmux python3-venv
 #      this the mint sits silently waiting for an address nobody can see.
 S 'cat > ~/mint.sh <<'"'"'EOF'"'"'
 PYTHONUNBUFFERED=1 bash ~/boot.sh --mint --headless --detach \
-  --version groundwire-rc-2026.9.9 \
+  --version groundwire-rc-2026.9.10 \
   --sponsor "~barmul-bolmet-ronlus-lighul--rovtun-satryc-moclug-daplyd" 2>&1 | tee ~/mint.log
 EOF
 chmod +x ~/mint.sh'
