@@ -833,6 +833,33 @@
             tip=?~(best ~ `num.u.best)
             indexing=indexing
         ==
+    ::  The public-index scanner's progress, for a control pane.  Every
+    ::  leg is a plain value -- this path must always answer (a [~ ~]
+    ::  blocks the caller's whole event; see %gevulot's +our-pass).  The
+    ::  cursor is the last block scanned; the scanner stops .confirmations
+    ::  short of the tip; .epoch is where a virgin index starts, so
+    ::  (tip - confirmations - cursor) is the work left and
+    ::  (cursor - epoch) the work done.
+    ::
+      [%x %scan ~]
+    :^  ~  ~  %noun
+    !>  :*  cursor=num.block-id.urb-state
+            epoch=gw-epoch
+            tip=?~(best ~ `num.u.best)
+            confirmations=block-confirmations
+            batch=scan-batch
+            indexing=indexing
+            points=~(wyt by unv-ids.urb-state)
+        ==
+    ::  What each in-flight verification is waiting on: the height its
+    ::  liveness walk started from (the peer's last custody entry), so a
+    ::  pane can say "N of M filters to go".  Never the pass.
+    ::
+      [%x %inflight-detail ~]
+    :^  ~  ~  %noun
+    !>  ^-  (map ship [job=@ud top=@ud])
+    %-  ~(run by inflight)
+    |=(w=inflight-writ [job.w (log-top-height sat.w)])
     ::  Which identities this ship holds CONFIDENTIALLY (so their points
     ::  are withheld from /x/points and from jael's udiffs), and the tip
     ::  each one last attested to.

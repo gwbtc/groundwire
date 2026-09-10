@@ -62,6 +62,16 @@
   ==
 +$  card  card:agent:gall
 +$  ready  [synced=? tip=(unit @) indexing=?]  :: shape of %gw-btc /x/ready
++$  scan                                       :: shape of %gw-btc /x/scan
+  $:  cursor=@ud
+      epoch=@ud
+      tip=(unit @ud)
+      confirmations=@ud
+      batch=@ud
+      indexing=?
+      points=@ud
+  ==
++$  walks  (map @p [job=@ud top=@ud])          :: shape of %gw-btc /x/inflight-detail
 --
 ::
 =|  state-1
@@ -278,6 +288,31 @@
     %-  mule  |.
     ;;  (set @p)
     .^(* %gx /(scot %p our.bowl)/gw-btc/(scot %da now.bowl)/inflight/noun)
+  ?:  ?=(%| -.res)  ~
+  p.res
+::
+::  +gw-scan: the public-index scanner's progress.  A %gw-btc without the
+::  path (older desk) reads as "nothing scanned", which the pane shows as
+::  "no data" rather than a wrong number.
+::
+++  gw-scan
+  ^-  (unit scan)
+  =/  res
+    %-  mule  |.
+    ;;  scan
+    .^(* %gx /(scot %p our.bowl)/gw-btc/(scot %da now.bowl)/scan/noun)
+  ?:  ?=(%| -.res)  ~
+  `p.res
+::
+::  +gw-walks: for each verification in flight, the height its liveness
+::  walk started at -- what "re-checking" is actually waiting on.
+::
+++  gw-walks
+  ^-  walks
+  =/  res
+    %-  mule  |.
+    ;;  walks
+    .^(* %gx /(scot %p our.bowl)/gw-btc/(scot %da now.bowl)/inflight-detail/noun)
   ?:  ?=(%| -.res)  ~
   p.res
 ::
@@ -584,7 +619,7 @@
       ;div.wrap
         ;h1: Gevulot
         ;p.sub: identity control pane
-        ;+  (status-card rdy spo)
+        ;+  (status-card rdy spo gw-scan gw-walks)
         ;*  ?~  spo  ~
             :~  (sponsee-section u.spo conf synced.rdy)
             ==
@@ -597,7 +632,7 @@
   ==
 ::
 ++  status-card
-  |=  [rdy=ready spo=(unit @p)]
+  |=  [rdy=ready spo=(unit @p) sc=(unit scan) wk=walks]
   ^-  manx
   ;div.card.status
     ;div.statrow
@@ -612,6 +647,62 @@
       ;span.k: light client
       ;+  (sync-span rdy)
     ==
+    ;div.statrow
+      ;span.k: public index
+      ;+  (index-span sc)
+    ==
+    ;div.statrow
+      ;span.k: verifying
+      ;+  (walks-span rdy wk)
+    ==
+  ==
+::
+::  +index-span: where %gw-btc's public-index scanner is.  Two different
+::  things run after "synced": this scan (every full block from the epoch,
+::  needed only to DISCOVER public names) and per-peer verification.  The
+::  scan is the one that pins the CPU for hours on a fresh comet, and it
+::  used to be invisible behind the word "indexing".
+::
+++  index-span
+  |=  sc=(unit scan)
+  ^-  manx
+  ?~  sc
+    ;span.v.st.st-wait: no data (older %gw-btc)
+  ?~  tip.u.sc
+    ;span.v.st.st-wait: waiting for a chain tip
+  =/  settled=@ud  (sub u.tip.u.sc (min u.tip.u.sc confirmations.u.sc))
+  ?.  indexing.u.sc
+    ;span.v.st.st-wait: not started
+  ?:  (gte cursor.u.sc settled)
+    ;span.v.st.st-ok: complete at block {(scow %ud cursor.u.sc)}, {(scow %ud points.u.sc)} public point(s)
+  =/  left=@ud  (sub settled cursor.u.sc)
+  =/  done=@ud  (sub cursor.u.sc (min cursor.u.sc epoch.u.sc))
+  ;span.v.st.st-wait
+    ; scanning block {(scow %ud cursor.u.sc)} of {(scow %ud settled)}:
+    ; {(scow %ud left)} to go, {(scow %ud done)} done since the epoch
+    ; ({(scow %ud batch.u.sc)} per batch; the ship is slow until this ends)
+  ==
+::
+::  +walks-span: what each in-flight verification is doing.  A re-check
+::  walks every block filter from the peer's last custody entry to the
+::  tip to prove its sat has not moved, so a peer that spawned long ago
+::  costs thousands of fetches -- which is what "re-checking" waits on.
+::
+++  walks-span
+  |=  [rdy=ready wk=walks]
+  ^-  manx
+  =/  jobs  ~(tap by wk)
+  ?~  jobs
+    ;span.v: idle
+  ;span.v.st.st-wait
+    ;*  %+  turn  jobs
+        |=  [who=@p job=@ud top=@ud]
+        =/  txt=tape
+          ?~  tip.rdy
+            "{(scow %p who)}: liveness walk from block {(scow %ud top)}"
+          =/  n=@ud  (sub u.tip.rdy (min u.tip.rdy top))
+          "{(scow %p who)}: liveness walk from block {(scow %ud top)} to {(scow %ud u.tip.rdy)} ({(scow %ud n)} filters)"
+        ;div: {txt}
   ==
 ::
 ++  sync-span
