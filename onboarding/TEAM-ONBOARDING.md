@@ -176,21 +176,45 @@ In the dojo (`boot.sh --comet '<@p>'` attaches, or via the control socket):
   human. Causeway generates and signs the wallet itself; no external wallet is
   involved.
 
-## Sponsor prerequisite (Trent / infra owner)
+## How a fresh comet finds its sponsor (and why the pane may say "none")
 
-Peer **discovery** between team comets runs through `%gevulot` on the sponsor.
-`~barmul` booted 2026-08-18, two days before `%gevulot` existed, so it must have
-the current desk installed once before discovery works. This does **not** need a
-re-mint — a local desk install on the sponsor pier keeps its @p, keys and fief:
+A fresh comet needs its sponsor's **keys and fief in jael** before it can send
+it a single packet — jael's dawn only records the classic parent star. Without
+that, `ames` holds the sponsor as `%alien`: the comet can't self-attest to it,
+can't `%announce` for peer discovery, and every app-desk sync from the sponsor
+queues until the comet's *own* light client has verified the sponsor on chain
+(hours). The Gevulot pane reads **"SPONSOR none"** the whole time.
 
+Since `93966f9` + `a519404` this is automatic: Causeway records the sponsor's
+attestation (`sponsor_pass_hex`) in the spawn proof, and `boot.sh` installs it
+into jael via `%gevulot %ingest-peer` at the peer-discovery step, then sends
+`%distribute` (which now carries the comet's own attestation to the sponsor).
+That needs an RC whose Causeway carries the change (the one cut after
+`a519404`) — the branch `boot.sh` already does the install when the proof has
+the field, and warns when it doesn't.
+
+**A comet minted from an earlier RC** (its proof has no `sponsor_pass_hex`)
+needs the install done once by hand. Measured effect on the first real mint:
+`ames: lamp ~barmul … static ip … port 34344` within seconds, the sponsor
+verified the comet on chain and recorded it as a sponsee, and the queued desk
+syncs began. On the droplet:
+
+```bash
+# the sponsor's attestation = its pass WITH the xtr custody log (Causeway's
+# DEFAULT_SPONSOR_PASS_HEX for ~barmul). Dot-group it every 4 hex digits.
+export GW_DIR=/root/.groundwire SOCK_TOOL=python3
+. ~/.groundwire/var/<comet>.env; . ~/.groundwire/lib/gwlib.sh
+gwl_poke gevulot noun "!>([%ingest-peer $(gwl_hoonhex <pass hex without 0x>)])" 90
+gwl_poke gevulot noun '!>([%distribute ~])' 30
 ```
-# on the sponsor droplet (146.190.199.0, pier /opt/gw/piers/sponsor), in its dojo:
-|mount %gw-btc                       :: then rsync the hd/cc-landing desk in
-|commit %gw-btc
-|install our %gw-btc                 :: desk.bill pulls in %gevulot; serving defaults ON
-```
 
-Then confirm `%gw-btc` is synced past each new sponsee's spawn (it drops an
-`%announce` from a sponsee it hasn't yet verified on chain). Until this is done,
-comets still boot and are correctly sponsored — they just fall back to each
-ship's own (slow) light-client sync to find peers instead of a fast push.
+(`export GW_DIR … SOCK_TOOL=python3` first, or every `gwl_eval` returns empty.)
+
+## Sponsor side (Trent / infra owner)
+
+`~barmul` runs `%gevulot` (installed 2026-09-09, serving ON) and is synced, so it
+verifies each new sponsee's spawn on chain as it lands and pushes announced
+sponsees to every opted-in comet. Every desk in the pill names `~barmul` as
+publisher, so a newer desk installed on barmul (e.g. Drive) propagates to
+sponsees over Clay once they can reach it — which the install above makes
+immediate.
