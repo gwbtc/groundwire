@@ -1237,17 +1237,23 @@ cmd_stop() {
     kill "$p" 2>/dev/null || true
     info "SIGTERM to vere (pid $p); the serf exits with it and the pier replays"
   done
+  # Wait for the exit and VERIFY it. The old 60 s grace printed "stopped"
+  # while vere (still writing a 4 GB snapshot) ran on for minutes, holding
+  # the pier and the HTTP port -- and the next boot.sh collided with it.
   local vwait=0
-  while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$vwait" -lt 60 ]; do
-    sleep 1; vwait=$((vwait+1))
+  while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$vwait" -lt 900 ]; do
+    sleep 2; vwait=$((vwait+2))
+    [ $((vwait % 60)) -eq 0 ] && info "still waiting for vere to exit (${vwait}s; snapshot write)"
   done
-  if [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ]; then
-    warn "vere is still exiting after 60s (snapshot write); it will finish on its own"
-  fi
   for p in $(gwl_sidecar_pids); do
     kill "$p" 2>/dev/null || true
     info "stopped sidecar (pid $p)"
   done
+  if [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ]; then
+    die "vere (pid $(gwl_king_pid)) has not exited after ${vwait}s. It still holds the
+    pier; do NOT start another ship on it. Check with:  $SELF --status --comet '$COMET'
+    and re-run --stop once it is gone. Refusing to print 'stopped' while it runs."
+  fi
   good "stopped. The pier is untouched; re-run boot.sh to bring it back."
 }
 
@@ -1514,9 +1520,21 @@ cmd_install() {
     info "your comet is minted, on chain, and its peer-discovery opt-in is set."
     local mp mwaited=0
     for mp in $(gwl_king_pid); do kill "$mp" 2>/dev/null || true; done
-    while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$mwaited" -lt 60 ]; do
-      sleep 1; mwaited=$((mwaited+1))
+    # A 4 GB loom can take minutes to write its final snapshot. Wait for the
+    # exit and VERIFY it: on the first real run the old 60 s grace printed
+    # "It is NOT running right now" while vere ran on for 6+ minutes, still
+    # bound to the HTTP port, and the user's next `boot.sh --comet` collided
+    # with it. Never remove the pier lock while a vere still holds the pier.
+    while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$mwaited" -lt 900 ]; do
+      sleep 2; mwaited=$((mwaited+2))
+      [ $((mwaited % 60)) -eq 0 ] && info "still waiting for vere to exit (${mwaited}s; snapshot write)"
     done
+    if [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ]; then
+      die "vere (pid $(gwl_king_pid)) has not exited after ${mwaited}s. The comet IS
+    minted and on chain; the ship is still running. Stop it with
+      $GW_DIR/boot.sh --stop --comet '$COMET'
+    and start it with --detach when it is gone. Refusing to pretend it stopped."
+    fi
     rm -f "$GW_PIER/.vere.lock"
     write_ship_readme
     printf '\n'
