@@ -25,7 +25,7 @@ confidential comets):
 
 ```bash
 gh release list -R gwbtc/urbit | grep groundwire-rc | head -1
-# e.g. groundwire-rc-2026.9.10_2
+# e.g. groundwire-rc-2026.9.10_4
 ```
 
 ## The sponsor — nothing to memorize
@@ -56,13 +56,15 @@ One hard constraint shapes the recipe: `boot.sh --mint` reads its prompts from
 survives your SSH connection, and your Claude drives it with `send-keys` and
 reads it from a log. (This is exactly how the ops campaign drove ships.)
 
-**Use `groundwire-rc-2026.9.10_2` or newer.** Earlier RCs have one or both of:
+**Use `groundwire-rc-2026.9.10_4` or newer.** Earlier RCs have one or both of:
 a `gwlib.sh` whose peer seeding pokes a renamed mark (the light client never
 gets a peer and sync never starts — fixed in 2026.9.10), and a Causeway that
 does not record the sponsor's attestation in the spawn proof (the comet can't
 reach its sponsor until its own sync finishes, hours later, and the Gevulot
 pane reads "SPONSOR none" the whole time — fixed in 2026.9.10_2; see "How a
-fresh comet finds its sponsor" below).
+fresh comet finds its sponsor" below). 2026.9.10_4 adds the peer-seeding fixes
+from the second real mint: the seeding thread no longer crashes on its own
+Hoon literal, and the supervisor's post-crash re-seed can resolve DNS.
 
 **Droplet prerequisites** (learned the hard way on the first real run): a stock
 4 GB DigitalOcean droplet is *not* enough on its own. The comet miner maps an
@@ -92,7 +94,7 @@ S 'apt-get update -qq && apt-get install -y -qq tmux python3-venv
 #      this the mint sits silently waiting for an address nobody can see.
 S 'cat > ~/mint.sh <<'"'"'EOF'"'"'
 PYTHONUNBUFFERED=1 bash ~/boot.sh --mint --headless --detach \
-  --version groundwire-rc-2026.9.10_2 \
+  --version groundwire-rc-2026.9.10_4 \
   --sponsor "~barmul-bolmet-ronlus-lighul--rovtun-satryc-moclug-daplyd" 2>&1 | tee ~/mint.log
 EOF
 chmod +x ~/mint.sh'
@@ -119,7 +121,7 @@ S 'tmux send-keys -t mint "<the twelve words>" Enter'
 #    watching the sync). Pass the SAME --version as the mint: boot.sh now pins
 #    the installed release by itself, but say it anyway -- an older boot.sh
 #    resolved "latest" to the daily and overwrote bin/ under a running pier.
-S "bash ~/boot.sh --detach --version groundwire-rc-2026.9.10_2 --comet '<the @p it printed>'"
+S "bash ~/boot.sh --detach --version groundwire-rc-2026.9.10_4 --comet '<the @p it printed>'"
 S "bash ~/boot.sh --status --comet '<@p>'; bash ~/boot.sh --code --comet '<@p>'"
 ```
 
