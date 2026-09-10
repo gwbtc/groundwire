@@ -56,39 +56,73 @@ One hard constraint shapes the recipe: `boot.sh --mint` reads its prompts from
 survives your SSH connection, and your Claude drives it with `send-keys` and
 reads it from a log. (This is exactly how the ops campaign drove ships.)
 
+**Droplet prerequisites** (learned the hard way on the first real run): a stock
+4 GB DigitalOcean droplet is *not* enough on its own. The comet miner maps an
+**8 GB** loom and the ship another 4 GB, so add **8 GB of swap**; and Causeway
+needs **`python3-venv`**, which Ubuntu images omit. Step 1 below does both.
+
 ```bash
-H=root@<DROPLET_IP>; K=~/.ssh/<your-claude-key>
-S="ssh -o BatchMode=yes -i $K $H"
+# NB: a shell FUNCTION, not a string variable. `S="ssh …"; $S cmd` breaks under
+# zsh (macOS default): zsh does not word-split an unquoted variable, so it
+# tries to run one command literally named "ssh -o BatchMode=yes …".
+S() { ssh -o BatchMode=yes -i ~/.ssh/<your-claude-key> root@<DROPLET_IP> "$@"; }
 
-# 1. one-time setup on the droplet: tmux + boot.sh from the branch
-$S 'command -v tmux >/dev/null || (apt-get update -qq && apt-get install -y -qq tmux)
-    curl -fsSL -o ~/boot.sh https://raw.githubusercontent.com/gwbtc/groundwire/hd/cc-landing/causeway/public/boot.sh'
+# 1. one-time setup on the droplet: tmux, python3-venv, 8 GB swap, boot.sh
+S 'apt-get update -qq && apt-get install -y -qq tmux python3-venv
+   swapon --show | grep -q swapfile || {
+     fallocate -l 8G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+     echo "/swapfile none swap sw 0 0" >> /etc/fstab; }
+   curl -fsSL -o ~/boot.sh https://raw.githubusercontent.com/gwbtc/groundwire/hd/cc-landing/causeway/public/boot.sh
+   free -m | grep Swap'
 
-# 2. a wrapper script, so the sponsor's leading ~ is quoted once and never
-#    tilde-expanded by a shell (a bare ~barmul... is "no such user" to bash)
-$S 'cat > ~/mint.sh <<'"'"'EOF'"'"'
-bash ~/boot.sh --mint --headless --detach \
+# 2. a wrapper script. Two things it exists for:
+#    - the sponsor's leading ~ is quoted once, so no shell ever tilde-expands
+#      it (a bare ~barmul... is "no such user" to bash);
+#    - PYTHONUNBUFFERED=1. Causeway's stdout is a PIPE here (tee), and Python
+#      block-buffers a pipe: the phrase prompt shows (input() flushes) but the
+#      FUNDING ADDRESS, printed just before a polling loop, never does. Without
+#      this the mint sits silently waiting for an address nobody can see.
+S 'cat > ~/mint.sh <<'"'"'EOF'"'"'
+PYTHONUNBUFFERED=1 bash ~/boot.sh --mint --headless --detach \
   --version groundwire-rc-2026.9.9 \
   --sponsor "~barmul-bolmet-ronlus-lighul--rovtun-satryc-moclug-daplyd" 2>&1 | tee ~/mint.log
 EOF
 chmod +x ~/mint.sh'
 
 # 3. start the mint in tmux (gives it the tty it needs; survives disconnects)
-$S 'tmux new -d -s mint && tmux send-keys -t mint "bash ~/mint.sh" Enter'
+S 'tmux new -d -s mint && tmux send-keys -t mint "bash ~/mint.sh" Enter'
 
 # 4. drive it by polling the log (read-only) and answering with send-keys
-$S 'tail -40 ~/mint.log'
+S 'tail -40 ~/mint.log'
 #   a) it prints a 12-word RECOVERY PHRASE, then "Please re-enter your seed
 #      phrase to confirm you wrote it down" -> save the words, then type them back:
-$S 'tmux send-keys -t mint "<the twelve words>" Enter'
-#   b) it prints a bc1p... FUNDING ADDRESS, then "Waiting for funding
-#      transaction to confirm..." -> hand the address to Trent; keep polling
-#      the log every few minutes. Nothing to type: it watches the chain itself.
-#   c) on confirmation it mines, spawns, bakes the feed, boots --detach, and exits.
+S 'tmux send-keys -t mint "<the twelve words>" Enter'
+#   b) it prints a bc1p... FUNDING ADDRESS, then "Polling mempool.space for
+#      confirmation..." -> hand the address to Trent; keep polling the log every
+#      few minutes. Nothing to type: it watches the chain itself.
+#   c) on confirmation it mines (a few minutes), broadcasts the spawn, and asks
+#      you to re-enter the phrase ONCE MORE ("last chance") -> same send-keys.
+#   d) it then waits for the spawn tx to confirm (~10-60 min), bakes the feed,
+#      boots the ship once to set its peer-discovery opt-in, and STOPS it.
+#      The mint ends with the ship NOT running. That is by design.
 
-# 5. verify
-$S 'bash ~/boot.sh --status; bash ~/boot.sh --code'
+# 5. run the ship, then verify (a plain ssh is fine here: --detach needs no tty)
+S "bash ~/boot.sh --detach --comet '<the @p it printed>'"
+S "bash ~/boot.sh --status --comet '<@p>'; bash ~/boot.sh --code --comet '<@p>'"
 ```
+
+**If the mint dies after the address was funded** (the miner ran out of
+memory, the box rebooted, anything): do not start a fresh mint — that strands
+the sats at an address nothing watches. Add `--resume` to the wrapper's
+`boot.sh` line and run it again; it asks for the phrase you saved and picks up
+the funded address.
+
+**Before ever killing a process on the droplet, look at `ps` first.** A
+`pgrep -c` count includes the `bash -c` wrapper that ssh itself runs, so "more
+than one" does not mean a stale copy exists. And check `pgrep -a -f 'gw-vere -t'`
+before a second `boot.sh --comet`: `boot.sh --stop` currently reports "stopped"
+after a 60 s grace even when vere is still exiting, and two boots on one pier
+collide on port 8080.
 
 What happens, in order:
 
@@ -103,8 +137,9 @@ What happens, in order:
      identity can never be rotated.)
    - **→ Send the funding address to Trent.** He sends the spawn sats. This is
      the one manual checkpoint.
-3. On confirmation it bakes the custody log into the boot feed and boots the
-   comet, detached.
+3. On confirmation it bakes the custody log into the boot feed, boots the comet
+   **once** to set its `%gevulot` peer-discovery opt-in, then **stops it** and
+   prints the run command. You start it: `boot.sh --detach --comet '<@p>'`.
 
 ## Verify it worked
 

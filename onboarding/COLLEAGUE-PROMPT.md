@@ -16,21 +16,37 @@ droplet's address and `<KEY>` with the SSH private key authorized on it.
 > The mint (`boot.sh --mint`) **needs a real terminal** — it reads prompts from
 > `/dev/tty` — so a plain `ssh host 'command'` will fail. Run it inside a
 > **tmux session on the droplet** and drive it from here, exactly as the guide's
-> "flow" section shows: install tmux if missing, fetch `boot.sh` from the
-> branch, write the `~/mint.sh` wrapper (the guide gives it verbatim — the
-> sponsor's leading `~` must be quoted inside the file), start it in tmux, then
-> poll `~/mint.log` and answer with `tmux send-keys`.
+> "flow" section shows, **using its commands verbatim** — they encode fixes that
+> are easy to get wrong (a shell *function* for ssh, not a string variable;
+> `python3-venv` and 8 GB of swap installed first; the sponsor's leading `~`
+> quoted inside the wrapper file; `PYTHONUNBUFFERED=1` so the funding address
+> actually reaches the log). Start it in tmux, then poll `~/mint.log` and answer
+> with `tmux send-keys`.
 >
 > Hard rules:
 > - It prints a **12-word recovery phrase** and asks you to re-enter it. Save
 >   the words to a private local file (`chmod 600`) and tell me you did, then
 >   type them back with `tmux send-keys`. That phrase is the *only* key that can
->   ever rekey this comet (the ship boots from a separate feed file).
+>   ever rekey this comet (the ship boots from a separate feed file). It asks
+>   for the phrase a **second time** right after the spawn is broadcast — answer
+>   that the same way.
 > - It prints a **Bitcoin funding address** (bc1p…) and waits. **Stop and give
 >   me that address** so I can pass it to the person funding it. **Do not** fund
 >   it yourself, invent or broadcast a transaction, or use a faucet. Nothing to
->   type — it watches the chain. Poll `~/mint.log` every few minutes; once the
->   funding confirms it mines, spawns, boots, and exits on its own.
+>   type — it watches the chain. Poll `~/mint.log` every few minutes.
+> - If the mint dies **after** the address was funded, do **not** start a fresh
+>   mint (that strands the sats). Re-run it with `--resume` as the guide
+>   describes; it asks for the saved phrase and picks up the funded address.
+> - **The mint ends with the ship stopped — that is by design.** It boots once to
+>   set the peer-discovery opt-in, then stops and prints the run command. Start
+>   it with `bash ~/boot.sh --detach --comet '<@p>'` over plain ssh (no tmux
+>   needed), then verify. Before that, check `pgrep -a -f 'gw-vere -t'`: if a
+>   vere from the mint is still exiting, wait for it — two boots on one pier
+>   collide.
+> - **Never kill a process on the droplet from a `pgrep` count.** ssh runs your
+>   command inside a `bash -c` wrapper that matches the same pattern, so the
+>   count over-reads by one. Look at `ps -eo pid,etime,args` and reason about
+>   the actual pids before touching anything.
 > - After boot the Bitcoin light-client sync takes a **few hours** — expected,
 >   not a hang.
 >
