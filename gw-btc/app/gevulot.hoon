@@ -346,16 +346,21 @@
 ::  +peer-status: the UI/driver state of an installed peer.
 ::    %confirmed -- %gw-btc has verified it on chain.
 ::    %syncing   -- our light client is not synced; we trust it for now.
-::    %pending   -- synced; re-verification is under way (tries left).
+::    %checking  -- synced; ITS verification is running right now.
+::    %queued    -- synced; waiting for the verifier's single slot (some
+::                  other ship's verification is running).  Used to be
+::                  shown as "re-checking" too, which read as if this
+::                  peer's check were the slow thing.
 ::    %failed    -- synced and exhausted; never confirmed (stale or forged).
 ::
 ++  peer-status
-  |=  [who=@p conf=(set @p) synced=? p=peer:gev]
-  ^-  ?(%confirmed %syncing %pending %failed)
+  |=  [who=@p conf=(set @p) synced=? infl=(set @p) p=peer:gev]
+  ^-  ?(%confirmed %syncing %checking %queued %failed)
   ?:  (peer-confirmed who conf)  %confirmed
   ?.  synced  %syncing
+  ?:  (~(has in infl) who)  %checking
   ?:  (gte tries.p max-tries)  %failed
-  %pending
+  %queued
 ::
 ::  +poke-gw-install: hand a trusted peer pass to %gw-btc for an
 ::  offline (no-fetch, never-snub) install into jael.
@@ -621,7 +626,7 @@
         ;p.sub: identity control pane
         ;+  (status-card rdy spo gw-scan gw-walks)
         ;*  ?~  spo  ~
-            :~  (sponsee-section u.spo conf synced.rdy)
+            :~  (sponsee-section u.spo conf synced.rdy gw-inflight)
             ==
         ;*  ?.  am-sponsor  ~
             :~  (sponsor-section spees)
@@ -674,7 +679,7 @@
   ?.  indexing.u.sc
     ;span.v.st.st-wait: not started
   ?:  (gte cursor.u.sc settled)
-    ;span.v.st.st-ok: complete at block {(scow %ud cursor.u.sc)}, {(scow %ud points.u.sc)} public point(s)
+    ;span.v.st.st-ok: complete at block {(scow %ud cursor.u.sc)}; {(scow %ud points.u.sc)} identit(ies) indexed
   =/  left=@ud  (sub settled cursor.u.sc)
   =/  done=@ud  (sub cursor.u.sc (min cursor.u.sc epoch.u.sc))
   ;span.v.st.st-wait
@@ -716,7 +721,7 @@
   ;span(class ?:(synced.rdy "v st st-ok" "v st st-wait")): {(weld txt tiptxt)}
 ::
 ++  sponsee-section
-  |=  [spo=@p conf=(set @p) synced=?]
+  |=  [spo=@p conf=(set @p) synced=? infl=(set @p)]
   ^-  manx
   ;div.card
     ;h2: As a sponsee
@@ -757,11 +762,11 @@
         ;button.ghost.small(type "submit"): Re-check all on chain now
       ==
     ==
-    ;+  (installed-list conf synced)
+    ;+  (installed-list conf synced infl)
   ==
 ::
 ++  installed-list
-  |=  [conf=(set @p) synced=?]
+  |=  [conf=(set @p) synced=? infl=(set @p)]
   ^-  manx
   =/  peers  ~(tap by installed)
   ?~  peers
@@ -770,7 +775,7 @@
     ;h3: Installed peers ({(scow %ud (lent peers))})
     ;*  %+  turn  peers
         |=  [who=@p p=peer:gev]
-        =/  st  (peer-status who conf synced p)
+        =/  st  (peer-status who conf synced infl p)
         ;div.peer
           ;div.peer-id
             ;span.patp: {(scow %p who)}
@@ -786,22 +791,24 @@
   ==
 ::
 ++  status-label
-  |=  st=?(%confirmed %syncing %pending %failed)
+  |=  st=?(%confirmed %syncing %checking %queued %failed)
   ^-  tape
   ?-  st
     %confirmed  "verified on chain"
     %syncing    "trusted — awaiting sync"
-    %pending    "trusted — re-checking"
+    %checking   "trusted — verifying on chain now"
+    %queued     "trusted — queued for verification"
     %failed     "unconfirmed"
   ==
 ::
 ++  status-class
-  |=  st=?(%confirmed %syncing %pending %failed)
+  |=  st=?(%confirmed %syncing %checking %queued %failed)
   ^-  tape
   ?-  st
     %confirmed  "st st-ok"
     %syncing    "st st-wait"
-    %pending    "st st-wait"
+    %checking   "st st-wait"
+    %queued     "st st-wait"
     %failed     "st st-bad"
   ==
 ::
