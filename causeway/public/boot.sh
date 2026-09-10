@@ -772,8 +772,13 @@ boot_ship() {
   # comet discovers peers without waiting for its own light client to
   # sync.  The opt-in itself is only set on a fresh mint (PEER_DISCOVERY),
   # never on a plain restart, and never if the user unticked the box.
+  # These pokes WAIT for their reply (10 min).  A khan client that gives up
+  # while the ship is still working on the reply is what took the king
+  # down on both real mints (gwbtc/vere: conn double-close on a write to a
+  # departed client); until that runtime fix is in every release, never
+  # leave a control-socket request behind.
   if [ "${PEER_DISCOVERY:-0}" = 1 ]; then
-    if gwl_poke gevulot noun '!>([%set-receive %.y])' 30 >/dev/null 2>&1; then
+    if gwl_poke gevulot noun '!>([%set-receive %.y])' 600 >/dev/null 2>&1; then
       info "peer discovery: enabled (%gevulot will accept your sponsor's pushes)"
     else
       warn "could not enable peer discovery in %gevulot; toggle it on later in the Gevulot app"
@@ -800,9 +805,9 @@ boot_ship() {
   # (~fossyd's did, in vere, 2026-09-10).  So the runner command is also
   # the repair.
   if [ -n "${SPONSOR_PASS_HEX:-}" ]; then
-    if gwl_poke gevulot noun "!>([%ingest-peer $(gwl_hoonhex "$SPONSOR_PASS_HEX")])" 90 >/dev/null 2>&1; then
+    if gwl_poke gevulot noun "!>([%ingest-peer $(gwl_hoonhex "$SPONSOR_PASS_HEX")])" 600 >/dev/null 2>&1; then
       info "sponsor: attestation installed (keys + fief in jael)"
-      gwl_poke gevulot noun '!>([%distribute ~])' 30 >/dev/null 2>&1 \
+      gwl_poke gevulot noun '!>([%distribute ~])' 600 >/dev/null 2>&1 \
         && info "sponsor: asked it to broadcast us to its other sponsees" \
         || warn "sponsor: could not send %distribute; use the Gevulot app's Distribute button later"
     else
