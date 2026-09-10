@@ -39,10 +39,14 @@ droplet's address and `<KEY>` with the SSH private key authorized on it.
 >   describes; it asks for the saved phrase and picks up the funded address.
 > - **The mint ends with the ship stopped — that is by design.** It boots once to
 >   set the peer-discovery opt-in, then stops and prints the run command. Start
->   it with `bash ~/boot.sh --detach --comet '<@p>'` over plain ssh (no tmux
->   needed), then verify. Before that, check `pgrep -a -f 'gw-vere -t'`: if a
->   vere from the mint is still exiting, wait for it — two boots on one pier
->   collide.
+>   it with the guide's step-5 command — `bash ~/boot.sh --detach --version
+>   <the same RC tag> --comet '<@p>'` — over plain ssh (no tmux needed), then
+>   verify. Before that, check `pgrep -a -f 'gw-vere -t'`: if a vere from the
+>   mint is still exiting, wait for it — two boots on one pier collide.
+> - If the mint's one-time boot crashes, or `--status` shows `headers 1` /
+>   `live peers 0` minutes after boot, follow the guide's two recovery
+>   sections ("If the mint's one-time boot died", "If sync never starts")
+>   rather than improvising.
 > - **Never kill a process on the droplet from a `pgrep` count.** ssh runs your
 >   command inside a `bash -c` wrapper that matches the same pattern, so the
 >   count over-reads by one. Look at `ps -eo pid,etime,args` and reason about

@@ -259,7 +259,7 @@ while [ $# -gt 0 ]; do
     --dir)        [ $# -ge 2 ] || usagedie "--dir needs a value"; GW_DIR="$2"; shift 2 ;;
     --port)       [ $# -ge 2 ] || usagedie "--port needs a value"; HTTP_PORT="$2"; PORT_EXPLICIT=1; shift 2 ;;
     --ames-port)  [ $# -ge 2 ] || usagedie "--ames-port needs a value"; AMES_PORT="$2"; shift 2 ;;
-    --version)    [ $# -ge 2 ] || usagedie "--version needs a value"; TAG="$2"; shift 2 ;;
+    --version)    [ $# -ge 2 ] || usagedie "--version needs a value"; TAG="$2"; TAG_EXPLICIT=1; shift 2 ;;
     --sha256)     [ $# -ge 2 ] || usagedie "--sha256 needs a value"; EXPECT_SHA="$2"; shift 2 ;;
     --loom)       [ $# -ge 2 ] || usagedie "--loom needs a value"; LOOM="$2"; shift 2 ;;
     --no-bitcoin) DO_BITCOIN=0; shift ;;
@@ -268,7 +268,9 @@ while [ $# -gt 0 ]; do
     --redownload) FORCE_REDOWNLOAD=1; shift ;;
     --status)     MODE="status"; shift ;;
     --code)       MODE="code"; shift ;;
-    --detach)     DETACH=1; shift ;;
+    # A supervised background ship should return promptly: --detach used to
+    # sit in watch_sync for hours, and a driver piping its output saw nothing.
+    --detach)     DETACH=1; DO_WAIT=0; shift ;;
     --stop)       MODE="stop"; shift ;;
     -h|--help)    usage; exit 0 ;;
     *) usagedie "unknown argument: $1" ;;
@@ -768,36 +770,48 @@ boot_ship() {
   # Causeway's peer-discovery opt-in (default on): the moment the ship is
   # up, tell %gevulot to accept attestations its sponsor pushes, so the
   # comet discovers peers without waiting for its own light client to
-  # sync.  Only on a fresh mint (PEER_DISCOVERY set), never a plain
-  # restart, and never if the user unticked the box.
+  # sync.  The opt-in itself is only set on a fresh mint (PEER_DISCOVERY),
+  # never on a plain restart, and never if the user unticked the box.
   if [ "${PEER_DISCOVERY:-0}" = 1 ]; then
     if gwl_poke gevulot noun '!>([%set-receive %.y])' 30 >/dev/null 2>&1; then
       info "peer discovery: enabled (%gevulot will accept your sponsor's pushes)"
     else
       warn "could not enable peer discovery in %gevulot; toggle it on later in the Gevulot app"
     fi
-    # Give jael the sponsor's keys and fief NOW.  Dawn records only the
-    # classic parent, so without this the sponsor is %alien to ames: the
-    # comet cannot announce itself, the sponsor never pushes peers, and
-    # every desk sync queues until the light client has verified the
-    # sponsor on chain -- hours.  %ingest-peer is %gevulot's trusted
-    # install (re-verified on chain once synced); %distribute then asks
-    # the sponsor to broadcast us.  Measured on the first real mint.
-    if [ -n "${SPONSOR_PASS_HEX:-}" ]; then
-      if gwl_poke gevulot noun "!>([%ingest-peer $(gwl_hoonhex "$SPONSOR_PASS_HEX")])" 90 >/dev/null 2>&1; then
-        info "sponsor: attestation installed (keys + fief in jael)"
-        gwl_poke gevulot noun '!>([%distribute ~])' 30 >/dev/null 2>&1 \
-          && info "sponsor: asked it to broadcast us to its other sponsees" \
-          || warn "sponsor: could not send %distribute; use the Gevulot app's Distribute button later"
-      else
-        warn "could not install the sponsor's attestation; paste it into the Gevulot app later"
-      fi
-    else
-      warn "no sponsor attestation in the proof: the ship will not reach its sponsor
-    until its light client has verified it on chain. Paste the sponsor's
-    attestation into the Gevulot app to fix that now."
-    fi
     PEER_DISCOVERY=0
+  fi
+  # The runner path has no mint context: read the sponsor's attestation
+  # from the proof save_proof kept beside the pier.
+  if [ -z "${SPONSOR_PASS_HEX:-}" ] && [ -s "$GW_DIR/var/${NAME}.proof.json" ]; then
+    PROOF_SEEN=1
+    SPONSOR_PASS_HEX="$(sed -n 's/.*"sponsor_pass_hex"[[:space:]]*:[[:space:]]*"0x\([0-9a-fA-F]*\)".*/\1/p' "$GW_DIR/var/${NAME}.proof.json" | head -1)"
+  fi
+  # Give jael the sponsor's keys and fief NOW.  Dawn records only the
+  # classic parent, so without this the sponsor is %alien to ames: the
+  # comet cannot announce itself, the sponsor never pushes peers, and
+  # every desk sync queues until the light client has verified the
+  # sponsor on chain -- hours.  %ingest-peer is %gevulot's trusted
+  # install (re-verified on chain once synced); %distribute then asks
+  # the sponsor to broadcast us.  Measured on the first real mint.
+  #
+  # On EVERY boot, not just the mint's: both pokes are idempotent (a peer
+  # already held is refreshed; the roster is a set), and the mint's
+  # one-time boot is exactly the one that can die before reaching them
+  # (~fossyd's did, in vere, 2026-09-10).  So the runner command is also
+  # the repair.
+  if [ -n "${SPONSOR_PASS_HEX:-}" ]; then
+    if gwl_poke gevulot noun "!>([%ingest-peer $(gwl_hoonhex "$SPONSOR_PASS_HEX")])" 90 >/dev/null 2>&1; then
+      info "sponsor: attestation installed (keys + fief in jael)"
+      gwl_poke gevulot noun '!>([%distribute ~])' 30 >/dev/null 2>&1 \
+        && info "sponsor: asked it to broadcast us to its other sponsees" \
+        || warn "sponsor: could not send %distribute; use the Gevulot app's Distribute button later"
+    else
+      warn "could not install the sponsor's attestation; paste it into the Gevulot app later"
+    fi
+  elif [ "${PROOF_SEEN:-0}" = 1 ]; then
+    warn "no sponsor attestation in the proof: the ship will not reach its sponsor
+    until its light client has verified it on chain. Paste the sponsor's
+    attestation into the Gevulot app to fix that now (TEAM-ONBOARDING.md)."
   fi
 }
 
@@ -1035,6 +1049,15 @@ seed_peers() {
         die "%%bitcoin-client rejected the peer poke: $(printf '%s' "$reply" | grep -oE '%(bad-poke|poke-fail)[^]]{0,60}' | head -1)
     The peer-add mark in gwlib.sh does not match this release's %bitcoin-client;
     the light client will never get a peer. Update gwlib.sh (release) and re-run." ;;
+      *thread-fail*)
+        # The thread itself crashed -- a bad Hoon literal, not a busy ship.
+        # On ~fossyd's mint every batch died this way (a space after `~[`)
+        # and this line said "continuing" six times.  Say what the ship said.
+        printf 'CRASHED\n'
+        die "the peer-seeding thread crashed: $(thread_error_text "$reply")
+    Nothing was seeded; the light client will not start. This is a bug in
+    gwlib.sh's generated Hoon, not the ship. Seed by hand (TEAM-ONBOARDING.md,
+    \"sync never starts\") and report it." ;;
       *%avow*) printf 'ok\n' ;;
       *)       printf 'no reply (the ship may be busy; continuing)\n' ;;
     esac
@@ -1042,6 +1065,28 @@ seed_peers() {
     [ "$i" -lt "$SEED_BATCHES" ] && sleep 30
   done
   good "seeded $(( i * SEED_BATCH_SIZE )) peer addresses in $i batches"
+  # Prove it took: "seeded N" with 0 live peers is the failure mode that
+  # looks like a slow sync.  One log-info poke and a look at the answer.
+  local live tries=0
+  while [ "$tries" -lt 6 ]; do
+    gwl_log_info; sleep 10; tries=$(( tries + 1 ))
+    live="$(gwl_log_last live-earth-peers)"
+    [ "${live:-0}" -gt 0 ] 2>/dev/null && break
+  done
+  if [ "${live:-0}" -gt 0 ] 2>/dev/null; then
+    good "light client has $live live peer(s); header sync is under way"
+  else
+    warn "no live Bitcoin peers a minute after seeding. Sync has NOT started.
+    Check $SELF --status --comet '$COMET' in a few minutes; if 'live peers'
+    is still 0, seed by hand (TEAM-ONBOARDING.md, \"sync never starts\")."
+  fi
+}
+
+# The ship reports a crashed thread as a tang of %leaf tapes, each a list
+# of byte values.  Render the first one so the reason is readable.
+thread_error_text() {
+  printf '%s' "$1" | grep -oE '%leaf( [0-9]+)+' | head -1 \
+    | tr ' ' '\n' | grep -E '^[0-9]+$' | awk '{ printf "%c", $1 }'
 }
 
 start_supervisor() {
@@ -1538,6 +1583,23 @@ cmd_install() {
 
   detect_platform
   preflight
+  # Never swap the release under an existing install by default.  Without
+  # --version this used to resolve "latest" -- the daily -- and overwrote
+  # bin/, lib/ and pills/ beneath a pier booted from an RC (~fossyd's run;
+  # harmless only because that day's binaries happened to be identical).
+  # The install remembers its release; an explicit --version still wins.
+  if [ "${TAG_EXPLICIT:-0}" = 0 ]; then
+    local pinned=""
+    if [ -s "$GW_DIR/var/mint/release-tag" ]; then
+      pinned="$(tr -d " \t\r\n" < "$GW_DIR/var/mint/release-tag")"
+    elif [ -s "$GW_DIR/var/release.txt" ]; then
+      pinned="$(sed -n 's/^tag=//p' "$GW_DIR/var/release.txt" | head -1)"
+    fi
+    if [ -n "$pinned" ]; then
+      TAG="$pinned"
+      info "using the installed release: $TAG (change it with an explicit --version)"
+    fi
+  fi
   resolve_tag
   fetch_release
   install_release
@@ -1621,7 +1683,7 @@ cmd_install() {
   if [ "$DO_WAIT" = 1 ]; then
     watch_sync
   else
-    step "Running (--no-wait)"
+    step "Running${DETACH:+ (detached)}"
     info "sync is under way; check on it with:  $SELF --status --comet '$COMET'"
   fi
   summary_lines

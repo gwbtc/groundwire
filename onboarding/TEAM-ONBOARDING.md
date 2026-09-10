@@ -114,10 +114,47 @@ S 'tmux send-keys -t mint "<the twelve words>" Enter'
 #      boots the ship once to set its peer-discovery opt-in, and STOPS it.
 #      The mint ends with the ship NOT running. That is by design.
 
-# 5. run the ship, then verify (a plain ssh is fine here: --detach needs no tty)
-S "bash ~/boot.sh --detach --comet '<the @p it printed>'"
+# 5. run the ship, then verify (a plain ssh is fine here: --detach needs no
+#    tty, and it returns as soon as the ship is up -- it no longer sits
+#    watching the sync). Pass the SAME --version as the mint: boot.sh now pins
+#    the installed release by itself, but say it anyway -- an older boot.sh
+#    resolved "latest" to the daily and overwrote bin/ under a running pier.
+S "bash ~/boot.sh --detach --version groundwire-rc-2026.9.10_2 --comet '<the @p it printed>'"
 S "bash ~/boot.sh --status --comet '<@p>'; bash ~/boot.sh --code --comet '<@p>'"
 ```
+
+**If the mint's one-time boot died** (seen once: vere segfaulted right after
+`ames: missing peer ~daplyd on new sponsor, skip` at first boot; the pier was
+fine): just run step 5. The runner command re-sends the sponsor setup
+(`%ingest-peer` + `%distribute`) on every boot now, so nothing is lost. Then
+turn peer discovery ON in the Gevulot pane (the one poke the runner does not
+repeat), or from the droplet:
+
+```bash
+export GW_DIR=/root/.groundwire SOCK_TOOL=python3
+. ~/.groundwire/var/<comet>.env; . ~/.groundwire/lib/gwlib.sh
+gwl_poke gevulot noun '!>([%set-receive %.y])' 30
+```
+
+**If sync never starts** — `boot.sh --status` shows `headers 1` and
+`live peers 0` a few minutes after boot — peer seeding failed (boot.sh now
+dies loudly when its seeding thread crashes and warns when no peer is live a
+minute later; an older one printed "no reply … continuing" and moved on).
+Seed by hand — the light client only ever connects to addresses poked in,
+and it requires peers that serve compact filters (the `x49.*` DNS seeds):
+
+```bash
+export GW_DIR=/root/.groundwire SOCK_TOOL=python3
+. ~/.groundwire/var/<comet>.env; . ~/.groundwire/lib/gwlib.sh
+gwl_pool_fill 2                       # +N fresh x49 addresses into var/peerpool.txt
+for ip in $(gwl_take_peers 20); do
+  gwl_poke bitcoin-client bitcoin-client-connect-peer "!>([%ipv4 $(gwl_ip_hoon $ip) 8.333])" 20 | tail -1
+done
+sleep 60; gwl_log_info; sleep 5; tail -200 ~/.groundwire/var/<comet>.log | grep -E "live-earth-peers|\[%headers "
+```
+
+`live-earth-peers` above 0 and `%headers` climbing means it took. Peers that
+connect and immediately close are nodes without compact filters — expected.
 
 **If the mint dies after the address was funded** (the miner ran out of
 memory, the box rebooted, anything): do not start a fresh mint — that strands
