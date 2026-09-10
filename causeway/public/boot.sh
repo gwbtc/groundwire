@@ -776,6 +776,27 @@ boot_ship() {
     else
       warn "could not enable peer discovery in %gevulot; toggle it on later in the Gevulot app"
     fi
+    # Give jael the sponsor's keys and fief NOW.  Dawn records only the
+    # classic parent, so without this the sponsor is %alien to ames: the
+    # comet cannot announce itself, the sponsor never pushes peers, and
+    # every desk sync queues until the light client has verified the
+    # sponsor on chain -- hours.  %ingest-peer is %gevulot's trusted
+    # install (re-verified on chain once synced); %distribute then asks
+    # the sponsor to broadcast us.  Measured on the first real mint.
+    if [ -n "${SPONSOR_PASS_HEX:-}" ]; then
+      if gwl_poke gevulot noun "!>([%ingest-peer $(gwl_hoonhex "$SPONSOR_PASS_HEX")])" 90 >/dev/null 2>&1; then
+        info "sponsor: attestation installed (keys + fief in jael)"
+        gwl_poke gevulot noun '!>([%distribute ~])' 30 >/dev/null 2>&1 \
+          && info "sponsor: asked it to broadcast us to its other sponsees" \
+          || warn "sponsor: could not send %distribute; use the Gevulot app's Distribute button later"
+      else
+        warn "could not install the sponsor's attestation; paste it into the Gevulot app later"
+      fi
+    else
+      warn "no sponsor attestation in the proof: the ship will not reach its sponsor
+    until its light client has verified it on chain. Paste the sponsor's
+    attestation into the Gevulot app to fix that now."
+    fi
     PEER_DISCOVERY=0
   fi
 }
@@ -1478,6 +1499,10 @@ cmd_mint() {
   else
     PEER_DISCOVERY=1
   fi
+  # the sponsor's attestation, if Causeway recorded one: installed into jael
+  # at boot so the comet can reach its sponsor before its own light client
+  # has verified it (see boot_ship).
+  SPONSOR_PASS_HEX="$(sed -n 's/.*"sponsor_pass_hex"[[:space:]]*:[[:space:]]*"0x\([0-9a-fA-F]*\)".*/\1/p' "$proof" | head -1)"
 
   step "Baking the custody log into the boot feed"
   info "instant if Causeway already saw the confirmation; otherwise this"

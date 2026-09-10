@@ -3404,12 +3404,17 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
                    "the command line would land in shell history.")
 @click.option("--out-feed", "out_feed", default=None, metavar="PATH",
               help="Write the boot feed to this file (0600) instead of printing it. A feed is a private key; an argument lands in shell history and in the ship's argv.")
+@click.option("--sponsor-pass", "sponsor_pass", default=None, metavar="PATH",
+              help="File holding your sponsor's attestation pass as hex (what it "
+                   "sends peers over ames), recorded in the proof so boot.sh can "
+                   "install it into jael at boot. Not needed for Groundwire's "
+                   "default sponsor, whose pass is built in.")
 @click.option("--assume-saved", is_flag=True, default=False,
               help="Skip the seed-phrase read-back prompts. Scripted runs MUST "
                    "capture this command's output — the generated BIP-39 phrase is "
                    "printed nowhere else, and it controls the coins.")
 def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish, sponsor, fief_arg,
-                   no_route, resume, mnemonic_file, out_feed, assume_saved):
+                   no_route, resume, mnemonic_file, out_feed, sponsor_pass, assume_saved):
     """Generate a fresh BIP-39 wallet, fund it, spawn, and emit a boot one-liner.
 
     The generated seed phrase controls the coins; the comet's identity is the
@@ -3417,7 +3422,8 @@ def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, p
     run_spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish,
                        sponsor=sponsor, fief_arg=fief_arg, no_route=no_route,
                        resume=resume, mnemonic_file=mnemonic_file,
-                       out_feed=out_feed, assume_saved=assume_saved)
+                       out_feed=out_feed, assume_saved=assume_saved,
+                       sponsor_pass=sponsor_pass)
 
 
 @proof.command("show")
@@ -4143,6 +4149,15 @@ def assert_routable(snapshot: dict, no_route: bool = False) -> None:
 #  by the project.  It is a CONVENIENCE DEFAULT, never a silent one: both
 #  faces show it and say whose it is before anything is spent.
 DEFAULT_SPONSOR = "~barmul-bolmet-ronlus-lighul--rovtun-satryc-moclug-daplyd"
+#  The default sponsor's ATTESTATION (its suite-C pass with the xtr custody
+#  log): public data, the same packet it sends any peer over ames.  A freshly
+#  booted comet needs its sponsor's keys and fief in jael before it can reach
+#  it at all -- jael's dawn records only the classic parent -- so Causeway
+#  writes this into the spawn proof and boot.sh hands it to %gevulot
+#  (%ingest-peer) the moment the ship is up.  Without it a new comet cannot
+#  announce itself, its sponsor never pushes peers, and nothing routes until
+#  its own light client has verified the sponsor on chain (hours).
+DEFAULT_SPONSOR_PASS_HEX = "0x5d643c902c6f888d5998a4466c44f357a223a6767a58e8d442ae1e86e2bfc05efe4f95d7c7c02002cc31404092bec700040399a7c0cce1306960e26f749d085305d0a01e40b47a30152505d33887bd15fdcd4dd51e57004006716e129efeba5ace29c3e118634f568ca73ec84d0283695e0d497e9ad9cf9e8770302800cf5910240646175329b7af6f1f4208006267de6c628b3a97351fb9e33c3f9a52f538e569b7f8016c6f888d5998a4466c44f357a223a6767a58e8d442ae1e86e2bfc05efe4f95d7c7c020023b004918dd188b5dd9df01d200c260d2c1c4dee93a10a60ba1403c8168f4602a4a0ba6710f7a2bfb9a9baa3cae2fccc8360691a427b6e7dda90da78fa424102608380d70ff2ef27d8dc503aa5a63"
 
 
 def apply_default_sponsor(sponsor: str | None, fief_arg: str | None,
@@ -4368,6 +4383,7 @@ def _finish_spawn_proof(
     pass_atom: int,
     utxo: dict,
     peer_discovery: bool = True,
+    sponsor_pass_hex: str | None = None,
 ) -> None:
     """Attach the kelvin-9 spawn bookkeeping to a freshly built spawn proof.
 
@@ -4384,12 +4400,21 @@ def _finish_spawn_proof(
     #  boot.sh reads this after boot to enable (or not) %gevulot peer
     #  discovery.  Absent is treated as on, so this only ever turns it OFF.
     proof["peer_discovery"] = peer_discovery
+    #  The sponsor's attestation, so boot.sh can install it into jael on
+    #  trust at boot (see DEFAULT_SPONSOR_PASS_HEX).  An explicit
+    #  --sponsor-pass wins; the built-in one applies only when the snapshot
+    #  actually committed the default sponsor.
+    spo = (proof.get("snapshot") or {}).get("sponsor")
+    if sponsor_pass_hex:
+        proof["sponsor_pass_hex"] = sponsor_pass_hex
+    elif spo is not None and spo == patp_to_int(DEFAULT_SPONSOR):
+        proof["sponsor_pass_hex"] = DEFAULT_SPONSOR_PASS_HEX
 
 
 def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False,
                        sponsor: str | None = None, fief_arg: str | None = None, no_route: bool = False, out_feed: str | None = None,
                        resume: bool = False, mnemonic_file: str | None = None,
-                       assume_saved: bool = False) -> None:
+                       assume_saved: bool = False, sponsor_pass: str | None = None) -> None:
     print()
     print("=" * 60)
     print(f"  CAUSEWAY — {'Public' if publish else 'Confidential'} Comet Spawn (Generate New Wallet)")
@@ -4479,7 +4504,15 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
         publication_pass_atom=pub_pass,
         publication_opening=pub_opening,
     )
-    _finish_spawn_proof(proof, comet=comet, pass_atom=pass_atom, utxo=utxo)
+    spass = None
+    if sponsor_pass:
+        with open(sponsor_pass) as f:
+            spass = f.read().strip()
+        int(spass, 16)  # must be hex
+        if not spass.startswith("0x"):
+            spass = "0x" + spass
+    _finish_spawn_proof(proof, comet=comet, pass_atom=pass_atom, utxo=utxo,
+                        sponsor_pass_hex=spass)
 
     # Sign the PSBT in-process (we have the seed).
     p_signed = psbt_obj

@@ -37,8 +37,8 @@
 ::    check without changing %gw-btc's verdict path.  .tries bounds the
 ::    retry so a permanently unconfirmable entry stops re-poking.
 ::
-/-  gev=gevulot, urb, ord
-/+  default-agent, dbug, server, schooner, cc=gw-btc-pass
+/-  gev=gevulot, urb, ord, sa=self-attestation
+/+  default-agent, dbug, server, schooner, cc=gw-btc-pass, lsa=self-attestation
 ::
 |%
 +$  versioned-state  $%(state-0)
@@ -135,15 +135,39 @@
 ::
 ++  max-tries  3
 ::
-::  +our-sponsor: the ship OUR own jael point names as our sponsor, if any.
-::  A comet with no sponsor projects to itself, which we treat as "none".
+::  +our-sponsor: the sponsor we COMMITTED, if any.
+::
+::    Two sources, in order.  jael's own point, when it names one (a comet
+::    with no sponsor projects to itself, which we treat as "none").  But
+::    jael does not yet record a Groundwire comet's committed sponsor:
+::    dawn writes the classic parent star, so a freshly booted comet's
+::    `sein` is itself.  The sponsor it actually committed is in the
+::    snapshot of the custody log its own baked pass carries (the xtr tail
+::    finalize wrote into the boot feed) -- so fall back to reading that,
+::    from the pass jael holds for us at our current life.  Without this a
+::    fresh comet showed "SPONSOR none" and %distribute was a silent no-op,
+::    so its sponsor never learned to push peers to it (first real mint,
+::    2026-09-10).
 ::
 ++  our-sponsor
   ^-  (unit @p)
   =/  s=@p
     .^(@p %j /(scot %p our.bowl)/sein/(scot %da now.bowl)/(scot %p our.bowl))
-  ?:  =(our.bowl s)  ~
-  `s
+  ?.  =(our.bowl s)  `s
+  =/  res
+    %-  mule  |.
+    =/  lyf=@ud
+      .^(@ud %j /(scot %p our.bowl)/life/(scot %da now.bowl)/(scot %p our.bowl))
+    =/  pas=(unit pass)  (pass-of our.bowl lyf)
+    ?~  pas  ~
+    =/  sat  (from-xtr:lsa our.bowl u.pas)
+    ?~  sat  ~
+    ?~  chain.u.sat  ~
+    =/  last=custody-entry:sa  (rear chain.u.sat)
+    ?~  opening.last  ~
+    sponsor.snapshot.u.opening.last
+  ?:  ?=(%| -.res)  ~
+  p.res
 ::
 ::  +our-sponsees: the comets %gw-btc says we sponsor, with each life
 ::  (so we can read its pass from jael's %deed, which is keyed by life).
