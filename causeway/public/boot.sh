@@ -1002,7 +1002,21 @@ seed_peers() {
     n="$(printf '%s\n' "$batch" | grep -c .)"
     i=$(( i + 1 ))
     printf '    batch %d: %d peers ... ' "$i" "$n"
-    if gwl_add_peers "$batch" >/dev/null 2>&1; then printf 'ok\n'; else printf 'no reply (the ship may be busy; continuing)\n'; fi
+    # Read the ship's actual answer. A poke nack here is not "busy": on the
+    # first real mint every batch nacked `%bad-poke %add-earth-peer` (a
+    # renamed mark), this line printed "no reply ... continuing" 6 times,
+    # the summary said "seeded 150 peers", and the ship sat at 0 peers.
+    local reply
+    reply="$(gwl_add_peers "$batch" 2>/dev/null || true)"
+    case "$reply" in
+      *bad-poke*|*poke-fail*)
+        printf 'REFUSED\n'
+        die "%%bitcoin-client rejected the peer poke: $(printf '%s' "$reply" | grep -oE '%(bad-poke|poke-fail)[^]]{0,60}' | head -1)
+    The peer-add mark in gwlib.sh does not match this release's %bitcoin-client;
+    the light client will never get a peer. Update gwlib.sh (release) and re-run." ;;
+      *%avow*) printf 'ok\n' ;;
+      *)       printf 'no reply (the ship may be busy; continuing)\n' ;;
+    esac
     # Batches of ~25 with a pause. Bulk-adding SIGSEGVs the sidecar.
     [ "$i" -lt "$SEED_BATCHES" ] && sleep 30
   done
