@@ -130,3 +130,42 @@ sponsee's `%from-spawn` index is complete, not just social.
 `%urb-snapshot` (216 lines: publishes `urb-snapshot.jam` over HTTP) is
 deleted with this change, together with its `desk.bill` entry and the
 `%gw-btc` subscription hook that feeds it.
+
+## 9. Invariants: Jael, `urb-state`, and Gevulot must not drift
+
+There are three stores, and "urb-state and Jael becoming disjoint" is the
+bug this design must make impossible, not merely unlikely:
+
+| store | is the truth about | may be written by |
+|---|---|---|
+| **Jael** (`pos.zim.pki`) | which keys this ship will talk to, and at what life | `%verdict` facts from `%gw-btc` (add/update); the forget path (`%stale-notice` today, `%snob-notice` under gwbtc/urbit#72); trusted installs from Gevulot (`%gw-trusted-peer`) |
+| **`%gw-btc` `urb-state`** | what the chain says: verified points (`unv-ids`), the sat index, the scan cursor | the scanner (batches are all-or-nothing) and `+apply-verified` — **never a poke that replaces it** |
+| **Gevulot** | *intent and provenance only*: receive/serving, the broadcast roster (passes it must relay), and per-ship annotations (how a peer was learned, when, tries) | the user and Causeway |
+
+Rules:
+
+1. **Gevulot keeps no peer list of its own.** The "installed peers" section
+   is *derived* on every render from Jael's known set and `%gw-btc`'s
+   verified set; Gevulot's map only annotates ships that appear there.
+   (Today's `installed` map is a third copy and is removed.)
+2. **Every identity is classified, and every class is shown:**
+   `trusted` = in Jael, not in `urb-state` (a Gevulot install awaiting
+   verification — the one *intended*, temporary disjointness, and it says
+   so); `verified` = in both; `indexed-only` = in `urb-state`, not in Jael
+   (should not persist: a verdict is emitted in the same event that indexes
+   a point; if the pane ever shows one, that is a bug to report, and the
+   pane says so).
+3. **No single-store mutation is reachable from the pane or from
+   `boot.sh`.** "Forget" becomes one operation that removes the annotation,
+   runs `+forget-points`, and sends the forget to Jael — or it is not
+   offered. `%gw-index-from` (wholesale replace) is not reachable; re-index
+   is a cursor rewind that keeps `unv-ids`, so the sponsor-existence set
+   and Jael stay aligned throughout.
+4. **Crash safety is Arvo's, and we rely on it:** a scan batch, its
+   `urb-state` change, and the `%verdict` cards it emits are one event;
+   Jael's application of those cards is later events in the same log.
+   Replay reproduces the same sequence. No store is updated outside an
+   event.
+5. **A self-check the pane can run** (and shows in the debug card): count
+   the three classes and any `indexed-only` identity, so drift is visible
+   the moment it exists rather than discovered a day later in a log.
