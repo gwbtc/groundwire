@@ -770,11 +770,27 @@
 ::  scan is the one that pins the CPU for hours on a fresh comet, and it
 ::  used to be invisible behind the word "indexing".
 ::
+::  +when-txt: a @da as "2026-09-11 03:06" -- the pane's dates are for a
+::  human glancing at provenance, not for parsing.
+::
+++  when-txt
+  |=  da=@da
+  ^-  tape
+  =/  d  (yore da)
+  =/  pad  |=(n=@ud ?:((lth n 10) "0{(scow %ud n)}" (scow %ud n)))
+  "{(a-co:co y.d)}-{(pad m.d)}-{(pad d.t.d)} {(pad h.t.d)}:{(pad m.t.d)}"
+::
+::  +index-span: the public index's row.  A short status pill, then the
+::  provenance as a quiet second line, then (while catching up) a bar and
+::  the numbers -- each its own line, so nothing has to fit in one.
+::
 ++  index-span
   |=  sc=(unit scan)
   ^-  manx
   ?~  sc
-    ;span.v.st.st-wait: no data (older %gw-btc)
+    ;div.v.idx
+      ;span.st.st-wait: no data (older %gw-btc)
+    ==
   =/  org  origin.u.sc
   =/  who=tape
     ?-  decided-by.org
@@ -782,31 +798,54 @@
       %user      "chosen by you"
       %default   "recorded at upgrade"
     ==
-  =/  when=tape  (scow %da at.org)
+  =/  when=tape  (when-txt at.org)
   ?:  ?=(%unstarted mode.org)
-    ;span.v.st.st-wait: not started (waiting for the light client)
+    ;div.v.idx
+      ;span.st.st-wait: not started
+      ;span.idx-meta: waiting for the light client
+    ==
   ?:  ?=(%pending mode.org)
-    ;span.v.st.st-bad: PENDING YOUR DECISION (since {when}) -- see the card below
+    ;div.v.idx
+      ;span.st.st-bad: pending your decision
+      ;span.idx-meta: since {when} -- choose in the Public index card below
+    ==
   =/  origin-txt=tape
     ?-  mode.org
-      %from-spawn   "from my spawn, block {(scow %ud start.org)} ({who}, {when})"
-      %from-height  "from block {(scow %ud start.org)} ({who}, {when})"
-      %from-epoch   "from the epoch, block {(scow %ud start.org)} ({who}, {when})"
+      %from-spawn   "from my spawn block {(scow %ud start.org)}"
+      %from-height  "from block {(scow %ud start.org)}"
+      %from-epoch   "from the epoch, block {(scow %ud start.org)}"
     ==
+  =/  meta=tape  "{origin-txt} · {who}, {when}"
   ?~  tip.u.sc
-    ;span.v.st.st-wait: {origin-txt}; waiting for a chain tip
+    ;div.v.idx
+      ;span.st.st-wait: waiting for a chain tip
+      ;span.idx-meta: {meta}
+    ==
   =/  settled=@ud  (sub u.tip.u.sc (min u.tip.u.sc confirmations.u.sc))
   ?.  indexing.u.sc
-    ;span.v.st.st-wait: {origin-txt}; starts when the light client is synced
+    ;div.v.idx
+      ;span.st.st-wait: starts when the light client is synced
+      ;span.idx-meta: {meta}
+    ==
   ?:  (gte cursor.u.sc settled)
-    ;span.v.st.st-ok: {origin-txt}; complete at block {(scow %ud cursor.u.sc)}; {(scow %ud points.u.sc)} identit(ies) indexed
+    ;div.v.idx
+      ;span.st.st-ok: complete at block {(scow %ud cursor.u.sc)} · {(scow %ud points.u.sc)} identit(ies) indexed
+      ;span.idx-meta: {meta}
+    ==
   =/  left=@ud  (sub settled cursor.u.sc)
   =/  done=@ud  (sub cursor.u.sc (min cursor.u.sc start.org))
-  ;span.v.st.st-wait
-    ; {origin-txt};
-    ; scanning block {(scow %ud cursor.u.sc)} of {(scow %ud settled)}:
-    ; {(scow %ud left)} to go, {(scow %ud done)} done
-    ; ({(scow %ud batch.u.sc)} per batch; the ship is slow until this ends)
+  =/  total=@ud  (add done left)
+  =/  pct=@ud  ?:(=(0 total) 0 (div (mul 100 done) total))
+  ;div.v.idx
+    ;span.st.st-wait: scanning · block {(scow %ud cursor.u.sc)} of {(scow %ud settled)}
+    ;div.bar
+      ;div.bar-fill(style "width:{(scow %ud pct)}%");
+    ==
+    ;span.idx-meta
+      ; {(scow %ud left)} blocks to go · {(scow %ud done)} done ({(scow %ud pct)}%) ·
+      ; {(scow %ud batch.u.sc)} per batch · the ship is slow until this ends
+    ==
+    ;span.idx-meta: {meta}
   ==
 ::
 ::  +index-card: the decisions about the public index that only a human
@@ -1121,7 +1160,13 @@
   .paste input{background:#0c0d10;border:1px solid #2c2d35;border-radius:8px;color:var(--fg);padding:9px;font:13px monospace}
   .statrow{display:flex;align-items:baseline;gap:12px}
   .statrow .k{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.04em;min-width:170px;flex:none}
-  .statrow .v{font:12px monospace;color:var(--fg);word-break:break-all}
+  .statrow .v{font:12px monospace;color:var(--fg);word-break:break-all;min-width:0;flex:1}
+  .statrow .st{white-space:normal;word-break:break-word;display:inline-block;line-height:1.5}
+  .idx{display:flex;flex-direction:column;gap:6px;min-width:0;word-break:normal}
+  .idx .st{align-self:flex-start}
+  .idx-meta{font:12px monospace;color:var(--mut);white-space:normal;word-break:break-word}
+  .bar{height:6px;background:#24252c;border-radius:3px;overflow:hidden;max-width:420px}
+  .bar-fill{height:100%;background:var(--wait);border-radius:3px}
   .peers{margin-top:12px}
   .peer{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid #1f2027}
   .peer-id{display:flex;flex-direction:column;gap:1px;min-width:0}
