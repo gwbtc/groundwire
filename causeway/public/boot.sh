@@ -810,6 +810,13 @@ boot_ship() {
       gwl_poke gevulot noun '!>([%distribute ~])' 600 >/dev/null 2>&1 \
         && info "sponsor: asked it to broadcast us to its other sponsees" \
         || warn "sponsor: could not send %distribute; use the Gevulot app's Distribute button later"
+      # With a reachable sponsor the public index can start at our own
+      # spawn block: everything older arrives as the sponsor's pushes.
+      # %gw-btc ignores this once an index exists, so re-running boot.sh
+      # never changes an index decision (ops/doc/gevulot-state-model.md).
+      gwl_poke gw-btc noun '!>([%index-origin %from-spawn 0 %causeway])' 600 >/dev/null 2>&1 \
+        && info "public index: will start from our spawn block (recorded as set by Causeway)" \
+        || warn "public index: could not record a start; the Gevulot pane will ask you"
     else
       warn "could not install the sponsor's attestation; paste it into the Gevulot app later"
     fi

@@ -151,6 +151,69 @@
       ::  every attestation until then.  Fail-closed, but dead.
       ::
       synced=?
+      ::  .clean: how far each peer's LIVENESS WALK has got.  The walk
+      ::  proves the peer's current sat output unspent by testing one
+      ::  compact filter per block from its last custody entry to the tip;
+      ::  for an identity that spawned long ago that is thousands of
+      ::  fetches, and it used to start from the custody entry on EVERY
+      ::  attempt -- so under load it never finished inside the stuck-job
+      ::  guard, each retry redid the same blocks, and a peer that was in
+      ::  fact perfectly live ended up "unconfirmed" after three tries.
+      ::  "Unspent through height H" is monotone -- once true, always
+      ::  true -- so the thread reports progress here (every few hundred
+      ::  blocks and on completion) and the next walk resumes above .to.
+      ::  Keyed by the custody entry the walk was for: a new hop means a
+      ::  new tip output, and the checkpoint no longer applies.
+      ::
+      clean=(map ship [last=[height=@ud =txid:ord] to=@ud])
+      ::  .origin: where the public index started, and who decided.  The
+      ::  scanner used to bootstrap itself from the kelvin-9 epoch the
+      ::  first time the light client reported synced -- a day of pinned
+      ::  CPU on every fresh comet, chosen by nobody.  Now it starts only
+      ::  where an %index-origin poke told it to (Causeway at boot, or the
+      ::  user in the Gevulot pane), and until one arrives it parks in
+      ::  %pending and says so.  See ops/doc/gevulot-state-model.md.
+      ::
+      origin=index-origin
+      ::  .trusted: peers installed into Jael ON TRUST (%gw-trusted-peer,
+      ::  from %gevulot's sponsor pushes and pastes) that this ship has
+      ::  not yet verified on chain.  Jael cannot be enumerated from
+      ::  userspace, and this agent is the only thing that puts a point of
+      ::  this domain there, so this map plus .unv-ids IS the mirror of
+      ::  what Jael holds through us -- and the one list a control pane
+      ::  may derive from.  A ship leaves it the moment it is verified
+      ::  (+apply-verified) or forgotten (%gw-forget-peer), never
+      ::  otherwise.  ops/doc/gevulot-state-model.md section 9.
+      ::
+      trusted=(map ship [=pass since=@da])
+  ==
+::  $index-origin: the public index's start and its provenance.
+::
+::    %unstarted -- no decision has been asked for yet (fresh agent)
+::    %pending   -- synced, no decision received; the pane shows a card
+::    %from-spawn / %from-height / %from-epoch -- decided; .start is the
+::    first block scanned.  .decided-by is who chose, .at when.
+::
++$  index-origin
+  $:  mode=?(%unstarted %pending %from-spawn %from-height %from-epoch)
+      start=@ud
+      decided-by=?(%causeway %user %default)
+      at=@da
+  ==
+::  $gw-state-15: the shape immediately before .clean and .origin.
+::
++$  gw-state-15
+  $:  urb-state=state:urb
+      indexing=?
+      best=(unit id:block:bc)
+      inflight=(map ship inflight-writ)
+      confidential=(set ship)
+      attested=(map ship sont:ord)
+      next-job=@ud
+      sponsees=(map ship sponsee)
+      declined=(set ship)
+      own=own-custody
+      synced=?
   ==
 ::  $gw-state-14 / -13 / -12 / -11 / -10: the five earlier shapes
 ::
@@ -325,7 +388,11 @@
   ::  start false or the agent comes up believing things it has no
   ::  evidence for.  See $gw-state for why neither is declared `_|`.
   ::
-  :_  this(indexing %.n, synced %.n)
+  ::  .origin likewise: the bunt of its mode union is its LAST member,
+  ::  %from-epoch, with a start of 0 -- which the scanner would crash on
+  ::  at its first synced tick (found by the test suite, 2026-09-10).
+  ::
+  :_  this(indexing %.n, synced %.n, origin [%unstarted 0 %default now.bowl])
   :~  [%pass /anex %arvo %j %anex /writs]
       [%pass /best-block %agent [our.bowl light-client-agent:lca] %watch /best-block]
       (watch-synced our.bowl)
@@ -362,6 +429,21 @@
   ::
   =/  cur  (mole |.(;;(gw-state nou)))
   ?^  cur  `this(state u.cur)
+  ::  -15 is the current shape minus .clean and .origin; every walk simply
+  ::  starts from its custody entry once more, and an index that exists
+  ::  is recorded as what every ship so far did: the epoch bootstrap.
+  ::
+  =/  o15  (mole |.(;;(gw-state-15 nou)))
+  ?^  o15
+    =/  ext=gw-state
+      :*  urb-state.u.o15
+          indexing.u.o15  best.u.o15  inflight.u.o15
+          confidential.u.o15  attested.u.o15
+          next-job.u.o15  sponsees.u.o15  declined.u.o15  own.u.o15
+          synced.u.o15  ~
+          (migrated-origin num.block-id.urb-state.u.o15 now.bowl)  ~
+      ==
+    `this(state ext)
   ::  A -14 state carries .reorg-halt, the scanner's reorg STOP flag.  It
   ::  is dropped, not converted: the scanner no longer halts on a reorg,
   ::  it forgets the points the orphaned blocks were evidence for and
@@ -382,7 +464,8 @@
           indexing.u.o14  best.u.o14  inflight.u.o14
           confidential.u.o14  attested.u.o14
           next-job.u.o14  sponsees.u.o14  declined.u.o14  own.u.o14
-          synced.u.o14
+          synced.u.o14  ~
+          (migrated-origin num.block-id.urb-state.u.o14 now.bowl)  ~
       ==
     ?~  reorg-halt.u.o14  `this(state ext)
     %-  %-  slog
@@ -403,7 +486,8 @@
           indexing.u.o13  best.u.o13  inflight.u.o13
           confidential.u.o13  attested.u.o13
           next-job.u.o13  sponsees.u.o13  declined.u.o13  own.u.o13
-          synced.u.o13
+          synced.u.o13  ~
+          (migrated-origin num.block-id.urb-state.u.o13 now.bowl)  ~
       ==
     `this(state ext)
   ::  A -12 state carries .publicizing, which no longer exists: the block
@@ -419,7 +503,8 @@
           indexing.u.o12  best.u.o12  inflight.u.o12
           confidential.u.o12  attested.u.o12
           next-job.u.o12  sponsees.u.o12  declined.u.o12  own.u.o12
-          synced.u.o12
+          synced.u.o12  ~
+          (migrated-origin num.block-id.urb-state.u.o12 now.bowl)  ~
       ==
     `this(state ext)
   =/  o11  (mole |.(;;(gw-state-11 nou)))
@@ -429,7 +514,8 @@
           indexing.u.o11  best.u.o11  inflight.u.o11
           confidential.u.o11  attested.u.o11
           next-job.u.o11  sponsees.u.o11  declined.u.o11  own.u.o11
-          %.n
+          %.n  ~
+          (migrated-origin num.block-id.urb-state.u.o11 now.bowl)  ~
       ==
     :_  this(state ext)
     ~[(watch-synced our.bowl)]
@@ -438,7 +524,8 @@
     :*  (lift-urb-state urb-state.o)
         indexing.o  best.o  inflight.o  confidential.o
         attested.o  next-job.o  sponsees.o  declined.o
-        *own-custody  %.n
+        *own-custody  %.n  ~
+        (migrated-origin num.block-id.urb-state.o now.bowl)  ~
     ==
   :_  this(state ext)
   ~[(watch-synced our.bowl)]
@@ -485,10 +572,100 @@
     ::  duplicate -- the same peer heard twice, or heard then later seen on
     ::  chain -- never snubs.  This is the sync-wait-free discovery path.
     ::
+    ::  Where the public index should start (see $index-origin).  From
+    ::  boot.sh after it installed our sponsor (%causeway) or from the
+    ::  Gevulot pane (%user).  A no-op once an index exists: re-running
+    ::  boot.sh never changes an index decision.
+    ::
+    ?:  ?=([%index-origin *] q.vase)
+      ?>  =(our src):bowl
+      =/  req
+        ;;  [%index-origin mode=?(%from-spawn %from-height %from-epoch) start=@ud by=?(%causeway %user)]
+        q.vase
+      ?.  ?&(=(0 num.block-id.urb-state) =(~ unv-ids.urb-state))
+        %-  %-  slog  :_  ~
+            leaf+"%gw-btc: %index-origin ignored: already indexing from {<start.origin>} ({<mode.origin>}, {<decided-by.origin>}); cursor {<num.block-id.urb-state>}"
+        `this
+      =/  start=(unit @ud)
+        ?-  mode.req
+          %from-epoch   `gw-epoch
+          %from-height  ?:(=(0 start.req) ~ `start.req)
+          %from-spawn   (own-spawn-height our.bowl now.bowl)
+        ==
+      ?~  start
+        %-  %-  slog  :_  ~
+            leaf+"%gw-btc: %index-origin {<mode.req>} refused: no start height (own custody log empty, or height 0); still {<mode.origin>}"
+        `this
+      =.  origin  [mode.req u.start by.req now.bowl]
+      ?.  ?&(synced ?=(^ best) (gte num.u.best u.start))
+        %-  %-  slog  :_  ~
+            leaf+"%gw-btc: public index will start from block {<u.start>} ({<mode.req>}, decided by {<by.req>}) once the light client is synced"
+        `this
+      %-  %-  slog  :_  ~
+          leaf+"%gw-btc: public index: starting from block {<u.start>} ({<mode.req>}, decided by {<by.req>})"
+      :_  this(urb-state (start-index u.start urb-state), indexing %.y)
+      ~[[%pass /timer %arvo %b %wait now.bowl]]
+    ::  Rewind the scanner to re-read from .height (the pane's "re-index
+    ::  from the epoch").  Keeps every verified identity, the sat index,
+    ::  and everything in Jael; only the cursor moves.  A scanner that is
+    ::  running picks the new cursor up on its next tick; one that is not
+    ::  is started.
+    ::
+    ?:  ?=([%gw-index-rewind *] q.vase)
+      ?>  =(our src):bowl
+      =/  height  ;;(@ud +.q.vase)
+      ?:  |(=(0 height) (gth height +(num.block-id.urb-state)))
+        %-  %-  slog  :_  ~
+            leaf+"%gw-btc: %gw-index-rewind {<height>} refused: cursor is {<num.block-id.urb-state>}"
+        `this
+      %-  %-  slog  :_  ~
+          leaf+"%gw-btc: public index: rewinding from {<num.block-id.urb-state>} to re-read from block {<height>} (verified identities kept)"
+      =.  urb-state  (start-index height urb-state)
+      ?:  indexing  `this
+      :_  this(indexing %.y)
+      ~[[%pass /timer %arvo %b %wait now.bowl]]
+    ::  A liveness walk reporting how far it has got (see $gw-state's
+    ::  .clean).  Only our own threads send this; the checkpoint only ever
+    ::  moves forward, and only for the custody entry it was taken for.
+    ::
+    ?:  ?=([%gw-liveness-progress *] q.vase)
+      ?>  =(our src):bowl
+      =/  pg
+        ;;  [%gw-liveness-progress who=ship last=[height=@ud =txid:ord] to=@ud]
+        q.vase
+      =/  cur  (~(get by clean) who.pg)
+      ?:  ?&  ?=(^ cur)
+              =(last.u.cur last.pg)
+              (gte to.u.cur to.pg)
+          ==
+        `this
+      =.  clean  (~(put by clean) who.pg [last.pg to.pg])
+      `this
     ?:  ?=([%gw-trusted-peer *] q.vase)
       =/  tp  ;;([%gw-trusted-peer who=ship =pass] q.vase)
-      :_  this
-      (install-trusted-peer who.tp pass.tp)
+      =/  cards  (install-trusted-peer who.tp pass.tp)
+      ::  Record it only if it went to Jael, and only while unverified:
+      ::  a verified identity is in .unv-ids, which is the truth for it.
+      =?  trusted  ?&(?=(^ cards) !(~(has by unv-ids.urb-state) who.tp))
+        (~(put by trusted) who.tp [pass.tp now.bowl])
+      [cards this]
+    ::  Forget a peer everywhere at once -- our trusted mirror, our index,
+    ::  and Jael -- so no store can hold it alone.  The ONLY way a peer is
+    ::  removed by hand (ops/doc/gevulot-state-model.md section 9).
+    ::
+    ?:  ?=([%gw-forget-peer *] q.vase)
+      ?>  =(our src):bowl
+      =/  who  ;;(ship +.q.vase)
+      =/  gone  (silt ~[who])
+      =.  trusted  (~(del by trusted) who)
+      =/  fp  (forget-points urb-state confidential attested inflight gone)
+      =:  urb-state     index.fp
+          confidential  confidential.fp
+          attested      attested.fp
+          inflight      inflight.fp
+        ==
+      %-  (slog leaf+"%gw-btc: forgot {(scow %p who)} (trusted mirror, index, and Jael)" ~)
+      [(forget-cards dap.bowl gone) this]
     =/  poke  ;;(jael-poke:urb q.vase)
     ?-    -.poke
         %jael-writ
@@ -850,6 +1027,7 @@
             batch=scan-batch
             indexing=indexing
             points=~(wyt by unv-ids.urb-state)
+            origin=origin
         ==
     ::  What each in-flight verification is waiting on: the height its
     ::  liveness walk started from (the peer's last custody entry), so a
@@ -860,6 +1038,15 @@
     !>  ^-  (map ship [job=@ud top=@ud])
     %-  ~(run by inflight)
     |=(w=inflight-writ [job.w (log-top-height sat.w)])
+    ::  Liveness-walk checkpoints (see $gw-state's .clean); always answers.
+    ::
+      [%x %clean ~]
+    ``noun+!>(clean)
+    ::  Peers in Jael on trust, not yet verified (see $gw-state's .trusted).
+    ::  Ship -> when.  Always answers.
+    ::
+      [%x %trusted ~]
+    ``noun+!>((~(run by trusted) |=([* since=@da] since)))
     ::  Which identities this ship holds CONFIDENTIALLY (so their points
     ::  are withheld from /x/points and from jael's udiffs), and the tip
     ::  each one last attested to.
@@ -955,6 +1142,15 @@
   ::  node for a tip, and with no tip yet there is simply nothing to do.
       [%timer ~]
     ?~  best
+      :_  this
+      ~[[%pass /timer %arvo %b %wait (add ~s30 now.bowl)]]
+    ::  A verification in flight gets the event loop.  A block batch is
+    ::  minutes of parsing in one ship, and the scanner re-arms itself at
+    ::  once while behind the tip, so with both running a peer's liveness
+    ::  walk (one filter per block, thousands for an old identity) never
+    ::  finished inside the stuck-job guard.  Wait it out; the index can
+    ::  be a few blocks late, a verification cannot be re-run from scratch.
+    ?^  inflight
       :_  this
       ~[[%pass /timer %arvo %b %wait (add ~s30 now.bowl)]]
     :_  this
@@ -1281,6 +1477,8 @@
         %-  (slog leaf+"%gw-btc: declining sponsorship of {<who>}" ~)
         `this(declined (~(put in declined) who))
       =/  applied  (apply-verified who u.verified tip-value.res)
+      ::  Verified now: the index is the truth for it, not the trusted mirror.
+      =.  trusted  (~(del by trusted) who)
       =.  urb-state  -.applied
       =.  confidential  +.applied
       =.  attested  (~(put by attested) who sont.own.u.verified)
@@ -1359,6 +1557,8 @@
             ==
         `this
       =/  applied  (apply-verified who u.verified tip-value.res)
+      ::  Verified now: the index is the truth for it, not the trusted mirror.
+      =.  trusted  (~(del by trusted) who)
       =.  urb-state  -.applied
       ::  +apply-verified files every verified identity as confidential,
       ::  which is right for a packet and exactly wrong for a broadcast.
@@ -1594,12 +1794,26 @@
             =(0 num.block-id.urb-state)
             =(~ unv-ids.urb-state)
         ==
-      ?.  ?&(virgin ?=(^ best) (gte num.u.best gw-epoch))
+      ?.  ?&(virgin ?=(^ best))
+        `new
+      ::  A virgin index starts only where it was TOLD to (.origin, set by
+      ::  an %index-origin poke).  Nobody decided yet: park, say so, and
+      ::  let the pane ask.  It used to start from the epoch here on its
+      ::  own -- a day of pinned CPU nobody chose (see $index-origin).
+      ::
+      ?.  ?&  ?=(?(%from-spawn %from-height %from-epoch) mode.origin)
+              !=(0 start.origin)
+          ==
+        ?:  ?=(%pending mode.origin)  `new
+        %-  %-  slog  :_  ~
+            leaf+"%gw-btc: public index: synced but no start was chosen; waiting (poke %index-origin, or use the Gevulot pane)"
+        `new(origin [%pending 0 decided-by.origin now.bowl])
+      ?.  (gte num.u.best start.origin)
         `new
       %-  %-  slog  :_  ~
-          leaf+"%gw-btc: public index: auto-bootstrap from the kelvin-9 epoch, block {<gw-epoch>}"
+          leaf+"%gw-btc: public index: starting from block {<start.origin>} ({<mode.origin>}, decided by {<decided-by.origin>})"
       :_  %=  new
-            urb-state  [[0x0 (dec gw-epoch)] *sont-map:ord *insc-ids:ord *unv-ids:urb]
+            urb-state  (start-index start.origin urb-state)
             indexing   %.y
           ==
       ~[[%pass /timer %arvo %b %wait now.bowl]]
@@ -1903,6 +2117,27 @@
 ::
 ++  gw-epoch  963.104
 ::
+::  +migrated-origin: the provenance to record for an index that predates
+::  .origin.  Every ship so far either auto-bootstrapped from the epoch
+::  or never started; a moved cursor is the one, an unmoved one the other.
+::
+++  migrated-origin
+  |=  [cursor=@ud now=@da]
+  ^-  index-origin
+  ?:  =(0 cursor)  [%unstarted 0 %default now]
+  [%from-epoch gw-epoch %default now]
+::
+::  +start-index: point a VIRGIN index at its first block and start the
+::  scanner.  Everything already verified (.unv-ids) is kept: a start is
+::  never a wipe.  Callers check the index is virgin, or that they mean a
+::  rewind (+rewind-index).
+::
+++  start-index
+  |=  [start=@ud st=state:urb]
+  ^-  state:urb
+  ?>  (gth start 0)
+  st(block-id [0x0 (dec start)])
+::
 ::  +scan-batch: most blocks one run of the block thread will process
 ::
 ::    A batch is all-or-nothing: the cursor advances only when the thread
@@ -2074,6 +2309,15 @@
   ^-  (list card)
   =/  wir  /(scot %p who)/(scot %ud job.req)
   =/  gud=@tas  ?:(?=(%verify kin) %stuck-job %claim-stuck)
+  ::  Resume the liveness walk where the last one left off, if that was a
+  ::  walk for the same custody entry (see $gw-state's .clean).
+  ::
+  =/  from=(unit @ud)
+    ?~  chain.sat.req  ~
+    =/  last  (rear chain.sat.req)
+    ?~  cur=(~(get by clean) who)  ~
+    ?.  =(last.u.cur [height.last txid.last])  ~
+    `to.u.cur
   :~  :*  %pass  [kin wir]  %arvo  %k
           %lard  byk
           %+  (set-timeout:strandio ,vase)  stuck-job-guard
@@ -2082,6 +2326,7 @@
               (tracked-anchor urb-state who)
               ~(key by unv-ids.urb-state)
               best-height
+              from
           ==
       ==
       :*  %pass  [gud wir]
@@ -2331,6 +2576,18 @@
   ?~  sat  ~
   chain.u.sat
 ::
+::  +own-spawn-height: the block our own spawn confirmed in, from our
+::  custody log -- the natural first block of a sponsee's public index
+::  (%from-spawn): everything before it that matters arrives from the
+::  sponsor as attestation pushes.
+::
+++  own-spawn-height
+  |=  [our=@p now=@da]
+  ^-  (unit @ud)
+  =/  open  (spawn-of:lsa (base-chain our now))
+  ?~  open  ~
+  `start-height.u.open
+::
 ::  +begin-anew: validate a candidate custody log for OUR OWN comet
 ::
 ::    Everything the poke claims is re-derived from the chain by the SAME
@@ -2442,7 +2699,7 @@
   :~  :*  %pass  [%anew wir]  %arvo  %k
           %lard  byk
           %+  (set-timeout:strandio ,vase)  stuck-job-guard
-          (verify-lc:lca sat ~ known-public best-height)
+          (verify-lc:lca sat ~ known-public best-height ~)
       ==
       :*  %pass  [%anew-guard wir]
           %arvo  %b  %wait  (add now stuck-job-guard)

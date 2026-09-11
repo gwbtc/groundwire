@@ -664,13 +664,27 @@
     ::  and the block timer is armed immediately
     (expect-eq !>(1) !>((lent (app-cards cards))))
   ==
-::  EPOCH AUTO-BOOTSTRAP.  A virgin index starts itself from +gw-epoch
-::  the first time the light client reports synced on a chain that has
-::  reached it.  Found live: a fresh comet could not resolve its own
-::  sponsor, and a sponsor could not resolve ITSELF, because nothing
-::  ever started the scanner (issue #92's real shape).
+::  THE INDEX STARTS ONLY WHERE IT WAS TOLD TO.  A virgin index used to
+::  bootstrap itself from +gw-epoch the first time the light client
+::  reported synced -- a day of pinned CPU on every fresh comet, chosen
+::  by nobody, and on the first real mints it fired because Causeway had
+::  failed to hand the comet its sponsor.  Now it parks in %pending and
+::  says so; an %index-origin poke (boot.sh after installing the sponsor,
+::  or the user in the Gevulot pane) is what starts it.
+::  ops/doc/gevulot-state-model.md section 2.
 ::
-++  test-epoch-auto-bootstrap-on-first-sync
+++  scan-origin-mode
+  |=  scn=*
+  ^-  @tas
+  =/  sc
+    ;;  $:  cursor=@ud  epoch=@ud  tip=(unit @ud)  confirmations=@ud
+            batch=@ud  indexing=?  points=@ud
+            origin=[mode=@tas start=@ud by=@tas at=@da]
+        ==
+    scn
+  mode.origin.sc
+::
+++  test-index-parks-pending-without-an-origin
   =/  agent  gw-btc
   =^  *  agent  ~(on-init agent bowl0)
   =^  *  agent  (~(on-agent agent bowl0) /best-block (new-block-sign 963.150))
@@ -678,27 +692,55 @@
     (~(on-agent agent bowl0) /is-synced [%fact %bitcoin-client-is-synced !>(&)])
   =/  bid  (peek-noun (~(on-peek agent bowl0) /x/block-id))
   =/  rdy  (peek-noun (~(on-peek agent bowl0) /x/ready))
+  =/  scn  (peek-noun (~(on-peek agent bowl0) /x/scan))
   ;:  weld
-    ::  the cursor lands one below the epoch, exactly as a poke would put it
-    (expect-eq !>(`id:block:bitcoin`[0x0 963.103]) !>(;;(id:block:bitcoin bid)))
-    ::  ... the agent is synced AND indexing
-    (expect-eq !>(`*`[%.y [~ 963.150] %.y]) !>(`*`rdy))
-    ::  ... and the block timer is armed immediately
-    (expect-eq !>(1) !>((lent (app-cards cards))))
+    ::  nothing moved ...
+    (expect-eq !>(`id:block:bitcoin`[0x0 0]) !>(;;(id:block:bitcoin bid)))
+    ::  ... synced, NOT indexing ...
+    (expect-eq !>(`*`[%.y [~ 963.150] %.n]) !>(`*`rdy))
+    ::  ... no timer, and the pane can see why
+    (expect-eq !>(0) !>((lent (app-cards cards))))
+    (expect-eq !>(%pending) !>((scan-origin-mode scn)))
   ==
-::  ... but never on a chain that has not reached the epoch: regtest and
-::  the harness keep the explicit-poke behavior.
+::  An %index-origin poke on a synced ship starts the scanner where it
+::  says, at once: the cursor lands one below the start, the timer is
+::  armed, and the provenance is recorded.
 ::
-++  test-epoch-auto-bootstrap-waits-for-the-epoch
+++  test-index-origin-poke-starts-from-the-epoch
+  =/  agent  gw-btc
+  =^  *  agent  ~(on-init agent bowl0)
+  =^  *  agent  (~(on-agent agent bowl0) /best-block (new-block-sign 963.150))
+  =^  *  agent
+    (~(on-agent agent bowl0) /is-synced [%fact %bitcoin-client-is-synced !>(&)])
+  =^  cards  agent
+    (~(on-poke agent bowl0) %noun !>([%index-origin %from-epoch 0 %user]))
+  =/  bid  (peek-noun (~(on-peek agent bowl0) /x/block-id))
+  =/  rdy  (peek-noun (~(on-peek agent bowl0) /x/ready))
+  =/  scn  (peek-noun (~(on-peek agent bowl0) /x/scan))
+  ;:  weld
+    (expect-eq !>(`id:block:bitcoin`[0x0 963.103]) !>(;;(id:block:bitcoin bid)))
+    (expect-eq !>(`*`[%.y [~ 963.150] %.y]) !>(`*`rdy))
+    (expect-eq !>(1) !>((lent (app-cards cards))))
+    (expect-eq !>(%from-epoch) !>((scan-origin-mode scn)))
+  ==
+::  ... but never on a chain that has not reached the start: regtest and
+::  the harness keep waiting; the decision is kept and applied once the
+::  chain gets there.
+::
+++  test-index-origin-waits-for-the-chain
   =/  agent  gw-btc
   =^  *  agent  ~(on-init agent bowl0)
   =^  *  agent  (~(on-agent agent bowl0) /best-block (new-block-sign 500))
+  =^  *  agent
+    (~(on-poke agent bowl0) %noun !>([%index-origin %from-epoch 0 %user]))
   =^  cards  agent
     (~(on-agent agent bowl0) /is-synced [%fact %bitcoin-client-is-synced !>(&)])
   =/  bid  (peek-noun (~(on-peek agent bowl0) /x/block-id))
+  =/  scn  (peek-noun (~(on-peek agent bowl0) /x/scan))
   ;:  weld
     (expect-eq !>(`id:block:bitcoin`[0x0 0]) !>(;;(id:block:bitcoin bid)))
     (expect-eq !>(0) !>((lent (app-cards cards))))
+    (expect-eq !>(%from-epoch) !>((scan-origin-mode scn)))
   ==
 ::  ... and never over an index that exists: an operator who chose a
 ::  start point keeps it, and a second sync transition cannot rewind a

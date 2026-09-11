@@ -41,7 +41,7 @@
 /+  default-agent, dbug, server, schooner, cc=gw-btc-pass, lsa=self-attestation
 ::
 |%
-+$  versioned-state  $%(state-0 state-1)
++$  versioned-state  $%(state-0 state-1 state-2)
 +$  state-0
   $:  %0
       receive=?
@@ -55,10 +55,28 @@
 ::
 +$  state-1
   $:  %1
+      receive=?
+      serving=?
+      roster=(map @p pass)
+      installed=(map @p peer:gev)
+  ==
+::  state-2: .share-index.  A sponsor that pushes only its roster gives a
+::  sponsee a social index; pushing every PUBLIC identity it has indexed
+::  gives it a complete one, which is what lets a sponsee start its own
+::  scanner at its spawn block instead of the epoch.
+::
+::  .installed is provenance and retry bookkeeping ONLY.  The list of
+::  peers the pane shows is derived from %gw-btc (its trusted mirror plus
+::  its verified index) on every render; this map annotates that list
+::  and is never the list itself.  ops/doc/gevulot-state-model.md section 9.
+::
++$  state-2
+  $:  %2
       receive=?               :: sponsee: accept pushes from our sponsor?  (default no)
       serving=?               :: sponsor: run the distribution service?    (default yes)
+      share-index=?           :: sponsor: push my whole public index to announcers? (default yes)
       roster=(map @p pass)    :: sponsor: announced sponsees, each with the pass to push
-      installed=(map @p peer:gev) :: sponsee: peers we installed, with provenance
+      installed=(map @p peer:gev) :: sponsee: how each peer was learned, and retry counts
   ==
 +$  card  card:agent:gall
 +$  ready  [synced=? tip=(unit @) indexing=?]  :: shape of %gw-btc /x/ready
@@ -70,11 +88,18 @@
       batch=@ud
       indexing=?
       points=@ud
+      origin=index-origin
+  ==
++$  index-origin                               :: %gw-btc's $index-origin
+  $:  mode=?(%unstarted %pending %from-spawn %from-height %from-epoch)
+      start=@ud
+      decided-by=?(%causeway %user %default)
+      at=@da
   ==
 +$  walks  (map @p [job=@ud top=@ud])          :: shape of %gw-btc /x/inflight-detail
 --
 ::
-=|  state-1
+=|  state-2
 =*  state  -
 %-  agent:dbug
 ^-  agent:gall
@@ -98,11 +123,13 @@
   ^-  (quip card _this)
   =/  ver  !<(versioned-state old)
   ?-  -.ver
-    %1  `this(state ver)
-    ::  0 -> 1: the old roster held ships without passes, and there is no
+    %2  `this(state ver)
+    ::  1 -> 2: share the index by default.
+    %1  `this(state [%2 receive.ver serving.ver %.y roster.ver installed.ver])
+    ::  0 -> 2: the old roster held ships without passes, and there is no
     ::  way to recover them (see state-1).  Start it empty; every sponsee
     ::  re-announces on boot (boot.sh's %distribute) and can from the pane.
-    %0  `this(state [%1 receive.ver serving.ver ~ installed.ver])
+    %0  `this(state [%2 receive.ver serving.ver %.y ~ installed.ver])
   ==
 ::
 ++  on-poke
@@ -316,6 +343,33 @@
   ?:  ?=(%| -.res)  ~
   p.res
 ::
+::  +gw-trusted: peers %gw-btc put into Jael on trust and has not verified
+::  yet (ship -> when).  With +gw-confidential and +gw-public this is the
+::  whole set of identities this ship holds through %gw-btc -- the list
+::  the pane derives from.  Whole-map path; always answers.
+::
+++  gw-trusted
+  ^-  (map @p @da)
+  =/  res
+    %-  mule  |.
+    ;;  (map @p @da)
+    .^(* %gx /(scot %p our.bowl)/gw-btc/(scot %da now.bowl)/trusted/noun)
+  ?:  ?=(%| -.res)  ~
+  p.res
+::
+::  +gw-public: every PUBLIC identity in %gw-btc's index, with the pass
+::  its point carries -- what a sponsor pushes to an announcing sponsee
+::  when .share-index is on.
+::
+++  gw-public
+  ^-  (map @p pass)
+  =/  res
+    %-  mule  |.
+    %-  ~(run by ;;((map @p point:urb) .^(* %gx /(scot %p our.bowl)/gw-btc/(scot %da now.bowl)/points/noun)))
+    |=(p=point:urb pass.net.p)
+  ?:  ?=(%| -.res)  ~
+  p.res
+::
 ::  +gw-point-public: does %gw-btc hold a PUBLIC on-chain point for .who?
 ::  (Confidential peers are withheld from /points and show up in
 ::  +gw-confidential instead.)  Read as membership in the whole /points
@@ -417,8 +471,9 @@
   |=  act=action:gev
   ^-  (quip card _state)
   ?-    -.act
-      %set-receive   `state(receive on.act)
-      %set-serving   `state(serving on.act)
+      %set-receive      `state(receive on.act)
+      %set-serving      `state(serving on.act)
+      %set-share-index  `state(share-index on.act)
   ::
       %distribute
     ::  ask our sponsor to broadcast us, sending the attestation we want
@@ -444,14 +499,44 @@
     (install-peer (fingerprint pass.act) pass.act %paste)
   ::
       %forget-peer
-    ::  drop it from OUR list only; we do not un-tell jael (harmless to keep).
-    `state(installed (~(del by installed) who.act))
+    ::  One operation, every store: %gw-btc drops its trusted mirror and
+    ::  its index entry and tells Jael; we drop our annotation.  Forgetting
+    ::  used to be ours alone ("we do not un-tell jael") -- a peer list
+    ::  that disagreed with Jael by design.
+    :_  state(installed (~(del by installed) who.act))
+    :~  :*  %pass  /gw-forget  %agent  [our.bowl %gw-btc]  %poke
+            %noun  !>([%gw-forget-peer who.act])
+        ==
+    ==
   ::
       %recheck
     ::  reset the attempt counters and re-verify everything on chain now.
     =.  state
       state(installed (~(run by installed) |=(p=peer:gev p(tries 0))))
     recheck-sweep
+  ::
+      ::  The user decides where the public index starts.  %gw-btc resolves
+      ::  the height (own spawn block, or the epoch) and ignores it once an
+      ::  index exists, so a repeated click cannot restart anything.
+      %index-start
+    :_  state
+    :~  :*  %pass  /gw-index  %agent  [our.bowl %gw-btc]  %poke
+            %noun  !>([%index-origin mode.act 0 %user])
+        ==
+    ==
+  ::
+      ::  Re-read every block from the epoch.  Keeps every verified
+      ::  identity, every trusted install and everything in Jael: the
+      ::  scanner's cursor is the only thing that moves.  The epoch is
+      ::  read from %gw-btc so the two can never disagree.
+      %index-rewind
+    =/  sc  gw-scan
+    ?~  sc  `state
+    :_  state
+    :~  :*  %pass  /gw-index  %agent  [our.bowl %gw-btc]  %poke
+            %noun  !>([%gw-index-rewind epoch.u.sc])
+        ==
+    ==
   ==
 ::
 ::  +recheck-sweep: re-verify unconfirmed installs on chain, one at a time
@@ -505,7 +590,15 @@
     ?.  (~(has by our-sponsees) src)  `state
     =.  roster  (~(put by roster) src pass.wire)
     :_  state
-    (broadcast-announce src pass.wire)
+    %+  weld  (broadcast-announce src pass.wire)
+    ::  With .share-index, the newcomer also gets every PUBLIC identity
+    ::  we have indexed, each as its own attestation to verify -- so its
+    ::  index can start at its own spawn block and still be complete.
+    ?.  share-index  ~
+    %+  murn  ~(tap by gw-public)
+    |=  [who=@p =pass]
+    ?:  |(=(who src) =(who our.bowl))  ~
+    `(wire-to src %peer who pass)
   ::
       %withdraw
     `state(roster (~(del by roster) src))
@@ -596,6 +689,7 @@
   =/  act  (~(gut by (malt q)) 'act' '')
   ?:  =(act 'set-receive')   [%set-receive =('true' (~(gut by (malt q)) 'on' ''))]
   ?:  =(act 'set-serving')   [%set-serving =('true' (~(gut by (malt q)) 'on' ''))]
+  ?:  =(act 'set-share-index')  [%set-share-index =('true' (~(gut by (malt q)) 'on' ''))]
   ?:  =(act 'distribute')    [%distribute ~]
   ?:  =(act 'withdraw')      [%withdraw ~]
   ?:  =(act 'recheck')       [%recheck ~]
@@ -603,6 +697,13 @@
   ?:  =(act 'ingest')
     =/  raw  (~(gut by (malt q)) 'pass' '')
     [%ingest-peer (slav %ux raw)]
+  ?:  =(act 'index-spawn')   [%index-start %from-spawn]
+  ?:  =(act 'index-epoch')   [%index-start %from-epoch]
+  ::  The scary one.  A plain click is not enough: the form makes the
+  ::  user type the epoch height, and anything else is a no-op.
+  ?:  =(act 'index-rewind')
+    ?.  =('963104' (~(gut by (malt q)) 'confirm' ''))  [%set-serving serving]
+    [%index-rewind ~]
   [%set-serving serving]
 ::
 ::  +render-page: the whole control pane as a $manx.
@@ -625,6 +726,7 @@
         ;h1: Gevulot
         ;p.sub: identity control pane
         ;+  (status-card rdy spo gw-scan gw-walks)
+        ;+  (index-card gw-scan)
         ;*  ?~  spo  ~
             :~  (sponsee-section u.spo conf synced.rdy gw-inflight)
             ==
@@ -673,19 +775,87 @@
   ^-  manx
   ?~  sc
     ;span.v.st.st-wait: no data (older %gw-btc)
+  =/  org  origin.u.sc
+  =/  who=tape
+    ?-  decided-by.org
+      %causeway  "set by Causeway at boot"
+      %user      "chosen by you"
+      %default   "recorded at upgrade"
+    ==
+  =/  when=tape  (scow %da at.org)
+  ?:  ?=(%unstarted mode.org)
+    ;span.v.st.st-wait: not started (waiting for the light client)
+  ?:  ?=(%pending mode.org)
+    ;span.v.st.st-bad: PENDING YOUR DECISION (since {when}) -- see the card below
+  =/  origin-txt=tape
+    ?-  mode.org
+      %from-spawn   "from my spawn, block {(scow %ud start.org)} ({who}, {when})"
+      %from-height  "from block {(scow %ud start.org)} ({who}, {when})"
+      %from-epoch   "from the epoch, block {(scow %ud start.org)} ({who}, {when})"
+    ==
   ?~  tip.u.sc
-    ;span.v.st.st-wait: waiting for a chain tip
+    ;span.v.st.st-wait: {origin-txt}; waiting for a chain tip
   =/  settled=@ud  (sub u.tip.u.sc (min u.tip.u.sc confirmations.u.sc))
   ?.  indexing.u.sc
-    ;span.v.st.st-wait: not started
+    ;span.v.st.st-wait: {origin-txt}; starts when the light client is synced
   ?:  (gte cursor.u.sc settled)
-    ;span.v.st.st-ok: complete at block {(scow %ud cursor.u.sc)}; {(scow %ud points.u.sc)} identit(ies) indexed
+    ;span.v.st.st-ok: {origin-txt}; complete at block {(scow %ud cursor.u.sc)}; {(scow %ud points.u.sc)} identit(ies) indexed
   =/  left=@ud  (sub settled cursor.u.sc)
-  =/  done=@ud  (sub cursor.u.sc (min cursor.u.sc epoch.u.sc))
+  =/  done=@ud  (sub cursor.u.sc (min cursor.u.sc start.org))
   ;span.v.st.st-wait
+    ; {origin-txt};
     ; scanning block {(scow %ud cursor.u.sc)} of {(scow %ud settled)}:
-    ; {(scow %ud left)} to go, {(scow %ud done)} done since the epoch
+    ; {(scow %ud left)} to go, {(scow %ud done)} done
     ; ({(scow %ud batch.u.sc)} per batch; the ship is slow until this ends)
+  ==
+::
+::  +index-card: the decisions about the public index that only a human
+::  may take.  Shown whenever the index is pending, plus the rewind form
+::  whenever an index exists.  Nothing here happens on its own.
+::
+++  index-card
+  |=  sc=(unit scan)
+  ^-  manx
+  ?~  sc
+    ;div;
+  =/  org  origin.u.sc
+  ;div.card
+    ;h2: Public index
+    ;p.hint
+      ; Two different syncs run on this ship.  The LIGHT CLIENT downloads
+      ; block headers and compact filters; it is what verifies a specific
+      ; identity and it is quick.  The PUBLIC INDEX reads every full block
+      ; from its start height to discover public names nobody told you
+      ; about and to follow known names' moves; it is slow (tens of
+      ; seconds per block) and pins the ship while it catches up.
+    ==
+    ;*  ?.  ?=(%pending mode.org)  ~
+        :_  ~
+        ;div.pending
+          ;p.warn
+            ; No start was chosen for the public index.  Nothing is being
+            ; indexed until you choose.  From your spawn block is the
+            ; normal choice: your sponsor pushes you everything older.
+          ==
+          ;div.row
+            ;form(method "post", action "/apps/gevulot")
+              ;input(type "hidden", name "act", value "index-spawn");
+              ;button(type "submit"): Index from my spawn block
+            ==
+            ;form(method "post", action "/apps/gevulot")
+              ;input(type "hidden", name "act", value "index-epoch");
+              ;button.ghost(type "submit"): Index from the epoch (about a day)
+            ==
+          ==
+        ==
+    ;*  ?.  ?=(?(%from-spawn %from-height %from-epoch) mode.org)  ~
+        :_  ~
+        ;form.paste(method "post", action "/apps/gevulot")
+          ;input(type "hidden", name "act", value "index-rewind");
+          ;label: Re-index from the epoch (block {(scow %ud epoch.u.sc)}).  Slow: about a day at full CPU.  Keeps every verified identity, every trusted install, and everything in Jael; only the scanner's cursor moves.  Type the epoch height to confirm.
+          ;input(type "text", name "confirm", placeholder (scow %ud epoch.u.sc), spellcheck "false");
+          ;button.ghost(type "submit"): Re-index from the epoch
+        ==
   ==
 ::
 ::  +walks-span: what each in-flight verification is doing.  A re-check
@@ -768,11 +938,31 @@
 ++  installed-list
   |=  [conf=(set @p) synced=? infl=(set @p)]
   ^-  manx
-  =/  peers  ~(tap by installed)
+  ::  The list is DERIVED: every identity %gw-btc holds (trusted mirror,
+  ::  verified confidential set, public index), annotated by .installed
+  ::  where we have a provenance.  Nothing is listed from .installed
+  ::  alone: a ship only we remember and %gw-btc does not is exactly the
+  ::  drift the design forbids, and it would show here as absent.
+  =/  trusted  gw-trusted
+  =/  public   gw-public
+  =/  ships=(set @p)
+    %-  ~(uni in (~(uni in ~(key by trusted)) conf))
+    ~(key by public)
+  =/  peers=(list [who=@p p=peer:gev])
+    %+  turn  ~(tap in ships)
+    |=  who=@p
+    ^-  [@p peer:gev]
+    ?^  a=(~(get by installed) who)  [who u.a]
+    :-  who
+    :*  pass=?^(b=(~(get by public) who) u.b 0)
+        via=?:((~(has in conf) who) %packet %index)
+        since=?^(t=(~(get by trusted) who) u.t *@da)
+        tries=0
+    ==
   ?~  peers
-    ;p.empty: No peers installed yet.
+    ;p.empty: No peers yet.
   ;div.peers
-    ;h3: Installed peers ({(scow %ud (lent peers))})
+    ;h3: Peers ({(scow %ud (lent peers))})
     ;*  %+  turn  peers
         |=  [who=@p p=peer:gev]
         =/  st  (peer-status who conf synced infl p)
@@ -830,6 +1020,20 @@
     ;p.hint
       ; When ON, a sponsee that asks to be broadcast is added to the
       ; roster and pushed to every one of your sponsees.
+    ==
+    ;div.row
+      ;form(method "post", action "/apps/gevulot")
+        ;input(type "hidden", name "act", value "set-share-index");
+        ;input(type "hidden", name "on", value ?:(share-index "false" "true"));
+        ;button.toggle(type "submit")
+          ; Share my public index: {?:(share-index "ON — turn off" "OFF — turn on")}
+        ==
+      ==
+    ==
+    ;p.hint
+      ; When ON, a sponsee that announces also receives every public
+      ; identity you have indexed, so it can index from its own spawn
+      ; block instead of the epoch and still know every public name.
     ==
     ;+  (roster-list spees)
   ==

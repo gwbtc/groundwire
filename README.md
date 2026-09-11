@@ -14,8 +14,11 @@ The `%gw-btc` desk runs two Gall agents (`gw-btc/desk.bill`):
   (via `++light-client-agent:lca`), not `%light-client`. This agent used to be
   called `%urb-watcher`; that name is retired and survives only in older docs
   and in the legacy `onboarding/booting/` tooling.
-- **`%urb-snapshot`** — publishes the point snapshot (`urb-snapshot.jam`) to
-  an S3 bucket so clients can fetch it without talking to the ship.
+- **`%gevulot`** — the identity control pane. Sponsor-mediated peer
+  discovery, the public index's start and provenance, and the derived view
+  of every identity the ship holds (`ops/doc/gevulot-state-model.md`). It
+  replaced `%urb-snapshot`, which published a monolithic index snapshot to
+  S3: a sponsor now pushes attestations, each carrying its own proof.
 
 The `%spv-wallet` desk contains an SPV Wallet Gall app. We currently use this app for performing post-boot comet attestations, though this may change soon.
 

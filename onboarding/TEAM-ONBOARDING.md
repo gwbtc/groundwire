@@ -249,6 +249,14 @@ That needs an RC whose Causeway carries the change (the one cut after
 `a519404`) — the branch `boot.sh` already does the install when the proof has
 the field, and warns when it doesn't.
 
+Once the sponsor is installed, `boot.sh` also tells `%gw-btc` where its
+**public index** starts: your own spawn block. Everything older reaches you as
+your sponsor's pushes, so the ship never grinds through the ~3,300 blocks
+since the epoch (about a day of pinned CPU on a fresh comet, which the first
+mints suffered). If no sponsor could be installed, nothing is decided for you:
+the Gevulot pane shows a **pending decision** card with the choices
+(`ops/doc/gevulot-state-model.md`).
+
 **A comet minted from an earlier RC** (its proof has no `sponsor_pass_hex`)
 needs the install done once by hand. Measured effect on the first real mint:
 `ames: lamp ~barmul … static ip … port 34344` within seconds, the sponsor

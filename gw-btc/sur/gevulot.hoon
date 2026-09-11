@@ -28,7 +28,12 @@
 ::  $provenance: how a peer entry was learned.  Drives nothing but the UI
 ::  and, for %paste, the "verify now if we can" bias.
 ::
-+$  provenance  ?(%sponsor %paste %dojo)
+::    %packet and %index are not installs at all: the pane lists every
+::    identity %gw-btc holds, and those two are how it got the ones
+::    nobody pushed or pasted (a direct attestation packet, or the public
+::    index).  They carry no pass here and are never re-submitted.
+::
++$  provenance  ?(%sponsor %paste %dojo %packet %index)
 ::  $peer: a peer whose attestation we hold.  .pass is kept so we can
 ::  re-submit it for on-chain verification once synced; .tries bounds that
 ::  retry so a permanently-unconfirmable entry (stale, or a bad paste)
@@ -52,6 +57,9 @@
       [%forget-peer who=@p]      :: sponsee: drop a peer we installed
       [%recheck ~]               :: sponsee: re-verify all installs on chain now
       [%set-serving on=?]        :: sponsor: run the distribution service?
+      [%set-share-index on=?]    :: sponsor: push my whole public index to a sponsee that announces?
+      [%index-start mode=?(%from-spawn %from-epoch)]  :: decide where the public index starts
+      [%index-rewind ~]          :: re-read every block from the epoch (slow; keeps everything verified)
   ==
 ::  $wire: an inter-ship poke between a sponsor and its sponsees.
 ::

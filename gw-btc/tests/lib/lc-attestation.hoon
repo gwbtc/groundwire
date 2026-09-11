@@ -92,6 +92,12 @@
   ^-  card:agent:gall
   [%pass watch+wire %agent [~zod light-client-agent:lca] %watch path]
 ::
+::  A strand poke (strandio's +poke-our) waits for its ack on /poke.
+++  answer-poke
+  |=  st=pace
+  ^-  pace
+  (inject st [%agent /poke %poke-ack ~])
+::
 ::  +no-timers: a strand's LIGHT-CLIENT cards, with timeout bookkeeping cut
 ::
 ::    Every one-shot request is wrapped in +set-timeout (see
@@ -349,7 +355,7 @@
 ++  start-verify
   |=  best-het=@ud
   ^-  pace
-  (step (verify-lc:lca good-sat ~ no-points best-het) ~)
+  (step (verify-lc:lca good-sat ~ no-points best-het ~) ~)
 ::
 ++  drive-fetches
   |=  best-het=@ud
@@ -552,7 +558,7 @@
 ++  start-verify-sat
   |=  [sat=self-attestation:sa best-het=@ud]
   ^-  pace
-  (step (verify-lc:lca sat ~ no-points best-het) ~)
+  (step (verify-lc:lca sat ~ no-points best-het ~) ~)
 ::  +drive-fetches, with the LAST transaction supplied by the caller.
 ::
 ++  drive-fetches-tip
@@ -642,6 +648,42 @@
     ::  out again in the desk's -- unchanged.
     (expect-eq !>(tip-spk) !>(tip))
     (expect-eq !>(`sont:ord`[c1-id 0 0]) !>(sont.own:(need point.res)))
+  ==
+::  ---- a walk over MORE than one block reports its checkpoint ---------
+::
+::    The liveness walk is resumable: after a walk that examined more
+::    than the tip block, it pokes %gw-btc with how far it got
+::    (%gw-liveness-progress), so the next walk for the same custody
+::    entry starts above that height instead of at the entry.  A
+::    one-block walk reports nothing (see +test-no-best-block-watch's
+::    exhaustive card list, which stays exact).
+::
+++  test-multi-block-walk-reports-a-checkpoint
+  ::  best-height 102 > tip-height 101: two blocks to examine.
+  =/  s6  (drive-fetches 102)
+  =/  s7  (answer-watch s6 (filter-wire 101) (filter-fact h-c1 101 (mk-filter h-c1 ~[tip-spk-bcm])))
+  =/  s8  (answer-watch s7 (block-wire 101) (block-fact h-c1 101 ~[(bc-to-common c1-tx)]))
+  ::  block 102's filter does not match the tip script: no block fetch
+  =/  c8c  (expect-watch s8 (filter-wire 102) (filter-path 102))
+  =/  other  (bc-hexb-to-common (p2tr-spk 0xc0ff.ee00))
+  =/  s9  (answer-watch s8 (filter-wire 102) (filter-fact 0xc2 102 (mk-filter 0xc2 ~[other])))
+  ::  ... then the checkpoint poke, then done.
+  ::  [%pass wire %agent [ship app] %poke [mark [type noun]]], read as
+  ::  nouns: a ?= pattern with wildcards leaves no faces to follow.
+  =/  pn
+    ;;  [%pass wir=path %agent gil=[@p @tas] %poke mar=@tas typ=* nun=*]
+    (rear cards.s9)
+  =/  s10  (answer-poke s9)
+  =/  [res=result:sa *]  (done-result s10)
+  ;:  weld
+    c8c
+    (expect-eq !>(/poke) !>(wir.pn))
+    (expect-eq !>([~zod %gw-btc]) !>(gil.pn))
+    (expect-eq !>(%noun) !>(mar.pn))
+    %+  expect-eq
+      !>(`*`[%gw-liveness-progress who [101 c1-id] 102])
+      !>(`*`nun.pn)
+    (expect !>(ok.verdict.res))
   ==
 ::  ---- /best-block must never be watched from the strand -------------
 ::

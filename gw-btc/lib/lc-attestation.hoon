@@ -77,6 +77,7 @@
           tracked=(unit anchor:sa)
           known-public=(set ship)
           best-height=@ud
+          from=(unit @ud)
       ==
   ^-  shed:khan
   =/  m  (strand:strandio ,vase)
@@ -133,8 +134,12 @@
   =/  tip-height=@ud  height:(rear chain.sat)
   ::  TIP LIVENESS: scan every block above the tip for a spend of the exact
   ::  outpoint.  `%.y`/`%.n`/~ = unspent/spent/undeterminable (fails closed).
+  =/  last-entry  (rear chain.sat)
   ;<  live=(unit ?)  bind:m
-    (scan-liveness our u.tip tip-spk tip-height best-height)
+    %:  scan-liveness
+        our  u.tip  tip-spk  tip-height  best-height
+        from  who  [height.last-entry txid.last-entry]
+    ==
   ::  .fetched is non-empty: chain.sat was checked non-empty above and
   ::  +fetch-entries returns one entry per custody entry.
   ::
@@ -226,18 +231,37 @@
 ::    `[%gw-btc-lc-scan-clean ... from=961.196 to=0]` passed `tip-unspent`
 ::    on no evidence at all.  A spent tip would have read identically.
 ::
+::    RESUMABLE.  .from is the height through which an earlier walk for
+::    the SAME custody entry already found the output unspent (the agent's
+::    .clean checkpoint); "unspent through H" is monotone, so the walk
+::    starts above it.  Every +progress-every blocks, and on completion,
+::    the walk reports how far it got with a %gw-liveness-progress poke to
+::    the agent, so a walk that later times out still leaves durable
+::    progress behind and the next attempt continues rather than restarts.
+::    .who/.last identify the peer and the entry the checkpoint is for.
+::
+++  progress-every  256
 ++  scan-liveness
   |=  $:  our=@p
           tip=sont:ord
           tip-spk=hexb:bc
           tip-height=@ud
           best-height=@ud
+          from=(unit @ud)
+          who=ship
+          last=[height=@ud =txid:ord]
       ==
   =/  m  (strand:strandio ,(unit ?))
+  =/  n  (strand:strandio ,~)
   ^-  form:m
   ?:  (gth tip-height best-height)
     ~&  [%gw-btc-lc-scan-degenerate tip=tip from=tip-height to=best-height]
     (pure:m ~)
+  =/  progress
+    |=  to=@ud
+    ^-  form:n
+    %+  poke-our:strandio  %gw-btc
+    noun+!>([%gw-liveness-progress who last to])
   ::  Back into the NODE's byte order for the GCS matcher.  +match:b-fil is
   ::  the node's own matcher and consumes its targets LSB-first, exactly as
   ::  the node encoded them into the filter; .tip-spk arrives here in the
@@ -245,11 +269,20 @@
   ::  +common-out-to-bc MUST MOVE TOGETHER: drop it and the filter silently
   ::  stops matching, turning a SPENT tip into `unspent` -- a fail-OPEN.
   =/  spk=hexb:bcm  (unflip-hexb tip-spk)
-  =/  h=@ud  tip-height
+  =/  h=@ud
+    ?~  from  tip-height
+    (max tip-height +(u.from))
+  ~&  [%gw-btc-lc-scan-start tip=tip from=h to=best-height resumed=?=(^ from)]
   |-
   ^-  form:m
   ?:  (gth h best-height)
     ~&  [%gw-btc-lc-scan-clean tip=tip from=tip-height to=best-height]
+    ::  A one-block walk (a fresh spawn, or a %claim, which examines only
+    ::  the publication's own block) leaves nothing worth remembering:
+    ::  the next walk starts at the custody entry anyway.
+    ;<  ~  bind:m
+      ?.  (gth best-height tip-height)  (pure:n ~)
+      (progress best-height)
     (pure:m `%.y)
   ;<  res=?(%error %no-match %spent %unspent)  bind:m
     %+  (set-timeout:strandio ,?(%error %no-match %spent %unspent))
@@ -264,8 +297,12 @@
     ~&  [%gw-btc-lc-scan-spent tip=tip height=h]
     (pure:m `%.n)
   ::
-      %no-match  $(h +(h))
-      %unspent   $(h +(h))
+      ?(%no-match %unspent)
+    ::  block h is clean; every +progress-every blocks, say so durably.
+    ;<  ~  bind:m
+      ?.  =(0 (mod h progress-every))  (pure:n ~)
+      (progress h)
+    $(h +(h))
   ==
 ::
 ::  +scan-height: liveness signal contributed by a single block height.

@@ -131,6 +131,23 @@ sponsee's `%from-spawn` index is complete, not just social.
 deleted with this change, together with its `desk.bill` entry and the
 `%gw-btc` subscription hook that feeds it.
 
+## 8a. Where this lives in the code (implemented 2026-09-10)
+
+| design element | code |
+|---|---|
+| liveness checkpoint (§4) | `%gw-btc` state `.clean` (ship → last custody entry, clean-through height); the walk in `lib/lc-attestation.hoon +scan-liveness` resumes above it and reports every 256 blocks and on completion with a `%gw-liveness-progress` poke; scry `/x/clean` |
+| scanner yields to verification (§4) | `%gw-btc` `[%timer ~]` arm: no batch while `.inflight` is non-empty |
+| `index-origin` (§2) | `%gw-btc` state `.origin` `[mode start decided-by at]`; poke `%index-origin [mode start by]` (no-op once an index exists); the `/is-synced` arm parks a virgin index in `%pending` instead of starting from the epoch; scry `/x/scan` carries `origin` |
+| re-index (§5) | poke `%gw-index-rewind height`: cursor only, keeps `unv-ids`/sat index/Jael; the pane's form requires typing the epoch height |
+| trusted mirror + one-op forget (§9) | `%gw-btc` state `.trusted` (written by `%gw-trusted-peer`, cleared on verification); scry `/x/trusted`; poke `%gw-forget-peer who` (trusted mirror + `+forget-points` + Jael forget in one event) |
+| derived peer list (§9) | `%gevulot +installed-list` builds the list from `/x/trusted` ∪ `/x/confidential` ∪ `/x/points`; `.installed` annotates only; new provenances `%packet`/`%index` |
+| sponsor pushes the whole index (§7) | `%gevulot` state-2 `.share-index` (default on); `%announce` also pushes every public identity's pass |
+| Causeway initialization (§6) | `boot.sh` pokes `%index-origin [%from-spawn 0 %causeway]` right after a successful sponsor install, every boot |
+| `%urb-snapshot` removal (§8) | agent and `desk.bill` entry deleted; `/urb-state` watch path kept |
+
+Not yet: the `indexed-only` self-check (Jael cannot be enumerated from
+userspace; the invariant holds by construction and is documented).
+
 ## 9. Invariants: Jael, `urb-state`, and Gevulot must not drift
 
 There are three stores, and "urb-state and Jael becoming disjoint" is the
