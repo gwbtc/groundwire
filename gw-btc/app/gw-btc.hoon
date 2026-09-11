@@ -2148,7 +2148,15 @@
 ::    +scan-again re-arms immediately rather than idling for the poll
 ::    interval, so a small batch costs nothing in throughput.
 ::
-++  scan-batch  25
+::    Five, not twenty-five: a batch is ONE event, and every other event
+::    on the ship -- a desk sync from the sponsor, an ames packet, a
+::    control-socket request -- waits for it.  With 25 blocks of full
+::    parsing per event and an immediate re-arm, a comet grinding through
+::    its history could not even receive the desk update that would have
+::    fixed it (2026-09-11: kiln retried "cannot reach the sync source"
+::    for hours against a sponsor two hops away).  See +scan-again.
+::
+++  scan-batch  5
 ::
 ::  +block-fetch-timeout: how long one /block/height/<h> fetch may take
 ::
@@ -2180,7 +2188,10 @@
     ?~  tip  |
     ?:  (lth num.u.tip block-confirmations)  |
     (lth num.block-id.st (sub num.u.tip block-confirmations))
-  [%pass /timer %arvo %b %wait ?:(soon now (add ~s30 now))]
+  ::  Behind the tip: re-arm soon, not NOW.  A few seconds between batches
+  ::  is where everything else on the ship gets to run (see +scan-batch);
+  ::  over a day-long catch-up it costs minutes.
+  [%pass /timer %arvo %b %wait ?:(soon (add ~s3 now) (add ~s30 now))]
 ::
 ::  +get-blocks: index range(last-processed + 1, tip - block-confirmations)
 ::
