@@ -25,7 +25,7 @@ confidential comets):
 
 ```bash
 gh release list -R gwbtc/urbit | grep groundwire-rc | head -1
-# e.g. groundwire-rc-2026.9.11
+# e.g. groundwire-rc-2026.9.13
 ```
 
 ## The sponsor — nothing to memorize
@@ -56,7 +56,7 @@ One hard constraint shapes the recipe: `boot.sh --mint` reads its prompts from
 survives your SSH connection, and your Claude drives it with `send-keys` and
 reads it from a log. (This is exactly how the ops campaign drove ships.)
 
-**Use `groundwire-rc-2026.9.11` or newer.** Earlier RCs have one or both of:
+**Use `groundwire-rc-2026.9.13` or newer.** Earlier RCs have one or both of:
 a `gwlib.sh` whose peer seeding pokes a renamed mark (the light client never
 gets a peer and sync never starts — fixed in 2026.9.10), and a Causeway that
 does not record the sponsor's attestation in the spawn proof (the comet can't
@@ -74,7 +74,13 @@ Earlier RCs crash-loop under load; do not mint on them. **2026.9.11** puts the
 Gevulot state model in the pill: a fresh comet indexes from its own spawn
 block once its sponsor is installed (no day-long epoch scan), the pane shows
 where the index started and who decided, and peers are re-verified
-incrementally instead of from scratch on every attempt.
+incrementally instead of from scratch on every attempt. **2026.9.13** is the
+same kernel with the desk brought up to date: the index scanner takes five
+blocks at a time with a pause between batches, so the light client keeps
+syncing while the index runs (2026.9.11's larger batches starved it), and the
+pane's public-index row wraps and reads as a status, a progress bar, and a
+provenance line. A ship already running follows the sponsor's `%gw-btc`
+automatically and does not need reinstalling for this.
 
 **Droplet prerequisites** (learned the hard way on the first real run): a stock
 4 GB DigitalOcean droplet is *not* enough on its own. The comet miner maps an
@@ -104,7 +110,7 @@ S 'apt-get update -qq && apt-get install -y -qq tmux python3-venv
 #      this the mint sits silently waiting for an address nobody can see.
 S 'cat > ~/mint.sh <<'"'"'EOF'"'"'
 PYTHONUNBUFFERED=1 bash ~/boot.sh --mint --headless --detach \
-  --version groundwire-rc-2026.9.11 \
+  --version groundwire-rc-2026.9.13 \
   --sponsor "~barmul-bolmet-ronlus-lighul--rovtun-satryc-moclug-daplyd" 2>&1 | tee ~/mint.log
 EOF
 chmod +x ~/mint.sh'
@@ -131,7 +137,7 @@ S 'tmux send-keys -t mint "<the twelve words>" Enter'
 #    watching the sync). Pass the SAME --version as the mint: boot.sh now pins
 #    the installed release by itself, but say it anyway -- an older boot.sh
 #    resolved "latest" to the daily and overwrote bin/ under a running pier.
-S "bash ~/boot.sh --detach --version groundwire-rc-2026.9.11 --comet '<the @p it printed>'"
+S "bash ~/boot.sh --detach --version groundwire-rc-2026.9.13 --comet '<the @p it printed>'"
 S "bash ~/boot.sh --status --comet '<@p>'; bash ~/boot.sh --code --comet '<@p>'"
 ```
 
