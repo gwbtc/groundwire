@@ -2104,16 +2104,15 @@
 ::  +gw-epoch: the first mainnet block that can contain a kelvin-9
 ::  %gw-btc publication -- the block of the first one ever minted (the
 ::  ~barmul sponsor spawn, tx 48c2ea65..., block 963.104).  A virgin
-::  index that starts here provably misses nothing, so the agent
-::  bootstraps itself from it the first time the light client reports
-::  synced (see the /is-synced %fact arm) and no operator poke is needed.
-::  Found live: a fresh comet could not resolve its own SPONSOR -- and a
-::  sponsor could not resolve ITSELF ([??] sponsor-known, UNDETERMINED
-::  forever) -- because nothing ever started the scanner.
-::
-::  On a chain that has not reached the epoch (regtest, the test
-::  harness) the auto-bootstrap simply never fires and %gw-index-from
-::  remains the way to choose a start, exactly as before.
+::  index that starts here provably misses nothing, and it is also a
+::  day of pinned CPU, so nothing starts from it on its own: a virgin
+::  index parks at first sync until an %index-origin poke names a
+::  start (see the /is-synced %fact arm and $index-origin).  Causeway
+::  pokes %from-spawn at install; the Gevulot pane offers the spawn
+::  and, behind a confirmation, the epoch.  The epoch is only ever
+::  chosen by a person.  +migrated-origin records this height as the
+::  provenance of an index that predates .origin, since every such
+::  index did auto-bootstrap from here.
 ::
 ++  gw-epoch  963.104
 ::
