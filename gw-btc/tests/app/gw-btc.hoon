@@ -140,6 +140,12 @@
 ++  pending-state
   |=  [stored=custody-log:sa]
   ^-  *
+  (pending-state-cand stored cand)
+::  ... with the candidate log under validation chosen by the test
+::
+++  pending-state-cand
+  |=  [stored=custody-log:sa candidate=custody-log:sa]
+  ^-  *
   :*  `state:urb`[[0xdead.beef 900.100] ~ ~ ~]   :: urb-state
       %.y                                         :: indexing
       `[0xdead.beef 900.100]                      :: best
@@ -150,8 +156,55 @@
       1                                           :: next-job
       ~                                           :: sponsees
       ~                                           :: declined
-      [stored `[0 cand anew-pass]]                :: own
+      [stored `[0 candidate anew-pass]]           :: own
   ==
+::  a custody entry whose opening names ~marzod as our sponsor, and a
+::  log ending in it
+::
+++  spon-open
+  ^-  opening:sa
+  [internal-key=0x1234 [life=1 rift=0 key=0xabcd sponsor=`~marzod fief=~] ~]
+++  entry-spon  ^-  custody-entry:sa  [txid=0xbeef.beef height=900.002 opening=`spon-open]
+++  cand-spon   ^-  custody-log:sa    ~[entry0 entry-spon]
+::  the one %spon udiff +own-spon-card publishes for ~zod from that log:
+::  the $id is the index cursor of the state above
+::
+++  spon-udiffs
+  ^-  udiffs:point:jael
+  [~zod [0xdead.beef 900.100] %spon `~marzod]~
+::  a state whose public index already holds OUR point (~zod), with the
+::  on-chain "no sponsor" the index projects to self, and a stored log.
+::  An 11-field (-11) state, so the point is the pre-provenance shape
+::  (+point-13: no .seen) that the -11 migration lifts.
+::
+++  own-index-state
+  |=  [stored=custody-log:sa]
+  ^-  *
+  =/  self-point=*
+    [[tip-sont ~] [rift=0 life=1 anew-pass [%.n ~zod] ~ ~]]
+  :*  [[0xdead.beef 900.100] ~ ~ (malt ~[[`ship`~zod self-point]])]
+      %.y                                         :: indexing
+      `[0xdead.beef 900.100]                      :: best
+      ~                                           :: inflight
+      ~                                           :: confidential
+      ~                                           :: attested
+      ~                                           :: publicizing
+      1                                           :: next-job
+      ~                                           :: sponsees
+      ~                                           :: declined
+      [stored ~]                                  :: own
+  ==
+::  the %spon elements of an %azimuth-udiffs payload
+::
+++  spon-of
+  |=  pay=(unit *)
+  ^-  (list [ship (unit @p)])
+  ?~  pay  ~
+  %+  murn  ;;(udiffs:point:jael u.pay)
+  |=  [=ship =udiff:point:jael]
+  ^-  (unit [^ship (unit @p)])
+  ?.  ?=(%spon -.+.udiff)  ~
+  `[ship sponsor.udiff]
 ::  the state shape BEFORE .publicizing was dropped (13 fields), for the
 ::  migration.  Deliberately the AMBIGUOUS case: .publicizing, .next-job
 ::  and .sponsees are all ~/0, so if the tail did not discriminate the
@@ -892,6 +945,76 @@
   ;:  weld
     (expect-eq !>(~) !>((app-cards cards)))
     (expect-eq !>(`custody-log:sa`~) !>(;;(custody-log:sa (peek-noun (~(on-peek agent bowl0) /x/custody)))))
+  ==
+::
+::  ---------------------------------------------------------------------
+::  our own sponsor, as jael hears it (+own-spon-card / +fix-own-spon)
+::  ---------------------------------------------------------------------
+::
+::  A positive verdict on a log whose newest opening names a sponsor
+::  publishes the pass AND one %spon udiff for us on /writs; and once
+::  that log is ours, jael's /writs watch gets the same udiff.
+::
+++  test-anew-positive-verdict-tells-jael-our-sponsor
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((pending-state-cand ~ cand-spon)))
+  =^  cards  agent  (~(on-arvo agent bowl0) /anew/0 (anew-sign %.y ~zod))
+  =/  out  (app-cards cards)
+  =^  watch  agent  (~(on-watch agent bowl0) /writs)
+  =/  wout  (app-cards watch)
+  ;:  weld
+    (expect-eq !>(2) !>((lent out)))
+    (expect-eq !>(`%anew-response) !>((fact-mark (snag 0 out))))
+    (expect-eq !>(`%azimuth-udiffs) !>((fact-mark (snag 1 out))))
+    (expect-eq !>(spon-udiffs) !>(;;(udiffs:point:jael (need (fact-payload (snag 1 out))))))
+    ::  the fact goes where jael listens: /writs, not the %listen paths
+    (expect !>(?=([%give %fact [[%writs ~] ~] *] (snag 1 out))))
+    ::  ... and the /writs watch says the same, now from the stored log
+    (expect-eq !>(1) !>((lent wout)))
+    (expect-eq !>(spon-udiffs) !>(;;(udiffs:point:jael (need (fact-payload (snag 0 wout))))))
+  ==
+::
+::  No sponsor in the log -- a self-sponsoring root, or no opening at
+::  all -- says nothing: jael keeps whatever it has (self), which is
+::  the right answer for a root.  Both the verdict and the watch.
+::
+++  test-own-sponsor-is-silent-without-one-in-the-log
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((pending-state-cand ~ cand)))
+  =^  cards  agent  (~(on-arvo agent bowl0) /anew/0 (anew-sign %.y ~zod))
+  =^  watch  agent  (~(on-watch agent bowl0) /writs)
+  ;:  weld
+    (expect-eq !>(1) !>((lent (app-cards cards))))
+    (expect-eq !>(`%anew-response) !>((fact-mark (snag 0 (app-cards cards)))))
+    (expect-eq !>(~) !>((app-cards watch)))
+  ==
+::
+::  The index projects our own on-chain "no sponsor" to self.  When jael
+::  asks for our point (the /<ship> watch), the log's sponsor replaces
+::  that projection -- and only that: the other udiffs are untouched.
+::
+++  test-index-self-sponsorship-yields-to-the-log
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((own-index-state cand-spon)))
+  =^  cards  agent  (~(on-watch agent bowl0) /~zod)
+  =/  out  (app-cards cards)
+  ;:  weld
+    (expect-eq !>(1) !>((lent out)))
+    (expect-eq !>(`%azimuth-udiffs) !>((fact-mark (snag 0 out))))
+    (expect-eq !>(`(list [ship (unit @p)])`[~zod `~marzod]~) !>((spon-of (fact-payload (snag 0 out)))))
+    (expect-eq !>(4) !>((lent ;;(udiffs:point:jael (need (fact-payload (snag 0 out)))))))
+  ==
+::
+::  ... and stays self when the log names no sponsor (the root's case).
+::
+++  test-index-self-sponsorship-stands-for-a-root
+  =/  agent  gw-btc
+  =^  *      agent  (~(on-load agent bowl0) !>((own-index-state cand)))
+  =^  cards  agent  (~(on-watch agent bowl0) /~zod)
+  =/  out  (app-cards cards)
+  ;:  weld
+    (expect-eq !>(1) !>((lent out)))
+    (expect-eq !>(`(list [ship (unit @p)])`[~zod `~zod]~) !>((spon-of (fact-payload (snag 0 out)))))
   ==
 ::
 ::  A verdict for a job that is not the one in flight is ignored: a

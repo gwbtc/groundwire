@@ -428,7 +428,15 @@
   ::  rather than reinstalled.
   ::
   =/  cur  (mole |.(;;(gw-state nou)))
-  ?^  cur  `this(state u.cur)
+  ?^  cur
+    ::  A running ship takes this branch when the desk updates; jael is
+    ::  already watching /writs, so this is where it first hears our
+    ::  sponsor (+own-spon-card).  .state first: +base-chain reads the
+    ::  LOADED log, not the bunt.
+    ::
+    =.  state  u.cur
+    :_  this
+    (own-spon-cards our.bowl now.bowl)
   ::  -15 is the current shape minus .clean and .origin; every walk simply
   ::  starts from its custody entry once more, and an index that exists
   ::  is recorded as what every ship so far did: the epoch bootstrap.
@@ -1084,7 +1092,13 @@
   ::  %verdict and %anew-response facts.
       [%writs ~]
     ?>  =(our src):bowl
-    `this
+    ::  This watch is the first moment jael can hear anything from us
+    ::  (it arrives in the event after +on-init's %anex, so a card from
+    ::  +on-init itself would find no subscriber), and it recurs on every
+    ::  re-watch after a kick.  Tell jael our sponsor here.
+    ::
+    :_  this
+    (own-spon-cards our.bowl now.bowl)
   ::
   ::  %urb-snapshot listens for new urb-states
       [%urb-state ~]
@@ -1120,6 +1134,7 @@
             ~
             %azimuth-udiffs
             !>  ^-  udiffs:point:jael
+            %^  fix-own-spon  our.bowl  (own-spon our.bowl now.bowl)
             %+  murn
               (state-to-udiffs urb-state.state)
             |=  [=ship =udiff:point:jael]
@@ -1268,8 +1283,15 @@
       ::  proved leaves us unreachable.
       %-  (slog (unroutable-point our.bowl point.res))
       %-  (slog leaf+"%gw-btc: custody log verified ({<(lent chain.req)>} entries); refreshing our pass" ~)
+      ::  ... and, from the log just proved, our sponsor -- so a change
+      ::  of sponsor reaches jael with the pass that records it, not on
+      ::  the next reload.
+      ::
       :_  this(chain.own chain.req)
-      ~[(anew-card domain:cc pass.req)]
+      %+  weld  ~[(anew-card domain:cc pass.req)]
+      =/  spo  (own-spon-of chain.req)
+      ?~  spo  ~
+      ~[(own-spon-card our.bowl u.spo)]
     ==
   ::
       ::  Leak backstop for the %anew job, mirroring +stuck-job-guard for
@@ -1578,6 +1600,7 @@
       ?.  (~(has in (subs-to-ships sup.bowl)) who)
         ~[(listen-to-urb (silt ~[who]) [%| dap.bowl])]
       %-  jael-update
+      %^  fix-own-spon  our.bowl  (own-spon our.bowl now.bowl)
       %+  murn  (state-to-udiffs urb-state)
       |=  [=ship =udiff:point:jael]
       ^-  (unit [^ship udiff:point:jael])
@@ -1720,7 +1743,8 @@
           ==
         ~
       %+  welp
-        (jael-update filtered-udiffs)
+        %-  jael-update
+        (fix-own-spon our.bowl (own-spon our.bowl now.bowl) filtered-udiffs)
       %+  welp
         :~  (scan-again now.bowl urb-state best)
         ==
@@ -2585,6 +2609,86 @@
   =/  sat  (from-xtr:lsa our u.base)
   ?~  sat  ~
   chain.u.sat
+::
+::  +own-spon-of: the sponsor a custody log names, if any
+::
+::    The log's newest opening is authoritative (+run-checks:lsa enforces
+::    monotone life across openings).  ~ when the log has no opening or
+::    its newest names none -- a root that sponsors itself (~barmul is
+::    minted with no --sponsor) stays self-sponsoring in jael, which is
+::    exactly right: +saxo:of ends at the first self-sponsoring ship.
+::
+++  own-spon-of
+  |=  chain=custody-log:sa
+  ^-  (unit @p)
+  =/  ops  (openings-of:lsa chain)
+  ?~  ops  ~
+  sponsor.snapshot.opening:(rear ops)
+::
+++  own-spon
+  |=  [our=@p now=@da]
+  ^-  (unit @p)
+  (own-spon-of (base-chain our now))
+::
+::  +own-spon-card: tell jael who sponsors US
+::
+::    A comet's %dawn arrives with an empty sponsorship chain (this
+::    runtime is built with unsafe_dawn, so nothing asks Azimuth), and
+::    jael writes our own point with sponsor=~.  +sein:of then falls
+::    through to the numeric star of our name, and once the public index
+::    sees our own spawn it says "self" instead (+state-to-udiffs, via the
+::    /<ship> watch jael opens when we %listen for a ship we scanned).
+::    Either way %saxo collapses, and the base desk's %ping agent -- which
+::    pokes the top of the chain every 25 s precisely so the sponsor's
+::    lane for us survives restarts, port changes and NAT timeouts --
+::    pokes nobody.  Seen live: ~fossyd restarted on a new port and its
+::    sponsor could not deliver desk updates for three days, until the
+::    ship happened to send a packet.  The custody log is where our
+::    sponsor is actually recorded, so it is what jael hears.
+::
+::    One %spon udiff on /writs.  Jael accepts udiffs from an %anex-
+::    registered domain on any path it subscribes to (jael +take, the
+::    %fact tail: `dom-for-app` bypasses the %listen registry), and it
+::    watches /writs from %anex on -- the same path +anew-card uses.
+::    +jael-update's / and /<ship> paths are %listen-only and are not
+::    used here.  The $id rides along but is never read (+udiff-to-diff
+::    applies %spon unconditionally).
+::
+++  own-spon-card
+  |=  [our=@p spo=@p]
+  ^-  card
+  =/  =id:block:jael  block-id.urb-state
+  :*  %give  %fact  ~[/writs]  %azimuth-udiffs
+      !>  ^-  udiffs:point:jael
+      [our id %spon `spo]~
+  ==
+::
+++  own-spon-cards
+  |=  [our=@p now=@da]
+  ^-  (list card)
+  =/  spo  (own-spon our now)
+  ?~  spo  ~
+  ~[(own-spon-card our u.spo)]
+::
+::  +fix-own-spon: the index's %spon for OUR ship yields to the log's
+::
+::    +state-to-udiffs and +fx-to-udiffs project an on-chain "no sponsor"
+::    to self for every ship: a confidential comet's sponsor lives in its
+::    xtr, not in the OP_RETURN publication, and self is the one default
+::    that never routes a peer through a random mainnet star.  For every
+::    other ship that stays.  For us the log knows better -- when it names
+::    a sponsor.  When it does not (a self-sponsoring root) the projection
+::    stands, untouched.
+::
+++  fix-own-spon
+  |=  [our=@p spo=(unit @p) =udiffs:point:jael]
+  ^-  udiffs:point:jael
+  ?~  spo  udiffs
+  %+  turn  udiffs
+  |=  [=ship =udiff:point:jael]
+  ^-  [^ship udiff:point:jael]
+  ?.  &(=(ship our) ?=(%spon -.+.udiff))  [ship udiff]
+  [ship id.udiff %spon spo]
 ::
 ::  +own-spawn-height: the block our own spawn confirmed in, from our
 ::  custody log -- the natural first block of a sponsee's public index
