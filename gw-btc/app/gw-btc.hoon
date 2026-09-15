@@ -2171,7 +2171,7 @@
 ::    +scan-again re-arms immediately rather than idling for the poll
 ::    interval, so a small batch costs nothing in throughput.
 ::
-::    Five, not twenty-five: a batch is ONE event, and every other event
+::    Small, not twenty-five: a batch is ONE event, and every other event
 ::    on the ship -- a desk sync from the sponsor, an ames packet, a
 ::    control-socket request -- waits for it.  With 25 blocks of full
 ::    parsing per event and an immediate re-arm, a comet grinding through
@@ -2179,7 +2179,12 @@
 ::    fixed it (2026-09-11: kiln retried "cannot reach the sync source"
 ::    for hours against a sponsor two hops away).  See +scan-again.
 ::
-++  scan-batch  5
+::    Ten as of node@hd/lc-peers, whose deserialiser no longer copies the
+::    whole remaining block on every field read (tens of seconds a block
+::    became about a second), and whose peer sweep keeps blocks arriving.
+::    Raise further only against a measurement on a live ship.
+::
+++  scan-batch  10
 ::
 ::  +block-fetch-timeout: how long one /block/height/<h> fetch may take
 ::
@@ -2196,7 +2201,14 @@
 ::    and re-arms in 30s, and the batch is simply rescanned -- the cursor
 ::    only advances on a thread that returned.
 ::
-++  block-fetch-timeout  ~m5
+::    Ninety seconds, down from five minutes: the light client re-asks a
+::    different peer for an unanswered block every 20 s (node@hd/lc-peers;
+::    5 s before), so a block that has not arrived by now has no peer to
+::    come from, and its sweep timer will have replaced the peer set by
+::    the time the 30 s re-arm fires.  Five minutes was the cost of every
+::    block on a ship with no live peers -- ~ponnyd spent days at zero.
+::
+++  block-fetch-timeout  ~s90
 ::
 ::  +scan-again: re-arm the block timer
 ::

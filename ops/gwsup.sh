@@ -211,6 +211,9 @@ N_WEDGE=$(_count 'WEDGE (recover')
 N_VERE=$(_count 'VERE-DOWN')
 N_SIDE=$(_count 'SIDECAR-DOWN')
 LAST_RECOVER=0
+PEER_EVERY=4       # polls between live-peer checks (4 x 30 s)
+PEER_TICK=0
+PEER_ZEROS=0
 log "supervisor start (pier=$PIER port=$PORT stale=${STALE}s poll=${POLL}s)"
 [ "$(pool_left)" -lt 40 ] && pool_fill
 
@@ -238,6 +241,27 @@ while true; do
     now=$(date +%s)
     if [ $(( now - LAST_RECOVER )) -ge $COOLDOWN ]; then
       recover "event log stale ${AGE}s"
+    fi
+  fi
+
+  # 4. live peers.  A ship with no live peers keeps writing events (block
+  #    re-requests every few seconds, ping timers), so evt_age never trips
+  #    and the ship "looks healthy" while doing nothing.  Every PEER_EVERY
+  #    polls ask the agent; two consecutive zeros => recover.  Mirrors the
+  #    installer's gwsup.sh (keep the two in sync).
+  PEER_TICK=$(( PEER_TICK + 1 ))
+  if [ "$PEER_TICK" -ge "$PEER_EVERY" ]; then
+    PEER_TICK=0
+    live=$(peer_count)
+    if [ -n "$live" ]; then
+      if [ "$live" -eq 0 ]; then PEER_ZEROS=$(( PEER_ZEROS + 1 )); else PEER_ZEROS=0; fi
+      if [ "$PEER_ZEROS" -ge 2 ]; then
+        now=$(date +%s)
+        if [ $(( now - LAST_RECOVER )) -ge $COOLDOWN ]; then
+          PEER_ZEROS=0
+          recover "no live peers on two consecutive checks"
+        fi
+      fi
     fi
   fi
 
