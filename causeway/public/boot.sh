@@ -90,7 +90,7 @@ HTTP_PORT="${GROUNDWIRE_PORT:-8080}"
 PORT_EXPLICIT="${GROUNDWIRE_PORT:+1}"
 AMES_PORT=""
 # The PKI gateway a comet's FIRST boot fetches the galaxy table and network
-# domains from (gw-vere -W; dawn.c =lamp= / =turf=).  gw-vere's built-in
+# domains from (gw-vere --gateway; dawn.c =lamp= / =turf=).  gw-vere's built-in
 # default is http://143.198.70.9:8080, a droplet that no longer exists
 # (2026-09-16); any ship's eyre serves the same two scries, and this is the
 # sponsor's.  Restarts never dawn, so only the first boot passes it.
@@ -764,9 +764,9 @@ boot_ship() {
     check_ports
     mkdir -p "$GW_DIR/piers"
     : > "$GW_LOG"
-    local args="-t --loom $LOOM -c $GW_PIER -w $NAME -G $FEED -B $PILL --http-port $HTTP_PORT -W $GATEWAY"
+    local args="-t --loom $LOOM -c $GW_PIER -w $NAME -G $FEED -B $PILL --http-port $HTTP_PORT --gateway $GATEWAY"
     [ -n "$AMES_PORT" ] && args="$args -p $AMES_PORT"
-    info "gw-vere -t --loom $LOOM -c $GW_PIER -w $NAME -G <feed> -B <pill> --http-port $HTTP_PORT -W $GATEWAY${AMES_PORT:+ -p $AMES_PORT}"
+    info "gw-vere -t --loom $LOOM -c $GW_PIER -w $NAME -G <feed> -B <pill> --http-port $HTTP_PORT --gateway $GATEWAY${AMES_PORT:+ -p $AMES_PORT}"
     if have setsid; then
       # shellcheck disable=SC2086
       setsid nohup "$VERE" $args >> "$GW_LOG" 2>&1 </dev/null &
