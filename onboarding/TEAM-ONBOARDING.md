@@ -25,7 +25,7 @@ confidential comets):
 
 ```bash
 gh release list -R gwbtc/urbit | grep groundwire-rc | head -1
-# e.g. groundwire-rc-2026.9.13
+# e.g. groundwire-rc-2026.9.16
 ```
 
 ## The sponsor — nothing to memorize
@@ -56,7 +56,7 @@ One hard constraint shapes the recipe: `boot.sh --mint` reads its prompts from
 survives your SSH connection, and your Claude drives it with `send-keys` and
 reads it from a log. (This is exactly how the ops campaign drove ships.)
 
-**Use `groundwire-rc-2026.9.13` or newer.** Earlier RCs have one or both of:
+**Use `groundwire-rc-2026.9.16` or newer.** Earlier RCs have one or both of:
 a `gwlib.sh` whose peer seeding pokes a renamed mark (the light client never
 gets a peer and sync never starts — fixed in 2026.9.10), and a Causeway that
 does not record the sponsor's attestation in the spawn proof (the comet can't
@@ -81,6 +81,15 @@ syncing while the index runs (2026.9.11's larger batches starved it), and the
 pane's public-index row wraps and reads as a status, a progress bar, and a
 provenance line. A ship already running follows the sponsor's `%gw-btc`
 automatically and does not need reinstalling for this.
+**2026.9.16** is the one to mint on now: the light client keeps its peers
+(stale connects are reaped and a sweep reconnects every minute; a ship no
+longer sits at zero peers looking healthy), a full block parses in well under
+a second instead of tens of seconds, the sidecar hands blocks over in a few
+events instead of hundreds, the comet tells jael who its sponsor is (so the
+base desk's `%ping` refreshes the sponsor's route to it on every restart),
+and the first boot fetches the galaxy table from the sponsor's web server --
+the old gateway host is gone, and a mint on any earlier release now hangs at
+"retrieving galaxy table".
 
 **Droplet prerequisites** (learned the hard way on the first real run): a stock
 4 GB DigitalOcean droplet is *not* enough on its own. The comet miner maps an
@@ -110,7 +119,7 @@ S 'apt-get update -qq && apt-get install -y -qq tmux python3-venv
 #      this the mint sits silently waiting for an address nobody can see.
 S 'cat > ~/mint.sh <<'"'"'EOF'"'"'
 PYTHONUNBUFFERED=1 bash ~/boot.sh --mint --headless --detach \
-  --version groundwire-rc-2026.9.13 \
+  --version groundwire-rc-2026.9.16 \
   --sponsor "~barmul-bolmet-ronlus-lighul--rovtun-satryc-moclug-daplyd" 2>&1 | tee ~/mint.log
 EOF
 chmod +x ~/mint.sh'
@@ -137,7 +146,7 @@ S 'tmux send-keys -t mint "<the twelve words>" Enter'
 #    watching the sync). Pass the SAME --version as the mint: boot.sh now pins
 #    the installed release by itself, but say it anyway -- an older boot.sh
 #    resolved "latest" to the daily and overwrote bin/ under a running pier.
-S "bash ~/boot.sh --detach --version groundwire-rc-2026.9.13 --comet '<the @p it printed>'"
+S "bash ~/boot.sh --detach --version groundwire-rc-2026.9.16 --comet '<the @p it printed>'"
 S "bash ~/boot.sh --status --comet '<@p>'; bash ~/boot.sh --code --comet '<@p>'"
 
 # 6. restarting later: ALWAYS through boot.sh (`--stop`, then `--detach`),
