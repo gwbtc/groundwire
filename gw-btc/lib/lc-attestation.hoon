@@ -461,10 +461,14 @@
   =|  acc=(map @ud block:bc)
   |-  ^-  form:m
   ?:  =(want ~(wyt by acc))  (pure:m acc)
+  ::  +take-fact-prefix hands back the wire from the prefix's LAST
+  ::  segment on (it slags by the prefix's length, not one past it), so
+  ::  the path here is /blocks/<h>, not /<h>.
+  ::
   ;<  [=path =cage]  bind:m  (take-fact-prefix:strandio /blocks)
-  ?.  ?=([@ ~] path)
+  ?.  ?=([%blocks @ ~] path)
     (strand-fail:strandio %scan-block-wire [>path< ~])
-  =/  h=@ud  (slav %ud i.path)
+  =/  h=@ud  (slav %ud i.t.path)
   =/  bres  !<(block-by-height:update:lc q.cage)
   ?.  =(h block-height.bres)
     %+  strand-fail:strandio  %scan-block-height-mismatch
