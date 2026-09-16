@@ -20,11 +20,11 @@ jobs:
       - name: Build desks
         run: |
           make spv
-          make groundwire
+          make gw-btc
 
       - name: Create desk.ship
         run: |
-          printf '%s\n' "~${DIST_PIER}" > dist-groundwire/desk.ship
+          printf '%s\n' "~${DIST_PIER}" > dist-gw-btc/desk.ship
           printf '%s\n' "~${DIST_PIER}" > dist-spv/desk.ship
 
       - name: Setup SSH
@@ -34,16 +34,35 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H 143.198.70.9 >> ~/.ssh/known_hosts
 
-      - name: Clear deployed desks
-        run: ssh ${SHIP_HOST} "find ${PIER_PATH}/${DIST_PIER}/groundwire ${PIER_PATH}/${DIST_PIER}/spv-wallet -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
+      # The desk was renamed %groundwire -> %gw-btc.  A mount point is not
+      # created by scp: the distribution ship must already have the desk and
+      # have it mounted, or `scp -r a/* host:missing/` fails with a bare "No
+      # such file or directory" that says nothing about why.  Check first and
+      # name the fix, once, in the place someone will be looking.
+      - name: Verify the desk is mounted on the distribution ship
+        run: |
+          for d in gw-btc spv-wallet; do
+            if ! ssh ${SHIP_HOST} "test -d ${PIER_PATH}/${DIST_PIER}/$d"; then
+              echo "::error::%$d is not mounted on ~${DIST_PIER}."
+              echo "Run this once in the '${TMUX_TAB}' tmux tab on ${SHIP_HOST}:"
+              echo "    |new-desk %$d"
+              echo "    |mount %$d"
+              echo "(%gw-btc is the desk formerly called %groundwire; the old"
+              echo " mount can be deleted once this deploy is green.)"
+              exit 1
+            fi
+          done
 
-      - name: Deploy Groundwire
-        run: scp -r dist-groundwire/* ${SHIP_HOST}:${PIER_PATH}/${DIST_PIER}/groundwire/
+      - name: Clear deployed desks
+        run: ssh ${SHIP_HOST} "find ${PIER_PATH}/${DIST_PIER}/gw-btc ${PIER_PATH}/${DIST_PIER}/spv-wallet -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
+
+      - name: Deploy gw-btc
+        run: scp -r dist-gw-btc/* ${SHIP_HOST}:${PIER_PATH}/${DIST_PIER}/gw-btc/
 
       - name: Deploy Wallet
         run: scp -r dist-spv/* ${SHIP_HOST}:${PIER_PATH}/${DIST_PIER}/spv-wallet/
 
       - name: Commit desk on ship
         run: |
-          ssh ${SHIP_HOST} "tmux send-keys -t ${TMUX_TAB} '|commit %groundwire' Enter"
+          ssh ${SHIP_HOST} "tmux send-keys -t ${TMUX_TAB} '|commit %gw-btc' Enter"
           ssh ${SHIP_HOST} "tmux send-keys -t ${TMUX_TAB} '|commit %spv-wallet' Enter"
