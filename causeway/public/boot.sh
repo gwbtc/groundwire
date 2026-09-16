@@ -89,6 +89,12 @@ GW_DIR="${GROUNDWIRE_DIR:-$HOME/.groundwire}"
 HTTP_PORT="${GROUNDWIRE_PORT:-8080}"
 PORT_EXPLICIT="${GROUNDWIRE_PORT:+1}"
 AMES_PORT=""
+# The PKI gateway a comet's FIRST boot fetches the galaxy table and network
+# domains from (gw-vere -W; dawn.c =lamp= / =turf=).  gw-vere's built-in
+# default is http://143.198.70.9:8080, a droplet that no longer exists
+# (2026-09-16); any ship's eyre serves the same two scries, and this is the
+# sponsor's.  Restarts never dawn, so only the first boot passes it.
+GATEWAY="${GW_GATEWAY:-http://146.190.199.0:80}"
 TAG="${GROUNDWIRE_VERSION:-latest}"
 LOOM="${GROUNDWIRE_LOOM:-32}"
 EXPECT_SHA="${GROUNDWIRE_SHA256:-}"
@@ -192,6 +198,9 @@ OPTIONS
   --ames-port <n>    UDP port for ames. Pin this if your comet commits a
                      fief: the fief names an exact IP:port and the ship has
                      to actually be reachable there.
+  --gateway <url>    the PKI gateway the FIRST boot fetches the galaxy table
+                     from (any ship's web server; default: the sponsor's,
+                     http://146.190.199.0:80). Restarts never need it.
   --version <tag>    pin a release tag (default: the latest release)
   --sha256 <hex>     require the tarball to have this SHA-256. The release's
                      own SHA256SUMS is fetched and checked without this; pass
@@ -259,6 +268,7 @@ while [ $# -gt 0 ]; do
     --dir)        [ $# -ge 2 ] || usagedie "--dir needs a value"; GW_DIR="$2"; shift 2 ;;
     --port)       [ $# -ge 2 ] || usagedie "--port needs a value"; HTTP_PORT="$2"; PORT_EXPLICIT=1; shift 2 ;;
     --ames-port)  [ $# -ge 2 ] || usagedie "--ames-port needs a value"; AMES_PORT="$2"; shift 2 ;;
+    --gateway)    [ $# -ge 2 ] || usagedie "--gateway needs a value"; GATEWAY="$2"; shift 2 ;;
     --version)    [ $# -ge 2 ] || usagedie "--version needs a value"; TAG="$2"; TAG_EXPLICIT=1; shift 2 ;;
     --sha256)     [ $# -ge 2 ] || usagedie "--sha256 needs a value"; EXPECT_SHA="$2"; shift 2 ;;
     --loom)       [ $# -ge 2 ] || usagedie "--loom needs a value"; LOOM="$2"; shift 2 ;;
@@ -754,9 +764,9 @@ boot_ship() {
     check_ports
     mkdir -p "$GW_DIR/piers"
     : > "$GW_LOG"
-    local args="-t --loom $LOOM -c $GW_PIER -w $NAME -G $FEED -B $PILL --http-port $HTTP_PORT"
+    local args="-t --loom $LOOM -c $GW_PIER -w $NAME -G $FEED -B $PILL --http-port $HTTP_PORT -W $GATEWAY"
     [ -n "$AMES_PORT" ] && args="$args -p $AMES_PORT"
-    info "gw-vere -t --loom $LOOM -c $GW_PIER -w $NAME -G <feed> -B <pill> --http-port $HTTP_PORT${AMES_PORT:+ -p $AMES_PORT}"
+    info "gw-vere -t --loom $LOOM -c $GW_PIER -w $NAME -G <feed> -B <pill> --http-port $HTTP_PORT -W $GATEWAY${AMES_PORT:+ -p $AMES_PORT}"
     if have setsid; then
       # shellcheck disable=SC2086
       setsid nohup "$VERE" $args >> "$GW_LOG" 2>&1 </dev/null &

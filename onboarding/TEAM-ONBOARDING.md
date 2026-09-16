@@ -139,6 +139,15 @@ S 'tmux send-keys -t mint "<the twelve words>" Enter'
 #    resolved "latest" to the daily and overwrote bin/ under a running pier.
 S "bash ~/boot.sh --detach --version groundwire-rc-2026.9.13 --comet '<the @p it printed>'"
 S "bash ~/boot.sh --status --comet '<@p>'; bash ~/boot.sh --code --comet '<@p>'"
+
+# 6. restarting later: ALWAYS through boot.sh (`--stop`, then `--detach`),
+#    never `gw-vere <pier>` by hand. boot.sh pins the ship's ames port (it
+#    is in ~/.groundwire/var/<name>.env) and the supervisor relaunches with
+#    it. A hand-started vere binds a fresh random port, and the sponsor
+#    keeps sending to the old one: the ship looks fine but receives no
+#    desk updates until it happens to send the sponsor a packet (this cost
+#    one comet three days of updates in September). If you must start vere
+#    yourself, pass `-p <that port>`.
 ```
 
 **If the mint's one-time boot died** (seen once: vere segfaulted right after

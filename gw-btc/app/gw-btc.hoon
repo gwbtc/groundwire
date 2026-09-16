@@ -2165,9 +2165,10 @@
 ::
 ::    A batch is all-or-nothing: the cursor advances only when the thread
 ::    returns, so a failed fetch or a rejected +reconcile-block discards
-::    every block in it.  A full mainnet block costs tens of seconds to
-::    fetch on a small node, which makes this a bound on MINUTES of lost
-::    work, not just on event size.  When a run stops short of the tip,
+::    every block in it.  A full mainnet block cost tens of seconds to
+::    fetch on a small node (before node@hd/lc-peers; about a second
+::    since), which made this a bound on MINUTES of lost work, not just
+::    on event size.  When a run stops short of the tip,
 ::    +scan-again re-arms immediately rather than idling for the poll
 ::    interval, so a small batch costs nothing in throughput.
 ::

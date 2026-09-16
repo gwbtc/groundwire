@@ -1070,7 +1070,8 @@ Measured on 2-vCPU droplets against mainnet. Use these to tell "slow" from
 | **full light-client bring-up** | — | **~2.5 h** |
 | one confidential verification | ~11 filter fetches + 2 blocks | **100–110 s** |
 | BIP-158 liveness scan, ~170 blocks | — | ~4 min |
-| single block fetch | — | tens of seconds |
+| single block fetch (node ≤ 063720b9) | — | tens of seconds |
+| single block parse (node hd/lc-peers, cursor deserialiser) | 1.87 MB, 6,000 txs | 0.3 s |
 | peer recovery 0 → 10 live peers | gossip | a few minutes |
 | sidecar kill → detected | 30 s poll | 5 s |
 | sidecar kill → recovered | — | 19 s |
