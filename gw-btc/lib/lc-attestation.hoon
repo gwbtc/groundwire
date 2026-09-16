@@ -429,6 +429,47 @@
 ::    here from the transaction itself (+node-txid).  The reward is the
 ::    height's block subsidy, exactly as the old RPC path derived it.
 ::
+::  +fetch-blocks: every block from .from to .to, fetched CONCURRENTLY
+::
+::    One /block/height/<h> subscription per height, all opened before
+::    any is awaited, so the light client asks a different peer for each
+::    and the batch takes as long as its slowest download, not the sum.
+::    Measured on a live comet: a 1.7 MB block arrives in 3 s from a fast
+::    peer and 18-23 s from a slow one, and with one fetch at a time the
+::    index paid the slow ones in series.
+::
+::    Facts are collected by wire (+take-fact-prefix) into a map keyed by
+::    height, because they arrive in whatever order the peers deliver;
+::    the caller walks the map in height order.  The light client kicks
+::    each subscription after its fact; those kicks are ordinary inputs
+::    that +take-fact-prefix skips.  A height it answers with the wrong
+::    block-height fails the whole strand, as +fetch-block-at does.
+::
+++  fetch-blocks
+  |=  [our=@p from=@ud to=@ud]
+  =/  m  (strand:strandio ,(map @ud block:bc))
+  ^-  form:m
+  =/  want=@ud  +((sub to from))
+  =/  heights=(list @ud)  (gulf from to)
+  |-  ^-  form:m
+  ?^  heights
+    ;<  ~  bind:m
+      %^  watch:strandio  /blocks/(scot %ud i.heights)
+        [our %bitcoin-client]
+      /block/height/(scot %ud i.heights)
+    $(heights t.heights)
+  =|  acc=(map @ud block:bc)
+  |-  ^-  form:m
+  ?:  =(want ~(wyt by acc))  (pure:m acc)
+  ;<  [=path =cage]  bind:m  (take-fact-prefix:strandio /blocks)
+  ?.  ?=([@ ~] path)
+    (strand-fail:strandio %scan-block-wire [>path< ~])
+  =/  h=@ud  (slav %ud i.path)
+  =/  bres  !<(block-by-height:update:lc q.cage)
+  ?.  =(h block-height.bres)
+    %+  strand-fail:strandio  %scan-block-height-mismatch
+    [>[h block-height.bres]< ~]
+  $(acc (~(put by acc) h (common-block-to-bc block-hash.bres h +.bres)))
 ++  common-block-to-bc
   |=  [haz=@ux height=@ud blk=block:bcm]
   ^-  block:bc

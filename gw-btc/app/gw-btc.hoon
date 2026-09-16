@@ -2183,11 +2183,13 @@
 ::    Ten as of node@hd/lc-peers, whose deserialiser no longer copies the
 ::    whole remaining block on every field read (tens of seconds a block
 ::    became about a second), and whose peer sweep keeps blocks arriving.
-::    Raise further only against a measurement on a live ship.
+::    The batch is also the fetch's concurrency (+fetch-blocks:lca): ten
+::    downloads in flight from ten peers.  Raise further only against a
+::    measurement on a live ship.
 ::
 ++  scan-batch  10
 ::
-::  +block-fetch-timeout: how long one /block/height/<h> fetch may take
+::  +block-fetch-timeout: how long a batch's block fetch may take
 ::
 ::    A light-client watch has no timeout of its own: if the node never
 ::    answers (no peer will serve the block, the sidecar died, ...) the
@@ -2195,8 +2197,9 @@
 ::    when the thread RETURNS, the public scanner would stop permanently
 ::    with no error and no retry.  The confidential verifier is covered
 ::    against the same hazard by +stuck-job-guard; this is the scanner's
-::    equivalent.  Bounding the individual fetch rather than the batch
-::    keeps a legitimately slow +scan-batch run from being killed.
+::    equivalent.  The batch's blocks are fetched concurrently
+::    (+fetch-blocks:lca), so this bounds the slowest of them, not their
+::    sum; the timer was per block when fetches were serial.
 ::
 ::    On expiry the strand fails, +on-arvo's %blocks failure branch logs
 ::    and re-arms in 30s, and the batch is simply rescanned -- the cursor
@@ -2262,16 +2265,22 @@
   =/  stop
     (min last-settled-block (add num.block-id.urb-state scan-batch))
   =/  from  +(num.block-id.urb-state)
+  ?:  (gth from stop)  (pure:m !>([urb-state [fx state]:uc]))
+  ::  Every block of the batch is requested up front and fetched
+  ::  concurrently by the light client, one peer per height (see
+  ::  +fetch-blocks:lca); the batch costs its slowest download, not the
+  ::  sum of them.  The timeout bounds the whole batch.
+  ::
+  ;<  blocks=(map @ud block:bitcoin)  bind:m
+    %+  (set-timeout:strandio ,(map @ud block:bitcoin))  block-fetch-timeout
+    (fetch-blocks:lca our from stop)
   =/  i  from
   |-
   ^-  form:m
   ?.  (lte i stop)
-    ?:  =(i from)  (pure:m !>([urb-state [fx state]:uc]))
     ~&  >  [%gw-btc-scanned from=from to=(dec i) settled-tip=last-settled-block]
     (pure:m !>([urb-state [fx state]:uc]))
-  ;<  =block:bitcoin  bind:m
-    %+  (set-timeout:strandio ,block:bitcoin)  block-fetch-timeout
-    (fetch-block-at:lca our i)
+  =/  =block:bitcoin  (~(got by blocks) i)
   ::  Filter the block to urb-relevant txs, fill in the input values we
   ::  already track, and run the OP_RETURN scanner over the result.
   =/  revs-and-block  (find-block-reveals:uc block)
