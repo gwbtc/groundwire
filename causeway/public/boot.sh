@@ -114,6 +114,7 @@ REMINT=""
 DO_BITCOIN=1
 DO_SUPERVISOR=1
 DO_WAIT=1
+DO_DOMAIN=1
 FORCE_REDOWNLOAD=0
 SEED_BATCHES="${GROUNDWIRE_SEED_BATCHES:-6}"
 SEED_BATCH_SIZE=25          # OPERATIONS.md 5.6: bulk adds SIGSEGV the sidecar
@@ -211,6 +212,7 @@ OPTIONS
   --no-bitcoin       boot the ship only: no sidecar, no peers, no sync
   --no-supervisor    do not start the supervisor (you get no crash recovery)
   --no-wait          set everything running and exit without watching sync
+  --no-domain        skip the groundwire.me name + certificate step (see below)
   --redownload       re-fetch the release even if it is already installed
   --help             this text
 
@@ -275,6 +277,7 @@ while [ $# -gt 0 ]; do
     --no-bitcoin) DO_BITCOIN=0; shift ;;
     --no-supervisor) DO_SUPERVISOR=0; shift ;;
     --no-wait)    DO_WAIT=0; shift ;;
+    --no-domain)  DO_DOMAIN=0; shift ;;
     --redownload) FORCE_REDOWNLOAD=1; shift ;;
     --status)     MODE="status"; shift ;;
     --code)       MODE="code"; shift ;;
@@ -739,6 +742,7 @@ GW_SIDECAR='${GW_SIDECAR:-}'
 GW_AMES_PORT='$AMES_PORT'
 GW_HTTP_PORT='$HTTP_PORT'
 GW_LOOM='$LOOM'
+GW_DOMAIN='${GW_DOMAIN:-}'
 EOF
 }
 
@@ -1134,6 +1138,141 @@ start_supervisor() {
   info "-- which is the part a plain Restart=always unit gets wrong."
 }
 
+# ------------------------------------------------------------------ domain --
+# A name under groundwire.me and a certificate for it, on every boot,
+# idempotently.  The sponsor runs the naming service (gwbtc/urbit-dns);
+# the %dns desk asks it with the dns-address thread, eyre takes the turf
+# the thread installs, and %acme orders the certificate.  Three things
+# have to be true, and each is made true here:
+#
+#   1. port 80 reaches the ship.  The certificate authority validates on
+#      80 and the ship listens on $HTTP_PORT, so one NAT rule forwards it,
+#      made persistent when iptables-persistent can be installed (a reboot
+#      that drops the rule breaks certificate RENEWAL, months later, with
+#      no message).  Root and iptables only; anything else is reported.
+#   2. the %dns desk is on the ship.  It is in the pill from RC 2026.9.23
+#      on; an older pier installs it from the sponsor with one kiln poke.
+#   3. the thread has run once.  eyre holds no turf -> run it with this
+#      machine's public IPv4; eyre already holds one -> nothing to do.
+#
+# Nothing here can fail the boot: a ship with no name works by IP exactly
+# as before.  --no-domain skips the whole step.
+#
+# What the user notices: a minute or two after the thread, once the
+# certificate is installed, eyre redirects EVERY plain-http request to
+# https, so http://<ip>:8080 stops working and the ship's address is the
+# https name.  The status, the summary and the README all print it.
+DEFAULT_SPONSOR="~barmul-bolmet-ronlus-lighul--rovtun-satryc-moclug-daplyd"
+
+public_ip() {
+  local ip=""
+  if have dig; then
+    ip="$(dig +short -4 myip.opendns.com @resolver1.opendns.com 2>/dev/null | tail -1)"
+  fi
+  if ! printf '%s' "$ip" | grep -qE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
+    ip="$(curl -4 -fsS -m 10 https://api.ipify.org 2>/dev/null || true)"
+  fi
+  printf '%s' "$ip" | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' || true
+}
+
+# Does clay hold a desk of this name?  Whole-set scry on %base: never
+# bails, unlike a scry into the desk itself when it is absent.
+ship_has_desk() {
+  printf "(pure:m !>((crip ?:((~(has in .^((set desk) %%cd /(scot %%p our)/base/(scot %%da now))) %%%s) \"yes\" \"no\"))))\n" "$1" \
+    | gwl_eval 120 | grep -qE "%yes|'yes'"
+}
+
+ensure_port80() {
+  [ "$HTTP_PORT" = 80 ] && return 0
+  if [ "$(id -u)" != 0 ] || ! have iptables; then
+    warn "port 80: not root, or no iptables -- forward port 80 to $HTTP_PORT yourself,
+    or the certificate cannot be issued (urbit-dns README: Getting a URL for your comet)"
+    return 1
+  fi
+  if ! iptables -t nat -C PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports "$HTTP_PORT" 2>/dev/null; then
+    iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports "$HTTP_PORT" \
+      || { warn "port 80: could not add the NAT rule to $HTTP_PORT"; return 1; }
+    info "port 80: forwarded to $HTTP_PORT"
+  fi
+  if ! have netfilter-persistent && have apt-get; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -q iptables-persistent >/dev/null 2>&1 || true
+  fi
+  if have netfilter-persistent; then
+    netfilter-persistent save >/dev/null 2>&1 || true
+  else
+    warn "port 80: the forward is not persistent here (no iptables-persistent); re-run boot.sh after a reboot"
+  fi
+  return 0
+}
+
+ensure_dns_desk() {
+  if ship_has_desk dns; then return 0; fi
+  local sponsor="${MINT_SPONSOR:-$DEFAULT_SPONSOR}" i
+  info "%dns is not on this ship (a pill from before 2026.9.23); installing it from $sponsor"
+  gwl_poke hood kiln-install "!>([%dns $sponsor %dns])" 600 >/dev/null 2>&1 || true
+  for i in $(seq 1 18); do
+    sleep 10
+    ship_has_desk dns && return 0
+  done
+  warn "%dns did not arrive within 3 minutes (sponsor unreachable?); no name this boot"
+  return 1
+}
+
+# "... 25965 %groundwire %kebab %untrained 0 ..." -> untrained.kebab.groundwire.me
+# A turf is TLD-first, and 25965 is the atom 'me'.
+domain_from_noun() {
+  printf '%s' "$1" | grep -oE '25965( %[a-z0-9-]+)+' | head -1 | grep -oE '%[a-z0-9-]+' | tr -d '%' \
+    | awk '{a[NR]=$0} END{for(i=NR;i>0;i--) printf "%s.", a[i]; if (NR) print "me"}'
+}
+
+ensure_domain() {
+  [ "${DO_DOMAIN:-1}" = 1 ] || return 0
+  step "A name for $COMET"
+  ensure_port80 || true
+  ensure_dns_desk || return 0
+  local doms ip out strand
+  doms="$(printf '(pure:m !>(.^(* %%e /(scot %%p our)/domains/(scot %%da now))))\n' | gwl_eval 120)"
+  if printf '%s' "$doms" | grep -q '%groundwire'; then
+    GW_DOMAIN="$(domain_from_noun "$doms")"
+    good "name: https://$GW_DOMAIN (already set)"
+    return 0
+  fi
+  ip="$(public_ip)"
+  if [ -z "$ip" ]; then
+    warn "could not learn this machine's public IPv4 (dig/curl); no name this boot"
+    return 0
+  fi
+  info "asking the sponsor to name $ip (the dns-address thread)"
+  strand="$(cat <<'EOF'
+;<  =bowl:spider  bind:m  get-bowl
+=/  tid  ;;(@ta (cat 3 'dns-address-' (scot %uv (sham eny.bowl))))
+;<  ~  bind:m  (watch /res [our %spider] /thread-result/[tid])
+;<  ~  bind:m
+  %^  poke-our  %spider  %spider-start
+  !>  ^-  start-args:spider
+  [~ [~ tid] [our %dns da+now] %dns-address !>([~ [%if .GWIP]])]
+;<  =cage  bind:m  (take-fact /res)
+(pure:m !>([p.cage q.q.cage]))
+EOF
+)"
+  out="$(printf '%s\n' "${strand//GWIP/$ip}" | gwl_eval 300)"
+  case "$out" in
+    *thread-done*)
+      GW_DOMAIN="$(domain_from_noun "$out")"
+      if [ -n "$GW_DOMAIN" ]; then
+        good "name: https://$GW_DOMAIN"
+        info "the certificate follows within a couple of minutes (%acme, over port 80)."
+        info "from then on plain http to the ip:port redirects to https: use the name."
+      else
+        warn "the thread finished but the name could not be read from: $(printf '%s' "$out" | cut -c1-160)"
+      fi ;;
+    *)
+      warn "the naming thread did not finish: $(printf '%s' "$out" | cut -c1-200)
+    (re-run boot.sh to try again; the ship works by ip:port meanwhile)" ;;
+  esac
+  return 0
+}
+
 # ---------------------------------------------------------------- progress --
 hms() { printf '%02d:%02d:%02d' $(( $1 / 3600 )) $(( ($1 % 3600) / 60 )) $(( $1 % 60 )); }
 
@@ -1280,6 +1419,13 @@ cmd_status() {
     info "filter-hdrs   $(gwl_log_last filter-headers)"
     info "live peers    $(gwl_log_last live-earth-peers)"
     info "is-synced     $(gwl_log_synced)"
+    local dom
+    dom="$(sed -n "s/^GW_DOMAIN='\(.*\)'/\1/p" "$GW_DIR/var/$NAME.env" 2>/dev/null | head -1)"
+    if [ -n "$dom" ]; then
+      info "web           https://$dom   (http://<ip>:$HTTP_PORT redirects here once the certificate is in)"
+    else
+      info "web           http://<this machine's ip>:$HTTP_PORT   (no groundwire.me name yet; boot.sh asks for one on each run)"
+    fi
     local rdy
     rdy="$(gwl_ready 60 | tr -d '\n')"
     case "$rdy" in
@@ -1671,6 +1817,8 @@ cmd_install() {
   fi
 
   if [ "$DO_BITCOIN" = 0 ]; then
+    ensure_domain || true
+    export_env
     step "Done (--no-bitcoin)"
     info "ship is running; the light client was not started."
     summary_lines
@@ -1691,6 +1839,8 @@ cmd_install() {
     [ "$DO_SUPERVISOR" = 1 ] && start_supervisor
   fi
   seed_peers || true
+  ensure_domain || true
+  export_env
 
   # ---- the ending.  At a terminal the ship IS the product: hand the
   # user their dojo (gw-onboard did exactly this and it was right).
@@ -1741,6 +1891,7 @@ summary_lines() {
   [ -f "$GW_SC_LOG" ] && info "sidecar log $GW_SC_LOG"
   [ -f "$GW_DIR/var/sup-$NAME.log" ] && info "supervisor  $GW_DIR/var/sup-$NAME.log"
   info "http        http://127.0.0.1:$HTTP_PORT"
+  [ -n "${GW_DOMAIN:-}" ] && info "https       https://$GW_DOMAIN   (the address to use; the ip:port redirects here once the certificate is in)"
   info ""
   info "web login   $GW_DIR/boot.sh --code --comet '$COMET'   (key for the http address above)"
   info "status      $GW_DIR/boot.sh --status --comet '$COMET'"
@@ -1760,7 +1911,9 @@ Your Groundwire ship: $COMET
   pier (the ship; all its state):  $GW_PIER
   ship log:                        $GW_LOG
   web:                             http://127.0.0.1:$HTTP_PORT
-
+${GW_DOMAIN:+  address (use this one):          https://$GW_DOMAIN
+  (plain http to the ip:port redirects here once the certificate is in)
+}
   status:  $GW_DIR/boot.sh --status --comet '$COMET'
   web login code (the key for the web address): $GW_DIR/boot.sh --code --comet '$COMET'
   stop:    $GW_DIR/boot.sh --stop   --comet '$COMET'

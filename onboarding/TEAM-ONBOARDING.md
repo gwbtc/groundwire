@@ -158,22 +158,21 @@ S "bash ~/boot.sh --status --comet '<@p>'; bash ~/boot.sh --code --comet '<@p>'"
 #    one comet three days of updates in September). If you must start vere
 #    yourself, pass `-p <that port>`.
 
-# 7. a URL and a certificate (optional, ~3 min). The sponsor runs a DNS
-#    service that names comets under groundwire.me; the `%dns` desk it
-#    publishes does the asking. Full runbook: gwbtc/urbit-dns README,
-#    "Getting a URL for your comet". In short:
-#    a) forward port 80 to the ship on the droplet, once (the certificate
-#       authority validates on 80; boot.sh runs the ship on 8080):
-S "iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports 8080 && DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent >/dev/null && netfilter-persistent save"
-#    b) in the dojo: |install ~barmul-bolmet-ronlus-lighul--rovtun-satryc-moclug-daplyd %dns
-#       then, with the droplet's public IPv4:  -dns!dns-address [%if .1.2.3.4]
-#       (from the shell: gwl_poke works for pokes only; run threads in the dojo
-#       or with a %spider-start strand -- see the README)
-#    c) it prints `dns: installed <name>.groundwire.me`; %acme installs the
-#       certificate within ~2 min; `curl https://<name>.groundwire.me/~/host`.
-#    From then on plain http to <ip>:8080 REDIRECTS to https and fails TLS:
-#    use https://<name>.groundwire.me for Landscape, Drive, Tlon and phone
-#    apps, and log in again there (same +code).
+# 7. the ship's address. boot.sh gives every comet a groundwire.me name
+#    and a certificate on its own, on every run (step "A name for ~..."):
+#    it forwards port 80 to the ship (one persistent NAT rule; the
+#    certificate authority validates on 80), installs the %dns desk from
+#    the sponsor if the pill predates 2026.9.23, and runs the naming thread
+#    with the droplet's public IPv4. It prints the name, the summary and
+#    the README repeat it, and `boot.sh --status` shows it as `web`:
+#        name: https://expense.intone.groundwire.me
+#    The certificate follows within ~2 min (`curl https://<name>/~/host`).
+#    FROM THEN ON plain http to <ip>:8080 REDIRECTS to https and fails TLS:
+#    use https://<name>.groundwire.me for Landscape (/apps/landscape/),
+#    Drive (/drive), Tlon (/apps/groups/) and phone apps, and log in again
+#    there (same +code). Skip the step with --no-domain. The mechanism and
+#    the by-hand runbook: gwbtc/urbit-dns README, "Getting a URL for your
+#    comet".
 ```
 
 **If the mint's one-time boot died** (seen once: vere segfaulted right after
