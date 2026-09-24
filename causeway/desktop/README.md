@@ -46,7 +46,8 @@ causeway-tui              # Textual terminal UI
 
 | command | what it does |
 | --- | --- |
-| `causeway spawn generate` | mint a wallet, fund it, spawn a comet, print the boot one-liner |
+| `causeway spawn generate` | mint a wallet, fund it (or spend an invite), spawn a comet, print the boot one-liner |
+| `causeway invite create` / `invite show <code>` | prepay someone else's spawn as one hex code; see what a code holds |
 | `causeway rekey` | rotate the messaging key on an existing point (the only on-chain management op) |
 | `causeway finalize <proof…>` | bake the `xtr` custody log into the proofs and, with `--feed`, into the boot feed |
 | `causeway publish <proof…>` | declassify: put the comet's whole attestation packet on chain in an OP_RETURN |
@@ -67,17 +68,64 @@ explicitly to override.
 ## Quickstart (Generate New Wallet)
 
 ```bash
-causeway spawn generate --invite <FAUCET_CODE>
+causeway spawn generate
 ```
 
-Prints a fresh 12-word seed phrase, derives a P2TR address, requests 1000 sats from the faucet, waits for confirmation, mines a comet under `~daplyd`, signs + broadcasts a single spawn tx (confidential by default; pass `--publish` for a public on-chain publication), then prints the boot command.
+Prints a fresh 12-word seed phrase, derives a P2TR address, waits for you to
+fund it and for that to confirm, mines a comet, signs + broadcasts a single
+spawn tx (confidential by default; pass `--publish` for a public on-chain
+publication), then prints the boot command.
 
 That seed phrase controls the coins. The comet's identity is the proof file + the feed (see [Custody](#custody-the-identity-bundle)).
 
+### Invites: paying for someone else's spawn
+
+One person funds, another spawns, and the funder never holds the comet.
+
+```bash
+# the inviter
+causeway invite create
+#   -> an address to send sats to, how many (priced at today's fees), and
+#      a 74-character hex INVITE CODE; then it waits for the funding to confirm
+
+# the invitee
+causeway spawn generate --invite <CODE>
+```
+
+The code is 32 random bytes with a version byte and a checksum. Those bytes
+seed a BIP-32 wallet (raw seed, the way `%spv-wallet` treats a `%q` seed)
+whose first BIP-86 address the inviter funds, so **the code is the sats:
+anyone holding it can spend them**. Pass it over a channel you would pass
+money over. The invitee's Causeway derives the same wallet, spends that UTXO
+as the spawn's input and signs the input with the invite key — but the
+identity sat it creates is tweaked from the **invitee's** own wallet key
+(recorded in the proof as `sat_key`, which the next `rekey` derives), and
+any change goes to the invitee's wallet at `m/86'/0'/0'/1/0`. Import the
+same 12 words into the ship's Wallet app (`%spv-wallet`, a BIP-39 `%t`
+seed) and the change shows up there. The inviter is left with nothing: not
+the identity, not the remainder.
+
+`causeway invite show <CODE>` reports what an invite's address holds.
+`invite create` prints the code *before* it waits for funding, because a run
+that dies while waiting must not take the only key to the sats with it.
+
+### Fees
+
+Every transaction Causeway builds is a P2TR key-path spend — SegWit v1 — so
+fees are sat per **virtual** byte: a spawn is ~111 vB with one output and
+~154 vB with change. By default the rate is the mempool's next-block
+estimate (`/v1/fees/recommended`, `fastestFee`) plus 1 sat/vB, never below
+2; `--fee-rate` overrides it. `invite create` quotes two amounts from the
+same estimate: the minimum for a spawn today, and a suggestion with fee
+headroom for the days an invite may sit unused, since whatever the fee does
+not consume reaches the invitee as change. (The old flow priced everything
+at a flat 1000 sats, which at a busy mempool meant hours in the queue.)
+
 ### Spawn flags
 
-Common to both spawn commands: `--invite` (faucet code), `--fee-rate`
-(sat/vB, default 2), `--network main|testnet`, `--output-dir`, `--miner`,
+Common to both spawn commands: `--invite` (an invite code; anything else is
+treated as a legacy faucet code), `--fee-rate` (sat/vB; default = next block
++ 1, see [Fees](#fees)), `--network main|testnet`, `--output-dir`, `--miner`,
 `--mempool-base`, `--publish` (public spawn: add an OP_RETURN publication
 output opening the `dat`; default is confidential), `--sponsor` (@p or
 mnemonym committed in the initial snapshot), `--fief IP:PORT` (a static
@@ -120,8 +168,9 @@ all fall back to the prompt-based CLI flow below.
 Every flow runs without a terminal. The contract:
 
 ```bash
-# mint (non-interactive: fund the printed address out-of-band, or use --invite)
-causeway spawn generate --assume-saved \
+# mint (non-interactive: fund the printed address out-of-band, or spend an
+# invite code someone made with `causeway invite create`)
+causeway spawn generate --assume-saved --invite <CODE> \
   --sponsor '~host-ship' --out-feed ./raw.feed --output-dir ./work
 
 # resume a mint that died after funding (phrase from a file, never an argument)
