@@ -107,6 +107,7 @@ MODE=""
 MINT_SPONSOR=""
 MINT_FIEF=""
 MINT_RESUME=0
+MINT_INVITE=""
 MINT_UI=tui
 MINT_ARGS=""
 DETACH=""
@@ -167,6 +168,8 @@ MINT MODE (--mint)
                      and the spawn picks up your already-funded address.
                      (Implies --headless for now.)
   --headless         use the plain prompt-based flow instead of the TUI.
+  --invite <code>    spend a prepaid invite (from \`causeway invite create\`)
+                     instead of funding the mint yourself. Implies --headless.
                      The default at a terminal is the TUI; no terminal, or
                      --resume falls back to prompts automatically.
 
@@ -262,6 +265,7 @@ while [ $# -gt 0 ]; do
     --sponsor)    [ $# -ge 2 ] || usagedie "--sponsor needs a value"; MINT_SPONSOR="$2"; shift 2 ;;
     --fief)       [ $# -ge 2 ] || usagedie "--fief needs a value"; MINT_FIEF="$2"; shift 2 ;;
     --resume)     MINT_RESUME=1; shift ;;
+    --invite)     [ $# -ge 2 ] || usagedie "--invite needs a value"; MINT_INVITE="$2"; MINT_UI=cli; shift 2 ;;
     --remint)     REMINT=1; MODE="mint"; shift ;;
     --headless)   MINT_UI=cli; shift ;;
     --proof)      [ $# -ge 2 ] || usagedie "--proof needs a value"; PROOF="$2"; shift 2 ;;
@@ -1530,6 +1534,9 @@ cmd_mint() {
   else
     local args=(spawn generate)
     args+=(--output-dir "$mintdir" --out-feed "$raw")
+    # A prepaid invite pays the spawn; the code is the inviter's sats until
+    # spent, so it rides the command line only as far as this process.
+    [ -n "$MINT_INVITE" ] && args+=(--invite "$MINT_INVITE")
     # Explicit, even though the launcher also exports GROUNDWIRE_HOME: two
     # independent routes to the same binary, either alone sufficient.
     args+=(--miner "$GW_DIR/bin/comet_miner")

@@ -10,7 +10,9 @@ path as of 2026-09-09; the deep reference is
 One **confidential comet** per person, minted off our development branches,
 sponsored by Groundwire's sponsor so we can message each other (Drive, Talon)
 off Signal. Trent custodies the Bitcoin — **he funds each spawn**, so there is
-exactly one human checkpoint in an otherwise scriptable flow.
+exactly one human checkpoint in an otherwise scriptable flow. That checkpoint
+can happen *before* you start: an **invite** (below) is a spawn Trent has
+already paid for, handed over as one hex code, so the mint never waits on him.
 
 ## The branches and the release
 
@@ -123,6 +125,10 @@ PYTHONUNBUFFERED=1 bash ~/boot.sh --mint --headless --detach \
   --sponsor "~barmul-bolmet-ronlus-lighul--rovtun-satryc-moclug-daplyd" 2>&1 | tee ~/mint.log
 EOF
 chmod +x ~/mint.sh'
+#    With an INVITE from Trent (a 74-character hex code; see "Invites" below)
+#    add `--invite <code>` to the boot.sh line. The mint then spends the sats
+#    he already put behind the code and never prints a funding address: step
+#    4b does not happen, and the leftover lands in your ship's wallet.
 
 # 3. start the mint in tmux (gives it the tty it needs; survives disconnects)
 S 'tmux new -d -s mint && tmux send-keys -t mint "bash ~/mint.sh" Enter'

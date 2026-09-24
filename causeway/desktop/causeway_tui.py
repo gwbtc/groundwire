@@ -273,7 +273,9 @@ class GenerateSeedScreen(BaseScreen):
                 "Type the full phrase back below to confirm you wrote it down:",
             ),
             Input(placeholder="word1 word2 word3 ...", id="confirm"),
-            Static("Faucet invite (optional — sends 1000 sats to your first receive address):"),
+            Static("Faucet code (optional — sends 1000 sats to your first receive address). "
+                   "A prepaid invite code from `causeway invite create` is for the CLI: "
+                   "`causeway spawn generate --invite <code>`."),
             Input(placeholder="blank to skip / fund manually", id="invite"),
             Horizontal(
                 Button("I saved it — continue", id="continue", variant="primary"),
