@@ -848,6 +848,42 @@
     ;span.idx-meta: {meta}
   ==
 ::
+::  +epoch-blocks / +epoch-hours: what a scan from the epoch costs today,
+::  read from the scan peek rather than hardcoded.  The rate is the one
+::  measured on ~ponnyd (a 2-vCPU droplet, serf pinned) on 2026-09-16
+::  with the concurrent batch fetch: 656 blocks an hour.  The tip moves
+::  about 144 blocks a day, so the figure grows a quarter hour a day --
+::  which is why it is computed, not written down.
+::
+++  epoch-rate  650
+++  epoch-blocks
+  |=  sc=scan
+  ^-  (unit @ud)
+  ::  no tip, or a tip the light client has not carried past the epoch
+  ::  yet (a fresh ship reports 0): the count is unknown, not zero.
+  ?~  tip.sc  ~
+  ?:  (lte u.tip.sc epoch.sc)  ~
+  `(sub u.tip.sc epoch.sc)
+::
+++  epoch-hours
+  |=  sc=scan
+  ^-  tape
+  =/  blocks  (epoch-blocks sc)
+  ?~  blocks  "several hours"
+  =/  hours  (div (add u.blocks (dec epoch-rate)) epoch-rate)
+  ?:  (lth hours 2)  "about an hour"
+  "about {(scow %ud hours)} hours"
+::
+::  The rewind form's whole cost phrase.
+++  epoch-cost
+  |=  sc=scan
+  ^-  tape
+  =/  blocks  (epoch-blocks sc)
+  =/  what
+    ?~  blocks  "every block since the epoch"
+    "{(scow %ud u.blocks)} blocks to re-read"
+  :(weld what ", " (epoch-hours sc) " at full CPU on a 2-vCPU droplet, and a quarter hour more each day")
+::
 ::  +index-card: the decisions about the public index that only a human
 ::  may take.  Shown whenever the index is pending, plus the rewind form
 ::  whenever an index exists.  Nothing here happens on its own.
@@ -865,8 +901,9 @@
       ; block headers and compact filters; it is what verifies a specific
       ; identity and it is quick.  The PUBLIC INDEX reads every full block
       ; from its start height to discover public names nobody told you
-      ; about and to follow known names' moves; it is slow (tens of
-      ; seconds per block) and pins the ship while it catches up.
+      ; about and to follow known names' moves; it is slow (a few
+      ; seconds per block on a 2-vCPU droplet) and pins the ship while
+      ; it catches up.
     ==
     ;*  ?.  ?=(%pending mode.org)  ~
         :_  ~
@@ -883,7 +920,7 @@
             ==
             ;form(method "post", action "/apps/gevulot")
               ;input(type "hidden", name "act", value "index-epoch");
-              ;button.ghost(type "submit"): Index from the epoch (about a day)
+              ;button.ghost(type "submit"): Index from the epoch ({(epoch-hours u.sc)} at full CPU)
             ==
           ==
         ==
@@ -891,7 +928,7 @@
         :_  ~
         ;form.paste(method "post", action "/apps/gevulot")
           ;input(type "hidden", name "act", value "index-rewind");
-          ;label: Re-index from the epoch (block {(scow %ud epoch.u.sc)}).  Slow: about a day at full CPU.  Keeps every verified identity, every trusted install, and everything in Jael; only the scanner's cursor moves.  Type the epoch height to confirm.
+          ;label: Re-index from the epoch (block {(scow %ud epoch.u.sc)}).  Slow: {(epoch-cost u.sc)}.  Keeps every verified identity, every trusted install, and everything in Jael; only the scanner's cursor moves.  Type the epoch height to confirm.
           ;input(type "text", name "confirm", placeholder (scow %ud epoch.u.sc), spellcheck "false");
           ;button.ghost(type "submit"): Re-index from the epoch
         ==

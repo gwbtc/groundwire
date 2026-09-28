@@ -303,9 +303,11 @@ the field, and warns when it doesn't.
 
 Once the sponsor is installed, `boot.sh` also tells `%gw-btc` where its
 **public index** starts: your own spawn block. Everything older reaches you as
-your sponsor's pushes, so the ship never grinds through the ~3,300 blocks
-since the epoch (about a day of pinned CPU on a fresh comet, which the first
-mints suffered). If no sponsor could be installed, nothing is decided for you:
+your sponsor's pushes, so the ship never grinds through the ~6,000 blocks
+since the epoch (about nine hours of pinned CPU on a 2-vCPU droplet at the
+end of September 2026, growing a quarter hour a day; the first mints paid a
+day at the old fetch pace). If no sponsor could be installed, nothing is
+decided for you:
 the Gevulot pane shows a **pending decision** card with the choices
 (`ops/doc/gevulot-state-model.md`).
 

@@ -92,9 +92,13 @@ The index scanner yields while a verification holds the slot.
 - **Index from my spawn** / **Index from block N** — only from `%pending`.
 - **Re-index from the epoch (slow)** — the scary button. Confirmation text
   states exactly what it does: *rewinds the scanner to block 963,104 and
-  re-reads every block (about a day at full CPU). Keeps every verified
+  re-reads every block since — N blocks, about H hours at full CPU on a
+  2-vCPU droplet, a quarter hour more each day. Keeps every verified
   identity, every trusted install, and everything in Jael. Does not touch
-  your keys.* Implemented as a cursor rewind; the wholesale-replace poke
+  your keys.* N and H come from the scan peek's tip at 650 blocks an hour
+  (measured on ~ponnyd, 2026-09-16, with the concurrent batch fetch), never
+  written down: about nine hours at the end of September 2026, where the
+  first mints paid a day. Implemented as a cursor rewind; the wholesale-replace poke
   (`%gw-index-from` as it exists today) is not reachable from the pane.
 - **Re-check all on chain now** — as today, but resumes from `clean-to`.
 
