@@ -146,7 +146,7 @@ S 'tmux send-keys -t mint "<the twelve words>" Enter'
 #    watching the sync). Pass the SAME --version as the mint: boot.sh now pins
 #    the installed release by itself, but say it anyway -- an older boot.sh
 #    resolved "latest" to the daily and overwrote bin/ under a running pier.
-S "bash ~/boot.sh --detach --version groundwire-rc-2026.9.16 --comet '<the @p it printed>'"
+S "bash ~/boot.sh --detach --vps --version groundwire-rc-2026.9.16 --comet '<the @p it printed>'"
 S "bash ~/boot.sh --status --comet '<@p>'; bash ~/boot.sh --code --comet '<@p>'"
 
 # 6. restarting later: ALWAYS through boot.sh (`--stop`, then `--detach`),
@@ -158,21 +158,23 @@ S "bash ~/boot.sh --status --comet '<@p>'; bash ~/boot.sh --code --comet '<@p>'"
 #    one comet three days of updates in September). If you must start vere
 #    yourself, pass `-p <that port>`.
 
-# 7. the ship's address. boot.sh gives every comet a groundwire.me name
-#    and a certificate on its own, on every run (step "A name for ~..."):
-#    it forwards port 80 to the ship (one persistent NAT rule; the
-#    certificate authority validates on 80), installs the %dns desk from
-#    the sponsor if the pill predates 2026.9.23, and runs the naming thread
-#    with the droplet's public IPv4. It prints the name, the summary and
-#    the README repeat it, and `boot.sh --status` shows it as `web`:
+# 7. the ship's address. With --vps (step 5 passes it: this comet lives on
+#    a public droplet) boot.sh gives the comet a groundwire.me name and a
+#    certificate on its own, idempotently (step "A name for ~..."): it
+#    forwards port 80 to the ship (one persistent NAT rule; the certificate
+#    authority validates on 80), installs the %dns desk from the sponsor if
+#    the pill predates 2026.9.23, and runs the naming thread with the
+#    droplet's public IPv4. It prints the name, the summary and the README
+#    repeat it, and `boot.sh --status` shows it as `web`:
 #        name: https://expense.intone.groundwire.me
 #    The certificate follows within ~2 min (`curl https://<name>/~/host`).
 #    FROM THEN ON plain http to <ip>:8080 REDIRECTS to https and fails TLS:
 #    use https://<name>.groundwire.me for Landscape (/apps/landscape/),
 #    Drive (/drive), Tlon (/apps/groups/) and phone apps, and log in again
-#    there (same +code). Skip the step with --no-domain. The mechanism and
-#    the by-hand runbook: gwbtc/urbit-dns README, "Getting a URL for your
-#    comet".
+#    there (same +code). --vps is remembered for later restarts. Without
+#    it (a dev comet, a laptop) nothing is named and the ship works by IP.
+#    The mechanism and the by-hand runbook: gwbtc/urbit-dns README,
+#    "Getting a URL for your comet".
 ```
 
 **If the mint's one-time boot died** (seen once: vere segfaulted right after

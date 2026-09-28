@@ -114,7 +114,7 @@ REMINT=""
 DO_BITCOIN=1
 DO_SUPERVISOR=1
 DO_WAIT=1
-DO_DOMAIN=1
+DO_DOMAIN=0
 FORCE_REDOWNLOAD=0
 SEED_BATCHES="${GROUNDWIRE_SEED_BATCHES:-6}"
 SEED_BATCH_SIZE=25          # OPERATIONS.md 5.6: bulk adds SIGSEGV the sidecar
@@ -212,7 +212,9 @@ OPTIONS
   --no-bitcoin       boot the ship only: no sidecar, no peers, no sync
   --no-supervisor    do not start the supervisor (you get no crash recovery)
   --no-wait          set everything running and exit without watching sync
-  --no-domain        skip the groundwire.me name + certificate step (see below)
+  --vps              this ship lives on a public server: give it a groundwire.me
+                     name and a certificate (see below). Off by default, so a
+                     dev comet or a laptop is never handed a public name.
   --redownload       re-fetch the release even if it is already installed
   --help             this text
 
@@ -277,7 +279,7 @@ while [ $# -gt 0 ]; do
     --no-bitcoin) DO_BITCOIN=0; shift ;;
     --no-supervisor) DO_SUPERVISOR=0; shift ;;
     --no-wait)    DO_WAIT=0; shift ;;
-    --no-domain)  DO_DOMAIN=0; shift ;;
+    --vps)        DO_DOMAIN=1; shift ;;
     --redownload) FORCE_REDOWNLOAD=1; shift ;;
     --status)     MODE="status"; shift ;;
     --code)       MODE="code"; shift ;;
@@ -743,6 +745,7 @@ GW_AMES_PORT='$AMES_PORT'
 GW_HTTP_PORT='$HTTP_PORT'
 GW_LOOM='$LOOM'
 GW_DOMAIN='${GW_DOMAIN:-}'
+GW_VPS='${DO_DOMAIN:-0}'
 EOF
 }
 
@@ -1156,7 +1159,9 @@ start_supervisor() {
 #      machine's public IPv4; eyre already holds one -> nothing to do.
 #
 # Nothing here can fail the boot: a ship with no name works by IP exactly
-# as before.  --no-domain skips the whole step.
+# as before.  The step is opt-in, --vps: a dev comet or one on a laptop
+# is never handed a public name.  The flag is remembered in the ship's
+# env file, so a later restart keeps the name without repeating it.
 #
 # What the user notices: a minute or two after the thread, once the
 # certificate is installed, eyre redirects EVERY plain-http request to
@@ -1226,7 +1231,14 @@ domain_from_noun() {
 }
 
 ensure_domain() {
-  [ "${DO_DOMAIN:-1}" = 1 ] || return 0
+  # --vps once is enough: it is kept in the ship's env file (export_env),
+  # so a plain restart (boot.sh --detach --comet ...) keeps the name and
+  # its renewal without repeating the flag.
+  if [ "${DO_DOMAIN:-0}" != 1 ] && \
+     [ "$(sed -n "s/^GW_VPS='\(.*\)'/\1/p" "$GW_DIR/var/$NAME.env" 2>/dev/null | head -1)" = 1 ]; then
+    DO_DOMAIN=1
+  fi
+  [ "${DO_DOMAIN:-0}" = 1 ] || return 0
   step "A name for $COMET"
   ensure_port80 || true
   ensure_dns_desk || return 0
