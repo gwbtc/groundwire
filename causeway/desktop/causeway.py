@@ -2964,7 +2964,7 @@ def hdkey_fingerprint(root: bip32.HDKey) -> bytes:
 
 WALLET_SEED_BOX_HEADER = (
     "SAVE THIS — your BIP-39 seed phrase controls your comet identity",
-    "and the funds that back it. Write it down. Losing it is fatal.",
+    "and the funds that back it. Write it down. Lose it and both are gone for good.",
 )
 
 def print_seed_box(mnemonic: str, *, header: tuple[str, ...] = WALLET_SEED_BOX_HEADER) -> None:

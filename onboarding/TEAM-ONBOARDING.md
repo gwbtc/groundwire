@@ -100,6 +100,9 @@ needs **`python3-venv`**, which Ubuntu images omit. Step 1 below does both.
 # NB: a shell FUNCTION, not a string variable. `S="ssh …"; $S cmd` breaks under
 # zsh (macOS default): zsh does not word-split an unquoted variable, so it
 # tries to run one command literally named "ssh -o BatchMode=yes …".
+# <your-claude-key>: a key made for this Claude and authorized on the droplet
+# by Trent (COLLEAGUE-PROMPT.md calls it <KEY>) -- not a personal key, so its
+# access can be revoked on its own.
 S() { ssh -o BatchMode=yes -i ~/.ssh/<your-claude-key> root@<DROPLET_IP> "$@"; }
 
 # 1. one-time setup on the droplet: tmux, python3-venv, 8 GB swap, boot.sh
@@ -177,7 +180,9 @@ S "bash ~/boot.sh --status --comet '<@p>'; bash ~/boot.sh --code --comet '<@p>'"
 #    "Getting a URL for your comet".
 ```
 
-**If the mint's one-time boot died** (seen once: vere segfaulted right after
+### If the mint's one-time boot died
+
+(Seen once: vere segfaulted right after
 `ames: missing peer ~daplyd on new sponsor, skip` at first boot; the pier was
 fine): just run step 5. The runner command re-sends the sponsor setup
 (`%ingest-peer` + `%distribute`) on every boot now, so nothing is lost. Then
@@ -190,7 +195,9 @@ export GW_DIR=/root/.groundwire SOCK_TOOL=python3
 gwl_poke gevulot noun '!>([%set-receive %.y])' 30
 ```
 
-**If sync never starts** — `boot.sh --status` shows `headers 1` and
+### If sync never starts
+
+`boot.sh --status` shows `headers 1` and
 `live peers 0` a few minutes after boot — peer seeding failed (boot.sh now
 dies loudly when its seeding thread crashes and warns when no peer is live a
 minute later; an older one printed "no reply … continuing" and moved on).
@@ -271,9 +278,10 @@ In the dojo (`boot.sh --comet '<@p>'` attaches, or via the control socket):
   Relay the address to Trent, then wait — `boot.sh` continues on its own once
   the funding tx confirms. Do not fabricate the funding.
 - Read `~/mint.log` on the droplet (the wrapper tees everything there): the
-  recovery phrase and address appear once, in that order. Keep the
-  phrase somewhere Trent can retrieve it (a `0600` file on the droplet is fine
-  for a test comet); never put it on a command line.
+  recovery phrase and address appear once, in that order. Save the
+  phrase in a `0600` file on the **local** machine (the one driving the
+  droplet) and tell its owner where; not on the droplet, which is the box
+  that gets wiped or compromised, and never on a command line.
 - Everything else — install, mine, sign, broadcast, finalize, boot — needs no
   human. Causeway generates and signs the wallet itself; no external wallet is
   involved.

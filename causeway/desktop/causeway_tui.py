@@ -267,7 +267,7 @@ class GenerateSeedScreen(BaseScreen):
         col_static = [Static("\n".join(c)) for c in cols]
         yield Vertical(
             Static("GENERATED SEED PHRASE", id="title"),
-            Static("SAVE THIS NOW — losing it is fatal.", id="warn"),
+            Static("SAVE THIS NOW — lose it and the comet is gone for good.", id="warn"),
             Horizontal(*col_static, id="seed-box"),
             Static(
                 "Type the full phrase back below to confirm you wrote it down:",
