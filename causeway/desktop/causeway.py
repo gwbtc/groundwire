@@ -639,6 +639,215 @@ def wait_for_funding(address: str, poll_interval: int = POLL_INTERVAL, **rpc_kwa
 
 
 # =========================================================================
+#  Fees — priced for the next block, not a constant
+# =========================================================================
+#
+#  Every transaction Causeway builds is a P2TR key-path spend (SegWit v1),
+#  so fees are sat per VIRTUAL byte: a spawn is ~111 vB with one output
+#  and ~154 vB with change, whatever its serialized size.  The old flow
+#  priced everything at a flat 1000 sats, which at a busy mempool meant
+#  hours in the queue; this asks the mempool what the next block costs and
+#  adds a little on top.
+
+SPAWN_BASE_VB = 111          # 1 key-path input + sat output + overhead (build_spawn_psbt)
+FEE_RATE_FALLBACK = 2        # sat/vB if the estimate is unreachable (the old default)
+FEE_RATE_OVERHEAD = 1        # sat/vB above "next block" so we are not the marginal tx
+IDENTITY_SAT_VALUE = 1_000   # what a spawn puts on the identity sat when there is change
+
+
+def recommended_fee_rate(mempool_base: str = MEMPOOL_API_URL) -> tuple[int, str]:
+    """(sat/vB, where it came from): the mempool's next-block estimate plus
+    FEE_RATE_OVERHEAD, never below FEE_RATE_FALLBACK.  Falls back to the
+    constant, saying so, when the estimate cannot be fetched."""
+    try:
+        fees = mempool_get("/v1/fees/recommended", base=mempool_base)
+        fastest = int(fees["fastestFee"])
+    except Exception as e:  # network, shape, anything: the mint must not die here
+        return FEE_RATE_FALLBACK, f"mempool estimate unavailable ({e}); using {FEE_RATE_FALLBACK} sat/vB"
+    rate = max(FEE_RATE_FALLBACK, fastest + FEE_RATE_OVERHEAD)
+    return rate, f"next block {fastest} sat/vB + {FEE_RATE_OVERHEAD} overhead"
+
+
+def spawn_fee(fee_rate: int, *, change: bool) -> int:
+    """The fee build_spawn_psbt charges a confidential spawn at `fee_rate`."""
+    return (SPAWN_BASE_VB + (P2TR_OUTPUT_VB if change else 0)) * fee_rate
+
+
+def spawn_change_possible(utxo_value: int, fee_rate: int) -> bool:
+    """Can a spawn from this UTXO put IDENTITY_SAT_VALUE on the sat and still
+    return a change output above dust?  Otherwise the whole remainder lands
+    on the identity sat (build_spawn_psbt's no-change branch)."""
+    return utxo_value - spawn_fee(fee_rate, change=True) - IDENTITY_SAT_VALUE >= P2TR_DUST
+
+
+# =========================================================================
+#  Invites — a prepaid spawn, handed over as one hex string
+# =========================================================================
+#
+#  An invite is 32 random bytes.  They seed a BIP-32 wallet (raw seed, the
+#  way spv-wallet treats a %q seed: no BIP-39 step), whose first BIP-86
+#  address the inviter funds.  The hex string carries a version byte, the
+#  32 bytes and a checksum, and it IS the money: whoever holds it can spend
+#  the UTXO.  The invitee's Causeway derives the same wallet, spends that
+#  UTXO as the spawn's input, and signs the input with the invite key --
+#  but the identity sat it creates is tweaked from the INVITEE's own wallet
+#  key, and any change goes to the invitee's wallet too.  The inviter is
+#  left with nothing: not the identity, not the remainder.
+
+INVITE_VERSION = 1
+INVITE_SECRET_LEN = 32
+INVITE_CHECK_LEN = 4
+INVITE_HEX_LEN = 2 * (1 + INVITE_SECRET_LEN + INVITE_CHECK_LEN)   # 74
+
+
+def _invite_checksum(payload: bytes) -> bytes:
+    return hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:INVITE_CHECK_LEN]
+
+
+def encode_invite(secret: bytes) -> str:
+    """32 secret bytes -> the 74-hex-character invite code."""
+    if len(secret) != INVITE_SECRET_LEN:
+        raise ValueError(f"an invite secret is {INVITE_SECRET_LEN} bytes, not {len(secret)}")
+    payload = bytes([INVITE_VERSION]) + secret
+    return (payload + _invite_checksum(payload)).hex()
+
+
+def decode_invite(text: str) -> bytes:
+    """The 32 secret bytes of an invite code, or ValueError saying why not."""
+    s = (text or "").strip().lower().removeprefix("0x")
+    if len(s) != INVITE_HEX_LEN or any(c not in "0123456789abcdef" for c in s):
+        raise ValueError(f"an invite code is {INVITE_HEX_LEN} hex characters")
+    raw = bytes.fromhex(s)
+    if raw[0] != INVITE_VERSION:
+        raise ValueError(f"unknown invite version {raw[0]} (this Causeway knows {INVITE_VERSION})")
+    payload, check = raw[:-INVITE_CHECK_LEN], raw[-INVITE_CHECK_LEN:]
+    if _invite_checksum(payload) != check:
+        raise ValueError("checksum mismatch: a character of the code is wrong or missing")
+    return payload[1:]
+
+
+def is_invite_code(text: str | None) -> bool:
+    if not text:
+        return False
+    try:
+        decode_invite(text)
+        return True
+    except ValueError:
+        return False
+
+
+def new_invite_secret() -> bytes:
+    return secrets.token_bytes(INVITE_SECRET_LEN)
+
+
+def invite_wallet(secret: bytes, network: str = "main") -> tuple["bip32.HDKey", "KeySource"]:
+    """(root, KeySource at m/86h/<coin>h/0h) for an invite secret.  The 32
+    bytes are the BIP-32 seed itself; the receive address is index 0."""
+    root = bip32.HDKey.from_seed(secret, version=NETWORKS[network]["xprv"])
+    account_path = [_hardened(86), _hardened(0 if network == "main" else 1), _hardened(0)]
+    source = KeySource(xpub=root.derive(_path_to_str(account_path)),
+                       master_fingerprint=hdkey_fingerprint(root),
+                       account_path=account_path, network=network)
+    return root, source
+
+
+def invite_amounts(fee_rate: int) -> dict:
+    """What to tell the inviter to send, at today's rate.
+
+    `minimum` is enough for a spawn right now with nothing to spare (the
+    whole remainder becomes the identity sat).  `suggested` covers the
+    identity sat, a change output, and the spawn fee at three times today's
+    rate (or ten sat/vB more, whichever is larger), because an invite may
+    sit for days before it is used and fees move; whatever that headroom
+    does not consume reaches the invitee's wallet as change."""
+    head_rate = max(fee_rate * 3, fee_rate + 10)
+    minimum = IDENTITY_SAT_VALUE + spawn_fee(fee_rate, change=False)
+    suggested = IDENTITY_SAT_VALUE + P2TR_DUST + spawn_fee(head_rate, change=True)
+    suggested = -(-suggested // 100) * 100   # round up to the next 100 sats
+    return {
+        "fee_rate": fee_rate,
+        "headroom_rate": head_rate,
+        "spawn_vbytes": SPAWN_BASE_VB + P2TR_OUTPUT_VB,
+        "minimum": minimum,
+        "suggested": suggested,
+    }
+
+
+def scan_invite(source: "KeySource", *, mempool_base: str = MEMPOOL_API_URL) -> list[dict]:
+    """The invite wallet's UTXOs (receive index 0-2, no change branch)."""
+    return scan_addresses(source, n_receive=3, n_change=0, mempool_base=mempool_base)
+
+
+def run_invite_create(network: str, mempool_base: str, wait: bool,
+                      poll_interval: int = POLL_INTERVAL) -> str:
+    """Mint an invite: print the address to fund, the code, and (unless
+    --no-wait) block until the funding confirms.  Returns the code."""
+    secret = new_invite_secret()
+    code = encode_invite(secret)
+    _root, source = invite_wallet(secret, network)
+    addr, _spk, _xonly, path = source.derive_address(0, 0)
+    rate, how = recommended_fee_rate(mempool_base)
+    amounts = invite_amounts(rate)
+
+    print()
+    print("=" * 60)
+    print("  CAUSEWAY — Invite (a prepaid comet spawn)")
+    print("=" * 60)
+    print(f"\n  Send sats to this address ({path}):")
+    print(f"\n    {addr}\n")
+    print(f"  Fees now: {how}.  A spawn is ~{amounts['spawn_vbytes']} vB.")
+    print(f"    minimum for a spawn today:  {amounts['minimum']:>6} sats")
+    print(f"    suggested:                  {amounts['suggested']:>6} sats"
+          f"   (fee headroom to {amounts['headroom_rate']} sat/vB; the rest reaches the invitee's wallet)")
+    print("\n  The invite code -- it IS the sats; anyone holding it can spend them:")
+    print(f"\n    {code}\n")
+    print("  Give it to the person you are inviting.  They run:")
+    print(f"    causeway spawn generate --invite {code[:12]}…")
+    if not wait:
+        print("\n  Not waiting for funding (--no-wait).  Check later with:")
+        print(f"    causeway invite show {code[:12]}…")
+        return code
+
+    print(f"\n  Waiting for the funding to confirm (checking every {poll_interval}s)...")
+    while True:
+        utxos = scan_invite(source, mempool_base=mempool_base)
+        confirmed = [u for u in utxos if u["confirmed"]]
+        if confirmed:
+            total = sum(u["value"] for u in confirmed)
+            print(f"\n  Funded: {total} sats confirmed ({len(confirmed)} UTXO).")
+            if total < amounts["minimum"]:
+                click.echo(click.style(
+                    f"  That is below today's minimum of {amounts['minimum']} sats; "
+                    f"top the address up before handing the code over.", fg="yellow"))
+            else:
+                print("  The invite is ready to hand over.")
+            return code
+        pending = sum(u["value"] for u in utxos)
+        print(f"  Not confirmed yet ({pending} sats pending).  Sleeping {poll_interval}s...", end="\r")
+        time.sleep(poll_interval)
+
+
+def run_invite_show(code: str, network: str, mempool_base: str) -> None:
+    """Decode an invite and report what its address holds."""
+    secret = decode_invite(code)
+    _root, source = invite_wallet(secret, network)
+    addr, _spk, _xonly, path = source.derive_address(0, 0)
+    print(f"\n  Invite address ({path}): {addr}")
+    utxos = scan_invite(source, mempool_base=mempool_base)
+    if not utxos:
+        print("  Holds nothing yet.")
+        return
+    for u in utxos:
+        state = "confirmed" if u["confirmed"] else "unconfirmed"
+        print(f"    {u['txid']}:{u['vout']}  {u['value']} sat  {state}")
+    rate, how = recommended_fee_rate(mempool_base)
+    amounts = invite_amounts(rate)
+    confirmed = sum(u["value"] for u in utxos if u["confirmed"])
+    print(f"  Confirmed: {confirmed} sats.  Fees now: {how}; "
+          f"a spawn today needs at least {amounts['minimum']} sats.")
+
+
+# =========================================================================
 #  Tweak construction — Hoon expression for comet-miner's --tweak flag
 # =========================================================================
 
@@ -1837,15 +2046,22 @@ def build_spawn_psbt(
     change_script_pubkey: bytes | None = None,
     change_path: str | None = None,
     network: str = "main",
+    sat_internal_xonly: bytes | None = None,
+    sat_key_path: str | None = None,
+    sat_key_fingerprint: bytes | None = None,
 ) -> tuple["psbt.PSBT", dict]:
     """Build the kelvin-9 spawn transaction — ONE tx, no reveal (spec §7.3).
 
     Shape:
       * input 0  — the chosen funding UTXO, spent via P2TR key-path.
       * output 0 — the sat-carrying P2TR output whose key Q = state_output_key
-        (funding xonly, initial snapshot).  The sat lands here and travels with
+        (internal key, initial snapshot).  The sat lands here and travels with
         its state commitment; the owner re-spends it key-path for every future
-        custody move.
+        custody move.  The internal key is the funding key unless
+        `sat_internal_xonly` names another: an INVITE spawn spends a UTXO the
+        inviter's key controls, and that key must not also control the
+        identity, so the sat output is tweaked from the invitee's own key and
+        the proof records where it lives (`sat_key`) for the next rekey.
       * OP_RETURN publication output — PUBLIC spawns only.  A confidential spawn
         omits it (there is nothing on-chain to grep).  Pass publication_pass_atom
         + publication_opening to include it.
@@ -1862,8 +2078,10 @@ def build_spawn_psbt(
         TransactionOutput as _TxOut,
     )
 
-    # The sat-carrying output commits the initial snapshot under the funding key.
-    q = state_output_key(funding_internal_xonly, snapshot)
+    # The sat-carrying output commits the initial snapshot under the owner's
+    # key: the funding key, unless the funding came from someone else's invite.
+    owner_xonly = sat_internal_xonly if sat_internal_xonly is not None else funding_internal_xonly
+    q = state_output_key(owner_xonly, snapshot)
     sat_spk = bytes([0x51, 0x20]) + q
     leaf_hash = state_leaf_hash(state_leaf_script(state_commit(snapshot)))
 
@@ -1937,7 +2155,7 @@ def build_spawn_psbt(
         "version": 2,
         "protocol": "kelvin-9",
         "sat_vout": 0,
-        "internal_pubkey_hex": funding_internal_xonly.hex(),
+        "internal_pubkey_hex": owner_xonly.hex(),
         "snapshot": snapshot,
         "leaf_hash_hex": leaf_hash.hex(),   # merkle root for the next rekey's key-path spend
         "sat_script_pubkey_hex": sat_spk.hex(),
@@ -1952,6 +2170,14 @@ def build_spawn_psbt(
             "fingerprint_hex": funding_fingerprint.hex(),
         },
     }
+    if sat_key_path is not None:
+        #  Where the identity sat's key lives when it is NOT the funding key:
+        #  the rekey spends output 0 key-path and must derive this, not the
+        #  funding path, which belongs to the inviter's wallet.
+        proof["sat_key"] = {
+            "path": sat_key_path,
+            "fingerprint_hex": (sat_key_fingerprint or b"\x00\x00\x00\x00").hex(),
+        }
     return p, proof
 
 
@@ -2105,7 +2331,11 @@ def build_rekey_psbt(
     prior_value = int(prior_proof["sat_value"])
     prior_spk = bytes.fromhex(prior_proof["sat_script_pubkey_hex"])
 
-    funding = prior_proof.get("funding", {})
+    #  The key that spends the prior sat-carrying output.  A spawn funded by
+    #  the owner's own wallet records it under `funding`; a spawn funded by
+    #  somebody's invite records the owner's key under `sat_key` instead,
+    #  because `funding` there is the inviter's wallet.
+    funding = prior_proof.get("sat_key") or prior_proof.get("funding", {})
     funding_path = funding.get("path", "m/86h/0h/0h/0/0")
     funding_fingerprint = bytes.fromhex(funding.get("fingerprint_hex", "00000000"))
 
@@ -3056,6 +3286,38 @@ def proof():
     """Inspect or verify a comet.proof.json file."""
 
 
+@cli.group()
+def invite():
+    """Prepay a comet spawn for someone else, as one hex code."""
+
+
+@invite.command("create")
+@click.option("--network", type=click.Choice(["main", "testnet"]), default="main", show_default=True)
+@click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
+@click.option("--no-wait", is_flag=True, default=False,
+              help="Print the address and the code and exit; do not wait for the funding to confirm.")
+def invite_create(network, mempool_base, no_wait):
+    """Print an address to fund and the invite code that spends it.
+
+    The code is printed BEFORE the wait, because it is the only key to the
+    sats: a run that dies while waiting must not take them with it. Hand the
+    code to the invitee once the funding has confirmed; they pass it to
+    `causeway spawn generate --invite`."""
+    run_invite_create(network, mempool_base, wait=not no_wait)
+
+
+@invite.command("show")
+@click.argument("code")
+@click.option("--network", type=click.Choice(["main", "testnet"]), default="main", show_default=True)
+@click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
+def invite_show(code, network, mempool_base):
+    """Decode an invite code and report what its address holds."""
+    try:
+        run_invite_show(code, network, mempool_base)
+    except ValueError as e:
+        raise click.UsageError(f"invite code: {e}")
+
+
 _MGMT_PRIOR_PROOF_HELP = (
     "Path to the prior proof.json for this point (spawn's or last rekey's). "
     "The rekey spends its sat-carrying output key-path — required so the "
@@ -3207,14 +3469,18 @@ def _backfill_funding_fingerprint(prior: dict, wallet: "KeySource") -> None:
     sign_with matches derivations by fingerprint, so a mismatch would sign
     nothing.  The seed in hand is the authority: it either controls the sat
     (the signature verifies) or _selfsign_psbt refuses loudly."""
-    fu = dict(prior.get("funding") or {})
+    #  An invite-funded spawn keeps the owner's key under `sat_key`, and that
+    #  is the record the rekey derives from; `funding` there is the inviter's
+    #  wallet and must stay as recorded.
+    slot = "sat_key" if prior.get("sat_key") else "funding"
+    fu = dict(prior.get(slot) or {})
     ours = wallet.master_fingerprint.hex()
     if fu.get("fingerprint_hex") not in (None, ours):
         click.echo(click.style(
-            f"  note: prior proof recorded funding fingerprint "
+            f"  note: prior proof recorded {slot} fingerprint "
             f"{fu.get('fingerprint_hex')}; using this seed's {ours}", fg="yellow"))
     fu["fingerprint_hex"] = ours
-    prior["funding"] = fu
+    prior[slot] = fu
 
 
 def _selfsign_psbt(unsigned_b64: str, root) -> str:
@@ -3376,8 +3642,13 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
 
 
 @spawn.command("generate")
-@click.option("--invite", default=None)
-@click.option("--fee-rate", type=int, default=2, show_default=True)
+@click.option("--invite", default=None, metavar="CODE",
+              help="An invite code from `causeway invite create`: the spawn is paid "
+                   "from the inviter's prepaid sats, the identity and any change are "
+                   "yours. (Anything else here is treated as a legacy faucet code.)")
+@click.option("--fee-rate", type=int, default=None, metavar="SAT/VB",
+              help="Fee rate in sat per virtual byte. Default: the mempool's next-block "
+                   "estimate plus 1 (see `recommended_fee_rate`).")
 @click.option("--network", type=click.Choice(["main", "testnet"]), default="main", show_default=True)
 @click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True), default=".", show_default=True)
 @click.option("--miner", default=COMET_MINER_BIN, show_default=True)
@@ -3927,20 +4198,40 @@ def _build_spawn_psbt_and_proof(
     include_change: bool = True,
     publication_pass_atom: int | None = None,
     publication_opening: dict | None = None,
+    funding_source: "KeySource | None" = None,
 ) -> tuple[psbt.PSBT, dict]:
     """Assemble the kelvin-9 spawn PSBT for a spawn op.
 
-    The funding UTXO's own xonly is the sat-carrying output's internal key, so
-    the sat stays key-path-spendable by the point owner for every future custody
-    move. If include_change and funding is large enough, the remainder splits
-    into a change output at m/<account>/1/0."""
+    `source` is the OWNER's wallet: the identity sat's key and the change
+    address come from it.  `funding_source` is the wallet the UTXO belongs
+    to; it is `source` for a self-funded spawn and the invite wallet for an
+    invite-funded one.  In the self-funded case the funding UTXO's own xonly
+    is the sat-carrying output's internal key, so the sat stays
+    key-path-spendable by the point owner for every future custody move; in
+    the invite case the owner's first receive key is, and the proof records
+    it under `sat_key`.  If include_change and funding is large enough, the
+    remainder splits into a change output at the OWNER's m/<account>/1/0."""
+    funder = funding_source or source
+    invited = funder is not source
     change_args: dict = {}
-    if include_change and utxo["value"] > 2_000:
+    if include_change and (
+        utxo["value"] > 2_000 or (invited and spawn_change_possible(utxo["value"], fee_rate))
+    ):
         change_addr, change_spk, change_xonly, change_path = source.derive_address(1, 0)
-        change_args = dict(
-            change_internal_xonly=change_xonly,
-            change_script_pubkey=change_spk,
-            change_path=change_path,
+        change_args = dict(change_script_pubkey=change_spk)
+        if not invited:
+            #  Derivation metadata on the change output tells a signer the
+            #  output is ours.  It names the funding fingerprint, which is
+            #  only true when the owner is the funder.
+            change_args.update(change_internal_xonly=change_xonly, change_path=change_path)
+
+    sat_args: dict = {}
+    if invited:
+        _oaddr, _ospk, owner_xonly, owner_path = source.derive_address(0, 0)
+        sat_args = dict(
+            sat_internal_xonly=owner_xonly,
+            sat_key_path=owner_path,
+            sat_key_fingerprint=source.master_fingerprint,
         )
 
     psbt_obj, proof = build_spawn_psbt(
@@ -3950,13 +4241,14 @@ def _build_spawn_psbt_and_proof(
         utxo_script_pubkey=utxo["scriptpubkey"],
         funding_internal_xonly=utxo["xonly"],
         funding_path=utxo["path"],
-        funding_fingerprint=source.master_fingerprint,
+        funding_fingerprint=funder.master_fingerprint,
         snapshot=snapshot,
         publication_pass_atom=publication_pass_atom,
         publication_opening=publication_opening,
         fee_rate=fee_rate,
         network=source.network,
         **change_args,
+        **sat_args,
     )
     # Carry the funding tx's block height into the proof: it IS the
     # spawn-opening's start-height (see resolve_start_height), and knowing it
@@ -4411,7 +4703,7 @@ def _finish_spawn_proof(
         proof["sponsor_pass_hex"] = DEFAULT_SPONSOR_PASS_HEX
 
 
-def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False,
+def run_spawn_generate(invite: str | None, fee_rate: int | None, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False,
                        sponsor: str | None = None, fief_arg: str | None = None, no_route: bool = False, out_feed: str | None = None,
                        resume: bool = False, mnemonic_file: str | None = None,
                        assume_saved: bool = False, sponsor_pass: str | None = None) -> None:
@@ -4419,6 +4711,26 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
     print("=" * 60)
     print(f"  CAUSEWAY — {'Public' if publish else 'Confidential'} Comet Spawn (Generate New Wallet)")
     print("=" * 60)
+
+    #  An invite code funds the spawn from the inviter's prepaid UTXO; any
+    #  other --invite value is the legacy faucet code.  Decide before the
+    #  wallet exists so a mistyped code fails here, not after the phrase.
+    invite_secret: bytes | None = None
+    if invite and is_invite_code(invite):
+        invite_secret = decode_invite(invite)
+        invite = None
+    elif invite and len(invite.strip()) == INVITE_HEX_LEN:
+        try:
+            decode_invite(invite)
+        except ValueError as e:
+            raise click.UsageError(f"--invite: {e}")
+
+    #  Priced for the next block unless the operator said otherwise.
+    if fee_rate is None:
+        fee_rate, how = recommended_fee_rate(mempool_base)
+        print(f"\n  Fee rate: {fee_rate} sat/vB ({how})")
+    else:
+        print(f"\n  Fee rate: {fee_rate} sat/vB (--fee-rate)")
 
     # Refuse an unroutable mint before generating a wallet or asking for funds.
     sponsor, defaulted = apply_default_sponsor(sponsor, fief_arg, no_route)
@@ -4456,7 +4768,17 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
     first_addr, first_spk, first_xonly, first_path = source.derive_address(0, 0)
     print(f"\n  First receive address: {first_addr}")
 
-    if invite:
+    #  Who pays.  With an invite the spawn's input is the inviter's prepaid
+    #  UTXO and the invite key signs it; the identity sat and the change are
+    #  the invitee's regardless (see _build_spawn_psbt_and_proof).
+    funding_root, funding_source = root, source
+    if invite_secret is not None:
+        funding_root, funding_source = invite_wallet(invite_secret, network)
+        inv_addr, _s, _x, _p = funding_source.derive_address(0, 0)
+        need = IDENTITY_SAT_VALUE + spawn_fee(fee_rate, change=False)
+        print(f"\n  Invite: spending the prepaid sats at {inv_addr}")
+        print(f"  (a spawn at {fee_rate} sat/vB needs {need} sats there; the rest is yours as change)")
+    elif invite:
         print("\n  Requesting 1000 sats from faucet...")
         fxid = request_faucet(first_addr, invite=invite)
         if fxid:
@@ -4468,13 +4790,20 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
 
     print("\n  Polling mempool.space for confirmation...")
     while True:
-        utxos = scan_addresses(source, n_receive=5, n_change=2, mempool_base=mempool_base)
+        if invite_secret is not None:
+            utxos = scan_invite(funding_source, mempool_base=mempool_base)
+        else:
+            utxos = scan_addresses(source, n_receive=5, n_change=2, mempool_base=mempool_base)
         confirmed = [u for u in utxos if u["confirmed"]]
         if confirmed:
             utxo = max(confirmed, key=lambda u: u["value"])
             print(f"  Found UTXO: {utxo['value']} sat at {utxo['txid']}:{utxo['vout']}")
             break
-        print(f"  No confirmed UTXO yet ({len(utxos)} unconfirmed). Sleeping {POLL_INTERVAL}s...", end="\r")
+        if invite_secret is not None and not utxos:
+            print("  The invite address holds nothing yet (the inviter may not have paid). Sleeping "
+                  f"{POLL_INTERVAL}s...", end="\r")
+        else:
+            print(f"  No confirmed UTXO yet ({len(utxos)} unconfirmed). Sleeping {POLL_INTERVAL}s...", end="\r")
         time.sleep(POLL_INTERVAL)
 
     print("\n  Mining comet (kelvin-9 dat)...")
@@ -4494,7 +4823,10 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
     pub_pass = pub_opening = None
     if publish:
         pub_pass = pass_atom
-        pub_opening = _spawn_publication_opening(utxo["xonly"], snapshot, utxo)
+        #  The opening names the identity sat's internal key: the owner's,
+        #  which is the funding key only when the owner funded the spawn.
+        sat_xonly = first_xonly if invite_secret is not None else utxo["xonly"]
+        pub_opening = _spawn_publication_opening(sat_xonly, snapshot, utxo)
 
     psbt_obj, proof = _build_spawn_psbt_and_proof(
         utxo=utxo,
@@ -4503,6 +4835,7 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
         fee_rate=fee_rate,
         publication_pass_atom=pub_pass,
         publication_opening=pub_opening,
+        funding_source=funding_source,
     )
     spass = None
     if sponsor_pass:
@@ -4513,10 +4846,15 @@ def run_spawn_generate(invite: str | None, fee_rate: int, network: str, output_d
             spass = "0x" + spass
     _finish_spawn_proof(proof, comet=comet, pass_atom=pass_atom, utxo=utxo,
                         sponsor_pass_hex=spass)
+    if invite_secret is not None:
+        proof["funded_by"] = "invite"
 
-    # Sign the PSBT in-process (we have the seed).
+    # Sign the PSBT in-process: the input belongs to the funding wallet,
+    # which is our own seed or the invite's.
     p_signed = psbt_obj
-    p_signed.sign_with(root)
+    signed_n = p_signed.sign_with(funding_root)
+    if not signed_n:
+        raise SystemExit("the funding key signed nothing; refusing to broadcast an unsigned spawn")
     signed_b64 = p_signed.to_base64()
     commit_txid, tx_hex = _extract_tx_from_psbt(signed_b64)
 
