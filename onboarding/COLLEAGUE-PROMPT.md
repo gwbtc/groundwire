@@ -11,7 +11,9 @@ droplet's address and `<KEY>` with the SSH private key authorized on it.
 > https://raw.githubusercontent.com/gwbtc/groundwire/hd/cc-landing/onboarding/TEAM-ONBOARDING.md
 >
 > Access: `ssh -i ~/.ssh/<KEY> root@<DROPLET_IP>` (host key: accept on first
-> connect). Use `-o BatchMode=yes` so nothing ever blocks on a password.
+> connect). `<KEY>` is a key made for this Claude and authorized on the
+> droplet by Trent — not a personal key — so its access can be revoked on its
+> own. Use `-o BatchMode=yes` so nothing ever blocks on a password.
 >
 > The mint (`boot.sh --mint`) **needs a real terminal** — it reads prompts from
 > `/dev/tty` — so a plain `ssh host 'command'` will fail. Run it inside a
@@ -39,14 +41,19 @@ droplet's address and `<KEY>` with the SSH private key authorized on it.
 >   describes; it asks for the saved phrase and picks up the funded address.
 > - **The mint ends with the ship stopped — that is by design.** It boots once to
 >   set the peer-discovery opt-in, then stops and prints the run command. Start
->   it with the guide's step-5 command — `bash ~/boot.sh --detach --version
->   <the same RC tag> --comet '<@p>'` — over plain ssh (no tmux needed), then
->   verify. Before that, check `pgrep -a -f 'gw-vere -t'`: if a vere from the
->   mint is still exiting, wait for it — two boots on one pier collide.
+>   it with the guide's step-5 command, verbatim — `bash ~/boot.sh --detach
+>   --vps --version <exactly the RC tag the guide's wrapper names> --comet
+>   '<@p>'` — over plain ssh (no tmux needed), then verify. `--vps` gives the
+>   comet a groundwire.me name with HTTPS; from then on the plain
+>   `http://<ip>:<port>` address redirects to it, so report the name. Before
+>   that, check `pgrep -a -f 'gw-vere -t'`: if a vere from the mint is still
+>   exiting, wait for it — two boots on one pier collide.
 > - If the mint's one-time boot crashes, or `--status` shows `headers 1` /
 >   `live peers 0` minutes after boot, follow the guide's two recovery
->   sections ("If the mint's one-time boot died", "If sync never starts")
->   rather than improvising.
+>   headings under "The flow" — "If the mint's one-time boot died" and "If
+>   sync never starts" — rather than improvising. If the mint's own stop step
+>   reports that vere has not exited after 900 s, the comet is minted and the
+>   ship is simply still running: stop and tell me, do not kill anything.
 > - **Never kill a process on the droplet from a `pgrep` count.** ssh runs your
 >   command inside a `bash -c` wrapper that matches the same pattern, so the
 >   count over-reads by one. Look at `ps -eo pid,etime,args` and reason about
@@ -62,10 +69,14 @@ droplet's address and `<KEY>` with the SSH private key authorized on it.
 >
 > When done, report:
 > - the comet's **@p** (and mnemonym);
-> - the **web UI URL**: `http://<DROPLET_IP>:<port>`, where `<port>` is the
->   `--http-port` value on the running ship's command line — read it with
->   `ssh … "pgrep -a -f gw-vere | grep -o -- '--http-port [0-9]*'"` rather than
->   assuming 8080 (boot.sh picks a nearby free port if 8080 is taken);
+> - the **web UI URL**: the `https://<name>.groundwire.me` address that
+>   `bash ~/boot.sh --status` shows as `web` (with `--vps` the ship has a
+>   name and a certificate; plain `http://<ip>:<port>` redirects there). If
+>   the name is not there yet, give `http://<DROPLET_IP>:<port>`, where
+>   `<port>` is the `--http-port` value on the running ship's command line —
+>   read it with `ssh … "pgrep -a -f gw-vere | grep -o -- '--http-port [0-9]*'"`
+>   rather than assuming 8080 (boot.sh picks a nearby free port if 8080 is
+>   taken);
 > - the **web login code** (`ssh … 'bash ~/boot.sh --code'`) — I paste it at
 >   that URL to log in;
 > - confirm `bash ~/boot.sh --status` shows the ship up with `%gw-btc`

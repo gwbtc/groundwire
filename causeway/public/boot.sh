@@ -1214,16 +1214,36 @@ ensure_port80() {
   return 0
 }
 
+# Is this agent RUNNING?  gall's %u care answers with a loobean, and
+# with %.n rather than a crash for an agent that is not there at all.
+# The trailing /$ is what makes it a question to gall rather than a peek
+# into the agent (which would block on an empty path and cancel the eval).
+ship_agent_running() {
+  printf "(pure:m !>((crip ?:(.^(? %%gu /(scot %%p our)/%s/(scot %%da now)/$) \"yes\" \"no\"))))\n" "$1" \
+    | gwl_eval 120 | grep -qE "%yes|'yes'"
+}
 ensure_dns_desk() {
-  if ship_has_desk dns; then return 0; fi
   local sponsor="${MINT_SPONSOR:-$DEFAULT_SPONSOR}" i
-  info "%dns is not on this ship (a pill from before 2026.9.23); installing it from $sponsor"
-  gwl_poke hood kiln-install "!>([%dns $sponsor %dns])" 600 >/dev/null 2>&1 || true
+  if ! ship_has_desk dns; then
+    info "%dns is not on this ship (a pill from before 2026.9.23); installing it from $sponsor"
+    gwl_poke hood kiln-install "!>([%dns $sponsor %dns])" 600 >/dev/null 2>&1 || true
+  fi
+  # Wait for the AGENT, not the desk.  The desk is in clay the moment kiln
+  # begins the install -- before the merge, the build and the agent start
+  # -- and the naming thread is built FROM that desk (its ted, sur and
+  # marks), so a ship whose install had only begun could not run it
+  # (issue #138: a %thread-fail until 'kiln: merge into %dns succeeded').
+  # The desk is %dns; its agent (desk.bill) is %gw-dns, and gall starts it
+  # only once the merge and the build have landed, so a running agent is
+  # the signal that the desk is usable.  A ship that already runs it
+  # passes on the first look.
   for i in $(seq 1 18); do
+    ship_agent_running gw-dns && return 0
     sleep 10
-    ship_has_desk dns && return 0
   done
-  warn "%dns did not arrive within 3 minutes (sponsor unreachable?); no name this boot"
+  warn "%dns is not running after 3 minutes (still installing from the sponsor, or the
+    sponsor is unreachable); no name this boot. Re-run this command once the ship's
+    log says 'kiln: merge into %dns succeeded'."
   return 1
 }
 
