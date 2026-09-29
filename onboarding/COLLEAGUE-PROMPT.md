@@ -1,19 +1,28 @@
 # Prompt for a Claude minting a comet on a droplet
 
-Paste this into a local Claude Code session. Replace `<DROPLET_IP>` with the
-droplet's address and `<KEY>` with the SSH private key authorized on it.
+Fill in the three fields at the top, then paste the whole block into a local
+Claude Code session. `KEY` is a key made for that Claude and authorized on the
+droplet by Trent — not a personal key — so its access can be revoked on its
+own. `INVITE` is a 74-character hex code from Trent (a spawn he has already
+paid for; see `causeway/desktop/README.md`, "Invites"), or `none` if he will
+fund the address the mint prints instead. The code is the sats: anyone holding
+it can spend them, so pass it the way you would pass money.
 
+> ```
+> DROPLET_IP = <the droplet's address>
+> KEY        = <the SSH private key authorized on it, a file in ~/.ssh/>
+> INVITE     = <74-character hex invite code from Trent, or: none>
+> ```
+>
 > You're helping stand up a **Groundwire confidential comet** on a remote
-> droplet. Groundwire is an Urbit fork where a ship's identity is anchored to a
-> Bitcoin sat. You'll drive the droplet **over SSH from here** — do not try to
-> run anything locally. Read the guide first and follow it; don't improvise
-> around the money or key steps:
+> droplet, using the three values above. Groundwire is an Urbit fork where a
+> ship's identity is anchored to a Bitcoin sat. You'll drive the droplet **over
+> SSH from here** — do not try to run anything locally. Read the guide first
+> and follow it; don't improvise around the money or key steps:
 > https://raw.githubusercontent.com/gwbtc/groundwire/hd/cc-landing/onboarding/TEAM-ONBOARDING.md
 >
-> Access: `ssh -i ~/.ssh/<KEY> root@<DROPLET_IP>` (host key: accept on first
-> connect). `<KEY>` is a key made for this Claude and authorized on the
-> droplet by Trent — not a personal key — so its access can be revoked on its
-> own. Use `-o BatchMode=yes` so nothing ever blocks on a password.
+> Access: `ssh -i ~/.ssh/KEY root@DROPLET_IP` (host key: accept on first
+> connect). Use `-o BatchMode=yes` so nothing ever blocks on a password.
 >
 > The mint (`boot.sh --mint`) **needs a real terminal** — it reads prompts from
 > `/dev/tty` — so a plain `ssh host 'command'` will fail. Run it inside a
@@ -25,6 +34,14 @@ droplet's address and `<KEY>` with the SSH private key authorized on it.
 > actually reaches the log). Start it in tmux, then poll `~/mint.log` and answer
 > with `tmux send-keys`.
 >
+> If `INVITE` is a code (not `none`): add `--invite INVITE` to the `boot.sh
+> --mint` line in the guide's wrapper file (step 2), exactly as the guide's
+> note under that step shows. The mint then spends the sats already behind the
+> code and **never prints a funding address** — the "funding address" rule
+> below does not happen, and the leftover lands in the ship's Wallet app. Put
+> the code only in that wrapper file: not in chat, not in a log you paste
+> back, not on any other command line.
+>
 > Hard rules:
 > - It prints a **12-word recovery phrase** and asks you to re-enter it. Save
 >   the words to a private local file (`chmod 600`) and tell me you did, then
@@ -32,13 +49,15 @@ droplet's address and `<KEY>` with the SSH private key authorized on it.
 >   ever rekey this comet (the ship boots from a separate feed file). It asks
 >   for the phrase a **second time** right after the spawn is broadcast — answer
 >   that the same way.
-> - It prints a **Bitcoin funding address** (bc1p…) and waits. **Stop and give
->   me that address** so I can pass it to the person funding it. **Do not** fund
->   it yourself, invent or broadcast a transaction, or use a faucet. Nothing to
->   type — it watches the chain. Poll `~/mint.log` every few minutes.
-> - If the mint dies **after** the address was funded, do **not** start a fresh
->   mint (that strands the sats). Re-run it with `--resume` as the guide
->   describes; it asks for the saved phrase and picks up the funded address.
+> - With `INVITE = none`, it prints a **Bitcoin funding address** (bc1p…) and
+>   waits. **Stop and give me that address** so I can pass it to the person
+>   funding it. **Do not** fund it yourself, invent or broadcast a transaction,
+>   or use a faucet. Nothing to type — it watches the chain. Poll `~/mint.log`
+>   every few minutes.
+> - If the mint dies **after** the address was funded (or after an invite's
+>   sats were spent), do **not** start a fresh mint (that strands the sats).
+>   Re-run it with `--resume` as the guide describes; it asks for the saved
+>   phrase and picks up where it stopped.
 > - **The mint ends with the ship stopped — that is by design.** It boots once to
 >   set the peer-discovery opt-in, then stops and prints the run command. Start
 >   it with the guide's step-5 command, verbatim — `bash ~/boot.sh --detach
@@ -65,14 +84,14 @@ droplet's address and `<KEY>` with the SSH private key authorized on it.
 >   Do not restart the ship, kill anything, or "fix" performance over this.
 >   It is done when the ship's log (`~/.groundwire/var/<comet>.log`) prints
 >   `%gw-btc: light client is SYNCED` — or the Gevulot pane at
->   `http://<DROPLET_IP>:<port>/apps/gevulot` says "light client synced".
+>   `https://<name>/apps/gevulot` says "light client synced".
 >
 > When done, report:
 > - the comet's **@p** (and mnemonym);
 > - the **web UI URL**: the `https://<name>.groundwire.me` address that
 >   `bash ~/boot.sh --status` shows as `web` (with `--vps` the ship has a
 >   name and a certificate; plain `http://<ip>:<port>` redirects there). If
->   the name is not there yet, give `http://<DROPLET_IP>:<port>`, where
+>   the name is not there yet, give `http://DROPLET_IP:<port>`, where
 >   `<port>` is the `--http-port` value on the running ship's command line —
 >   read it with `ssh … "pgrep -a -f gw-vere | grep -o -- '--http-port [0-9]*'"`
 >   rather than assuming 8080 (boot.sh picks a nearby free port if 8080 is

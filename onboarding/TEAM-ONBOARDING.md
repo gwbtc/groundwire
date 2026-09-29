@@ -128,8 +128,10 @@ PYTHONUNBUFFERED=1 bash ~/boot.sh --mint --headless --detach \
   --sponsor "~barmul-bolmet-ronlus-lighul--rovtun-satryc-moclug-daplyd" 2>&1 | tee ~/mint.log
 EOF
 chmod +x ~/mint.sh'
-#    With an INVITE from Trent (a 74-character hex code; see "Invites" below)
-#    add `--invite <code>` to the boot.sh line. The mint then spends the sats
+#    With an INVITE from Trent (a 74-character hex code; the mechanism is in
+#    causeway/desktop/README.md under "Invites"; COLLEAGUE-PROMPT.md carries
+#    it as the INVITE field) add `--invite <code>` to the boot.sh line above
+#    the --version line. The mint then spends the sats
 #    he already put behind the code and never prints a funding address: step
 #    4b does not happen, and the leftover lands in your ship's wallet.
 
