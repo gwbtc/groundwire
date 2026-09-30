@@ -459,8 +459,18 @@
   =/  rdy  gw-ready
   =/  entry=peer:gev  [pass via now.bowl ?:(synced.rdy 1 0)]
   :_  state(installed (~(put by installed) who entry))
+  ::  Arm the recheck sweep on BOTH paths.  The on-chain verifier is
+  ::  single-flight (%gw-btc drops any %jael-writ that arrives while a
+  ::  verification is running, silently), so the one poke-gw-verify below
+  ::  can be dropped -- most often right after our light client syncs,
+  ::  when the sweep is already working through the trust-installed
+  ::  backlog one at a time and a freshly pushed peer lands on the synced
+  ::  branch.  Without a timer that peer sat unconfirmed forever, only
+  ::  cleared by a manual "recheck all".  The sweep is idempotent: it
+  ::  waits while a verification is in flight, skips confirmed peers, and
+  ::  stops once every peer is confirmed or has spent its tries.
   ?:  synced.rdy
-    ~[(poke-gw-verify who pass)]
+    ~[(poke-gw-verify who pass) (recheck-timer ~m2)]
   ~[(poke-gw-install who pass) (recheck-timer ~m2)]
 ::
 ::  =====================================================================
