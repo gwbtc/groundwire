@@ -947,7 +947,6 @@
   =/  ac  ~(. ac:wallet-account [u.details active-network.u.details])
   ?+    event  !!
       [~ %draft-outputs-update]
-    ~&  >>  "=== SSE HANDLER: draft-outputs-update EVENT ==="
     ::  Build output list wrapper
     =/  output-list-manx=manx  (output-list draft:ac account-pubkey address-cache:ac)
     =/  output-wrapped=manx

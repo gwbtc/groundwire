@@ -4,6 +4,8 @@
 /+  io=sailboxio, sailbox, json-utils, *bitcoin-spv, *wallet-address
 /+  *wallet-mempool-space, bech32=bip-b173, taproot, drft=tx-draft
 |%
+::  dbg: flip to & for developer debug prints
+++  dbg  ^-(? |)
 ::
 ::  +ac: Pure function door for account-details manipulation
 ::
@@ -513,14 +515,12 @@
   ::  Parse address info
   =/  parsed-info=(unit address-info)
     (parse-address-info tapscript-addr enriched-data)
-  ~&  >>  "tapscript refresh: parsed-info={<parsed-info>}"
   ::  Fetch UTXOs for this tapscript address
   ;<  utxo-list=(list [txid=@t vout=@ud value=@ud =tx-status])  bind:m
     (fetch-utxos tapscript-addr spv-net)
-  ~&  >>  "tapscript refresh: found {(scow %ud (lent utxo-list))} UTXOs"
+  ~?  dbg  leaf+"%spv-wallet: tapscript refresh: {(scow %ud (lent utxo-list))} UTXOs at {(trip tapscript-addr)}"
   =/  updated-addr-details=address-details
     [tapscript-addr `now parsed-info ~ utxo-list]
-  ~&  >>  "tapscript refresh: updated-addr-details info={<info.updated-addr-details>}"
   ::  Get fresh state
   ;<  state=state-0  bind:m  (get-state-as:io state-0)
   =/  fresh-details=(unit account-details)  (~(get by accounts.state) pubkey)

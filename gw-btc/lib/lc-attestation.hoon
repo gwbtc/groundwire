@@ -39,6 +39,10 @@
 /-  bc=bitcoin, ord, urb, sa=self-attestation, lc=light-client, bcm=bitcoin-common
 /+  lsa=self-attestation, strandio, b-fil=compact-block-filters
 |%
+::  +dbg: debug prints (liveness scan progress); flip to & to see them
+::
+++  dbg  ^-(? |)
+::
 ::  +light-client-agent: the gall agent name of the local light client
 ::
 ::    gwbtc/node's desk.bill installs it as %bitcoin-client.  Every watch
@@ -255,7 +259,9 @@
   =/  n  (strand:strandio ,~)
   ^-  form:m
   ?:  (gth tip-height best-height)
-    ~&  [%gw-btc-lc-scan-degenerate tip=tip from=tip-height to=best-height]
+    ::  the synced gate should make this unreachable; when it is not,
+    ::  the light client is wrong about its tip -- a Warning
+    ~>  %slog.[2 leaf+"%gw-btc: liveness scan range is degenerate (evidence at {<tip-height>}, tip {<best-height>}), so it is undeterminable; %gw-btc-lc-scan-degenerate -- check the light client's /is-synced and best block"]
     (pure:m ~)
   =/  progress
     |=  to=@ud
@@ -272,11 +278,11 @@
   =/  h=@ud
     ?~  from  tip-height
     (max tip-height +(u.from))
-  ~&  [%gw-btc-lc-scan-start tip=tip from=h to=best-height resumed=?=(^ from)]
+  ~?  dbg  [%gw-btc-lc-scan-start tip=tip from=h to=best-height resumed=?=(^ from)]
   |-
   ^-  form:m
   ?:  (gth h best-height)
-    ~&  [%gw-btc-lc-scan-clean tip=tip from=tip-height to=best-height]
+    ~?  dbg  [%gw-btc-lc-scan-clean tip=tip from=tip-height to=best-height]
     ::  A one-block walk (a fresh spawn, or a %claim, which examines only
     ::  the publication's own block) leaves nothing worth remembering:
     ::  the next walk starts at the custody entry anyway.
@@ -290,11 +296,12 @@
     (scan-height our h spk txid.tip vout.tip)
   ?-  res
       %error
-    ~&  [%gw-btc-lc-scan-undeterminable height=h]
+    ::  surfaces as the verdict's [??] check; debug
+    ~?  dbg  [%gw-btc-lc-scan-undeterminable height=h]
     (pure:m ~)
   ::
       %spent
-    ~&  [%gw-btc-lc-scan-spent tip=tip height=h]
+    ~?  dbg  [%gw-btc-lc-scan-spent tip=tip height=h]
     (pure:m `%.n)
   ::
       ?(%no-match %unspent)

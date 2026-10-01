@@ -3,6 +3,8 @@
     *wallet-address, *wallet-mempool-space, *wallet-account, bip329,
     rt-indexer=rt-indexer
 |%
+::  dbg: flip to & for developer debug prints
+++  dbg  ^-(? |)
 ::  Unified full scan for any account type
 ::  Works with wallet accounts, signing accounts, and watch-only accounts
 ::
@@ -337,7 +339,7 @@
       ?:(=(chain 'receiving') ~(get-receiving-mop ac [details spv-net]) ~(get-change-mop ac [details spv-net]))
     =/  leaf=(unit hd-leaf)  (get:((on @ud hd-leaf) gth) leaf-mop index)
     ?~  leaf
-      ~&  >>>  "delete-tapscript: leaf not found at index {<index>}"
+      ~?  dbg  leaf+"%spv-wallet: delete-tapscript: no leaf at index {<index>}"
       (pure:m ~)
     =/  updated-trees=(map @t tapscript-details)
       (~(del by script-trees.u.leaf) tapscript-addr)
@@ -370,11 +372,11 @@
       ?:(=(chain 'receiving') ~(get-receiving-mop ac [details spv-net]) ~(get-change-mop ac [details spv-net]))
     =/  leaf=(unit hd-leaf)  (get:((on @ud hd-leaf) gth) leaf-mop index)
     ?~  leaf
-      ~&  >>>  "rename-tapscript: leaf not found at index {<index>}"
+      ~?  dbg  leaf+"%spv-wallet: rename-tapscript: no leaf at index {<index>}"
       (pure:m ~)
     =/  ts-details=(unit tapscript-details)  (~(get by script-trees.u.leaf) tapscript-addr)
     ?~  ts-details
-      ~&  >>>  "rename-tapscript: tapscript not found at addr {(trip tapscript-addr)}"
+      ~?  dbg  leaf+"%spv-wallet: rename-tapscript: no tapscript at {(trip tapscript-addr)}"
       (pure:m ~)
     =/  updated-ts=tapscript-details  u.ts-details(name new-name)
     =/  updated-trees=(map @t tapscript-details)
@@ -397,24 +399,19 @@
     =/  chain=@t  (need (get-key:kv:html-utils 'chain' args))
     =/  index=@ud  (rash (need (get-key:kv:html-utils 'index' args)) dem)
     =/  tapscript-addr=@t  (need (get-key:kv:html-utils 'tapscript-addr' args))
-    ~&  >  "refresh-tapscript: {(trip chain)} index {<index>} addr {(trip tapscript-addr)}"
+    ~?  dbg  leaf+"%spv-wallet: refresh-tapscript: {(trip chain)} index {<index>} addr {(trip tapscript-addr)}"
     ::  Set process tracking
     ;<  new-pid=@ta  bind:m  get-pid:io
-    ~&  >>  "got new pid: {<new-pid>}"
     ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
     =/  details=account-details  (~(got by accounts.state) pubkey)
-    ~&  >>  "current tapscript proc: {<tapscript.proc.details>}"
     =/  updated-proc-map=(map @t [pid=@ta act=?])
       (~(put by tapscript.proc.details) tapscript-addr [new-pid %.y])
-    ~&  >>  "updated tapscript proc: {<updated-proc-map>}"
     =/  updated-details=account-details
       details(proc proc.details(tapscript updated-proc-map))
     =.  accounts.state  (~(put by accounts.state) pubkey updated-details)
     ;<  ~  bind:m  (replace:io !>(state))
-    ~&  >>  "saved state, sending SSE"
     =/  row-event=@t  (crip "{(trip chain)}-row-update")
     ;<  ~  bind:m  (send-sse-event:io (account-stream-path pubkey) `(crip (scow %ud index)) `row-event)
-    ~&  >>  "SSE sent, now running refresh"
     ::  Run the refresh
     ;<  ~  bind:m  (refresh-tapscript-address pubkey chain index tapscript-addr)
     ::  Clear process tracking
@@ -480,7 +477,6 @@
     (send-sse-event:io (account-stream-path pubkey) ~ `'receiving-list-update')
   ::
       %set-output-labels
-    ~&  >>  "=== SET OUTPUT LABELS HANDLER CALLED ==="
     ::  Parse form fields: txid, vout, labels (comma-separated)
     =/  utxo-txid=@t  (need (get-key:kv:html-utils 'utxo-txid' args))
     =/  utxo-vout=@ud  (need (rush (need (get-key:kv:html-utils 'utxo-vout' args)) dem))
@@ -504,7 +500,6 @@
         $(str t.str, current ~, result [current result])
       ::  Accumulate character
       $(str t.str, current (snoc current i.str))
-    ~&  >>  "Setting labels for {<label-key>}: {<label-list>}"
     ::  Get current state and update global labels
     ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
     =.  labels.state  (~(set-texts la:bip329 labels.state) %output label-key label-list)
@@ -512,13 +507,12 @@
     (pure:m ~)
   ::
       %set-utxo-frozen
-    ~&  >>  "=== SET UTXO FROZEN HANDLER CALLED ==="
     =/  utxo-txid=@t  (need (get-key:kv:html-utils 'utxo-txid' args))
     =/  utxo-vout=@ud  (need (rush (need (get-key:kv:html-utils 'utxo-vout' args)) dem))
     =/  frozen=?  =('true' (need (get-key:kv:html-utils 'frozen' args)))
     ::  Build label key: "txid:vout"
     =/  label-key=@t  (crip "{(trip utxo-txid)}:{(scow %ud utxo-vout)}")
-    ~&  >>  "Setting frozen={<frozen>} for {<label-key>}"
+    ~?  dbg  leaf+"%spv-wallet: set frozen {<frozen>} for {(trip label-key)}"
     ::  Get current state and update global labels
     ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
     =.  labels.state
@@ -586,8 +580,9 @@
           gap-limit=20
           start-block=[~ 26.640]
       ==
-    ~&  >>  "Registering account with indexer: {<xub>}"
-    ~&  >>  "Purpose: {<idx-purpose>}, Network: {<idx-network>}"
+    ::  never print xub: for an %xprv account it is the private key
+    ::
+    ~?  dbg  leaf+"%spv-wallet: registering account with %indexer, purpose {<idx-purpose>} network {<idx-network>}"
     ;<  =bowl:gall  bind:m  get-bowl:io
     ;<  ~  bind:m  (poke:io [our.bowl %indexer] add-account+!>(new-acct))
     ::  Update account to mark as registered
@@ -606,7 +601,6 @@
         %xpub  k.extended-key.details
         %xprv  k.extended-key.details
       ==
-    ~&  >>  "Deregistering account from indexer: {<xub>}"
     ;<  =bowl:gall  bind:m  get-bowl:io
     ;<  ~  bind:m  (poke:io [our.bowl %indexer] del-account+!>(xub))
     ::  Update account to mark as not registered

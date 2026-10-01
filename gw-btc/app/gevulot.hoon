@@ -167,7 +167,7 @@
   ?+    sign-arvo  (on-arvo:def wire sign-arvo)
       [%eyre %bound *]
     ?:  accepted.sign-arvo  `this
-    %-  (slog leaf+"%gevulot: eyre refused to bind /apps/gevulot" ~)
+    ~>  %slog.[3 leaf+"%gevulot: eyre refused to bind /apps/gevulot, so the pane is unreachable; free that path from the app holding it, then |nuke %gevulot and |revive %gw-btc to bind again"]
     `this
   ::
       ::  the recheck sweep timer: re-verify trusted installs on chain.

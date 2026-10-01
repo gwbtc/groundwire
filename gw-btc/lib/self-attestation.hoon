@@ -565,6 +565,56 @@
     %name-mismatch  %drop
   ==
 ::
+::  +writ-drop-level / +anew-refusal-level / +report-level: the console
+::  priority each report is printed at (0 = debug only, 1 notice,
+::  2 warning, 3 error), per the logging policy: a line is printed only
+::  for a departure someone can act on, once rather than per retry.
+::
+::    A writ drop's level is computed from its FATE, the same value its
+::    cards and its verb come from, so the three cannot disagree.  The
+::    drops and holds are expected (a peer retrying while we verify or
+::    sync) and fire once per retransmitted writ, so they are debug.
+::    Only a REFUSED writ -- a sticky snub -- is a warning.
+::
+++  writ-drop-level
+  |=  drop=writ-drop:sa
+  ^-  @ud
+  ?-  (writ-drop-fate drop)
+    %drop     0
+    %hold     0
+    %refresh  0
+    %fail     2
+  ==
+::
+::    A refused %anew leaves our own pass unrefreshed and nothing retries
+::    it, so every refusal but the single-flight duplicate is a warning;
+::    the two that mean our encoder is broken are errors.
+::
+++  anew-refusal-level
+  |=  ref=anew-refusal:sa
+  ^-  @ud
+  ?-  -.ref
+    %in-flight      0
+    %no-log         2
+    %log-too-long   2
+    %no-tip         2
+    %unsynced       2
+    %tip-below-log  2
+    %no-pass        2
+    %encode-failed  3
+    %name-mismatch  3
+  ==
+::
+::    A peer's verdict: VALID is success and UNDETERMINED / STALE are
+::    expected (retried, or an honest state update), so all three are
+::    debug; only a fraud-class verdict, the one that snubs, is a warning.
+::
+++  report-level
+  |=  =verdict:sa
+  ^-  @ud
+  ?:  ok.verdict  0
+  ?:(?=(%fraud (classify verdict)) 2 0)
+::
 ::  +strand-death-report: a verification that DIED instead of answering
 ::
 ::    THE observed failure of test 6.7.  This path has always logged, and

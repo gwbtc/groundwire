@@ -1,6 +1,9 @@
 /+  server, multipart, sailbox, html-utils
 =|  hold=_| :: switch to interleave vs sequentialize processes
 |%
+::  dbg: flip to & for developer debug prints
+++  dbg  ^-(? |)
+::
 ++  fiber  fiber:fiber:sailbox
 ++  input  input:fiber:sailbox
 ::
@@ -490,11 +493,15 @@
   |-
   ^-  form:m
   ?:  =(crash-after `try)
-    ;<  ~  bind:m  (flog-text "retry: giving up after {<try>} attempts")
+    ::  the %retry-too-many failure itself reaches the console as a
+    ::  process crash trace; this line is diagnosis only
+    ;<  ~  bind:m
+      ?.  dbg  (pure:(fiber ,~) ~)
+      (flog-text "retry: giving up after {<try>} attempts")
     (fiber-fail %retry-too-many ~)
   ::  log retry attempts (skip first attempt, that's just normal)
   ::
-  ~?  (gth try 0)  "retry: attempt {<try>}/{<crash-after>}"
+  ~?  &(dbg (gth try 0))  "retry: attempt {<try>}/{<crash-after>}"
   ;<  ~                  bind:m  (backoff try ~s10)
   ;<  res=(unit result)  bind:m  ((unit-soften ,result) computation)
   ?~  res
@@ -551,12 +558,16 @@
   ::  rate-limited: log and fail so +retry can backoff
   ::
   ?:  =(429 status)
-    ;<  ~  bind:m  (flog-text "fetch: 429 rate limited on {url}")
+    ;<  ~  bind:m
+      ?.  dbg  (pure:(fiber ,~) ~)
+      (flog-text "fetch: 429 rate limited on {url}")
     (fiber-fail leaf+"http-rate-limited" ~)
   ::  any non-2xx: fail with status code
   ::
   ?.  =(2 (div status 100))
-    ;<  ~  bind:m  (flog-text "fetch: HTTP {<status>} on {url}")
+    ;<  ~  bind:m
+      ?.  dbg  (pure:(fiber ,~) ~)
+      (flog-text "fetch: HTTP {<status>} on {url}")
     (fiber-fail leaf+"http-error-{<status>}" ~)
   (extract-body client-response)
 ::
