@@ -1017,6 +1017,16 @@ that is a large dump.
 
 ### Log lines worth grepping
 
+Under the Foundation's logging policy (healthy is silent) a ship prints these
+with a marker: `>>>` error, `>>` warning, `>` notice. Routine lines print only
+when the agent's `dbg` arm is set to yes on a test ship; in a release they are
+silent. Debug-only here: VALID, STALE and UNDETERMINED verdicts, every
+"writ … held/dropped" line except a REFUSED one, both "block batch discarded"
+lines, a reorg above the cursor, "custody log verified" on a reboot that
+re-validated an unchanged log, the lc-scan clean/spent records, and
+`[%gw-btc-scanned …]` (read scan progress from the `/x/scan` peek instead).
+INVALID and SNUBBING are warnings; the light client's SYNCED line is a notice.
+
 ```
 %gw-btc: attestation for ~… is VALID
 %gw-btc: attestation for ~… is INVALID
