@@ -476,10 +476,8 @@
           (migrated-origin num.block-id.urb-state.u.o14 now.bowl)  ~
       ==
     ?~  reorg-halt.u.o14  `this(state ext)
-    %-  %-  slog
-        :~  leaf+"%gw-btc: clearing a reorg halt from {<since.u.reorg-halt.u.o14>}; the scanner resumes from cursor {<num.block-id.urb-state.u.o14>}"
-            leaf+"  (the halt is gone: a reorg now forgets the points the orphaned blocks proved, and rewinds)"
-        ==
+    ::  a migration that changes what the scanner does: a Notice, once
+    ~>  %slog.[1 leaf+"%gw-btc: cleared the reorg halt from {<since.u.reorg-halt.u.o14>}; the scanner resumes from cursor {<num.block-id.urb-state.u.o14>} (reorgs now forget orphaned points and rewind instead of halting)"]
     `this(state ext)
   ::  A -13 state's points carry no .seen (sur/urb): they were indexed
   ::  before a $point recorded which block it was last observed in.  They
@@ -590,9 +588,13 @@
       =/  req
         ;;  [%index-origin mode=?(%from-spawn %from-height %from-epoch) start=@ud by=?(%causeway %user)]
         q.vase
+      ::  Expected when boot.sh is simply re-run (%causeway): debug.  A
+      ::  user asking from the pane is told it was refused, and how to move.
+      ::
       ?.  ?&(=(0 num.block-id.urb-state) =(~ unv-ids.urb-state))
-        %-  %-  slog  :_  ~
-            leaf+"%gw-btc: %index-origin ignored: already indexing from {<start.origin>} ({<mode.origin>}, {<decided-by.origin>}); cursor {<num.block-id.urb-state>}"
+        %-  %+  plog  ?:(?=(%user by.req) 2 0)
+            :_  ~
+            leaf+"%gw-btc: %index-origin ignored: already indexing from {<start.origin>} ({<mode.origin>}, {<decided-by.origin>}); cursor {<num.block-id.urb-state>}; poke %gw-index-rewind to re-read from another block"
         `this
       =/  start=(unit @ud)
         ?-  mode.req
@@ -601,16 +603,14 @@
           %from-spawn   (own-spawn-height our.bowl now.bowl)
         ==
       ?~  start
-        %-  %-  slog  :_  ~
-            leaf+"%gw-btc: %index-origin {<mode.req>} refused: no start height (own custody log empty, or height 0); still {<mode.origin>}"
+        ~>  %slog.[2 leaf+"%gw-btc: %index-origin {<mode.req>} refused: no start height (own custody log empty, or height 0); still {<mode.origin>}; poke %index-origin %from-height with a block, or %from-epoch"]
         `this
       =.  origin  [mode.req u.start by.req now.bowl]
+      ::  confirmations of the operator's own choice: debug only
       ?.  ?&(synced ?=(^ best) (gte num.u.best u.start))
-        %-  %-  slog  :_  ~
-            leaf+"%gw-btc: public index will start from block {<u.start>} ({<mode.req>}, decided by {<by.req>}) once the light client is synced"
+        ~?  dbg  leaf+"%gw-btc: public index will start from block {<u.start>} ({<mode.req>}, decided by {<by.req>}) once the light client is synced"
         `this
-      %-  %-  slog  :_  ~
-          leaf+"%gw-btc: public index: starting from block {<u.start>} ({<mode.req>}, decided by {<by.req>})"
+      ~?  dbg  leaf+"%gw-btc: public index: starting from block {<u.start>} ({<mode.req>}, decided by {<by.req>})"
       :_  this(urb-state (start-index u.start urb-state), indexing %.y)
       ~[[%pass /timer %arvo %b %wait now.bowl]]
     ::  Rewind the scanner to re-read from .height (the pane's "re-index
@@ -623,11 +623,9 @@
       ?>  =(our src):bowl
       =/  height  ;;(@ud +.q.vase)
       ?:  |(=(0 height) (gth height +(num.block-id.urb-state)))
-        %-  %-  slog  :_  ~
-            leaf+"%gw-btc: %gw-index-rewind {<height>} refused: cursor is {<num.block-id.urb-state>}"
+        ~>  %slog.[2 leaf+"%gw-btc: %gw-index-rewind {<height>} refused: cursor is {<num.block-id.urb-state>}; name a block from 1 to one past the cursor"]
         `this
-      %-  %-  slog  :_  ~
-          leaf+"%gw-btc: public index: rewinding from {<num.block-id.urb-state>} to re-read from block {<height>} (verified identities kept)"
+      ~?  dbg  leaf+"%gw-btc: public index: rewinding from {<num.block-id.urb-state>} to re-read from block {<height>} (verified identities kept)"
       =.  urb-state  (start-index height urb-state)
       ?:  indexing  `this
       :_  this(indexing %.y)
@@ -672,7 +670,7 @@
           attested      attested.fp
           inflight      inflight.fp
         ==
-      %-  (slog leaf+"%gw-btc: forgot {(scow %p who)} (trusted mirror, index, and Jael)" ~)
+      ~?  dbg  leaf+"%gw-btc: forgot {(scow %p who)} (trusted mirror, index, and Jael)"
       [(forget-cards dap.bowl gone) this]
     =/  poke  ;;(jael-poke:urb q.vase)
     ?-    -.poke
@@ -836,10 +834,7 @@
       ::  then produced nothing.
       ::
       ?.  =(dom.poke domain:cc)
-        %-  %-  slog
-            :~  leaf+"%gw-btc: %jael-anew for domain {<dom.poke>} ignored; this agent serves {<domain:cc>}"
-                leaf+"  (no pass will be refreshed -- poke %jael-anew with our own domain)"
-            ==
+        ~>  %slog.[2 leaf+"%gw-btc: %jael-anew for domain {<dom.poke>} ignored; this agent serves {<domain:cc>}, so no pass will be refreshed; poke %jael-anew with our own domain"]
         `this
       =/  res
         %:  begin-anew
@@ -859,7 +854,7 @@
       %gw-sponsor-decline
     ?>  =(our src):bowl
     =/  who  !<(ship vase)
-    %-  (slog leaf+"%gw-btc: sponsorship of {<who>} declined by operator" ~)
+    ~?  dbg  leaf+"%gw-btc: sponsorship of {<who>} declined by operator"
     `this(declined (~(put in declined) who), sponsees (~(del by sponsees) who))
   ::
       %gw-sponsor-clear
@@ -890,16 +885,16 @@
           !=(~ unv-ids.urb-state)
       ==
     ?:  have-index
-      %-  (slog leaf+"%gw-btc: refusing %urb-start-indexing: an index already exists" ~)
+      ~>  %slog.[2 leaf+"%gw-btc: refusing %urb-start-indexing: an index already exists; poke %gw-index-rewind to re-read, or nuke the agent to rebootstrap"]
       `this
     =/  start-urb  ;;((unit state:urb) !<((unit noun) vase))
     ?~  start-urb
-      %-  (slog :_(~ [%leaf "%gw-btc: indexing from block {<num.block-id:(state:urb default-urb-state)>}"]))
+      ~?  dbg  leaf+"%gw-btc: indexing from block {<num.block-id:(state:urb default-urb-state)>}"
       =.  urb-state  default-urb-state
       =.  indexing  &
       :_  this
       ~[[%pass /timer %arvo %b %wait now.bowl]]
-    %-  (slog :_(~ [%leaf "%gw-btc: processing Groundwire snapshot ({<~(wyt by unv-ids.u.start-urb)>} points)"]))
+    ~?  dbg  leaf+"%gw-btc: processing Groundwire snapshot ({<~(wyt by unv-ids.u.start-urb)>} points)"
     =.  urb-state  u.start-urb
     =.  indexing  &
     :_  this
@@ -940,11 +935,7 @@
           !=(~ unv-ids.urb-state)
       ==
     ?:  have-index
-      %-  %-  slog
-          :~  leaf+"%gw-btc: refusing %gw-index-from: an index already exists"
-              leaf+"  (cursor {<num.block-id.urb-state>}, {<~(wyt by unv-ids.urb-state)>} points;"
-              leaf+"   rebootstrapping means nuking the agent, deliberately)"
-          ==
+      ~>  %slog.[2 leaf+"%gw-btc: refusing %gw-index-from: an index already exists (cursor {<num.block-id.urb-state>}, {<~(wyt by unv-ids.urb-state)>} points); poke %gw-index-rewind to re-read, or nuke the agent to rebootstrap"]
       `this
     =/  start=@ud  !<(@ud vase)
     ::  Height 0 is the "did you mean to?" guard -- block 0 is the genesis
@@ -953,9 +944,9 @@
     ::  saw an agent that accepted the command and then never indexed.
     ::
     ?:  =(0 start)
-      %-  (slog leaf+"%gw-btc: refusing %gw-index-from 0: name the first block to scan" ~)
+      ~>  %slog.[2 leaf+"%gw-btc: refusing %gw-index-from 0: name the first block to scan"]
       `this
-    %-  (slog leaf+"%gw-btc: indexing from block {<start>}" ~)
+    ~?  dbg  leaf+"%gw-btc: indexing from block {<start>}"
     =.  urb-state  [[0x0 (dec start)] *sont-map:ord *insc-ids:ord *unv-ids:urb]
     =.  indexing   &
     :_  this
@@ -1214,7 +1205,7 @@
     ::  evidence that the attestation is invalid.  Release the ship's slot
     ::  silently so a later packet can retry; emitting res=~ here would
     ::  cause Ames to snub a valid peer.
-    %-  (slog leaf+"%gw-btc: releasing stuck verification slot for {(scow %p who)}" ~)
+    ~>  %slog.[2 leaf+"%gw-btc: releasing stuck verification slot for {(scow %p who)}; if this repeats, check the light client's /is-synced and live peers"]
     `this(inflight (~(del by inflight) who))
   ::
       ::  Our OWN custody log finished validating.  A positive verdict
@@ -1234,14 +1225,15 @@
     ::  made that indistinguishable from an %anew that never ran.
     ::
     ?~  pend
-      %-  %-  slog
+      %-  %+  plog  2
           :~  leaf+"%gw-btc: discarding a %anew result for job {<job>}: no self-validation is pending"
               leaf+"  (the ~h2 leak guard released the slot before the thread answered;"
               leaf+"   our pass is NOT refreshed -- re-poke %jael-anew)"
           ==
       `this
+    ::  a newer job owns the slot and will answer: expected, debug
     ?.  =(job job.u.pend)
-      %-  %-  slog
+      %-  %+  plog  0
           :~  leaf+"%gw-btc: discarding a %anew result for job {<job>}: job {<job.u.pend>} holds the slot"
               leaf+"  (a stale thread answered after a newer self-validation started)"
           ==
@@ -1261,7 +1253,8 @@
         ::  +strand-death-report:lsa names the job, what it was doing, the
         ::  mote, and what an empty tang means.
         ::
-        %-  %-  slog
+        ::  our pass stays unrefreshed until someone re-pokes: an Error
+        %-  %+  plog  3
             %:  strand-death-report:lsa
                 [%own job (lent chain.req)]
                 -.p.p.sign-arvo
@@ -1272,17 +1265,24 @@
       =/  [%khan %arow %.y %noun =vase]  sign-arvo
       =/  parsed  !<([result:sa hexb:bc] vase)
       =/  res=result:sa  -.parsed
-      %-  (slog (report:lsa verdict.res))
+      ::  our own log: success is debug, a failure is a Warning
+      %-  (plog ?:(ok.verdict.res 0 2) (report:lsa verdict.res))
       ?.  &(ok.verdict.res =(our.bowl who.verdict.res))
-        %-  %-  slog
+        %-  %+  plog  2
             :~  leaf+"%gw-btc: our own custody log did not verify; %anew stays silent"
                 leaf+"  (the stored log is unchanged; a stale pass is worse than none)"
             ==
         `this
       ::  Warn the OPERATOR (never the network) if the state we just
       ::  proved leaves us unreachable.
-      %-  (slog (unroutable-point our.bowl point.res))
-      %-  (slog leaf+"%gw-btc: custody log verified ({<(lent chain.req)>} entries); refreshing our pass" ~)
+      %-  (plog 2 (unroutable-point our.bowl point.res))
+      ::  A Notice only when the log CHANGED (a custody move the operator
+      ::  made); re-validating the same log, as every reboot's %anew does,
+      ::  is routine and debug.
+      ::
+      %-  %+  plog  ?:(=(chain.req chain.own) 0 1)
+          :_  ~
+          leaf+"%gw-btc: custody log verified ({<(lent chain.req)>} entries); refreshing our pass"
       ::  ... and, from the log just proved, our sponsor -- so a change
       ::  of sponsor reaches jael with the pass that records it, not on
       ::  the next reload.
@@ -1308,7 +1308,7 @@
     ::
     ?~  pend  `this
     ?.  =(job job.u.pend)  `this
-    %-  (slog leaf+"%gw-btc: releasing stuck %anew self-validation slot" ~)
+    ~>  %slog.[2 leaf+"%gw-btc: releasing stuck %anew self-validation slot; our pass is NOT refreshed -- re-poke %jael-anew, and check the light client's /is-synced"]
     `this(pending.own ~)
   ::
       [%verify ship=@ job=@ ~]
@@ -1322,15 +1322,18 @@
     ::  verification really ran and its verdict is being discarded, which
     ::  is worth exactly one line -- and used to be worth none.
     ::
+    ::  Both are consequences: the leak guard already warned, and a
+    ::  scanner drop or a newer job is expected.  Debug.
+    ::
     ?~  active
-      %-  %-  slog
+      %-  %+  plog  0
           :~  leaf+"%gw-btc: discarding a verdict for {(scow %p who)} (job {<job>}): it holds no verification slot"
               leaf+"  (released by the ~h2 leak guard, or dropped by the block scanner;"
               leaf+"   no verdict is emitted, and the peer's next packet re-runs it)"
           ==
       `this
     ?.  =(job job.u.active)
-      %-  %-  slog
+      %-  %+  plog  0
           :~  leaf+"%gw-btc: discarding a verdict for {(scow %p who)} (job {<job>}): job {<job.u.active>} holds the slot"
               leaf+"  (a stale thread answered after a newer verification started)"
           ==
@@ -1347,7 +1350,7 @@
         ::  dropped and a +set-timeout death carries an empty tang, so
         ::  the operator was told a thread ended and nothing else.
         ::
-        %-  %-  slog
+        %-  %+  plog  2
             %:  strand-death-report:lsa
                 [%peer who job]
                 -.p.p.sign-arvo
@@ -1362,13 +1365,14 @@
       ::  belongs to the confidential verifier, but that is not evidence the
       ::  peer supplied a bad attestation, so do not emit a sticky failure.
       ?:  (known-public who)
-        %-  %-  slog
+        ::  an expected race, nothing to act on: debug
+        %-  %+  plog  0
             :~  leaf+"%gw-btc: verdict for {(scow %p who)} discarded: the block scanner indexed it as PUBLIC first"
                 leaf+"  (it is no longer the confidential verifier's to judge; not evidence"
                 leaf+"   against the peer, so no verdict is emitted and nothing is snubbed)"
             ==
         `this
-      %-  (slog (report:lsa verdict.res))
+      %-  (plog (report-level:lsa verdict.res) (report:lsa verdict.res))
       ::  THE SECOND DOORWAY ONTO THE SNUB PATH.  ++run-checks can say ok
       ::  and this agent can still decline, for reasons that are about OUR
       ::  state rather than the peer's evidence.  Those refusals used to
@@ -1434,7 +1438,8 @@
           (classify:lsa verdict.res)
         ?-    class
             %unknown
-          %-  %-  slog
+          ::  retried, and says nothing about the peer: debug
+          %-  %+  plog  0
               ?^  refused
                 :~  leaf+"%gw-btc: attestation for {(scow %p who)} passed, but we refused it locally ({<u.refused>}); emitting no verdict"
                     leaf+"  (that refusal is about OUR state, not the peer's evidence, so it"
@@ -1447,7 +1452,8 @@
           `this
         ::
             %stale
-          %-  %-  slog
+          ::  an honest state update, demoted not snubbed: debug
+          %-  %+  plog  0
               :~  leaf+"%gw-btc: attestation for {(scow %p who)} is STALE, not invalid"
                   leaf+"  (its identity sat has moved; demoting to alien, never snubbing)"
               ==
@@ -1466,7 +1472,7 @@
             ?^  refused
               "its checks passed but the result was refused locally ({<u.refused>}), and that refusal is classed as fraud"
             "the [XX] checks above are fraud-class: evidence that was never true, not evidence that expired"
-          %-  %-  slog
+          %-  %+  plog  2
               :~  leaf+"%gw-btc: SNUBBING {(scow %p who)} on a negative %gw-btc verdict"
                   leaf+"  {why}"
                   leaf+"  (a snub is sticky and blocks the packet that would correct it;"
@@ -1496,7 +1502,8 @@
       ?:  ?&  claims-us
               ?=(%decline (sponsor-policy who life.net.u.verified))
           ==
-        %-  (slog leaf+"%gw-btc: declining sponsorship of {<who>}" ~)
+        ::  a consequence of the operator's own %gw-sponsor-decline: debug
+        ~?  dbg  leaf+"%gw-btc: declining sponsorship of {<who>}"
         `this(declined (~(put in declined) who))
       =/  applied  (apply-verified who u.verified tip-value.res)
       ::  Verified now: the index is the truth for it, not the trusted mirror.
@@ -1509,7 +1516,7 @@
       =?  declined  claims-us  (~(del in declined) who)
       ::  Operator visibility only -- an unroutable comet is legal and
       ::  its verdict is unaffected.
-      %-  (slog (unroutable-point who verified))
+      %-  (plog 0 (unroutable-point who verified))
       :_  this
       ~[(verdict-card dom.req who `(urb-point-to-jael u.verified who))]
     ==
@@ -1536,14 +1543,14 @@
     =/  job  (slav %ud i.t.t.wire)
     =/  active  (~(get by inflight) who)
     ?~  active
-      %-  %-  slog
+      %-  %+  plog  0
           :~  leaf+"%gw-btc: discarding a publication result for {(scow %p who)} (job {<job>}): it holds no slot"
               leaf+"  (released by the ~h2 leak guard, or dropped by the block scanner;"
               leaf+"   nothing is installed, and a later publication re-runs it)"
           ==
       `this
     ?.  =(job job.u.active)
-      %-  %-  slog
+      %-  %+  plog  0
           :~  leaf+"%gw-btc: discarding a publication result for {(scow %p who)} (job {<job>}): job {<job.u.active>} holds the slot"
           ==
       `this
@@ -1553,7 +1560,7 @@
         [%khan %arow *]
       ?.  -.p.sign-arvo
         ?>  ?=([%khan %arow %.n *] sign-arvo)
-        %-  %-  slog
+        %-  %+  plog  2
             %:  strand-death-report:lsa
                 [%peer who job]
                 -.p.p.sign-arvo
@@ -1564,14 +1571,16 @@
       =/  [%khan %arow %.y %noun =vase]  sign-arvo
       =/  [res=result:sa tip-spk=hexb:bc]
         !<([result:sa hexb:bc] vase)
-      %-  (slog (report:lsa verdict.res))
+      %-  (plog 0 (report:lsa verdict.res))
       =/  refused=(unit refusal:sa)  (local-refusal who req res)
       =/  verified=(unit point:urb)
         ?.  &(ok.verdict.res ?=(~ refused))  ~
         ?~  point.res  ~
         `u.point.res(pass.net pass.req)
       ?~  verified
-        %-  %-  slog
+        ::  anyone can pay to put a publication in a block; nothing for
+        ::  this operator to act on: debug
+        %-  %+  plog  0
             :~  leaf+"%gw-btc: the on-chain publication by {(scow %p who)} did not verify"
                 ?^  refused
                   leaf+"  (it passed, and we refused it locally: {<u.refused>})"
@@ -1587,11 +1596,11 @@
       ::
       =.  confidential  (~(del in +.applied) who)
       =.  attested  (~(put by attested) who sont.own.u.verified)
-      %-  %-  slog
+      %-  %+  plog  0
           :~  leaf+"%gw-btc: {(scow %p who)} published a verified self-attestation on chain"
               leaf+"  (it is PUBLIC from here on -- that is what publishing means, and it does not undo)"
           ==
-      %-  (slog (unroutable-point who verified))
+      %-  (plog 0 (unroutable-point who verified))
       :_  this
       ::  Jael only receives udiffs for ships it has subscribed to; for
       ::  the rest, ask it to subscribe and answer the resulting /ship
@@ -1616,7 +1625,13 @@
         [%khan %arow *]
       ?.  -.p.sign-arvo
         ?>  ?=([%khan %arow %.n *] sign-arvo)
-        %-  (slog leaf+"%gw-btc: block thread failed, retrying" +.p.p.sign-arvo)
+        ::  a Warning per failed batch.  It retries every ~s30, so a light
+        ::  client that stays down repeats it; see the follow-up on making
+        ::  scanner faults readable state.
+        ::
+        %-  %+  plog  2
+            :-  leaf+"%gw-btc: block thread failed, retrying in ~s30; if this repeats, check the light client's /is-synced and live peers"
+            +.p.p.sign-arvo
         :_  this
         :~  [%pass /timer %arvo %b %wait (add ~s30 now.bowl)]
         ==
@@ -1681,7 +1696,9 @@
         ::  reason and was then contradicted by this one, two lines later.
         ::  The reorg guards in +reconcile-block slog before returning ~;
         ::  the custody cases do not, so silence above means custody.
-        %-  %-  slog
+        ::  Self-repairing (the retry's base is the live state), so debug,
+        ::  as are the reasons +reconcile-block gives.
+        %-  %+  plog  0
             :~  leaf+"%gw-btc: block batch discarded; retrying from the unchanged cursor"
                 leaf+"  cursor={<num.block-id.urb-state>}"
                 leaf+"  confidential={<confidential>}"
@@ -1775,7 +1792,9 @@
     ?+    -.sign  (on-agent:def wire sign)
         %watch-ack
       ?~  p.sign  `this
-      %-  (slog leaf+"%gw-btc: {<light-client-agent:lca>} /is-synced watch rejected" u.p.sign)
+      %-  %+  plog  2
+          :-  leaf+"%gw-btc: {<light-client-agent:lca>} /is-synced watch rejected, so attestations are held; retrying in ~s30 -- check that {<light-client-agent:lca>} is installed and running"
+          u.p.sign
       :_  this(synced %.n)
       ~[[%pass /synced-retry %arvo %b %wait (add ~s30 now.bowl)]]
     ::
@@ -1796,12 +1815,15 @@
         (on-agent:def wire sign)
       =/  syn  !<(is-synced:update:lc q.cage.sign)
       ?:  =(syn synced)  `this
-      %-  %-  slog
-          :_  ~
-          :-  %leaf
-          ?:  syn
-            "%gw-btc: light client is SYNCED; confidential verification enabled"
-          "%gw-btc: light client is NOT synced; holding all attestations (no verdicts)"
+      ::  SYNCED is a Notice and its wording is load-bearing: onboarding
+      ::  docs tell people to wait for exactly this line.  Losing sync is
+      ::  a Warning.
+      ::
+      %-  ?:  syn
+            ~>  %slog.[1 leaf+"%gw-btc: light client is SYNCED; confidential verification enabled"]
+            same
+          ~>  %slog.[2 leaf+"%gw-btc: light client is NOT synced; holding all attestations (no verdicts); if it does not recover, check the node's live peers"]
+          same
       =/  new  this(synced syn)
       ::  EPOCH AUTO-BOOTSTRAP.  The first time the client reports
       ::  synced on a chain that has reached the kelvin-9 epoch, a
@@ -1829,13 +1851,11 @@
               !=(0 start.origin)
           ==
         ?:  ?=(%pending mode.origin)  `new
-        %-  %-  slog  :_  ~
-            leaf+"%gw-btc: public index: synced but no start was chosen; waiting (poke %index-origin, or use the Gevulot pane)"
+        ~>  %slog.[1 leaf+"%gw-btc: public index: synced but no start was chosen; waiting (poke %index-origin, or use the Gevulot pane)"]
         `new(origin [%pending 0 decided-by.origin now.bowl])
       ?.  (gte num.u.best start.origin)
         `new
-      %-  %-  slog  :_  ~
-          leaf+"%gw-btc: public index: starting from block {<start.origin>} ({<mode.origin>}, decided by {<decided-by.origin>})"
+      ~?  dbg  leaf+"%gw-btc: public index: starting from block {<start.origin>} ({<mode.origin>}, decided by {<decided-by.origin>})"
       :_  %=  new
             urb-state  (start-index start.origin urb-state)
             indexing   %.y
@@ -1847,7 +1867,9 @@
     ?+    -.sign  (on-agent:def wire sign)
         %watch-ack
       ?~  p.sign  `this
-      %-  (slog leaf+"%gw-btc: {<light-client-agent:lca>} /best-block watch rejected" u.p.sign)
+      %-  %+  plog  2
+          :-  leaf+"%gw-btc: {<light-client-agent:lca>} /best-block watch rejected, so nothing is scanned or verified; retrying in ~s30 -- check that {<light-client-agent:lca>} is installed and running"
+          u.p.sign
       :_  this(best ~)
       :~  [%pass /lc-retry %arvo %b %wait (add ~s30 now.bowl)]
       ==
@@ -1904,7 +1926,8 @@
       ::  there is nothing to forget or rewind.
       ::
       ?:  (gth block-height.last-common.upd num.block-id.urb-state)
-        %-  %-  slog
+        ::  nothing indexed was affected: debug
+        %-  %+  plog  0
             :~  leaf+"%gw-btc: chain reorg to {<block-height.last-common.upd>}, above our cursor {<num.block-id.urb-state>}"
                 leaf+"  ({<(lent stale-branch.upd)>} blocks orphaned; nothing we have indexed came from them, continuing)"
             ==
@@ -1946,7 +1969,8 @@
       =.  attested      attested.forgot
       =.  inflight      inflight.forgot
       =.  block-id.urb-state  fork
-      %-  %-  slog
+      ::  self-repaired; a Warning only when it cost us points
+      %-  %+  plog  ?:(=(~ gone) 0 2)
           :~  leaf+"%gw-btc: chain reorg to {<block-height.last-common.upd>}, at or below our cursor"
               leaf+"  ({<(lent stale-branch.upd)>} blocks orphaned; forgot {<~(wyt in gone)>} points, rescanning from {<+(block-height.last-common.upd)>})"
           ==
@@ -1959,6 +1983,25 @@
 --
 ::
 |%
+::  +dbg: debug prints (routine progress, expected drops); flip to & to see them
+::
+++  dbg  ^-(? |)
+::
+::  +plog: print a whole tang at one console priority
+::
+::    3 error, 2 warning, 1 notice; 0 is debug, printed only under +dbg.
+::    The multi-line form of `~>  %slog.[pri tank]`, exactly as +slog
+::    walks a tang, so the wrapped expression is unchanged.
+::
+++  plog
+  |=  [pri=@ud =tang]
+  ^+  same
+  ?:  =(0 pri)  ?:(dbg (slog tang) same)
+  |-  ^+  same
+  ?~  tang  same
+  ~>  %slog.[pri i.tang]
+  $(tang t.tang)
+::
 ::  +stuck-job-guard: RESOURCE-LEAK BACKSTOP -- NOT a verification deadline
 ::
 ::    Verification has no wall-clock policy deadline, deliberately.  It is
@@ -2060,7 +2103,7 @@
 ++  drop-writ
   |=  [our=@p dom=@tas who=ship drop=writ-drop:sa]
   ^-  (list card)
-  %-  (slog (writ-drop-report:lsa who drop))
+  %-  (plog (writ-drop-level:lsa drop) (writ-drop-report:lsa who drop))
   ?-  (writ-drop-fate:lsa drop)
     %drop     ~
     %hold     ~
@@ -2080,7 +2123,7 @@
 ++  refuse-anew
   |=  [our=@p ref=anew-refusal:sa]
   ^-  (list card)
-  %-  (slog (anew-refusal-report:lsa our ref))
+  %-  (plog (anew-refusal-level:lsa ref) (anew-refusal-report:lsa our ref))
   ?-  (anew-refusal-fate:lsa ref)
     %drop     ~
     %refresh  (refresh-synced our)
@@ -2278,7 +2321,8 @@
   |-
   ^-  form:m
   ?.  (lte i stop)
-    ~&  >  [%gw-btc-scanned from=from to=(dec i) settled-tip=last-settled-block]
+    ::  routine progress; read it from the /x/scan peek instead
+    ~?  dbg  [%gw-btc-scanned from=from to=(dec i) settled-tip=last-settled-block]
     (pure:m !>([urb-state [fx state]:uc]))
   =/  =block:bitcoin  (~(got by blocks) i)
   ::  Filter the block to urb-relevant txs, fill in the input values we
@@ -2419,26 +2463,30 @@
   =/  who=ship  who.eu
   =/  height=@ud  num.-.i.fx
   =*  skip  $(fx t.fx)
+  ::  a publication anyone could have paid for is nothing this operator
+  ::  can act on, so these drops are debug -- except one we will now never
+  ::  look at again unless the operator rescans, which is a Warning.
+  ::
   ?:  (~(has by jobs) who)
-    %-  %-  slog
+    %-  %+  plog  0
         :~  leaf+"%gw-btc: publication by {(scow %p who)} dropped: a verification already holds its slot"
         ==
     skip
   ?~  sat=(pass-attestation domain:cc who pass.eu)
-    %-  %-  slog
+    %-  %+  plog  0
         :~  leaf+"%gw-btc: publication by {(scow %p who)} dropped: its completed pass does not decode"
         ==
     skip
   ?~  chain.u.sat
-    %-  (slog leaf+"%gw-btc: publication by {(scow %p who)} dropped: empty custody log" ~)
+    ~?  dbg  leaf+"%gw-btc: publication by {(scow %p who)} dropped: empty custody log"
     skip
   ?:  (gth (lent chain.u.sat) max-custody-log)
-    %-  %-  slog
+    %-  %+  plog  0
         :~  leaf+"%gw-btc: publication by {(scow %p who)} dropped: custody log of {<(lent chain.u.sat)>} exceeds {<max-custody-log>}"
         ==
     skip
   ?.  synced
-    %-  %-  slog
+    %-  %+  plog  2
         :~  leaf+"%gw-btc: publication by {(scow %p who)} held: the light client is not synced"
             leaf+"  (nothing is judged from a chain we have not seen; rescan to retry)"
         ==
@@ -3093,7 +3141,7 @@
   ::    and no forgotten point: any at-or-below-cursor reorg reaches it.
   ::
   ?.  =(block-id.base block-id.live)
-    %-  %-  slog
+    %-  %+  plog  0
         :~  leaf+"%gw-btc: block batch discarded: the cursor moved while it ran"
             leaf+"  batch base={<num.block-id.base>}, live={<num.block-id.live>}"
             leaf+"  (a reorg repair landed mid-batch; rescanning from the live cursor)"
@@ -3116,7 +3164,7 @@
   ::    a fault.
   ::
   ?:  (any-forgotten base live)
-    %-  %-  slog
+    %-  %+  plog  0
         :~  leaf+"%gw-btc: block batch discarded: a point was forgotten while it ran"
             leaf+"  cursor={<num.block-id.live>}"
             leaf+"  (a reorg orphaned evidence at or above the cursor; rescanning)"
