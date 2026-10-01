@@ -322,7 +322,7 @@
   ?.  (publication-envelope script)  ~
   =/  env  (parse-publication script)
   ?~  env
-    ~&  >>>  [%gw-btc-publication-unreadable-push bytes=wid.script]
+    ~>  %slog.[2 leaf+"%gw-btc: on-chain publication ignored: its push cannot be read ({<wid.script>} bytes); %gw-btc-publication-unreadable-push -- republish with a current Causeway"]
     ~
   ::  Past it, the script IS a Groundwire publication envelope, and every
   ::  refusal here is us declining to read something an operator paid
@@ -330,7 +330,7 @@
   ::  they were invisible, which is the whole of test 6.7's complaint.
   ::
   ?.  =(kelvin kel.u.env)
-    ~&  >>>  [%gw-btc-publication-foreign-kelvin found=kel.u.env ours=kelvin]
+    ~>  %slog.[2 leaf+"%gw-btc: on-chain publication ignored: protocol kelvin {<kel.u.env>}, ours is {<kelvin>}; %gw-btc-publication-foreign-kelvin -- one of the two sides needs an update"]
     ~
   =/  dec
     %-  mole
@@ -338,7 +338,7 @@
     ::  undo +jam-octs: little-endian byte dump back into the jam atom
     ;;(publication:sa (cue (rev 3 wid.payload.u.env dat.payload.u.env)))
   ?^  dec  dec
-  ~&  >>>  [%gw-btc-publication-undecodable payload-bytes=wid.payload.u.env]
+  ~>  %slog.[2 leaf+"%gw-btc: on-chain publication ignored: its {<wid.payload.u.env>}-byte payload does not decode; %gw-btc-publication-undecodable -- republish with a current Causeway"]
   ~
 ::  +parse-publication: (unit [kelvin payload]) from an output script
 ::
