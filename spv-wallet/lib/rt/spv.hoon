@@ -2,6 +2,8 @@
 /+  io=sailboxio, html-utils, bitcoin-spv, json-utils, spv=wallet-spv
 =,  dejs:format
 |%
+::  dbg: flip to & for developer debug prints
+++  dbg  ^-(? |)
 ::  Helper to get network from args, defaults to testnet3
 ::
 ++  get-network
@@ -64,7 +66,7 @@
   ^-  form:m
   =/  action=@t  (need (get-key:kv:html-utils 'action' args))
   =/  =network  (get-network args)
-  ~&  [spv-action+action network+network]
+  ~?  dbg  leaf+"%spv-wallet: spv action {(trip action)} on {<network>}"
   ?+  action  !!
       %set-checkpoint
     ::  Get height from form
@@ -203,8 +205,9 @@
     =/  block-height=(unit @ud)
       (mole |.((ni (got:jo-parser /['block_height']))))
     ?~  block-height
-      ~&  >>>  "Failed to get block_height from merkle proof response"
-      ~&  >>>  "Transaction may not be confirmed yet"
+      ::  %verify-transaction answers on the console only: these are its reply
+      ::
+      ~>  %slog.[2 leaf+"%spv-wallet: cannot verify, the transaction has no block height yet (unconfirmed?); retry after it confirms: {(trip txid)}"]
       (pure:m ~)
     =/  merkle=(list @t)  ((ar so) (got:jo-parser /merkle))
     =/  pos=@ud  (ni (got:jo-parser /pos))
@@ -217,21 +220,16 @@
     =/  chain=spv-chain  (get-chain network spv.state)
     =/  header=(unit block-header:bitcoin-spv)  (~(get by headers.chain) block-hash)
     ?~  header
-      ~&  >>>  "Block header not found locally: {<block-hash-hex>}"
-      ~&  >>>  "You need to fetch block at height {<u.block-height>} first"
+      ~>  %slog.[2 leaf+"%spv-wallet: cannot verify, block header not stored locally; sync or fetch headers up to height {<u.block-height>} first: {(trip block-hash-hex)}"]
       (pure:m ~)
     ::  Verify the merkle proof against our local header
     =/  merkle-root-hex=@t  (crip ((x-co:co 64) merkle-root.u.header))
     =/  verification-result=?
       (verify-merkle-proof:bitcoin-spv txid merkle pos merkle-root-hex)
-    ~&  >>>  "Transaction verification result: {<verification-result>}"
-    ~&  >>>  "TXID: {<txid>}"
-    ~&  >>>  "Block height: {<u.block-height>}"
-    ~&  >>>  "Block hash: {<block-hash-hex>}"
     ?:  verification-result
-      ~&  >>>  "✓ Transaction IS included in block {<u.block-height>}"
+      ~>  %slog.[0 leaf+"%spv-wallet: SPV verified, transaction is in block {<u.block-height>}: {(trip txid)}"]
       (pure:m ~)
-    ~&  >>>  "✗ Transaction NOT included in block (proof verification failed)"
+    ~>  %slog.[3 leaf+"%spv-wallet: SPV proof FAILED, transaction is NOT in block {<u.block-height>}; do not treat it as confirmed: {(trip txid)}"]
     (pure:m ~)
     ::
       %start-header-sync
