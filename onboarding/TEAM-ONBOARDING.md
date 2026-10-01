@@ -83,7 +83,7 @@ syncing while the index runs (2026.9.11's larger batches starved it), and the
 pane's public-index row wraps and reads as a status, a progress bar, and a
 provenance line. A ship already running follows the sponsor's `%gw-btc`
 automatically and does not need reinstalling for this.
-**2026.9.16** is the one to mint on now: the light client keeps its peers
+**2026.9.16** (superseded by 2026.10.1, above) brought: the light client keeps its peers
 (stale connects are reaped and a sweep reconnects every minute; a ship no
 longer sits at zero peers looking healthy), a full block parses in well under
 a second instead of tens of seconds, the sidecar hands blocks over in a few
