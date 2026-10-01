@@ -34,6 +34,8 @@
 ::
 |_  [=bowl:gall cards=(list card)]
 ++  cor   .
+::  dbg: flip to & for developer debug prints
+++  dbg   ^-(? |)
 ++  abet  :-  (flop cards)  state
 ++  emit  |=  =card  cor(cards [card cards])
 ++  emil  |=  caz=(list card)  cor(cards (welp (flop caz) cards))
@@ -45,13 +47,17 @@
   ?+  mak  ~|(bad-poke/mak !!) 
   ::
       %log
-    ~&  [%headers ~(wyt by block-headers)]
-    ~&  >  [%accounts accounts]
-    ~&  >>  [%utxo-set utxo-set]
-    ~&  >>>  [%sh-index sh-index]
-    ~&  >>  [%sh-mempool sh-mempool]
-    ~&  [%mempool-txids (lent mempool-txids)]
-    ~&  '--------------------------------------------------------'
+    ::  on-demand status reply: counts only, never the account/utxo
+    ::  maps themselves (xpubs and full wallet state)
+    ::
+    ~&  :*  %indexer
+            headers+~(wyt by block-headers)
+            accounts+~(wyt by accounts)
+            utxo-set+~(wyt by utxo-set)
+            sh-index+~(wyt by sh-index)
+            sh-mempool+~(wyt by sh-mempool)
+            mempool-txids+(lent mempool-txids)
+        ==
     cor
   ::
       %configure-node
@@ -64,11 +70,9 @@
     ?>  =(src.bowl our.bowl)
     =/  new  !<(new-account-args vaz)                :: TODO: add many at once
     ?:  (~(has by accounts) xpub.new)
-      ~&  >>  'account already added'
-      !!
+      ~|(%indexer-account-already-added !!)
     ?~  btc-node-config
-      ~&  >>>  'node configuration missing'
-      !!
+      ~|(%indexer-node-configuration-missing !!)
     =/  aco  ac-abet:(ac-new:ac new)
     =.  accounts  (~(put by accounts) xpub.new aco)
     =^  caz  polling.timers  ~(reset ti /polling polling.timers)
@@ -79,8 +83,7 @@
     =/  xub  !<(xpub vaz)
     =/  aco  (~(get by accounts) xub)
     ?~  aco
-      ~&  >>>  'account not found'
-      !!
+      ~|(%indexer-account-not-found !!)
     =.  cor  (del-account-from-index u.aco)
     %_  cor
       accounts  (~(del by accounts) xub)
@@ -192,8 +195,7 @@
     ?+  sin  cor
     ::
         [%iris %http-response %cancel *]
-      ~&  >>>  'transaction request interrupted'
-      ~&  >>>  'retrying...'
+      ~?  dbg  leaf+"%indexer: transaction request interrupted, retrying"
       %-  emil
       =>  ~(reset ti /retry/transaction/[mempool-or-block-hash.wir]/[txid.wir] [~s0 ~])
           -
@@ -201,8 +203,7 @@
         [%iris %http-response %finished *]
       =*  sus  status-code.response-header.client-response.sin
       ?:  (gte sus 400)
-        ~&  >>>  (cat 3 'transaction request failed: ' (scot %ud sus))
-        ~&  >>>  'retrying...'
+        ~>  %slog.[2 leaf+"%indexer: transaction lookup failed, retrying each minute; check the bitcoin node RPC. txid {(trip txid.wir)} status {(scow %ud sus)}"]
         %-  emil
         =>  ~(set ti /retry/transaction/[mempool-or-block-hash.wir]/[txid.wir] [~m1 ~])
             -
@@ -228,8 +229,7 @@
       ?:  =(~ last.polling.timers)  cor
       :: ~&  >  'polling...'
       ?.  .?(btc-node-config)
-        ~&  >>>  'node configuration missing'
-        ~&  >>>  'polling stopped'
+        ~>  %slog.[3 leaf+"%indexer: polling stopped, no bitcoin node configured; poke %configure-node"]
         =.  last.polling.timers  ~
         cor
       =^  caz  polling.timers  ~(set ti /polling polling.timers)
@@ -281,7 +281,7 @@
         [%iris %http-response %finished *]
       =*  sus  status-code.response-header.client-response.sin
       ?:  (gte sus 400)
-        ~&  >>>  (cat 3 'polling request failed: ' (scot %ud sus))
+        ~>  %slog.[2 leaf+"%indexer: bitcoin node RPC failed, sync paused until it answers; check the node is up and the RPC credentials. status {(scow %ud sus)}"]
         cor
       =/  res  (need (handle-rpc-http-response:btr client-response.sin))
       ?+  -.res  cor
@@ -310,7 +310,7 @@
         [%iris %http-response %finished *]
       =*  sus  status-code.response-header.client-response.sin
       ?:  (gte sus 400)
-        ~&  >>>  (cat 3 'mempool request failed: ' (scot %ud sus))
+        ~?  dbg  leaf+"%indexer: mempool request failed: {(scow %ud sus)}"
         cor
       =/  res  (need (handle-rpc-http-response:btr client-response.sin))
       ?+  -.res  !!
@@ -464,7 +464,7 @@
         [%iris %http-response %finished *]
       =*  sus  status-code.response-header.client-response.sin
       ?:  (gte sus 400)
-        ~&  >>>  (cat 3 'block header request failed: ' (scot %ud sus))
+        ~?  dbg  leaf+"%indexer: block header request failed: {(scow %ud sus)}"
         cor
       =/  res  (need (handle-rpc-http-response:btr client-response.sin))
       ?+  -.res  !!
@@ -526,7 +526,7 @@
         [%iris %http-response %finished *]
       =*  sus  status-code.response-header.client-response.sin
       ?:  (gte sus 400)
-        ~&  >>>  (cat 3 'index request failed: ' (scot %ud sus))
+        ~?  dbg  leaf+"%indexer: index request failed: {(scow %ud sus)}"
         cor
       =/  res  (need (handle-rpc-http-response:btr client-response.sin))
       ?+  -.res  !!
@@ -918,7 +918,7 @@
   =.  cor
     =/  old  (mole |.(!<(state-n vaz)))
     ?~  old
-      ~&  >>>  %resetting-state
+      ~>  %slog.[2 leaf+"%indexer: saved state unreadable, reset to empty; re-add accounts to resume indexing"]
       cor
     ?-  -.u.old
       %0  cor(state u.old)

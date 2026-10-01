@@ -9,6 +9,8 @@
 ::  Change these to retarget the boot sequence.
 ::
 ++  boot-network    `network:tx`%main
+::  dbg: flip to & for developer debug prints (boot progress)
+++  dbg  ^-(? |)
 ::  Pure helpers
 ::
 ++  sots-to-ptst
@@ -94,10 +96,10 @@
           .^((map @p point:urb) %gx /(scot %p our)/urb-watcher/(scot %da now.bowl)/points/urb-points)
         (~(has by points) our)
       ?:  in-watcher
-        ~&  "boot[start]: refusing to start because comet is already present in urb-watcher"
+        ~>  %slog.[1 leaf+"%spv-wallet: boot request ignored, this comet is already attested in %urb-watcher; no new boot is needed"]
         (pure:m ~)
       ?:  ?&(?=(^ boot.state) =(%done step.u.boot.state))
-        ~&  "boot[start]: refusing to start because previous boot is pending confirmation"
+        ~?  dbg  leaf+"%spv-wallet: boot[start]: previous boot pending confirmation"
         =.  error.u.boot.state
           `[ %spawn-pending
              ~['spawn transaction already broadcast; waiting for block confirmation']
@@ -142,12 +144,10 @@
       run-boot
     ::  Normal mode: parse sponsor @p from form
     =/  sponsor-text=@t  (fall (get-key:kv:html-utils 'sponsor' args) '')
-    ~&  "boot: sponsor field raw text: '{(trip sponsor-text)}'"
     =/  sponsor-parsed=(unit @p)  (slaw %p sponsor-text)
-    ~&  "boot: sponsor parsed: {<sponsor-parsed>}"
     ?~  sponsor-parsed
       (store-boot-error %bad-sponsor ~['invalid sponsor @p' (crip "raw input: '{(trip sponsor-text)}'")])
-    ~&  "boot: normal mode, sponsor={<u.sponsor-parsed>}"
+    ~?  dbg  leaf+"%spv-wallet: boot: normal mode, sponsor {<u.sponsor-parsed>}"
     =|  bd=boot-data:s
     =.  boot-mode.bd  %normal
     =.  boot-secret.bd  boot-secret
@@ -165,7 +165,6 @@
     run-boot
   ::
       %cancel
-    ~&  "boot[cancel]: canceling boot process"
     ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
     =.  boot.state  ~
     ;<  ~  bind:m  (replace:io !>(state))
@@ -182,7 +181,7 @@
   ?~  boot.state
     (pure:m ~)
   =/  bd=boot-data:s  data.u.boot.state
-  ~&  "boot[dispatch]: step={<step.u.boot.state>} mode={<boot-mode.bd>} sponsor={<sponsor.bd>}"
+  ~?  dbg  leaf+"%spv-wallet: boot[dispatch]: step {<step.u.boot.state>} mode {<boot-mode.bd>} sponsor {<sponsor.bd>}"
   ?+  step.u.boot.state  (pure:m ~)
     %start              (do-start bd)
     %derive             (do-derive bd)
@@ -273,7 +272,7 @@
   ?:  ?=(%| -.result)
     (store-boot-error %address-derivation p.result)
   =/  address=@t  p.result
-  ~&  "derived boot address: {(trip address)}"
+  ~?  dbg  leaf+"%spv-wallet: boot address {(trip address)}"
   ;<  addr-json=json  bind:m  (fetch-address-data address boot-network)
   =/  parsed-info=(unit address-info:s)  (parse-address-info address addr-json)
   ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
@@ -297,7 +296,7 @@
   =/  account-pubkey=@ux  (need account-pubkey.bd)
   ;<  utxo-list=(list [txid=@t vout=@ud value=@ud tx-status=tx-status:s])  bind:m
     (fetch-utxos address boot-network)
-  ~&  "found {(scow %ud (lent utxo-list))} UTXOs"
+  ~?  dbg  leaf+"%spv-wallet: boot address has {(scow %ud (lent utxo-list))} UTXOs"
   ?~  utxo-list
     (store-boot-error %no-utxos ~['no UTXOs found at boot address' (crip "address: {(trip address)}")])
   ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
@@ -315,12 +314,9 @@
   ::  Select first UTXO (drop tx-status for boot-data)
   =/  bd  bd(selected-utxo `[txid vout value]:i.utxo-list)
   ::  Branch: sponsor mode skips to attest, normal mode requests sponsorship
-  ~&  "boot[fetch-utxos]: branching, mode={<boot-mode.bd>}"
   ?:  ?=(%sponsor boot-mode.bd)
-    ~&  "boot[fetch-utxos]: sponsor mode -> skipping to %attest"
     ;<  ~  bind:m  (save-step %attest bd)
     (do-attest bd)
-  ~&  "boot[fetch-utxos]: normal mode -> going to %discover-sponsor, sponsor={<sponsor.bd>}"
   ;<  ~  bind:m  (save-step %discover-sponsor bd)
   (do-discover-sponsor bd)
 ::
@@ -329,38 +325,30 @@
   =/  m  (fiber:io ,~)
   ^-  form:m
   =/  sponsor=@p  (need sponsor.bd)
-  ~&  "boot[discover]: waiting for sponsor {<sponsor>} fief in urb-watcher..."
   ;<  our=@p  bind:m  get-our:io
   |-
   ;<  =bowl:gall  bind:m  get-bowl:io
-  =/  scry-base=tape
-    "/{(scow %p our.bowl)}/urb-watcher/{(scow %da now.bowl)}"
   =/  watcher-running=?
     .^(? %gu /(scot %p our.bowl)/urb-watcher/(scot %da now.bowl)/$)
-  ~&  "boot[discover]: scry %gu {scry-base}/$ -> {<watcher-running>}"
   ?.  watcher-running
-    ~&  "boot[discover]: urb-watcher not running yet, retrying in 5s..."
+    ~?  dbg  leaf+"%spv-wallet: boot[discover]: %urb-watcher not running, retrying"
     ;<  ~  bind:m  (send-sse-event:io /spv-wallet/progress ~ `'progress-update')
     ;<  ~  bind:m  (sleep:io ~s5)
     $
   =/  points=(map @p point:urb)
     .^((map @p point:urb) %gx /(scot %p our.bowl)/urb-watcher/(scot %da now.bowl)/points/urb-points)
-  ~&  "boot[discover]: scry %gx {scry-base}/points -> {<~(wyt by points)>} points in map"
-  =/  known-ships=(list @p)  ~(tap in ~(key by points))
-  ~&  "boot[discover]: known ships: {<known-ships>}"
   =/  point=(unit point:urb)  (~(get by points) sponsor)
   ?~  point
-    ~&  "boot[discover]: sponsor {<sponsor>} not in points map, retrying in 5s..."
+    ~?  dbg  leaf+"%spv-wallet: boot[discover]: sponsor not yet known to %urb-watcher, retrying: {<sponsor>} ({<~(wyt by points)>} points)"
     ;<  ~  bind:m  (send-sse-event:io /spv-wallet/progress ~ `'progress-update')
     ;<  ~  bind:m  (sleep:io ~s5)
     $
-  ~&  "boot[discover]: sponsor {<sponsor>} found. life={<life.net.u.point>} pass={<pass.net.u.point>} sponsor={<sponsor.net.u.point>} fief={<fief.net.u.point>}"
   ?~  fief.net.u.point
-    ~&  "boot[discover]: sponsor {<sponsor>} has no fief yet, retrying in 5s..."
+    ~?  dbg  leaf+"%spv-wallet: boot[discover]: sponsor has no fief yet, retrying: {<sponsor>}"
     ;<  ~  bind:m  (send-sse-event:io /spv-wallet/progress ~ `'progress-update')
     ;<  ~  bind:m  (sleep:io ~s5)
     $
-  ~&  "boot[discover]: sponsor {<sponsor>} fief confirmed: {<u.fief.net.u.point>}"
+  ~?  dbg  leaf+"%spv-wallet: boot[discover]: sponsor {<sponsor>} fief {<u.fief.net.u.point>}"
   ;<  ~  bind:m  (sleep:io ~s1)
   ;<  ~  bind:m  (save-step %sponsor bd)
   (do-sponsor bd)
@@ -370,16 +358,13 @@
   =/  m  (fiber:io ,~)
   ^-  form:m
   =/  sponsor=@p  (need sponsor.bd)
-  ~&  "boot[sponsor]: sponsor @p from boot-data: {<sponsor>}"
   ;<  our=@p  bind:m  get-our:io
-  ~&  "boot[sponsor]: our={<our>}, sending request to [{<sponsor>} %spv-wallet]"
   ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
   =.  sponsor-response.state  ~
   ;<  ~  bind:m  (replace:io !>(state))
-  ~&  "boot[sponsor]: firing poke to {<sponsor>} %spv-wallet %fiber-poke %sponsorship-request"
+  ~?  dbg  leaf+"%spv-wallet: boot[sponsor]: requesting sponsorship from {<sponsor>}"
   ;<  ~  bind:m
     (poke:io [sponsor %spv-wallet] %fiber-poke !>(['sponsor-req' %sponsorship-request our]))
-  ~&  "boot[sponsor]: poke sent, polling for response..."
   ;<  ~  bind:m  (save-step %poll-sponsor bd)
   (do-poll-sponsor bd)
 ::
@@ -394,9 +379,9 @@
   ;<  ~  bind:m  (sleep:io ~s2)
   ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
   ?~  sponsor-response.state
-    ~&  "sponsor poll {(scow %ud polls)}: waiting..."
+    ~?  dbg  leaf+"%spv-wallet: boot[poll-sponsor]: waiting, poll {(scow %ud polls)}"
     $(polls +(polls))
-  ~&  "boot[poll-sponsor]: response received! sig={<sig.u.sponsor-response.state>} height={<height.u.sponsor-response.state>}"
+  ~?  dbg  leaf+"%spv-wallet: boot[poll-sponsor]: sponsor signed at height {<height.u.sponsor-response.state>}"
   =/  bd  bd(sponsor-sig `sig.u.sponsor-response.state)
   ;<  ~  bind:m  (save-step %attest bd)
   (do-attest bd)
@@ -410,7 +395,6 @@
   ;<  deed=[=life =pass sec=(unit @ux)]  bind:m
     (scry:io ,[life pass (unit @ux)] %j /deed/(scot %p our)/1)
   ::  Build ptst: spawn-only for sponsor mode, batch spawn+escape for normal
-  ~&  "boot[attest]: mode={<boot-mode.bd>} sponsor={<sponsor.bd>} sig={<sponsor-sig.bd>}"
   =/  result=(each ptst:taproot tang)
     %-  mule  |.
     =/  master-wallet  (from-seed:bip32 (seed-to-bytes:wallet-address [%q boot-secret.bd]))
@@ -431,7 +415,7 @@
   =/  spawn-ptst=ptst:taproot  p.result
   ?>  ?=(%leaf -.spawn-ptst)
   =/  spawn-script=hexb:btc  script.tapleaf.spawn-ptst
-  ~&  "script built: {<wid.spawn-script>} bytes"
+  ~?  dbg  leaf+"%spv-wallet: boot[attest]: spawn script {<wid.spawn-script>} bytes"
   ::  Derive commit address internal key at m/86'/1'/0'/0/1
   =/  commit-key-result=(each @ux tang)
     %-  mule  |.
@@ -442,7 +426,7 @@
     (store-boot-error %commit-key-derivation p.commit-key-result)
   =/  commit-pubkey=@ux  p.commit-key-result
   =/  commit-address=@t  (tapscript-address:taproot commit-pubkey spawn-ptst (en-crypto:wallet-address boot-network))
-  ~&  "commit address: {(trip commit-address)}"
+  ~?  dbg  leaf+"%spv-wallet: boot[attest]: commit address {(trip commit-address)}"
   ::  Store index 1: main address + spawn tapscript
   =/  account-pubkey=@ux  (need account-pubkey.bd)
   =/  acct=account:hd-path  [[%.y 86] [%.y 1] [%.y 0]]
@@ -498,7 +482,7 @@
   ?:  (lte value.sel fee)
     (store-boot-error %insufficient-funds ~['boot UTXO value too low for commit tx fee'])
   =/  commit-value=@ud  (sub value.sel fee)
-  ~&  "commit tx: {<value.sel>} sats -> {<commit-value>} sats + {<fee>} fee"
+  ~?  dbg  leaf+"%spv-wallet: boot[commit]: {<value.sel>} sats -> {<commit-value>} sats + {<fee>} fee"
   =/  txid-display=@ux  (rash txid.sel hex)
   =/  txid-le=@ux  dat:(flip:byt:bcu [32 txid-display])
   =/  tx-input=input:ap:tx
@@ -516,7 +500,6 @@
   ?:  ?=(%| -.build-result)
     (store-boot-error %commit-tx-build p.build-result)
   =/  tx-hex-cord=@t  (crip p.build-result)
-  ~&  "commit tx built: {(scow %ud (lent p.build-result))} hex chars"
   =/  =request:http
     :*  %'POST'
         (crip (tx-base-url boot-network))
@@ -530,7 +513,7 @@
       [%finished * [~ [* [p=@ q=@]]]]
     q.data.u.full-file.client-response
     ==
-  ~&  "commit broadcast result: {(trip broadcast-result)}"
+  ~?  dbg  leaf+"%spv-wallet: boot[commit]: broadcast result {(trip broadcast-result)}"
   ?:  !=(64 (met 3 broadcast-result))
     (store-boot-error %broadcast-failed ~['broadcast did not return a valid txid' broadcast-result])
   =/  bd  bd(commit-txid `broadcast-result)
@@ -542,7 +525,6 @@
   =/  m  (fiber:io ,~)
   ^-  form:m
   =/  commit-txid=@t  (need commit-txid.bd)
-  ~&  "polling for commit txid: {(trip commit-txid)}"
   =/  poll-url=@t  (crip :(weld (tx-base-url boot-network) "/" (trip commit-txid)))
   =/  polls=@ud  0
   |-
@@ -557,9 +539,8 @@
         =(200 status-code.response-header.client-response)
     ==
   ?.  found
-    ~&  "poll {(scow %ud polls)}: not yet in mempool, retrying..."
+    ~?  dbg  leaf+"%spv-wallet: boot[confirm-commit]: not in mempool yet, poll {(scow %ud polls)}: {(trip commit-txid)}"
     $(polls +(polls))
-  ~&  "commit tx confirmed in mempool after {(scow %ud polls)} polls"
   ;<  ~  bind:m  (save-step %reveal bd)
   (do-reveal bd)
 ::
@@ -605,7 +586,7 @@
   =/  reveal-value=@ud  (sub commit-value reveal-fee)
   ?:  (lth reveal-value 330)
     (store-boot-error %reveal-dust ~['reveal output would be dust (<330 sats); need a larger boot UTXO'])
-  ~&  "reveal tx: {<commit-value>} sats -> {<reveal-value>} sats + {<reveal-fee>} fee ({<reveal-vbytes>} vB)"
+  ~?  dbg  leaf+"%spv-wallet: boot[reveal]: {<commit-value>} sats -> {<reveal-value>} sats + {<reveal-fee>} fee ({<reveal-vbytes>} vB)"
   =/  commit-txid-display=@ux  (rash commit-txid hex)
   =/  commit-txid-le=@ux  dat:(flip:byt:bcu [32 commit-txid-display])
   =/  reveal-input=input:ap:tx
@@ -625,7 +606,7 @@
   ?:  ?=(%| -.addr-result)
     (store-boot-error %reveal-addr-derivation p.addr-result)
   =/  reveal-address=@t  p.addr-result
-  ~&  "reveal destination address (idx 2): {(trip reveal-address)}"
+  ~?  dbg  leaf+"%spv-wallet: boot[reveal]: destination address {(trip reveal-address)}"
   ::  Store index 2 in account
   =/  account-pubkey=@ux  (need account-pubkey.bd)
   ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
@@ -643,7 +624,6 @@
   ?:  ?=(%| -.build-result)
     (store-boot-error %reveal-tx-build p.build-result)
   =/  reveal-hex-cord=@t  (crip p.build-result)
-  ~&  "reveal tx built: {(scow %ud (lent p.build-result))} hex chars"
   =/  reveal-req=request:http
     :*  %'POST'
         (crip (tx-base-url boot-network))
@@ -657,7 +637,7 @@
       [%finished * [~ [* [p=@ q=@]]]]
     q.data.u.full-file.client-response
     ==
-  ~&  "reveal broadcast result: {(trip reveal-result)}"
+  ~?  dbg  leaf+"%spv-wallet: boot[reveal]: broadcast result {(trip reveal-result)}"
   ?:  !=(64 (met 3 reveal-result))
     (store-boot-error %reveal-broadcast-failed ~['reveal broadcast did not return a valid txid' reveal-result])
   =/  bd  bd(reveal-address `reveal-address, reveal-txid `reveal-result)
@@ -669,7 +649,6 @@
   =/  m  (fiber:io ,~)
   ^-  form:m
   =/  reveal-txid=@t  (need reveal-txid.bd)
-  ~&  "polling for reveal txid: {(trip reveal-txid)}"
   =/  poll-url=@t  (crip :(weld (tx-base-url boot-network) "/" (trip reveal-txid)))
   =/  polls=@ud  0
   |-
@@ -684,9 +663,8 @@
         =(200 status-code.response-header.client-response)
     ==
   ?.  found
-    ~&  "boot[confirm-reveal]: poll {(scow %ud polls)}: not yet in mempool, retrying..."
+    ~?  dbg  leaf+"%spv-wallet: boot[confirm-reveal]: not in mempool yet, poll {(scow %ud polls)}: {(trip reveal-txid)}"
     $(polls +(polls))
-  ~&  "boot[confirm-reveal]: tx confirmed in mempool after {(scow %ud polls)} polls"
   ;<  ~  bind:m  (save-step %refresh bd)
   (do-refresh bd)
 ::

@@ -3,6 +3,9 @@
 /=  x-  /mar/fiber-poke
 /=  x-  /mar/fiber-bump
 |%
+::  dbg: flip to & for developer debug prints
+++  dbg  ^-(? |)
+::
 ++  numb :: adapted from numb:enjs:format
   |=  a=@u
   ^-  tape
@@ -691,7 +694,7 @@
     |=  [=term =tang]
     ^-  (quip card:agent:gall agent:gall)
     :: ?<  ?=([%eyre *] sap.bowl) :: Eyre Security (never happens)
-    %-  (slog leaf+"error in {<dap.bowl>}" >term< tang)
+    %-  (slog leaf+"%{(trip dap.bowl)}: agent failure {<term>}; report it with the trace that follows" tang)
     =^  cards  full-state
       abet:(handle-fiber-poke:hc %on-fail on-fail+!>([term tang]))
     [cards this]
@@ -753,7 +756,7 @@
     ::
     =/  host-header=(unit @t)  (get-header:http 'host' header-list.request.req)
     ?~  host-header
-      ~&  >>>  %missing-host-header
+      ~?  dbg  leaf+"%{(trip dap.bowl)}: rejected HTTP request without Host header"
       :_  this
       %+  give-simple-payload:app:server
         eyre-id
@@ -919,7 +922,7 @@
       this
     ?:  ?=(%simple-payload -.i.cards)
       ?.  (~(has in requests) pid)
-        ~&  >>>  "ignoring simple-payload for pid not in requests: {(trip pid)}"
+        ~?  dbg  leaf+"%{(trip dap.bowl)}: ignoring simple-payload for closed request {(trip pid)}"
         $(cards t.cards)
       =.  requests  (~(del in requests) pid)
       =.  this  (emit-cards (give-simple-payload:app:server pid payload.i.cards))
@@ -1139,7 +1142,7 @@
     ?-  -.result
       %done  ~
         %fail
-      %-  (slog leaf+"{(trip dap.bowl)}: crash at {(trip pid)}" err.result)
+      %-  (slog leaf+"%{(trip dap.bowl)}: process {(trip pid)} crashed; report it with the trace that follows" err.result)
       [~ err.result]
     ==
   ::
