@@ -39,6 +39,10 @@
 ::
 /-  gev=gevulot, urb, ord, sa=self-attestation
 /+  default-agent, dbug, server, schooner, cc=gw-btc-pass, lsa=self-attestation
+/+  mne=mnemonyms
+::  gwbtc/mnemonyms@4cbb198 (lib/mnemonyms.hoon, wordlists/english.txt),
+::  the same pin as the %dns desk; identical to Causeway's vendored list
+/*  english  %txt  /fil/wordlists/english/txt
 ::
 |%
 +$  versioned-state  $%(state-0 state-1 state-2)
@@ -189,6 +193,25 @@
 |_  =bowl:gall
 ::
 ++  max-tries  3
+::
+::  +nym: how this pane names a ship.  A comet is shown as its mnemonym
+::  (`.word.word…`, the form Causeway prints), anything else as its @p.
+::  +name-span puts the @p in the hover text and in data-p, which the
+::  pane's "Show @p" toggle swaps in, so it can be read and copied.
+::
+++  me  ~(. me:mne [.y 128 english])
+++  nym
+  |=  who=@p
+  ^-  tape
+  ?.  =(%pawn (clan:title who))  (scow %p who)
+  (trip (de:ship:me who))
+::
+++  name-span
+  |=  who=@p
+  ^-  manx
+  =/  p=tape  (scow %p who)
+  =/  n=tape  (nym who)
+  ;span.nm(title p, data-p p, data-n n): {n}
 ::
 ::  +our-sponsor: the sponsor we COMMITTED, if any.
 ::
@@ -733,7 +756,10 @@
     ==
     ;body
       ;div.wrap
-        ;h1: Gevulot
+        ;div.top
+          ;h1: Gevulot
+          ;button#nmt.ghost.small(type "button", title "Swap every name on this page between its mnemonym and its @p"): Show @p
+        ==
         ;p.sub: identity control pane
         ;+  (status-card rdy spo gw-scan gw-walks)
         ;+  (index-card gw-scan)
@@ -745,6 +771,7 @@
             ==
         ;+  (debug-card rdy conf gw-inflight gw-attested spees)
       ==
+      ;script: {name-toggle}
     ==
   ==
 ::
@@ -754,11 +781,16 @@
   ;div.card.status
     ;div.statrow
       ;span.k: ship
-      ;span.v: {(scow %p our.bowl)}
+      ;span.v
+        ;+  (name-span our.bowl)
+      ==
     ==
     ;div.statrow
       ;span.k: sponsor
-      ;span.v: {?~(spo "none" (scow %p u.spo))}
+      ;+  ?~  spo  ;span.v: none
+          ;span.v
+            ;+  (name-span u.spo)
+          ==
     ==
     ;div.statrow
       ;span.k: light client
@@ -960,10 +992,13 @@
         |=  [who=@p job=@ud top=@ud]
         =/  txt=tape
           ?~  tip.rdy
-            "{(scow %p who)}: liveness walk from block {(scow %ud top)}"
+            ": liveness walk from block {(scow %ud top)}"
           =/  n=@ud  (sub u.tip.rdy (min u.tip.rdy top))
-          "{(scow %p who)}: liveness walk from block {(scow %ud top)} to {(scow %ud u.tip.rdy)} ({(scow %ud n)} filters)"
-        ;div: {txt}
+          ": liveness walk from block {(scow %ud top)} to {(scow %ud u.tip.rdy)} ({(scow %ud n)} filters)"
+        ;div
+          ;+  (name-span who)
+          ;span: {txt}
+        ==
   ==
 ::
 ++  sync-span
@@ -981,7 +1016,10 @@
   ^-  manx
   ;div.card
     ;h2: As a sponsee
-    ;p: Your sponsor: {(scow %p spo)}
+    ;p
+      ;span: Your sponsor:{" "}
+      ;+  (name-span spo)
+    ==
     ;div.row
       ;form(method "post", action "/apps/gevulot")
         ;input(type "hidden", name "act", value "set-receive");
@@ -1054,7 +1092,9 @@
         =/  st  (peer-status who conf synced infl p)
         ;div.peer
           ;div.peer-id
-            ;span.patp: {(scow %p who)}
+            ;span.patp
+              ;+  (name-span who)
+            ==
             ;span.via: via {(trip via.p)}
           ==
           ;span(class (status-class st)): {(status-label st)}
@@ -1135,7 +1175,9 @@
     ;*  %+  turn  rs
         |=  p=@p
         ;div.peer
-          ;span.patp: {(scow %p p)}
+          ;span.patp
+            ;+  (name-span p)
+          ==
           ;span.tag: {?:((~(has by spees) p) "sponsee" "stale")}
         ==
   ==
@@ -1182,6 +1224,21 @@
     ==
   ==
 ::
+::  +name-toggle: the "Show @p" button.  Per page and per browser only
+::  (localStorage), never a ship setting; the hover text always has the @p.
+::
+++  name-toggle
+  ^-  tape
+  %-  trip
+  '''
+  (function(){var k='gevulot-show-patp',on=false;
+  function show(){document.querySelectorAll('.nm').forEach(function(e){e.textContent=on?e.dataset.p:e.dataset.n});
+  var b=document.getElementById('nmt');if(b)b.textContent=on?'Show names':'Show @p';}
+  try{on=localStorage.getItem(k)==='1'}catch(e){}
+  var b=document.getElementById('nmt');if(b)b.onclick=function(){on=!on;try{localStorage.setItem(k,on?'1':'0')}catch(e){}show()};
+  show();})();
+  '''
+::
 ++  style
   ^-  tape
   %-  trip
@@ -1218,6 +1275,8 @@
   .peer{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid #1f2027}
   .peer-id{display:flex;flex-direction:column;gap:1px;min-width:0}
   .patp{font:12px monospace;color:var(--fg);word-break:break-all}
+  .nm{cursor:help;word-break:break-all}
+  .top{display:flex;align-items:center;justify-content:space-between;gap:1em}
   .via{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
   .tag{font-size:11px;color:var(--mut)}
   .st{font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;white-space:nowrap;flex:none}
