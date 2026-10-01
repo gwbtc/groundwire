@@ -27,7 +27,7 @@ confidential comets):
 
 ```bash
 gh release list -R gwbtc/urbit | grep groundwire-rc | head -1
-# e.g. groundwire-rc-2026.9.16
+# e.g. groundwire-rc-2026.10.1
 ```
 
 ## The sponsor — nothing to memorize
@@ -58,7 +58,7 @@ One hard constraint shapes the recipe: `boot.sh --mint` reads its prompts from
 survives your SSH connection, and your Claude drives it with `send-keys` and
 reads it from a log. (This is exactly how the ops campaign drove ships.)
 
-**Use `groundwire-rc-2026.9.16` or newer.** Earlier RCs have one or both of:
+**Use `groundwire-rc-2026.10.1` or newer** — the first release whose Causeway knows invite codes (on 2026.9.16, `--invite` reaches the old faucet and fails with "Faucet error: Invalid invite code"; nothing is spent). Before that, **use `groundwire-rc-2026.9.16` or newer.** Earlier RCs have one or both of:
 a `gwlib.sh` whose peer seeding pokes a renamed mark (the light client never
 gets a peer and sync never starts — fixed in 2026.9.10), and a Causeway that
 does not record the sponsor's attestation in the spawn proof (the comet can't
@@ -124,7 +124,7 @@ S 'apt-get update -qq && apt-get install -y -qq tmux python3-venv
 #      this the mint sits silently waiting for an address nobody can see.
 S 'cat > ~/mint.sh <<'"'"'EOF'"'"'
 PYTHONUNBUFFERED=1 bash ~/boot.sh --mint --headless --detach \
-  --version groundwire-rc-2026.9.16 \
+  --version groundwire-rc-2026.10.1 \
   --sponsor "~barmul-bolmet-ronlus-lighul--rovtun-satryc-moclug-daplyd" 2>&1 | tee ~/mint.log
 EOF
 chmod +x ~/mint.sh'
@@ -157,7 +157,7 @@ S 'tmux send-keys -t mint "<the twelve words>" Enter'
 #    watching the sync). Pass the SAME --version as the mint: boot.sh now pins
 #    the installed release by itself, but say it anyway -- an older boot.sh
 #    resolved "latest" to the daily and overwrote bin/ under a running pier.
-S "bash ~/boot.sh --detach --vps --version groundwire-rc-2026.9.16 --comet '<the @p it printed>'"
+S "bash ~/boot.sh --detach --vps --version groundwire-rc-2026.10.1 --comet '<the @p it printed>'"
 S "bash ~/boot.sh --status --comet '<@p>'; bash ~/boot.sh --code --comet '<@p>'"
 
 # 6. restarting later: ALWAYS through boot.sh (`--stop`, then `--detach`),
