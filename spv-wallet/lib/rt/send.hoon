@@ -3,6 +3,8 @@
     bip32=bip32-spv, txns=tx-build, bip329, wallet-account, bcu=bitcoin-utils,
     fees=tx-fees, sel=tx-select, drft=tx-draft, wutxo=wallet-utxo, taproot
 |%
+::  dbg: flip to & for developer debug prints
+++  dbg  ^-(? |)
 ::  Safe list indexing (returns unit instead of crashing)
 ::
 ++  snag-safe
@@ -19,17 +21,16 @@
   =/  m  (fiber:io ,~)
   ^-  form:m
   =/  action=@t  (need (get-key:kv:html-utils 'action' args))
-  ~&  >>  "handle-send-actions called with action: {<action>}"
+  ~?  dbg  leaf+"%spv-wallet: send action {(trip action)}"
   ::  Get state and account details directly
   ;<  state=state-0:s  bind:m  (get-state-as:io state-0:s)
   =/  details=(unit account-details:s)  (~(get by accounts.state) account-pubkey)
   ?~  details
-    ~&  >>>  "account not found for pubkey {<account-pubkey>}"
+    ~?  dbg  leaf+"%spv-wallet: send action for unknown account {<account-pubkey>}"
     (pure:m ~)
   =/  ac  ~(. ac:wallet-account [u.details active-network.u.details])
   ?+    action  !!
       %add-output
-    ~&  >>  "=== ADD OUTPUT HANDLER CALLED ==="
     ::  Parse form fields
     =/  output-address=@t  (need (get-key:kv:html-utils 'output-address' args))
     =/  output-amount=@ud  (need (rush (need (get-key:kv:html-utils 'output-amount' args)) dem))
@@ -51,18 +52,16 @@
     (send-sse-event:io /spv-wallet/stream/account/(crip (hexn:sailbox account-pubkey))/send ~ `%draft-outputs-update)
     ::
       %clear-draft
-    ~&  >>  "=== CLEAR DRAFT HANDLER CALLED ==="
     =/  updated=account-details:s  clear-draft:ac
     =.  accounts.state  (~(put by accounts.state) account-pubkey updated)
     ;<  ~  bind:m  (replace:io !>(state))
     (send-sse-event:io /spv-wallet/stream/account/(crip (hexn:sailbox account-pubkey))/send ~ `%draft-outputs-update)
     ::
       %delete-output
-    ~&  >>  "=== DELETE OUTPUT HANDLER CALLED ==="
     =/  output-index=@ud  (need (rush (need (get-key:kv:html-utils 'output-index' args)) dem))
     =/  existing-draft  draft:ac
     ?~  existing-draft
-      ~&  >>>  "no draft to delete from"
+      ~?  dbg  leaf+"%spv-wallet: delete-output: no draft"
       (pure:m ~)
     ;<  now=@da  bind:m  get-time:io
     =/  draft=transaction:drft  u.existing-draft(modified now)
@@ -76,14 +75,13 @@
     (send-sse-event:io /spv-wallet/stream/account/(crip (hexn:sailbox account-pubkey))/send ~ `%draft-outputs-update)
     ::
       %add-input
-    ~&  >>  "=== ADD INPUT HANDLER CALLED ==="
     =/  utxo-txid=@t  (need (get-key:kv:html-utils 'utxo-txid' args))
     =/  utxo-vout=@ud  (need (rush (need (get-key:kv:html-utils 'utxo-vout' args)) dem))
     =/  utxo-value=@ud  (need (rush (need (get-key:kv:html-utils 'utxo-value' args)) dem))
     ::  Check if UTXO is frozen (spendable=%.n) using global labels
     =/  label-key=@t  (crip "{(trip utxo-txid)}:{(scow %ud utxo-vout)}")
     ?:  (~(frozen la:bip329 labels.state) label-key)
-      ~&  >>>  "UTXO is frozen, cannot add to inputs"
+      ~>  %slog.[2 leaf+"%spv-wallet: input not added, the UTXO is frozen; unfreeze it first to spend it: {(trip label-key)}"]
       (pure:m ~)
     ;<  now=@da  bind:m  get-time:io
     =/  existing-draft  draft:ac
@@ -101,12 +99,11 @@
     (send-sse-event:io /spv-wallet/stream/account/(crip (hexn:sailbox account-pubkey))/send ~ `%draft-outputs-update)
     ::
       %remove-input
-    ~&  >>  "=== REMOVE INPUT HANDLER CALLED ==="
     =/  utxo-txid=@t  (need (get-key:kv:html-utils 'utxo-txid' args))
     =/  utxo-vout=@ud  (need (rush (need (get-key:kv:html-utils 'utxo-vout' args)) dem))
     =/  existing-draft  draft:ac
     ?~  existing-draft
-      ~&  >>>  "no draft to remove from"
+      ~?  dbg  leaf+"%spv-wallet: remove-input: no draft"
       (pure:m ~)
     ;<  now=@da  bind:m  get-time:io
     =/  draft=transaction:drft  u.existing-draft(modified now)
@@ -120,7 +117,6 @@
     (send-sse-event:io /spv-wallet/stream/account/(crip (hexn:sailbox account-pubkey))/send ~ `%draft-outputs-update)
     ::
       %set-change-config
-    ~&  >>  "=== SET CHANGE CONFIG HANDLER CALLED ==="
     =/  fee-rate=@ud  (need (rush (need (get-key:kv:html-utils 'fee-rate' args)) dem))
     =/  change-address=@t  (need (get-key:kv:html-utils 'change-address' args))
     ;<  now=@da  bind:m  get-time:io
@@ -138,10 +134,9 @@
     (send-sse-event:io /spv-wallet/stream/account/(crip (hexn:sailbox account-pubkey))/send ~ `%draft-outputs-update)
     ::
       %clear-change-config
-    ~&  >>  "=== CLEAR CHANGE CONFIG HANDLER CALLED ==="
     =/  existing-draft  draft:ac
     ?~  existing-draft
-      ~&  >>>  "no draft to clear change from"
+      ~?  dbg  leaf+"%spv-wallet: clear-change-config: no draft"
       (pure:m ~)
     ;<  now=@da  bind:m  get-time:io
     =/  draft=transaction:drft  u.existing-draft(modified now)
@@ -178,19 +173,16 @@
     ::  Refresh auto-select (re-run selection with current mode)
     ::
       %refresh-auto-select
-    ~&  >>  "=== REFRESH AUTO SELECT ==="
     =/  existing-draft  draft:ac
     ?~  existing-draft  (pure:m ~)
     ?~  auto-select.u.existing-draft  (pure:m ~)
     =/  mode=select-mode:drft  u.auto-select.u.existing-draft
-    ~&  >>  "using mode: {<mode>}"
     =/  fee-rate=@ud
       ?~  change.u.existing-draft  1
       fee-rate.u.change.u.existing-draft
     ::  Build list of available UTXOs from cached per-address data
     =/  spend=spend:fees  script-type.u.details
     =/  cached  (collect-cached-utxos:wutxo u.details)
-    ~&  >>  "cached utxos from collect-cached-utxos: {<(lent cached)>}"
     =/  utxos=(list utxo-input:drft)
       %+  murn  cached
       |=  [txid=@t vout=@ud value=@ud address=@t chain=@t index=@ud confirmations=(unit @ud)]
@@ -200,16 +192,15 @@
       ?:  (~(frozen la:bip329 labels.state) label-key)
         ~
       `[txid vout value spend]
-    ~&  >>  "available utxos after frozen filter: {<(lent utxos)>}"
+    ~?  dbg  leaf+"%spv-wallet: auto-select ({<mode>}): {<(lent utxos)>} of {<(lent cached)>} UTXOs unfrozen"
     ::  Calculate target (outputs + fee)
     =/  total-outputs=@ud  (sum-outputs:drft outputs.u.existing-draft)
     =/  vbytes=@ud  (calculate-vbytes:drft u.existing-draft)
     =/  fee=@ud  (calculate-fee:fees vbytes fee-rate)
     =/  target=@ud  (add total-outputs fee)
-    ~&  >>  "target: {<target>} (outputs: {<total-outputs>} + fee: {<fee>})"
+    ~?  dbg  leaf+"%spv-wallet: auto-select target {<target>} (outputs {<total-outputs>} + fee {<fee>})"
     ::  If target is 0, clear inputs
     ?:  =(0 target)
-      ~&  >>  "refresh-auto-select: target is 0, clearing inputs"
       ;<  now=@da  bind:m  get-time:io
       =/  draft=transaction:drft  u.existing-draft(inputs ~, modified now)
       =/  updated=account-details:s  (set-draft:ac draft)
@@ -244,9 +235,9 @@
       =/  match  (skim utxos |=(u=utxo-input:drft &(=(txid.u txid.s) =(vout.u vout.s))))
       ?>(?=(^ match) i.match)
     ?~  selected
-      ~&  >>>  "refresh-auto-select failed: insufficient funds"
+      ~>  %slog.[2 leaf+"%spv-wallet: auto-select found no inputs covering the outputs plus fee; add funds, unfreeze UTXOs, or lower the amount. target {<target>} sats"]
       (pure:m ~)
-    ~&  >>  "refresh-auto-selected {<(lent u.selected)>} inputs"
+    ~?  dbg  leaf+"%spv-wallet: auto-selected {<(lent u.selected)>} inputs"
     ;<  now=@da  bind:m  get-time:io
     =/  draft=transaction:drft  u.existing-draft(inputs u.selected, modified now)
     =/  updated=account-details:s  (set-draft:ac draft)
@@ -258,9 +249,7 @@
     ::  mode: 'disabled' | 'random' | 'largest-first'
     ::
       %set-auto-select-mode
-    ~&  >>  "=== SET AUTO SELECT MODE ==="
     =/  mode-text=@t  (fall (get-key:kv:html-utils 'mode' args) 'random')
-    ~&  >>  "mode: {<mode-text>}"
     =/  new-auto-select=(unit select-mode:drft)
       ?:  =('disabled' mode-text)  ~
       ?:  =('largest-first' mode-text)  `%largest-first
@@ -279,13 +268,11 @@
     ::  Run auto-select using stored mode (or provided override)
     ::
       %run-auto-select
-    ~&  >>  "=== RUN AUTO SELECT ==="
     ::  Get mode from draft (default random if not set)
     =/  existing-draft  draft:ac
     =/  mode=select-mode:drft
       ?~  existing-draft  %random
       (fall auto-select.u.existing-draft %random)
-    ~&  >>  "using mode: {<mode>}"
     =/  fee-rate=@ud
       ?~  existing-draft  1
       ?~  change.u.existing-draft  1
@@ -293,7 +280,6 @@
     ::  Build list of available UTXOs from cached per-address data
     =/  spend=spend:fees  script-type.u.details
     =/  cached  (collect-cached-utxos:wutxo u.details)
-    ~&  >>  "cached utxos from collect-cached-utxos: {<(lent cached)>}"
     =/  utxos=(list utxo-input:drft)
       %+  murn  cached
       |=  [txid=@t vout=@ud value=@ud address=@t chain=@t index=@ud confirmations=(unit @ud)]
@@ -303,14 +289,13 @@
       ?:  (~(frozen la:bip329 labels.state) label-key)
         ~
       `[txid vout value spend]
-    ~&  >>  "available utxos after frozen filter: {<(lent utxos)>}"
+    ~?  dbg  leaf+"%spv-wallet: auto-select ({<mode>}): {<(lent utxos)>} of {<(lent cached)>} UTXOs unfrozen"
     ::  Get target amount (sum of outputs)
     =/  target=@ud
       ?~  existing-draft  0
       (sum-outputs:drft outputs.u.existing-draft)
     ::  If target is 0, clear inputs (nothing to fund)
     ?:  =(0 target)
-      ~&  >>  "auto-select: target is 0, clearing inputs"
       ;<  now=@da  bind:m  get-time:io
       =/  draft=transaction:drft
         ?~  existing-draft
@@ -350,9 +335,9 @@
       ?>(?=(^ match) i.match)
     ::  Handle selection result
     ?~  selected
-      ~&  >>>  "auto-select failed: insufficient funds"
+      ~>  %slog.[2 leaf+"%spv-wallet: auto-select found no inputs covering the outputs plus fee; add funds, unfreeze UTXOs, or lower the amount. target {<target>} sats"]
       (pure:m ~)
-    ~&  >>  "auto-selected {<(lent u.selected)>} inputs"
+    ~?  dbg  leaf+"%spv-wallet: auto-selected {<(lent u.selected)>} inputs"
     ::  Update draft with selected inputs
     ;<  now=@da  bind:m  get-time:io
     =/  draft=transaction:drft
@@ -365,25 +350,23 @@
     (send-sse-event:io /spv-wallet/stream/account/(crip (hexn:sailbox account-pubkey))/send ~ `%draft-outputs-update)
     ::
       %build-transaction
-    ~&  >>  "=== BUILD AND BROADCAST TRANSACTION ==="
-    ~&  >>  "extended-key type: {<-.extended-key.u.details>}"
     ::  Check if this account has an xprv (needed for signing)
     ?.  ?=([%xprv @] extended-key.u.details)
-      ~&  >>>  "account has no private key - cannot sign"
+      ~>  %slog.[2 leaf+"%spv-wallet: transaction not built, this account is watch-only (no private key); send from an account that holds its xprv"]
       (pure:m ~)
     =/  xprv=@  +.extended-key.u.details
     ::  Check if draft exists
     =/  existing-draft  draft:ac
     ?~  existing-draft
-      ~&  >>>  "no draft transaction"
+      ~>  %slog.[2 leaf+"%spv-wallet: transaction not built, there is no draft; add outputs and inputs first"]
       (pure:m ~)
     =/  draft-inputs=(list utxo-input:drft)  inputs.u.existing-draft
     =/  draft-outputs=(list output:drft)  outputs.u.existing-draft
     ?:  =(~ draft-inputs)
-      ~&  >>>  "no inputs in draft"
+      ~>  %slog.[2 leaf+"%spv-wallet: transaction not built, the draft has no inputs; add inputs or run auto-select"]
       (pure:m ~)
     ?:  =(~ draft-outputs)
-      ~&  >>>  "no outputs in draft"
+      ~>  %slog.[2 leaf+"%spv-wallet: transaction not built, the draft has no outputs; add an output"]
       (pure:m ~)
     ::  Create account-level bip32 wallet from xprv (stored as base58 cord)
     =/  account-wallet  (from-extended:bip32 (trip xprv))
@@ -451,10 +434,9 @@
     =/  tx-outputs=(list output:ap:tt)
       (incorporate-change:drft u.existing-draft)
     ::  Build and sign transaction
-    ~&  >>  "Building transaction with {<(lent tx-inputs)>} inputs and {<(lent tx-outputs)>} outputs"
+    ~?  dbg  leaf+"%spv-wallet: building transaction with {<(lent tx-inputs)>} inputs and {<(lent tx-outputs)>} outputs"
     =/  tx-hex=tape  (build-transaction:txns active-network.u.details 2 tx-inputs tx-outputs 0)
     =/  tx-hex-cord=@t  (crip tx-hex)
-    ~&  >>  "Transaction hex: {<tx-hex-cord>}"
     ::  Broadcast transaction - use correct network
     =/  broadcast-url=@t
       ?-  active-network.u.details
@@ -477,7 +459,13 @@
         [%finished * [~ [* [p=@ q=@]]]]
       q.data.u.full-file.client-response
       ==
-    ~&  >>  "Broadcast result: {<broadcast-result>}"
+    ::  a txid (64 hex chars) means the broadcast was accepted
+    ::
+    ~?  &(dbg =(64 (met 3 broadcast-result)))
+      leaf+"%spv-wallet: broadcast txid {(trip broadcast-result)}"
+    =?  broadcast-result  !=(64 (met 3 broadcast-result))
+      ~>  %slog.[3 leaf+"%spv-wallet: broadcast failed, the transaction was NOT sent and the draft was cleared; rebuild it and retry, and check the network and {(trip broadcast-url)}. response: {(trip broadcast-result)}"]
+      broadcast-result
     ::  Clear draft on success
     =/  updated=account-details:s  clear-draft:ac
     =.  accounts.state  (~(put by accounts.state) account-pubkey updated)

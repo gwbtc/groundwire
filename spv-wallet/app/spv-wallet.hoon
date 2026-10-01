@@ -13,6 +13,8 @@
 =>
   |%
   ++  kv    kv:html-utils
+  ::  dbg: flip to & for developer debug prints
+  ++  dbg   ^-(? |)
   +$  card  card:sailbox
   --
 ^-  agent:gall
@@ -293,10 +295,10 @@
   ::  Handle sponsorship requests from foreign ships
   ::
   ?:  ?=(%sponsorship-request mark)
-    ~&  "sponsorship request from {<src>}"
+    ~?  dbg  leaf+"%spv-wallet: sponsorship request from {<src>}"
     ;<  state=state-0  bind:m  (get-state-as:io state-0)
     ?.  auto-sponsor.state
-      ~&  "sponsorship: auto-sponsor disabled, rejecting {<src>}"
+      ~?  dbg  leaf+"%spv-wallet: auto-sponsor disabled, rejecting {<src>}"
       (pure:m ~)
     ::  Scry jael for our deed (for pass) and ring (for signing)
     ;<  deed=[=life =pass sec=(unit @)]  bind:m
@@ -308,11 +310,10 @@
     ::  Get current block height from urb-watcher
     ;<  =bowl:gall  bind:m  get-bowl:io
     ?.  .^(? %gu /(scot %p our.bowl)/urb-watcher/(scot %da now.bowl)/$)
-      ~&  "sponsorship: urb-watcher not running, cannot sign"
+      ~>  %slog.[2 leaf+"%spv-wallet: sponsorship request dropped, %urb-watcher is not running; start %urb-watcher so requesters can boot. from {<src>}"]
       (pure:m ~)
     =/  [* height=@ud]
       .^([@ @ud] %gx /(scot %p our.bowl)/urb-watcher/(scot %da now.bowl)/block-id/block-id)
-    ~&  "sponsorship: signing at height {<height>}"
     ::  Sign: (shaz (jam [sponsee height])) using raw ed25519
     ::  Must match urb-core verification: veri-octs:ed:crypto
     =/  msg=octs  512^(shaz (jam [src height]))
@@ -320,10 +321,8 @@
     ::  Self-check: verify our own signature before sending
     =/  pub-cac  (com:nu:cric:crypto pass.deed)
     =/  self-check=?  (veri-octs:ed:crypto sig msg sgn:ded:ex:pub-cac)
-    ~&  "sponsorship: self-check={<self-check>}"
     ?>  self-check
-    ~&  "sponsorship: signed for {<src>} at height {<height>}"
-    ~&  "sponsorship: sig={<sig>}"
+    ~?  dbg  leaf+"%spv-wallet: sponsorship signed for {<src>} at height {<height>}"
     ::  Poke back the requester with the response
     ;<  ~  bind:m  (poke:io [src %spv-wallet] %fiber-poke !>(['sponsor-res' %sponsorship-response [sig height]]))
     (pure:m ~)
@@ -331,7 +330,7 @@
   ::
   ?:  ?=(%sponsorship-response mark)
     =/  [sig=@ height=@ud]  !<([@ @ud] vase)
-    ~&  "sponsorship response from {<src>}: sig={<sig>} height={<height>}"
+    ~?  dbg  leaf+"%spv-wallet: sponsorship response from {<src>} at height {<height>}"
     ;<  state=state-0  bind:m  (get-state-as:io state-0)
     =.  sponsor-response.state  `[sig height]
     ;<  ~  bind:m  (replace:io !>(state))

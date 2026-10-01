@@ -92,11 +92,11 @@
     =/  tag  t:(got:dej 'id')
     ?:  (has:dej 'error')
       =/  erj  (got:dej 'error')
-      ~&  >>>  [%bitcoin-rpc-error tag]
       =/  cod  t:(got:erj 'code')
       =/  mes  t:(got:erj 'message')
-      ~&  >>>  [%code cod]
-      ~&  >>>  [%message mes]
+      ::  crash context, not a print: rides the crash trace to the console
+      ::
+      ~|  [%bitcoin-rpc-error tag code+cod message+mes]
       !!
     =/  res  (got:dej 'result')
     ?+  tag  !!
