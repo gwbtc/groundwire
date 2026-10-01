@@ -229,7 +229,9 @@
       ?:  =(~ last.polling.timers)  cor
       :: ~&  >  'polling...'
       ?.  .?(btc-node-config)
-        ~>  %slog.[3 leaf+"%indexer: polling stopped, no bitcoin node configured; poke %configure-node"]
+        ::  normal on a comet: it verifies through the light client and
+        ::  never configures a Bitcoin Core node for this indexer.
+        ~?  dbg  leaf+"%indexer: polling stopped, no bitcoin node configured; poke %configure-node"
         =.  last.polling.timers  ~
         cor
       =^  caz  polling.timers  ~(set ti /polling polling.timers)
