@@ -468,7 +468,7 @@
     ::  Network selection list page
     =/  spv-state=state-0:s  !<(state-0:s state)
     [/text/html (manx-to-octs:server (spv-list-page:ui spv-state))]
-      [%spv-wallet %groundwire ~]
+      [%spv-wallet %gw-btc ~]
     ::  Groundwire management page - ordinal comet identities
     =/  gw-state=state-0:s  !<(state-0:s state)
     [/text/html (manx-to-octs:server (groundwire-page:gw gw-state))]

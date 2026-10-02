@@ -1,7 +1,9 @@
 """Tests for gw-onboard.py pure functions."""
 
 import importlib.util
+import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -124,12 +126,18 @@ class TestMakeTweakExpr(unittest.TestCase):
 
 
 class TestDetectZigTarget(unittest.TestCase):
+    # The triples here are the ones zig actually emits.  Both vere/build.zig
+    # and comet-miner/build.zig rewrite a native Linux build to musl, so
+    # "<arch>-linux-none" is never produced and must never be a default.
     def test_linux_x86_64(self):
         with (
             patch("platform.machine", return_value="x86_64"),
             patch("platform.system", return_value="Linux"),
         ):
-            self.assertEqual(gw._detect_zig_target(), "x86_64-linux-none")
+            self.assertEqual(gw._detect_zig_target(), "x86_64-linux-musl")
+            self.assertEqual(
+                gw._zig_target_candidates(), ["x86_64-linux-musl", "x86_64-linux-gnu"]
+            )
 
     def test_macos_arm64(self):
         with (
@@ -137,13 +145,14 @@ class TestDetectZigTarget(unittest.TestCase):
             patch("platform.system", return_value="Darwin"),
         ):
             self.assertEqual(gw._detect_zig_target(), "aarch64-macos-none")
+            self.assertEqual(gw._zig_target_candidates(), ["aarch64-macos-none"])
 
     def test_linux_aarch64(self):
         with (
             patch("platform.machine", return_value="aarch64"),
             patch("platform.system", return_value="Linux"),
         ):
-            self.assertEqual(gw._detect_zig_target(), "aarch64-linux-none")
+            self.assertEqual(gw._detect_zig_target(), "aarch64-linux-musl")
 
     def test_macos_x86_64(self):
         with (
@@ -151,6 +160,37 @@ class TestDetectZigTarget(unittest.TestCase):
             patch("platform.system", return_value="Darwin"),
         ):
             self.assertEqual(gw._detect_zig_target(), "x86_64-macos-none")
+
+    def test_no_linux_none_triple(self):
+        for machine in ("x86_64", "aarch64"):
+            with (
+                patch("platform.machine", return_value=machine),
+                patch("platform.system", return_value="Linux"),
+            ):
+                self.assertNotIn(f"{machine}-linux-none", gw._zig_target_candidates())
+
+
+class TestZigOutBin(unittest.TestCase):
+    def test_picks_the_candidate_that_exists(self):
+        with tempfile.TemporaryDirectory() as d:
+            built = os.path.join(d, "zig-out", "x86_64-linux-gnu")
+            os.makedirs(built)
+            open(os.path.join(built, "urbit"), "w").close()
+            with (
+                patch("platform.machine", return_value="x86_64"),
+                patch("platform.system", return_value="Linux"),
+            ):
+                self.assertEqual(gw._zig_out_bin(d, "urbit"), f"{built}/urbit")
+
+    def test_falls_back_to_most_likely_and_records_search(self):
+        with tempfile.TemporaryDirectory() as d:
+            with (
+                patch("platform.machine", return_value="x86_64"),
+                patch("platform.system", return_value="Linux"),
+            ):
+                path = gw._zig_out_bin(d, "urbit")
+            self.assertEqual(path, f"{d}/zig-out/x86_64-linux-musl/urbit")
+            self.assertIn("x86_64-linux-gnu", gw._not_found_hint(path))
 
 
 class TestNormalizeTicket(unittest.TestCase):
