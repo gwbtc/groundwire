@@ -194,24 +194,35 @@
 ::
 ++  max-tries  3
 ::
-::  +nym: how this pane names a ship.  A comet is shown as its mnemonym
-::  (`.word.word…`, the form Causeway prints), anything else as its @p.
-::  +name-span puts the @p in the hover text and in data-p, which the
-::  pane's "Show @p" toggle swaps in, so it can be read and copied.
+::  How this pane names a ship.  A comet is shown as its mnemonym
+::  foreshortened to four words (`.foo.bar..baz.bat`), anything else as
+::  its @p.  +name-span carries the full nym in data-n and the @p in
+::  data-p and the hover text: a click copies the full nym, and the
+::  pane's "Show @p" toggle swaps the @p in to be read and copied.
 ::
 ++  me  ~(. me:mne [.y 128 english])
-++  nym
-  |=  who=@p
-  ^-  tape
-  ?.  =(%pawn (clan:title who))  (scow %p who)
-  (trip (de:ship:me who))
 ::
 ++  name-span
   |=  who=@p
   ^-  manx
   =/  p=tape  (scow %p who)
-  =/  n=tape  (nym who)
-  ;span.nm(title p, data-p p, data-n n): {n}
+  ?.  =(%pawn (clan:title who))
+    ;span.nm(title p, data-n p, data-p p): {p}
+  =/  n=@t  (de:ship:me who)
+  ;span.nm(title p, data-n (trip n), data-p p)
+    ;span.n: {(trip (fore:me n))}
+    ;span.p: {p}
+  ==
+::
+::  +comet-cite: a peer's short @p (`~sampel_dozzod`).  For a comet it is
+::  read back out of the nym with +en:ship, which also checks the nym's
+::  checksum, so the two names in a list row are shown to agree.
+::
+++  comet-cite
+  |=  who=@p
+  ^-  tape
+  ?.  =(%pawn (clan:title who))  (cite:title who)
+  (cite:title (en:ship:me (de:ship:me who)))
 ::
 ::  +our-sponsor: the sponsor we COMMITTED, if any.
 ::
@@ -780,13 +791,13 @@
   ^-  manx
   ;div.card.status
     ;div.statrow
-      ;span.k: ship
+      ;span.k: you
       ;span.v
         ;+  (name-span our.bowl)
       ==
     ==
     ;div.statrow
-      ;span.k: sponsor
+      ;span.k: your sponsor
       ;+  ?~  spo  ;span.v: none
           ;span.v
             ;+  (name-span u.spo)
@@ -1017,8 +1028,8 @@
   ;div.card
     ;h2: As a sponsee
     ;p
-      ;span: Your sponsor:{" "}
-      ;+  (name-span spo)
+      ;span: Your sponsor is {" "}
+      ;span: {?.(=(%pawn (clan:title spo)) (scow %p spo) (trip (fore:me (de:ship:me spo))))}
     ==
     ;div.row
       ;form(method "post", action "/apps/gevulot")
@@ -1095,13 +1106,18 @@
             ;span.patp
               ;+  (name-span who)
             ==
-            ;span.via: via {(trip via.p)}
+            ;span.comet: {(comet-cite who)}
           ==
-          ;span(class (status-class st)): {(status-label st)}
-          ;form(method "post", action "/apps/gevulot")
-            ;input(type "hidden", name "act", value "forget");
-            ;input(type "hidden", name "who", value (scow %p who));
-            ;button.ghost.small(type "submit"): forget
+          ;div.peer-meta
+            ;div.peer-top
+              ;span(class (status-class st)): {(status-label st)}
+              ;form(method "post", action "/apps/gevulot")
+                ;input(type "hidden", name "act", value "forget");
+                ;input(type "hidden", name "who", value (scow %p who));
+                ;button.ghost.small(type "submit"): forget
+              ==
+            ==
+            ;span.via: via {(trip via.p)}
           ==
         ==
   ==
@@ -1224,18 +1240,31 @@
     ==
   ==
 ::
-::  +name-toggle: the "Show @p" button.  Per page and per browser only
-::  (localStorage), never a ship setting; the hover text always has the @p.
+::  +name-toggle: the "Show @p" button and click-to-copy.  The toggle is
+::  per page and per browser only (localStorage), never a ship setting;
+::  the hover text always has the @p.  A click on a name copies what the
+::  toggle shows: the full nym, or the @p, and a "copied" tooltip fades
+::  in above the cursor, holds a second, and fades out.
+::  navigator.clipboard exists only on https and localhost, so a ship
+::  served over plain http falls back to a hidden textarea.
 ::
 ++  name-toggle
   ^-  tape
   %-  trip
   '''
-  (function(){var k='gevulot-show-patp',on=false;
-  function show(){document.querySelectorAll('.nm').forEach(function(e){e.textContent=on?e.dataset.p:e.dataset.n});
+  (function(){var k='gevulot-show-patp',on=false,r=document.documentElement;
+  function show(){r.classList.toggle('show-p',on);
   var b=document.getElementById('nmt');if(b)b.textContent=on?'Show names':'Show @p';}
   try{on=localStorage.getItem(k)==='1'}catch(e){}
   var b=document.getElementById('nmt');if(b)b.onclick=function(){on=!on;try{localStorage.setItem(k,on?'1':'0')}catch(e){}show()};
+  function old(t){var a=document.createElement('textarea');a.value=t;a.style.position='fixed';a.style.opacity='0';
+  document.body.appendChild(a);a.select();try{document.execCommand('copy')}catch(e){}document.body.removeChild(a);}
+  function copy(t){try{navigator.clipboard.writeText(t).catch(function(){old(t)})}catch(e){old(t)}}
+  function tip(x,y){var d=document.createElement('div');d.className='tip';d.textContent='copied';
+  d.style.left=x+'px';d.style.top=y+'px';document.body.appendChild(d);
+  d.addEventListener('animationend',function(){d.remove()});}
+  document.querySelectorAll('.nm').forEach(function(e){e.onclick=function(v){copy(on?e.dataset.p:e.dataset.n);
+  tip(v.clientX,v.clientY)}});
   show();})();
   '''
 ::
@@ -1272,10 +1301,23 @@
   .bar{height:6px;background:#24252c;border-radius:3px;overflow:hidden;max-width:420px}
   .bar-fill{height:100%;background:var(--wait);border-radius:3px}
   .peers{margin-top:12px}
-  .peer{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid #1f2027}
-  .peer-id{display:flex;flex-direction:column;gap:1px;min-width:0}
-  .patp{font:12px monospace;color:var(--fg);word-break:break-all}
-  .nm{cursor:help;word-break:break-all}
+  .peer{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:8px 0;border-top:1px solid #1f2027}
+  .peer-id{display:flex;flex-direction:column;min-width:0}
+  .patp{font:12px monospace;color:var(--fg);min-width:0}
+  .peer-id>*,.peer-meta>*{line-height:24px}
+  .peer-meta{display:flex;flex-direction:column;flex:none;width:270px}
+  .peer-top{display:flex;align-items:center;gap:8px;height:24px}
+  .peer-top .st{line-height:1.5}
+  .peer-top form{margin:0 0 0 auto}
+  .comet{font:12px monospace;color:var(--mut)}
+  .nm{cursor:pointer;transition:color .15s}
+  .nm:hover{color:var(--acc)}
+  .tip{position:fixed;z-index:9;transform:translate(-50%,-100%);margin-top:-10px;pointer-events:none;white-space:nowrap;background:var(--fg);color:#111;font:600 11px/1 -apple-system,system-ui,sans-serif;padding:5px 8px;border-radius:6px;opacity:0;animation:tip 1.3s ease forwards}
+  @keyframes tip{0%{opacity:0}12%{opacity:1}88%{opacity:1}100%{opacity:0}}
+  .nm .p{display:none;word-break:break-all}
+  .show-p .nm .n{display:none}
+  .show-p .nm .p{display:inline}
+  @media(max-width:560px){.peer{flex-direction:column;gap:2px}.peer-meta{width:auto;align-self:stretch}}
   .top{display:flex;align-items:center;justify-content:space-between;gap:1em}
   .via{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
   .tag{font-size:11px;color:var(--mut)}
