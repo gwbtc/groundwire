@@ -27,7 +27,7 @@ confidential comets):
 
 ```bash
 gh release list -R gwbtc/urbit | grep groundwire-rc | head -1
-# e.g. groundwire-rc-2026.10.1
+# e.g. groundwire-rc-2026.10.2
 ```
 
 ## The sponsor — nothing to memorize
@@ -58,10 +58,12 @@ One hard constraint shapes the recipe: `boot.sh --mint` reads its prompts from
 survives your SSH connection, and your Claude drives it with `send-keys` and
 reads it from a log. (This is exactly how the ops campaign drove ships.)
 
-**Mint on `groundwire-rc-2026.10.1`.** It is the first release whose
-Causeway accepts invite codes. Any older release, 2026.9.16 included, sends
-`--invite` to a retired faucet and stops with "Faucet error: Invalid invite
-code" (nothing is spent; re-run with 2026.10.1).
+**Mint on `groundwire-rc-2026.10.2`.** It carries the light client the
+network now runs (gwbtc/node develop, which heals its own peers) and the
+%gw-btc that reads it. 2026.10.1 was the first release whose Causeway
+accepts invite codes; anything older, 2026.9.16 included, sends `--invite`
+to a retired faucet and stops with "Faucet error: Invalid invite code"
+(nothing is spent; re-run with 2026.10.2).
 
 Release history, for reference only. Earlier RCs have one or both of:
 a `gwlib.sh` whose peer seeding pokes a renamed mark (the light client never
@@ -129,7 +131,7 @@ S 'apt-get update -qq && apt-get install -y -qq tmux python3-venv
 #      this the mint sits silently waiting for an address nobody can see.
 S 'cat > ~/mint.sh <<'"'"'EOF'"'"'
 PYTHONUNBUFFERED=1 bash ~/boot.sh --mint --headless --detach \
-  --version groundwire-rc-2026.10.1 \
+  --version groundwire-rc-2026.10.2 \
   --sponsor "~barmul-bolmet-ronlus-lighul--rovtun-satryc-moclug-daplyd" 2>&1 | tee ~/mint.log
 EOF
 chmod +x ~/mint.sh'
@@ -162,7 +164,7 @@ S 'tmux send-keys -t mint "<the twelve words>" Enter'
 #    watching the sync). Pass the SAME --version as the mint: boot.sh now pins
 #    the installed release by itself, but say it anyway -- an older boot.sh
 #    resolved "latest" to the daily and overwrote bin/ under a running pier.
-S "bash ~/boot.sh --detach --vps --version groundwire-rc-2026.10.1 --comet '<the @p it printed>'"
+S "bash ~/boot.sh --detach --vps --version groundwire-rc-2026.10.2 --comet '<the @p it printed>'"
 S "bash ~/boot.sh --status --comet '<@p>'; bash ~/boot.sh --code --comet '<@p>'"
 
 # 6. restarting later: ALWAYS through boot.sh (`--stop`, then `--detach`),
