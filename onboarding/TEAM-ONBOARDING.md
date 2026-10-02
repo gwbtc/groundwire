@@ -58,7 +58,12 @@ One hard constraint shapes the recipe: `boot.sh --mint` reads its prompts from
 survives your SSH connection, and your Claude drives it with `send-keys` and
 reads it from a log. (This is exactly how the ops campaign drove ships.)
 
-**Use `groundwire-rc-2026.10.1` or newer** — the first release whose Causeway knows invite codes (on 2026.9.16, `--invite` reaches the old faucet and fails with "Faucet error: Invalid invite code"; nothing is spent). Before that, **use `groundwire-rc-2026.9.16` or newer.** Earlier RCs have one or both of:
+**Mint on `groundwire-rc-2026.10.1`.** It is the first release whose
+Causeway accepts invite codes. Any older release, 2026.9.16 included, sends
+`--invite` to a retired faucet and stops with "Faucet error: Invalid invite
+code" (nothing is spent; re-run with 2026.10.1).
+
+Release history, for reference only. Earlier RCs have one or both of:
 a `gwlib.sh` whose peer seeding pokes a renamed mark (the light client never
 gets a peer and sync never starts — fixed in 2026.9.10), and a Causeway that
 does not record the sponsor's attestation in the spawn proof (the comet can't
