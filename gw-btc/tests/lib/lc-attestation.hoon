@@ -183,27 +183,27 @@
 ++  hdr-fact
   |=  [haz=@ux het=@ud]
   ^-  cage
-  [%noun !>(`block-header-by-height:update:lc`[(mk-bi haz het) dummy-hdr])]
+  [%bitcoin-client-update !>(`bitcoin-client-update:lc`[%block-header-by-height (mk-bi haz het) dummy-hdr])]
 ::
 ++  tx-fact
   |=  [haz=@ux het=@ud tid=@ux t=tx:bc]
   ^-  cage
   =/  upd=transaction:update:lc  [(mk-bi haz het) 0 tid 0x0 (bc-to-common t)]
-  [%noun !>(upd)]
+  [%bitcoin-client-update !>(`bitcoin-client-update:lc`[%transaction upd])]
 ::
 ++  tx-fact-empty
   ^-  cage
-  [%noun !>(`transaction:update:lc`~)]
+  [%bitcoin-client-update !>(`bitcoin-client-update:lc`[%transaction ~])]
 ::
 ++  filter-fact
   |=  [haz=@ux het=@ud f=hexb:bcm]
   ^-  cage
-  [%noun !>(`block-filter-by-height:update:lc`[(mk-bi haz het) f])]
+  [%bitcoin-client-update !>(`bitcoin-client-update:lc`[%block-filter-by-height (mk-bi haz het) f])]
 ::
 ++  block-fact
   |=  [haz=@ux het=@ud txs=(list transaction:bcm)]
   ^-  cage
-  [%noun !>(`block-by-height:update:lc`[(mk-bi haz het) [dummy-hdr txs]])]
+  [%bitcoin-client-update !>(`bitcoin-client-update:lc`[%block-by-height (mk-bi haz het) [dummy-hdr txs]])]
 ::  --------------------------------------------------------------------
 ::  BIP-158 filter builder (node byte convention: filter dat is LSB-first,
 ::  compactsize prefix in the low byte).  Self-verified in +test-filter-

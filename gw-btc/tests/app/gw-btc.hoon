@@ -737,12 +737,34 @@
     scn
   mode.origin.sc
 ::
+::  A fact from an older %bitcoin-client (one mark per case, before node
+::  develop 29a84c8) arrives during the minutes an upgrade takes.  It must
+::  be skipped -- no cards, nothing changes -- never handed to
+::  on-agent:def, whose crash would close the watch and set the agent
+::  re-watching in a loop.
+::
+++  test-old-format-fact-is-skipped
+  =/  agent  gw-btc
+  =^  *  agent  ~(on-init agent bowl0)
+  =^  c1  agent
+    (~(on-agent agent bowl0) /is-synced [%fact %bitcoin-client-is-synced !>(&)])
+  =^  c2  agent
+    %+  ~(on-agent agent bowl0)  /best-block
+    [%fact %bitcoin-client-best-block !>(`[%new @ud @ux]`[%new 963.150 0xbeef])]
+  =/  rdy  (peek-noun (~(on-peek agent bowl0) /x/ready))
+  ;:  weld
+    (expect-eq !>(0) !>((lent (app-cards c1))))
+    (expect-eq !>(0) !>((lent (app-cards c2))))
+    ::  still not synced, still no tip
+    (expect-eq !>(`*`[%.n ~ %.n]) !>(`*`rdy))
+  ==
+::
 ++  test-index-parks-pending-without-an-origin
   =/  agent  gw-btc
   =^  *  agent  ~(on-init agent bowl0)
   =^  *  agent  (~(on-agent agent bowl0) /best-block (new-block-sign 963.150))
   =^  cards  agent
-    (~(on-agent agent bowl0) /is-synced [%fact %bitcoin-client-is-synced !>(&)])
+    (~(on-agent agent bowl0) /is-synced (synced-sign &))
   =/  bid  (peek-noun (~(on-peek agent bowl0) /x/block-id))
   =/  rdy  (peek-noun (~(on-peek agent bowl0) /x/ready))
   =/  scn  (peek-noun (~(on-peek agent bowl0) /x/scan))
@@ -764,7 +786,7 @@
   =^  *  agent  ~(on-init agent bowl0)
   =^  *  agent  (~(on-agent agent bowl0) /best-block (new-block-sign 963.150))
   =^  *  agent
-    (~(on-agent agent bowl0) /is-synced [%fact %bitcoin-client-is-synced !>(&)])
+    (~(on-agent agent bowl0) /is-synced (synced-sign &))
   =^  cards  agent
     (~(on-poke agent bowl0) %noun !>([%index-origin %from-epoch 0 %user]))
   =/  bid  (peek-noun (~(on-peek agent bowl0) /x/block-id))
@@ -787,7 +809,7 @@
   =^  *  agent
     (~(on-poke agent bowl0) %noun !>([%index-origin %from-epoch 0 %user]))
   =^  cards  agent
-    (~(on-agent agent bowl0) /is-synced [%fact %bitcoin-client-is-synced !>(&)])
+    (~(on-agent agent bowl0) /is-synced (synced-sign &))
   =/  bid  (peek-noun (~(on-peek agent bowl0) /x/block-id))
   =/  scn  (peek-noun (~(on-peek agent bowl0) /x/scan))
   ;:  weld
@@ -805,7 +827,7 @@
   =^  *  agent  (~(on-poke agent bowl0) %gw-index-from !>(`@ud`961.055))
   =^  *  agent  (~(on-agent agent bowl0) /best-block (new-block-sign 963.150))
   =^  cards  agent
-    (~(on-agent agent bowl0) /is-synced [%fact %bitcoin-client-is-synced !>(&)])
+    (~(on-agent agent bowl0) /is-synced (synced-sign &))
   =/  bid  (peek-noun (~(on-peek agent bowl0) /x/block-id))
   ;:  weld
     (expect-eq !>(`id:block:bitcoin`[0x0 961.054]) !>(;;(id:block:bitcoin bid)))
@@ -1296,22 +1318,28 @@
 ++  rollback-sign
   |=  [fork=@ud stale=(list [@ud @ux])]
   ^-  sign:agent:gall
-  ::  the mark %bitcoin-client uses, named for its path in node's desk.
-  ::  A test that synthesizes the OLD name does not fail loudly -- it
-  ::  falls through to on-agent:def and CRASHES, which reads as a broken
-  ::  test rather than as the agent correctly refusing an unknown mark.
-  :+  %fact  %bitcoin-client-best-block
-  !>  ^-  $:  %reorg-rollback
-              last-common=[block-height=@ud block-hash=@ux]
-              stale-branch=(list [block-height=@ud block-hash=@ux])
-          ==
-  [%reorg-rollback [fork 0xf0.0000] stale]
+  ::  the ONE mark %bitcoin-client uses for every fact (node develop
+  ::  29a84c8 on), carrying [case p].  A fact under any other mark is
+  ::  skipped by the agent (+test-old-format-fact-is-skipped).
+  :+  %fact  %bitcoin-client-update
+  !>  ^-  $:  %best-block
+              $=  p
+              $:  %reorg-rollback
+                  last-common=[block-height=@ud block-hash=@ux]
+                  stale-branch=(list [block-height=@ud block-hash=@ux])
+          ==  ==
+  [%best-block [%reorg-rollback [fork 0xf0.0000] stale]]
 ::
 ++  new-block-sign
   |=  height=@ud
   ^-  sign:agent:gall
-  :+  %fact  %bitcoin-client-best-block
-  !>(`[%new block-height=@ud block-hash=@ux]`[%new height 0xbeef])
+  :+  %fact  %bitcoin-client-update
+  !>(`[%best-block p=[%new block-height=@ud block-hash=@ux]]`[%best-block [%new height 0xbeef]])
+::
+++  synced-sign
+  |=  syn=?
+  ^-  sign:agent:gall
+  [%fact %bitcoin-client-update !>(`[%is-synced p=?]`[%is-synced syn])]
 ::  four points, one per case the selector has to tell apart.  .peer is
 ::  CONFIDENTIAL (so it also carries an attested tip and an in-flight
 ::  job); the rest are public, which is what lets /x/urb-state witness
@@ -1630,7 +1658,7 @@
   =/  agent  gw-btc
   =^  *  agent  ~(on-init agent bowl0)
   =^  *  agent
-    (~(on-agent agent bowl0) /is-synced [%fact %bitcoin-client-is-synced !>(&)])
+    (~(on-agent agent bowl0) /is-synced (synced-sign &))
   =/  before  (peek-noun (~(on-peek agent bowl0) /x/ready))
   =^  *  agent  (~(on-load agent bowl0) ~(on-save agent bowl0))
   =/  after   (peek-noun (~(on-peek agent bowl0) /x/ready))

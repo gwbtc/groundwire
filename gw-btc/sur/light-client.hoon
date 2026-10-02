@@ -1,63 +1,64 @@
 ::  sur/light-client.hoon
 ::
-::  Faithful SUBSET of the real node's sur/bitcoin/light-client.hoon
-::  (gwbtc/node, branch develop).  These are the exact $update molds the
-::  %bitcoin-client agent gives facts under, so that %gw-btc's
-::  lib/lc-attestation can +!< a %light-client fact straight off the wire.
+::  Verbatim copy of gwbtc/node sur/bitcoin/client.hoon at develop 39648ac.
+::  %bitcoin-client gives every fact under ONE mark, %bitcoin-client-update,
+::  carrying a $bitcoin-client-update: a head tag naming the case and the
+::  case's update arm as .p.  The whole union has to be here, not just the
+::  cases %gw-btc reads: +!< checks that the incoming vase's type fits ours,
+::  and the agent types every fact as the full union.
 ::
-::  Each %bitcoin-client watch answers ONE fact and then kicks; the fact is
-::  given under the agent's own fact mark, which is the update arm name:
+::    watch path                       case
+::    /is-synced                       %is-synced              is-synced:update
+::    /best-block                      %best-block             best-block:update
+::    /block-header/height/<height>    %block-header-by-height
+::    /block-filter/height/<height>    %block-filter-by-height
+::    /block/height/<height>           %block-by-height
+::    /transaction/<block-hash>/<txid> %transaction
 ::
-::    watch path                      fact mark               vase mold
-::    /best-block                     %best-block             best-block:update
-::    /is-synced                      %is-synced              is-synced:update
-::    /block-header/height/<height>   %block-header-by-height block-header-by-height:update
-::    /block-header/hash/<hash>       %block-header-by-hash   block-header-by-hash:update
-::    /block-filter/height/<height>   %block-filter-by-height block-filter-by-height:update
-::    /block-filter/hash/<hash>       %block-filter-by-hash   block-filter-by-hash:update
-::    /block/height/<height>          %block-by-height        block-by-height:update
-::    /block/hash/<hash>              %block-by-hash          block-by-hash:update
-::    /transaction/<block-hash>/<txid> %transaction           transaction:update
+::  Until node develop 29a84c8 each case had its own mark
+::  (%bitcoin-client-is-synced, …); the old mar/bitcoin-client/ files stay in
+::  this desk so a fact from an older %bitcoin-client is still buildable --
+::  an unbuildable mark on a fact to a thread takes spider down -- and is
+::  then skipped.
 ::
-::  The height-form of a request always answers; the hash-form may answer ~
-::  when the hash is unknown or not on the main chain.
-::
-/-  *bitcoin-common
+/-  *bitcoin-common,
+    b-net=bitcoin-network
 |%
 ::
-+$  confirmations  (unit @ud)
-::
-+$  next-block-hash  (unit block-hash)
-::
-+$  block-info
-  $:  =block-hash
-      =block-height
-      =confirmations
-      =next-block-hash
-      =chainwork
++$  bitcoin-client-action
+  $%  [%broadcast-transaction p=broadcast-transaction:action]
+      [%connect-peer p=connect-peer:action]
+      [%disconnect-peer p=disconnect-peer:action]
   ==
+::
++$  bitcoin-client-update
+  $%  [%is-synced p=is-synced:update]
+      [%best-block p=best-block:update]
+      [%block-header-by-hash p=block-header-by-hash:update]
+      [%block-header-by-height p=block-header-by-height:update]
+      [%block-filter-by-hash p=block-filter-by-hash:update]
+      [%block-filter-by-height p=block-filter-by-height:update]
+      [%block-by-hash p=block-by-hash:update]
+      [%block-by-height p=block-by-height:update]
+      [%transaction p=transaction:update]
+      [%peers p=peers:update]
+      [%addresses p=addresses:update]
+      [%blacklist p=blacklist:update]
+  ==
+::
+++  action
+  |%
+  ::
+  +$  broadcast-transaction  transaction
+  +$  connect-peer           earth-address
+  +$  disconnect-peer        earth-address
+  ::
+  --
 ::
 ++  update
   |%
   ::
   +$  is-synced  ?
-  ::
-  ::  %reorg-rollback names the FORK POINT and the blocks that lost.
-  ::
-  ::    .last-common is the highest block the old and new chains agree on
-  ::    -- not the new tip.  The agent grafts the winning branch on and
-  ::    then emits an ordinary %new for each of its blocks, so the tip
-  ::    arrives immediately afterwards by the usual road.
-  ::
-  ::    .stale-branch is the ORPHANED set: every block of the losing
-  ::    chain above .last-common, LATEST FIRST, and excluding
-  ::    .last-common itself.  It is what %gw-btc filters its points
-  ::    against (+orphaned-points:urb-core).
-  ::
-  ::    Before gwbtc/node@063720b9 this was a flat [block-height
-  ::    block-hash] naming only the fork point, and with no list of
-  ::    losers there was nothing to filter -- which is why %gw-btc used
-  ::    to halt its scanner here instead of repairing the index.
   ::
   +$  best-block
     $%  [%new =block-height =block-hash]
@@ -107,6 +108,82 @@
         =^transaction
     ==
   ::
+  +$  peers
+    $%  [%all peers=(map earth-address earth-peer-info)]
+        [%put address=earth-address info=earth-peer-info]
+        [%del address=earth-address]
+    ==
+  ::
+  +$  addresses
+    $%  [%all addresses=earth-addresses]
+        [%put address=earth-address info=earth-address-info]
+        [%del address=earth-address]
+    ==
+  ::
+  +$  blacklist
+    $%  [%all blacklist=earth-blacklist]
+        [%put address=earth-address info=earth-blacklist-info]
+        [%del address=earth-address]
+    ==
+  ::
   --
 ::
++$  earth-addresses
+  %+  map
+      earth-address
+      earth-address-info
++$  earth-address
+  $:  net-id=network-address-id:b-net
+      address=@ux
+      port=@ud
+  ==
++$  earth-address-info
+  $:  =address-provenance
+      =address-rank
+      =last-heard
+      =services:b-net
+  ==
++$  earth-peer-info
+  $:  handshake-done=_|
+      wtxidrelay=_|
+      =services:b-net
+      connection-opened=time
+      =last-heard
+      =ping-average
+  ==
++$  earth-blacklist
+  %+  map
+      earth-address
+      earth-blacklist-info
++$  earth-blacklist-info
+  $:  when=time
+      reason=@t
+      expiration=(unit @dr)
+  ==
++$  address-rank
+  $~  %unknown
+  $?  %priority
+      %known
+      %unknown
+  ==
++$  address-provenance
+  $%  [%userspace ~]
+      [%network who=earth-address]
+  ==
++$  last-heard    (unit time)
++$  ping-average  (unit @dr)
+::
++$  confirmations  (unit @ud)
+::
++$  next-block-hash  (unit block-hash)
+::
++$  block-info
+  $:  =block-hash
+      =block-height
+      =confirmations
+      =next-block-hash
+      =chainwork
+  ==
+::
 --
+

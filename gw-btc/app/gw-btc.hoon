@@ -1792,9 +1792,15 @@
       ::  the %kick arm above re-watches, and the ship spins.  Measured at
       ::  136.539 iterations and 191MB of transcript in ~15 minutes on an
       ::  IDLE ship, against node@063720b9.
-      ?.  ?=(%bitcoin-client-is-synced p.cage.sign)
-        (on-agent:def wire sign)
-      =/  syn  !<(is-synced:update:lc q.cage.sign)
+      ::
+      ::  From node develop 29a84c8 on, every fact is %bitcoin-client-update.
+      ::  Anything else (an older %bitcoin-client, for the minutes an upgrade
+      ::  takes) is SKIPPED, never handed to on-agent:def: that crashes, the
+      ::  kick re-watches, the watch answers again, and the ship spins.
+      ?.  ?=(%bitcoin-client-update p.cage.sign)  `this
+      =/  u  !<(bitcoin-client-update:lc q.cage.sign)
+      ?.  ?=(%is-synced -.u)  `this
+      =/  syn  p.u
       ?:  =(syn synced)  `this
       %-  %-  slog
           :_  ~
@@ -1869,9 +1875,12 @@
       ::  renamed all of them with it.  See the +is-synced arm above for
       ::  what a mismatch costs; the two desks still COMPILE independently,
       ::  which is why CI cannot see this and a live ship must.
-      ?.  ?=(%bitcoin-client-best-block p.cage.sign)
-        (on-agent:def wire sign)
-      =/  upd  !<(best-block:update:lc q.cage.sign)
+      ::  One mark for every fact since node develop 29a84c8; anything else
+      ::  is skipped, for the reason given at the +is-synced arm above.
+      ?.  ?=(%bitcoin-client-update p.cage.sign)  `this
+      =/  u  !<(bitcoin-client-update:lc q.cage.sign)
+      ?.  ?=(%best-block -.u)  `this
+      =/  upd  p.u
       ?:  ?=(%new -.upd)
         `this(best ``id:block:bc`[block-hash.upd block-height.upd])
       ?>  ?=(%reorg-rollback -.upd)

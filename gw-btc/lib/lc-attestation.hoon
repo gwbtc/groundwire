@@ -49,6 +49,18 @@
 ::
 ++  light-client-agent  %bitcoin-client
 ::
+::  +lc-update: a light-client fact, unpacked.  Every fact is
+::  %bitcoin-client-update (node develop 29a84c8 on); the caller asserts the
+::  case it asked for.  Anything else -- an older %bitcoin-client, for the
+::  minutes an upgrade takes -- fails the strand here instead of being
+::  misread.
+::
+++  lc-update
+  |=  =cage
+  ^-  bitcoin-client-update:lc
+  ?>  ?=(%bitcoin-client-update p.cage)
+  !<(bitcoin-client-update:lc q.cage)
+::
 ::  +lc-fetch-timeout: how long ONE light-client request may take
 ::
 ::    The node's request endpoints answer when they have the data and
@@ -172,12 +184,12 @@
   =/  m  (strand:strandio ,confirmed)
   ^-  form:m
   ;<  h-cage=cage  bind:m  (watch-header-height our height)
-  =/  hres  !<(block-header-by-height:update:lc q.h-cage)
+  =/  hres  =/(u (lc-update h-cage) ?>(?=(%block-header-by-height -.u) p.u))
   ?.  =(height block-height.hres)
     %+  strand-fail:strandio  %attestation-height-mismatch
     [>[height block-height.hres]< ~]
   ;<  t-cage=cage  bind:m  (watch-transaction our block-hash.hres tid)
-  =/  tres  !<(transaction:update:lc q.t-cage)
+  =/  tres  =/(u (lc-update t-cage) ?>(?=(%transaction -.u) p.u))
   ?~  tres
     %+  strand-fail:strandio  %attestation-tx-not-found
     [>[height tid]< ~]
@@ -312,7 +324,7 @@
   =/  m  (strand:strandio ,?(%error %no-match %spent %unspent))
   ^-  form:m
   ;<  f-cage=cage  bind:m  (watch-filter-height our h)
-  =/  fres  !<(block-filter-by-height:update:lc q.f-cage)
+  =/  fres  =/(u (lc-update f-cage) ?>(?=(%block-filter-by-height -.u) p.u))
   ?.  =(h block-height.fres)
     (pure:m %error)
   ::  A zero-width filter cannot match anything, so accepting one would read
@@ -324,7 +336,7 @@
   ?.  (match:b-fil block-hash.fres filter.fres ~[spk])
     (pure:m %no-match)
   ;<  b-cage=cage  bind:m  (watch-block-height our h)
-  =/  bres  !<(block-by-height:update:lc q.b-cage)
+  =/  bres  =/(u (lc-update b-cage) ?>(?=(%block-by-height -.u) p.u))
   ?.  =(h block-height.bres)
     (pure:m %error)
   ?:  (block-spends +.bres tip-txid tip-vout)
@@ -415,7 +427,7 @@
   =/  m  (strand:strandio ,block:bc)
   ^-  form:m
   ;<  b-cage=cage  bind:m  (watch-block-height our height)
-  =/  bres  !<(block-by-height:update:lc q.b-cage)
+  =/  bres  =/(u (lc-update b-cage) ?>(?=(%block-by-height -.u) p.u))
   ?.  =(height block-height.bres)
     %+  strand-fail:strandio  %scan-block-height-mismatch
     [>[height block-height.bres]< ~]
@@ -469,7 +481,7 @@
   ?.  ?=([%blocks @ ~] path)
     (strand-fail:strandio %scan-block-wire [>path< ~])
   =/  h=@ud  (slav %ud i.t.path)
-  =/  bres  !<(block-by-height:update:lc q.cage)
+  =/  bres  =/(u (lc-update cage) ?>(?=(%block-by-height -.u) p.u))
   ?.  =(h block-height.bres)
     %+  strand-fail:strandio  %scan-block-height-mismatch
     [>[h block-height.bres]< ~]
