@@ -16,7 +16,7 @@ it can spend them, so pass it the way you would pass money.
 >
 > You're helping stand up a **Groundwire confidential comet** on a remote
 > droplet, using the three values above. The release is
-> **`groundwire-rc-2026.10.2`**; use exactly that tag in every
+> **`groundwire-alpha-2026.10.7`**; use exactly that tag in every
 > `boot.sh --version`. (An older one
 > sends the invite to a retired faucet: "Faucet error: Invalid invite code".) Groundwire is an Urbit fork where a
 > ship's identity is anchored to a Bitcoin sat. You'll drive the droplet **over
@@ -64,7 +64,7 @@ it can spend them, so pass it the way you would pass money.
 > - **The mint ends with the ship stopped — that is by design.** It boots once to
 >   set the peer-discovery opt-in, then stops and prints the run command. Start
 >   it with the guide's step-5 command, verbatim — `bash ~/boot.sh --detach
->   --vps --version groundwire-rc-2026.10.2 --comet
+>   --vps --version groundwire-rc-2026.10.7 --comet
 >   '<@p>'` — over plain ssh (no tmux needed), then verify. `--vps` gives the
 >   comet a groundwire.me name with HTTPS; from then on the plain
 >   `http://<ip>:<port>` address redirects to it, so report the name. Before
