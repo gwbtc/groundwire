@@ -1873,23 +1873,10 @@ cmd_install() {
     else
       info "your comet is minted, on chain, and its peer-discovery opt-in is set."
     fi
-    local mp mwaited=0
-    for mp in $(gwl_king_pid); do kill "$mp" 2>/dev/null || true; done
-    # A 4 GB loom can take minutes to write its final snapshot. Wait for the
-    # exit and VERIFY it: on the first real run the old 60 s grace printed
-    # "It is NOT running right now" while vere ran on for 6+ minutes, still
-    # bound to the HTTP port, and the user's next `boot.sh --comet` collided
-    # with it. Never remove the pier lock while a vere still holds the pier.
-    while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$mwaited" -lt 900 ]; do
-      sleep 2; mwaited=$((mwaited+2))
-      [ $((mwaited % 60)) -eq 0 ] && info "still waiting for vere to exit (${mwaited}s; snapshot write)"
-    done
-    if [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ]; then
-      die "vere (pid $(gwl_king_pid)) has not exited after ${mwaited}s. The comet IS
+    stop_vere_wait || die "vere (pid $(gwl_king_pid)) has not exited after ${VERE_WAITED}s. The comet IS
     minted and on chain; the ship is still running. Stop it with
       $GW_DIR/boot.sh --stop --comet '$COMET'
     and start it with --detach when it is gone. Refusing to pretend it stopped."
-    fi
     rm -f "$GW_PIER/.vere.lock"
     write_ship_readme
     printf '\n'
@@ -1947,6 +1934,29 @@ cmd_install() {
   summary_lines
 }
 
+# Stop this pier's vere and wait for it to go: 0 once king and serf have both
+# exited, 1 if either is still there after 900 s.  VERE_WAITED is how long
+# it took.
+#
+# A 4 GB loom can take minutes to write its final snapshot. Wait for the
+# exit and VERIFY it: on the first real run the old 60 s grace printed
+# "It is NOT running right now" while vere ran on for 6+ minutes, still
+# bound to the HTTP port, and the user's next `boot.sh --comet` collided
+# with it. Never remove the pier lock while a vere still holds the pier:
+# the caller removes it only when this returns 0.
+stop_vere_wait() {
+  local p
+  VERE_WAITED=0
+  for p in $(gwl_king_pid); do kill "$p" 2>/dev/null || true; done
+  while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$VERE_WAITED" -lt 900 ]; do
+    sleep 2; VERE_WAITED=$((VERE_WAITED+2))
+    if [ $((VERE_WAITED % 60)) -eq 0 ]; then
+      info "still waiting for vere to exit (${VERE_WAITED}s; snapshot write)"
+    fi
+  done
+  [ -z "$(gwl_king_pid)$(gwl_serf_pid)" ]
+}
+
 # Stop the detached ship and replace this process with vere attached to
 # the real terminal: the user lands in their dojo, and quitting it
 # (Ctrl-D) stops the ship -- the same contract gw-onboard had.  The
@@ -1959,12 +1969,13 @@ handoff_dojo() {
   info "Ctrl-D quits the dojo and stops the ship; restart with"
   info "  $GW_DIR/boot.sh --comet '$COMET'"
   printf '\n'
-  local p
-  for p in $(gwl_king_pid); do kill "$p" 2>/dev/null || true; done
-  local waited=0
-  while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$waited" -lt 60 ]; do
-    sleep 1; waited=$((waited+1))
-  done
+  # The old 60 s grace removed the lock and exec'd a second vere onto a
+  # pier the first was still snapshotting.  No exit, no handoff.
+  stop_vere_wait || die "vere (pid $(gwl_king_pid)) has not exited after ${VERE_WAITED}s, so the dojo
+    cannot have this pier yet. The ship is still running in the background
+    and the pier lock is untouched. Stop it with
+      $GW_DIR/boot.sh --stop --comet '$COMET'
+    and run this again when it is gone."
   rm -f "$GW_PIER/.vere.lock"
   # shellcheck disable=SC2086
   exec "$VERE" --loom "$LOOM" --http-port "$HTTP_PORT" ${AMES_PORT:+-p $AMES_PORT} "$GW_PIER" </dev/tty >/dev/tty 2>&1
