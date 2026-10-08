@@ -25,14 +25,14 @@ to that Claude, not to you, so its access can be revoked on its own.
 > it; don't improvise around the money or key steps:
 > https://raw.githubusercontent.com/gwbtc/groundwire/hd/cc-landing/onboarding/TEAM-ONBOARDING.md
 >
-> **The release tag.** The release is **`groundwire-alpha-2026.10.7`**. Use
+> **The release tag.** The release is **`groundwire-alpha-2026.10.8`**. Use
 > exactly that tag in every `boot.sh --version`: the mint wrapper (guide step
 > 2) and the run command (step 5). If the guide or anything else shows a
 > different tag, this one wins. Never use `latest` (the daily, which cannot
 > mint confidential comets), an `rc` tag, or a tag you looked up yourself; an
 > older release sends the invite to a retired faucet ("Faucet error: Invalid
 > invite code"). Before step 1, confirm the tag exists:
-> `curl -fsI https://github.com/gwbtc/urbit/releases/tag/groundwire-alpha-2026.10.7`
+> `curl -fsI https://github.com/gwbtc/urbit/releases/tag/groundwire-alpha-2026.10.8`
 > must succeed. If it does not, stop and ask me.
 >
 > **The person you're helping may not be technical.** Explain each step in
@@ -117,7 +117,7 @@ to that Claude, not to you, so its access can be revoked on its own.
 > - **The mint ends with the ship stopped — that is by design.** It boots once to
 >   set the peer-discovery opt-in, then stops and prints the run command. Start
 >   it with the guide's step-5 command, verbatim — `bash ~/boot.sh --detach
->   --vps --version groundwire-alpha-2026.10.7 --comet
+>   --vps --version groundwire-alpha-2026.10.8 --comet
 >   '<@p>'` — over plain ssh (no tmux needed), then verify. `--vps` gives the
 >   comet a groundwire.me name with HTTPS; from then on the plain
 >   `http://<ip>:<port>` address redirects to it, so report the name. Step 5
