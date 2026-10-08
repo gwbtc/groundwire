@@ -109,6 +109,7 @@ MINT_FIEF=""
 MINT_RESUME=0
 MINT_INVITE=""
 MINT_UI=tui
+SKIP_ATTEST=0
 MINT_ARGS=""
 DETACH=""
 REMINT=""
@@ -173,6 +174,9 @@ MINT MODE (--mint)
                      instead of funding the mint yourself. Implies --headless.
                      The default at a terminal is the TUI; no terminal, or
                      --resume falls back to prompts automatically.
+  --skip-attestation mine and boot a comet with no funding and no spawn
+                     transaction. FOR TESTING: it commits to a zeroed satpoint,
+                     has no custody log, and no peer can ever verify it.
 
 REQUIRED (for an install)
   --comet <@p>       the comet Causeway minted for you, with the leading ~.
@@ -272,6 +276,7 @@ while [ $# -gt 0 ]; do
     --invite)     [ $# -ge 2 ] || usagedie "--invite needs a value"; MINT_INVITE="$2"; MINT_UI=cli; shift 2 ;;
     --remint)     REMINT=1; MODE="mint"; shift ;;
     --headless)   MINT_UI=cli; shift ;;
+    --skip-attestation) SKIP_ATTEST=1; MODE="mint"; shift ;;
     --proof)      [ $# -ge 2 ] || usagedie "--proof needs a value"; PROOF="$2"; shift 2 ;;
     --dir)        [ $# -ge 2 ] || usagedie "--dir needs a value"; GW_DIR="$2"; shift 2 ;;
     --port)       [ $# -ge 2 ] || usagedie "--port needs a value"; HTTP_PORT="$2"; PORT_EXPLICIT=1; shift 2 ;;
@@ -1635,6 +1640,18 @@ cmd_mint() {
     mkdir -p "$mintdir"; chmod 700 "$mintdir"
   fi
 
+  # --skip-attestation: no wallet, no funding, no spawn, no finalize.  The
+  # miner's raw feed boots as it is; the rest of the mint (one boot, then
+  # stop) runs unchanged.
+  if [ "$SKIP_ATTEST" = 1 ]; then
+    mine_unattested "$raw"
+    FEED_FILE="$raw"
+    MINT_STOP=1
+    MODE="install"
+    cmd_install
+    return
+  fi
+
   # ---- which face?  The TUI is the default for a person at a terminal; the
   # CLI prompts remain for --headless, for --resume (not yet a TUI flow),
   # and for any environment without a tty.  The TUI takes its
@@ -1780,6 +1797,32 @@ cmd_mint() {
   cmd_install
 }
 
+# Mine a comet against a zeroed satpoint and write its feed to $1.  The dat
+# is the one Causeway's make_dat_expr builds for a real funding UTXO, with
+# txid 0x0: the same miner, the same @p shape, nothing on chain.  A ship
+# booted from this feed has an empty custody log by construction -- the
+# "expensive mistake" above, made on purpose and for free.
+mine_unattested() {
+  local miner="$GW_DIR/bin/comet_miner" out="$1" log feed
+  [ -x "$miner" ] || die "release $TAG does not ship comet_miner ($miner)"
+  step "Mining an unattested comet (--skip-attestation)"
+  info "no funding and no spawn transaction: this comet commits to a zeroed"
+  info "satpoint and no peer can ever verify it. For testing only."
+  info "mining takes a few minutes..."
+  # The miner prints the seed, the ring and the feed: private keys, so its
+  # output goes to a 0600 file in the 0700 mint dir and is deleted after.
+  log="$(dirname "$out")/miner.out"
+  ( umask 077; : > "$log" )
+  "$miner" -c --tweak '(can 0 (mat %gw-btc) (mat 9) (mat (jam [txid=0x0 vout=0 off=0])) ~)' daplyd \
+    > "$log" 2>&1 || { rm -f "$log"; die "comet_miner failed"; }
+  COMET="$(sed -n 's/^comet:[[:space:]]*//p' "$log" | tail -1)"
+  feed="$(sed -n 's/^feed:[[:space:]]*//p' "$log" | tail -1)"
+  rm -f "$log"
+  [ -n "$COMET" ] && [ -n "$feed" ] || die "could not read a comet and a feed out of comet_miner's output"
+  ( umask 077; printf '%s\n' "$feed" > "$out" )
+  good "mined $COMET"
+}
+
 # =================================================================== install =
 cmd_install() {
   validate_comet
@@ -1825,7 +1868,11 @@ cmd_install() {
   # act -- exactly the shape the old install.sh had and it was right.
   if [ "${MINT_STOP:-0}" = 1 ]; then
     step "Setup done -- stopping the ship"
-    info "your comet is minted, on chain, and its peer-discovery opt-in is set."
+    if [ "$SKIP_ATTEST" = 1 ]; then
+      info "your comet is mined and booted. It is NOT attested on chain."
+    else
+      info "your comet is minted, on chain, and its peer-discovery opt-in is set."
+    fi
     local mp mwaited=0
     for mp in $(gwl_king_pid); do kill "$mp" 2>/dev/null || true; done
     # A 4 GB loom can take minutes to write its final snapshot. Wait for the
