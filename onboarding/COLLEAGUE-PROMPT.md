@@ -123,19 +123,17 @@ to that Claude, not to you, so its access can be revoked on its own.
 >   `http://<ip>:<port>` address redirects to it, so report the name. Step 5
 >   can take half an hour while the sync keeps the ship busy, so give it a
 >   long timeout or run it in the background.
-> - **Expect the mint's stop step to time out.** It asks vere to stop and
->   waits 900 s. On 2026-10-07 vere ignored the request, because the sponsor's
->   desk updates kept it busy, and the mint ended with `error: vere (pid N)
->   has not exited after 900s`. The comet is minted and on chain; nothing is
->   lost. Handle it yourself, without asking:
->   1. Run `bash ~/boot.sh --stop --comet '<@p>'` once, over plain ssh, with a
->      long timeout or in the background. It waits up to another 900 s.
->   2. If vere is still alive when that returns, or after 15 minutes, kill it:
->      `pkill -9 -f '[g]w-vere .*<@p without the ~>'`. The brackets keep the
->      pattern from matching the ssh `bash -c` wrapper that carries it. A hard
->      kill is safe: the event log is durable and the pier replays on the next
->      boot.
->   3. Confirm that `ps -eo pid,etime,args | grep '[g]w-vere'` prints nothing
+> - **Expect the mint's stop step to kill vere.** It asks vere to stop, waits
+>   30 s, then kills it and prints `vere did not exit on SIGTERM within 30s;
+>   sending SIGKILL`. On 2026-10-07 vere ignored the request for 900 s,
+>   because the sponsor's desk updates kept it busy. A hard kill is safe: the
+>   event log is durable and the pier replays on the next boot. If the mint
+>   still ends with `error: vere (pid N) has not exited`, the comet is minted
+>   and on chain; nothing is lost. Handle it yourself, without asking:
+>   1. Kill it: `pkill -9 -f '[g]w-vere .*<@p without the ~>'`. The brackets
+>      keep the pattern from matching the ssh `bash -c` wrapper that carries
+>      it.
+>   2. Confirm that `ps -eo pid,etime,args | grep '[g]w-vere'` prints nothing
 >      and that `ss -ltn | grep ':8080 '` prints nothing, then run step 5.
 >      Two boots on one pier collide.
 > - If the mint's one-time boot crashes, or `--status` shows `headers 1` /

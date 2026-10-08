@@ -109,6 +109,7 @@ MINT_FIEF=""
 MINT_RESUME=0
 MINT_INVITE=""
 MINT_UI=tui
+SKIP_ATTEST=0
 MINT_ARGS=""
 DETACH=""
 REMINT=""
@@ -116,6 +117,7 @@ DO_BITCOIN=1
 DO_SUPERVISOR=1
 DO_WAIT=1
 DO_DOMAIN=0
+SHIP_RUNS=detached          # how this run leaves the ship; see write_ship_readme
 FORCE_REDOWNLOAD=0
 SEED_BATCHES="${GROUNDWIRE_SEED_BATCHES:-6}"
 SEED_BATCH_SIZE=25          # OPERATIONS.md 5.6: bulk adds SIGSEGV the sidecar
@@ -173,6 +175,9 @@ MINT MODE (--mint)
                      instead of funding the mint yourself. Implies --headless.
                      The default at a terminal is the TUI; no terminal, or
                      --resume falls back to prompts automatically.
+  --skip-attestation mine and boot a comet with no funding and no spawn
+                     transaction. FOR TESTING: it commits to a zeroed satpoint,
+                     has no custody log, and no peer can ever verify it.
 
 REQUIRED (for an install)
   --comet <@p>       the comet Causeway minted for you, with the leading ~.
@@ -272,6 +277,7 @@ while [ $# -gt 0 ]; do
     --invite)     [ $# -ge 2 ] || usagedie "--invite needs a value"; MINT_INVITE="$2"; MINT_UI=cli; shift 2 ;;
     --remint)     REMINT=1; MODE="mint"; shift ;;
     --headless)   MINT_UI=cli; shift ;;
+    --skip-attestation) SKIP_ATTEST=1; MODE="mint"; shift ;;
     --proof)      [ $# -ge 2 ] || usagedie "--proof needs a value"; PROOF="$2"; shift 2 ;;
     --dir)        [ $# -ge 2 ] || usagedie "--dir needs a value"; GW_DIR="$2"; shift 2 ;;
     --port)       [ $# -ge 2 ] || usagedie "--port needs a value"; HTTP_PORT="$2"; PORT_EXPLICIT=1; shift 2 ;;
@@ -753,10 +759,30 @@ GW_VPS='${DO_DOMAIN:-0}'
 EOF
 }
 
+# A restart must come back on the ports the ship had.  export_env writes
+# them to var/<name>.env on every run, but nothing read them back: a ship
+# whose first boot moved off a busy 8080 to 8081 restarted on 8080, and vere
+# exited at "http: listen (8080): address already in use"; and a pinned
+# ames port was dropped the same way, so the ship bound a random one and its
+# sponsor kept sending to the old.  An explicit --port or --ames-port wins.
+recall_ports() {
+  local env="$GW_DIR/var/$NAME.env" v
+  [ -d "$GW_PIER/.urb" ] && [ -f "$env" ] || return 0
+  if [ "$PORT_EXPLICIT" != 1 ]; then
+    v="$(sed -n "s/^GW_HTTP_PORT='\([0-9]*\)'/\1/p" "$env" | head -1)"
+    [ -n "$v" ] && HTTP_PORT="$v"
+  fi
+  if [ -z "$AMES_PORT" ]; then
+    AMES_PORT="$(sed -n "s/^GW_AMES_PORT='\([0-9]*\)'/\1/p" "$env" | head -1)"
+  fi
+  return 0
+}
+
 boot_ship() {
   step "Booting $COMET"
   GW_LOG="$GW_DIR/var/$NAME.log"
   GW_SC_LOG="$GW_DIR/var/sc-$NAME.log"
+  recall_ports
   if [ "${HAVE_SIDECAR:-0}" = 1 ]; then GW_SIDECAR="$SIDECAR"; else GW_SIDECAR=""; fi
   export GW_NAME="$NAME" GW_PIER GW_VERE="$VERE" GW_LOG GW_SC_LOG GW_LOOM="$LOOM"
   export GW_AMES_PORT="$AMES_PORT" GW_HTTP_PORT="$HTTP_PORT" GW_SIDECAR GW_DIR SOCK_TOOL
@@ -769,6 +795,9 @@ boot_ship() {
   if [ -d "$GW_PIER/.urb" ]; then
     info "pier exists at $GW_PIER -- restarting it, not re-creating it"
     info "(nothing here ever overwrites or deletes a pier)"
+    # the ship is down, so whoever holds its ports now is somebody else
+    check_ports
+    export GW_HTTP_PORT="$HTTP_PORT"
     gwl_start_vere_restart
   else
     [ -e "$GW_PIER" ] && die "$GW_PIER exists but is not a pier; refusing to touch it"
@@ -1130,6 +1159,7 @@ start_supervisor() {
     p="$(cat "$GW_DIR/var/sup-$NAME.lock/pid" 2>/dev/null || echo)"
     if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then
       info "already supervised (pid $p)"
+      SHIP_RUNS=supervised
       return 0
     fi
   fi
@@ -1139,6 +1169,7 @@ start_supervisor() {
     nohup "$GW_DIR/bin/gwsup.sh" "$NAME" >> "$GW_DIR/var/sup-$NAME.out" 2>&1 </dev/null &
   fi
   sleep 2
+  SHIP_RUNS=supervised
   good "supervisor running; log $GW_DIR/var/sup-$NAME.log"
   info "it restarts vere and the sidecar, and after a sidecar restart it also"
   info "runs the gwbtc/node#1 recovery -- kill-peer-connections and a re-seed"
@@ -1518,23 +1549,17 @@ cmd_stop() {
   rm -rf "$GW_DIR/var/sup-$NAME.lock"
 
   for p in $(gwl_king_pid); do
-    kill "$p" 2>/dev/null || true
     info "SIGTERM to vere (pid $p); the serf exits with it and the pier replays"
   done
-  # Wait for the exit and VERIFY it. The old 60 s grace printed "stopped"
-  # while vere (still writing a 4 GB snapshot) ran on for minutes, holding
-  # the pier and the HTTP port -- and the next boot.sh collided with it.
-  local vwait=0
-  while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$vwait" -lt 900 ]; do
-    sleep 2; vwait=$((vwait+2))
-    [ $((vwait % 60)) -eq 0 ] && info "still waiting for vere to exit (${vwait}s; snapshot write)"
-  done
+  # Stop it and VERIFY the exit (stop_vere_wait: SIGTERM, a grace, SIGKILL).
+  local vgone=1
+  stop_vere_wait || vgone=0
   for p in $(gwl_sidecar_pids); do
     kill "$p" 2>/dev/null || true
     info "stopped sidecar (pid $p)"
   done
-  if [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ]; then
-    die "vere (pid $(gwl_king_pid)) has not exited after ${vwait}s. It still holds the
+  if [ "$vgone" = 0 ]; then
+    die "vere (pid $(gwl_king_pid)) has not exited after ${VERE_WAITED}s. It still holds the
     pier; do NOT start another ship on it. Check with:  $SELF --status --comet '$COMET'
     and re-run --stop once it is gone. Refusing to print 'stopped' while it runs."
   fi
@@ -1633,6 +1658,18 @@ cmd_mint() {
     mv "$mintdir" "$GW_DIR/var/mint-$stamp"
     info "--remint: previous mint archived to $GW_DIR/var/mint-$stamp"
     mkdir -p "$mintdir"; chmod 700 "$mintdir"
+  fi
+
+  # --skip-attestation: no wallet, no funding, no spawn, no finalize.  The
+  # miner's raw feed boots as it is; the rest of the mint (one boot, then
+  # stop) runs unchanged.
+  if [ "$SKIP_ATTEST" = 1 ]; then
+    mine_unattested "$raw"
+    FEED_FILE="$raw"
+    MINT_STOP=1
+    MODE="install"
+    cmd_install
+    return
   fi
 
   # ---- which face?  The TUI is the default for a person at a terminal; the
@@ -1780,6 +1817,32 @@ cmd_mint() {
   cmd_install
 }
 
+# Mine a comet against a zeroed satpoint and write its feed to $1.  The dat
+# is the one Causeway's make_dat_expr builds for a real funding UTXO, with
+# txid 0x0: the same miner, the same @p shape, nothing on chain.  A ship
+# booted from this feed has an empty custody log by construction -- the
+# "expensive mistake" above, made on purpose and for free.
+mine_unattested() {
+  local miner="$GW_DIR/bin/comet_miner" out="$1" log feed
+  [ -x "$miner" ] || die "release $TAG does not ship comet_miner ($miner)"
+  step "Mining an unattested comet (--skip-attestation)"
+  info "no funding and no spawn transaction: this comet commits to a zeroed"
+  info "satpoint and no peer can ever verify it. For testing only."
+  info "mining takes a few minutes..."
+  # The miner prints the seed, the ring and the feed: private keys, so its
+  # output goes to a 0600 file in the 0700 mint dir and is deleted after.
+  log="$(dirname "$out")/miner.out"
+  ( umask 077; : > "$log" )
+  "$miner" -c --tweak '(can 0 (mat %gw-btc) (mat 9) (mat (jam [txid=0x0 vout=0 off=0])) ~)' daplyd \
+    > "$log" 2>&1 || { rm -f "$log"; die "comet_miner failed"; }
+  COMET="$(sed -n 's/^comet:[[:space:]]*//p' "$log" | tail -1)"
+  feed="$(sed -n 's/^feed:[[:space:]]*//p' "$log" | tail -1)"
+  rm -f "$log"
+  [ -n "$COMET" ] && [ -n "$feed" ] || die "could not read a comet and a feed out of comet_miner's output"
+  ( umask 077; printf '%s\n' "$feed" > "$out" )
+  good "mined $COMET"
+}
+
 # =================================================================== install =
 cmd_install() {
   validate_comet
@@ -1825,25 +1888,17 @@ cmd_install() {
   # act -- exactly the shape the old install.sh had and it was right.
   if [ "${MINT_STOP:-0}" = 1 ]; then
     step "Setup done -- stopping the ship"
-    info "your comet is minted, on chain, and its peer-discovery opt-in is set."
-    local mp mwaited=0
-    for mp in $(gwl_king_pid); do kill "$mp" 2>/dev/null || true; done
-    # A 4 GB loom can take minutes to write its final snapshot. Wait for the
-    # exit and VERIFY it: on the first real run the old 60 s grace printed
-    # "It is NOT running right now" while vere ran on for 6+ minutes, still
-    # bound to the HTTP port, and the user's next `boot.sh --comet` collided
-    # with it. Never remove the pier lock while a vere still holds the pier.
-    while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$mwaited" -lt 900 ]; do
-      sleep 2; mwaited=$((mwaited+2))
-      [ $((mwaited % 60)) -eq 0 ] && info "still waiting for vere to exit (${mwaited}s; snapshot write)"
-    done
-    if [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ]; then
-      die "vere (pid $(gwl_king_pid)) has not exited after ${mwaited}s. The comet IS
+    if [ "$SKIP_ATTEST" = 1 ]; then
+      info "your comet is mined and booted. It is NOT attested on chain."
+    else
+      info "your comet is minted, on chain, and its peer-discovery opt-in is set."
+    fi
+    stop_vere_wait || die "vere (pid $(gwl_king_pid)) has not exited after ${VERE_WAITED}s. The comet IS
     minted and on chain; the ship is still running. Stop it with
       $GW_DIR/boot.sh --stop --comet '$COMET'
     and start it with --detach when it is gone. Refusing to pretend it stopped."
-    fi
     rm -f "$GW_PIER/.vere.lock"
+    SHIP_RUNS=stopped
     write_ship_readme
     printf '\n'
     good "$COMET is ready.  It is NOT running right now."
@@ -1886,6 +1941,7 @@ cmd_install() {
   # --detach, --headless minting, or no tty keep the supervised
   # background shape, which is what servers want.
   if [ -z "$DETACH" ] && [ -e /dev/tty ]; then
+    SHIP_RUNS=dojo
     summary_lines
     handoff_dojo
     # not reached: handoff_dojo execs vere
@@ -1900,25 +1956,97 @@ cmd_install() {
   summary_lines
 }
 
+# Stop this pier's vere and VERIFY it is gone: 0 once king and serf have
+# both exited, 1 if either survived.  VERE_WAITED is how long it took.
+#
+# SIGTERM, a grace of VERE_TERM_GRACE seconds, then SIGKILL -- what
+# gw-onboard did (2 s), and it never hung.  SIGTERM alone is a request vere
+# may never honour: its graceful exit queues one writ to the serf with no
+# timer behind it (lord.c, "XX set timer, then halt"), and on a first boot
+# the serf has been watched ignoring it for 900 s, idle, while the event
+# log took writes.  The old code read that as a slow snapshot write and
+# waited: 60 s at first, which printed "It is NOT running right now" over a
+# vere still bound to the HTTP port, then 900 s, which only failed later.
+# A killed vere loses nothing: the event log is durable and the next boot
+# replays from the last snapshot.
+#
+# Never remove the pier lock while a vere still holds the pier: the caller
+# removes it only when this returns 0.
+VERE_TERM_GRACE=30
+stop_vere_wait() {
+  local p
+  VERE_WAITED=0
+  for p in $(gwl_king_pid); do kill "$p" 2>/dev/null || true; done
+  while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$VERE_WAITED" -lt "$VERE_TERM_GRACE" ]; do
+    sleep 2; VERE_WAITED=$((VERE_WAITED+2))
+  done
+  if [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ]; then
+    info "vere did not exit on SIGTERM within ${VERE_WAITED}s; sending SIGKILL (the pier replays on its next boot)"
+    # disown first: bash reports a killed background job ("Killed: 9") on
+    # stderr, in the middle of the output, when vere was started by this run
+    disown -a 2>/dev/null || true
+    for p in $(gwl_king_pid) $(gwl_serf_pid); do kill -9 "$p" 2>/dev/null || true; done
+    while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$VERE_WAITED" -lt $((VERE_TERM_GRACE+10)) ]; do
+      sleep 1; VERE_WAITED=$((VERE_WAITED+1))
+    done
+  fi
+  [ -z "$(gwl_king_pid)$(gwl_serf_pid)" ]
+}
+
+# Keep a tcp-sidecar on the pier for as long as process $1 lives.  The
+# sidecar exits when vere's Lick socket closes and when its first connect
+# fails (gwbtc/tcp-sidecar#4), so the handoff's stop kills the one
+# start_sidecar made, and the dojo's vere came up with a light client that
+# had no transport and nothing to give it one.  The supervisor cannot do
+# this job here: it would relaunch a background vere under the foreground
+# one.  So this is the one piece of it the dojo needs, and no more: wait
+# for vere to bind the socket, start a sidecar, start another if it dies,
+# stop when vere does.  It never touches vere.
+#
+# $1 is this shell's own pid: handoff_dojo calls this and then execs vere,
+# which keeps the pid.  INT and HUP are ignored (and stay ignored in the
+# sidecar it starts) because the job shares the dojo's terminal, and a
+# Ctrl-C meant for the dojo must not take the transport down.
+#
+# When the sidecar reconnects by itself (tcp-sidecar#4) this goes.
+keep_sidecar() {
+  local vere_pid="$1" sock="$GW_PIER/.urb/dev/tcp/tcp"
+  ( trap '' INT HUP
+    while kill -0 "$vere_pid" 2>/dev/null; do
+      if [ -S "$sock" ] && [ -z "$(gwl_sidecar_pids)" ]; then
+        # a socket file left by the old vere refuses the connect and the
+        # sidecar exits; the next pass tries again
+        gwl_start_sidecar \
+          && echo "boot.sh: sidecar started for the dojo's vere (pid $(gwl_sidecar_pids))"
+      fi
+      sleep 5
+    done ) </dev/null >> "$GW_SC_LOG" 2>&1 &
+}
+
 # Stop the detached ship and replace this process with vere attached to
 # the real terminal: the user lands in their dojo, and quitting it
 # (Ctrl-D) stops the ship -- the same contract gw-onboard had.  The
 # supervisor must not be running here or it would fight the foreground
-# vere; in the dojo path it was never started.
+# vere; in the dojo path it was never started.  keep_sidecar stands in
+# for the one part of it this path cannot do without.
 handoff_dojo() {
   step "Handing you the dojo"
   info "your ship restarts attached to this terminal (one short replay)."
   info "type +code in the dojo for your web login key."
   info "Ctrl-D quits the dojo and stops the ship; restart with"
   info "  $GW_DIR/boot.sh --comet '$COMET'"
+  info "the tcp-sidecar restarts with it. Nothing restarts the ship if it"
+  info "crashes: for that, run it with --detach."
   printf '\n'
-  local p
-  for p in $(gwl_king_pid); do kill "$p" 2>/dev/null || true; done
-  local waited=0
-  while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$waited" -lt 60 ]; do
-    sleep 1; waited=$((waited+1))
-  done
+  # The old 60 s grace removed the lock and exec'd a second vere onto a
+  # pier the first still held.  No exit, no handoff.
+  stop_vere_wait || die "vere (pid $(gwl_king_pid)) has not exited after ${VERE_WAITED}s, so the dojo
+    cannot have this pier yet. The ship is still running in the background
+    and the pier lock is untouched. Stop it with
+      $GW_DIR/boot.sh --stop --comet '$COMET'
+    and run this again when it is gone."
   rm -f "$GW_PIER/.vere.lock"
+  keep_sidecar $$
   # shellcheck disable=SC2086
   exec "$VERE" --loom "$LOOM" --http-port "$HTTP_PORT" ${AMES_PORT:+-p $AMES_PORT} "$GW_PIER" </dev/tty >/dev/tty 2>&1
 }
@@ -1943,7 +2071,20 @@ summary_lines() {
   write_ship_readme
 }
 
+# The README says how the ship was left, so it must be told: SHIP_RUNS is
+# set by whoever decided.  It used to claim a supervisor always, which was
+# false in the dojo, after a mint, and under --no-supervisor.
 write_ship_readme() {
+  local runs
+  case "$SHIP_RUNS" in
+    supervised) runs="The ship runs detached with a supervisor that restarts it if it crashes." ;;
+    dojo)       runs="The ship runs in the terminal that started it, with no supervisor:
+quitting the dojo (Ctrl-D) stops the ship, and nothing restarts it if it
+crashes." ;;
+    stopped)    runs="The ship is not running: start it with one of the run lines above." ;;
+    *)          runs="The ship runs detached with no supervisor: nothing restarts it if it
+crashes." ;;
+  esac
   cat > "$GW_DIR/README" <<EOF
 Your Groundwire ship: $COMET
 
@@ -1960,7 +2101,7 @@ ${GW_DOMAIN:+  address (use this one):          https://$GW_DOMAIN
   run in the background (supervised):      $GW_DIR/boot.sh --detach --comet '$COMET'
   (resuming needs no feed -- it boots off the pier that is already here)
 
-The ship runs detached with a supervisor that restarts it if it crashes.
+$runs
 It does NOT survive a reboot of this machine: run the start line above.
 Stopping is always safe; the pier holds everything.
 
