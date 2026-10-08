@@ -73,9 +73,10 @@ it can spend them, so pass it the way you would pass money.
 > - If the mint's one-time boot crashes, or `--status` shows `headers 1` /
 >   `live peers 0` minutes after boot, follow the guide's two recovery
 >   headings under "The flow" — "If the mint's one-time boot died" and "If
->   sync never starts" — rather than improvising. If the mint's own stop step
->   reports that vere has not exited after 900 s, the comet is minted and the
->   ship is simply still running: stop and tell me, do not kill anything.
+>   sync never starts" — rather than improvising. The mint's stop step kills
+>   vere itself if it ignores the stop for 30 s (the pier replays on its next
+>   boot). If it still reports that vere has not exited, the comet is minted
+>   and the ship is still running: stop and tell me, do not kill anything.
 > - **Never kill a process on the droplet from a `pgrep` count.** ssh runs your
 >   command inside a `bash -c` wrapper that matches the same pattern, so the
 >   count over-reads by one. Look at `ps -eo pid,etime,args` and reason about

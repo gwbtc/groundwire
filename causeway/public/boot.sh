@@ -1526,23 +1526,17 @@ cmd_stop() {
   rm -rf "$GW_DIR/var/sup-$NAME.lock"
 
   for p in $(gwl_king_pid); do
-    kill "$p" 2>/dev/null || true
     info "SIGTERM to vere (pid $p); the serf exits with it and the pier replays"
   done
-  # Wait for the exit and VERIFY it. The old 60 s grace printed "stopped"
-  # while vere (still writing a 4 GB snapshot) ran on for minutes, holding
-  # the pier and the HTTP port -- and the next boot.sh collided with it.
-  local vwait=0
-  while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$vwait" -lt 900 ]; do
-    sleep 2; vwait=$((vwait+2))
-    [ $((vwait % 60)) -eq 0 ] && info "still waiting for vere to exit (${vwait}s; snapshot write)"
-  done
+  # Stop it and VERIFY the exit (stop_vere_wait: SIGTERM, a grace, SIGKILL).
+  local vgone=1
+  stop_vere_wait || vgone=0
   for p in $(gwl_sidecar_pids); do
     kill "$p" 2>/dev/null || true
     info "stopped sidecar (pid $p)"
   done
-  if [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ]; then
-    die "vere (pid $(gwl_king_pid)) has not exited after ${vwait}s. It still holds the
+  if [ "$vgone" = 0 ]; then
+    die "vere (pid $(gwl_king_pid)) has not exited after ${VERE_WAITED}s. It still holds the
     pier; do NOT start another ship on it. Check with:  $SELF --status --comet '$COMET'
     and re-run --stop once it is gone. Refusing to print 'stopped' while it runs."
   fi
@@ -1939,26 +1933,40 @@ cmd_install() {
   summary_lines
 }
 
-# Stop this pier's vere and wait for it to go: 0 once king and serf have both
-# exited, 1 if either is still there after 900 s.  VERE_WAITED is how long
-# it took.
+# Stop this pier's vere and VERIFY it is gone: 0 once king and serf have
+# both exited, 1 if either survived.  VERE_WAITED is how long it took.
 #
-# A 4 GB loom can take minutes to write its final snapshot. Wait for the
-# exit and VERIFY it: on the first real run the old 60 s grace printed
-# "It is NOT running right now" while vere ran on for 6+ minutes, still
-# bound to the HTTP port, and the user's next `boot.sh --comet` collided
-# with it. Never remove the pier lock while a vere still holds the pier:
-# the caller removes it only when this returns 0.
+# SIGTERM, a grace of VERE_TERM_GRACE seconds, then SIGKILL -- what
+# gw-onboard did (2 s), and it never hung.  SIGTERM alone is a request vere
+# may never honour: its graceful exit queues one writ to the serf with no
+# timer behind it (lord.c, "XX set timer, then halt"), and on a first boot
+# the serf has been watched ignoring it for 900 s, idle, while the event
+# log took writes.  The old code read that as a slow snapshot write and
+# waited: 60 s at first, which printed "It is NOT running right now" over a
+# vere still bound to the HTTP port, then 900 s, which only failed later.
+# A killed vere loses nothing: the event log is durable and the next boot
+# replays from the last snapshot.
+#
+# Never remove the pier lock while a vere still holds the pier: the caller
+# removes it only when this returns 0.
+VERE_TERM_GRACE=30
 stop_vere_wait() {
   local p
   VERE_WAITED=0
   for p in $(gwl_king_pid); do kill "$p" 2>/dev/null || true; done
-  while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$VERE_WAITED" -lt 900 ]; do
+  while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$VERE_WAITED" -lt "$VERE_TERM_GRACE" ]; do
     sleep 2; VERE_WAITED=$((VERE_WAITED+2))
-    if [ $((VERE_WAITED % 60)) -eq 0 ]; then
-      info "still waiting for vere to exit (${VERE_WAITED}s; snapshot write)"
-    fi
   done
+  if [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ]; then
+    info "vere did not exit on SIGTERM within ${VERE_WAITED}s; sending SIGKILL (the pier replays on its next boot)"
+    # disown first: bash reports a killed background job ("Killed: 9") on
+    # stderr, in the middle of the output, when vere was started by this run
+    disown -a 2>/dev/null || true
+    for p in $(gwl_king_pid) $(gwl_serf_pid); do kill -9 "$p" 2>/dev/null || true; done
+    while [ -n "$(gwl_king_pid)$(gwl_serf_pid)" ] && [ "$VERE_WAITED" -lt $((VERE_TERM_GRACE+10)) ]; do
+      sleep 1; VERE_WAITED=$((VERE_WAITED+1))
+    done
+  fi
   [ -z "$(gwl_king_pid)$(gwl_serf_pid)" ]
 }
 
@@ -2008,7 +2016,7 @@ handoff_dojo() {
   info "crashes: for that, run it with --detach."
   printf '\n'
   # The old 60 s grace removed the lock and exec'd a second vere onto a
-  # pier the first was still snapshotting.  No exit, no handoff.
+  # pier the first still held.  No exit, no handoff.
   stop_vere_wait || die "vere (pid $(gwl_king_pid)) has not exited after ${VERE_WAITED}s, so the dojo
     cannot have this pier yet. The ship is still running in the background
     and the pier lock is untouched. Stop it with
