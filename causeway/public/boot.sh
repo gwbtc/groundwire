@@ -759,10 +759,30 @@ GW_VPS='${DO_DOMAIN:-0}'
 EOF
 }
 
+# A restart must come back on the ports the ship had.  export_env writes
+# them to var/<name>.env on every run, but nothing read them back: a ship
+# whose first boot moved off a busy 8080 to 8081 restarted on 8080, and vere
+# exited at "http: listen (8080): address already in use"; and a pinned
+# ames port was dropped the same way, so the ship bound a random one and its
+# sponsor kept sending to the old.  An explicit --port or --ames-port wins.
+recall_ports() {
+  local env="$GW_DIR/var/$NAME.env" v
+  [ -d "$GW_PIER/.urb" ] && [ -f "$env" ] || return 0
+  if [ "$PORT_EXPLICIT" != 1 ]; then
+    v="$(sed -n "s/^GW_HTTP_PORT='\([0-9]*\)'/\1/p" "$env" | head -1)"
+    [ -n "$v" ] && HTTP_PORT="$v"
+  fi
+  if [ -z "$AMES_PORT" ]; then
+    AMES_PORT="$(sed -n "s/^GW_AMES_PORT='\([0-9]*\)'/\1/p" "$env" | head -1)"
+  fi
+  return 0
+}
+
 boot_ship() {
   step "Booting $COMET"
   GW_LOG="$GW_DIR/var/$NAME.log"
   GW_SC_LOG="$GW_DIR/var/sc-$NAME.log"
+  recall_ports
   if [ "${HAVE_SIDECAR:-0}" = 1 ]; then GW_SIDECAR="$SIDECAR"; else GW_SIDECAR=""; fi
   export GW_NAME="$NAME" GW_PIER GW_VERE="$VERE" GW_LOG GW_SC_LOG GW_LOOM="$LOOM"
   export GW_AMES_PORT="$AMES_PORT" GW_HTTP_PORT="$HTTP_PORT" GW_SIDECAR GW_DIR SOCK_TOOL
@@ -775,6 +795,9 @@ boot_ship() {
   if [ -d "$GW_PIER/.urb" ]; then
     info "pier exists at $GW_PIER -- restarting it, not re-creating it"
     info "(nothing here ever overwrites or deletes a pier)"
+    # the ship is down, so whoever holds its ports now is somebody else
+    check_ports
+    export GW_HTTP_PORT="$HTTP_PORT"
     gwl_start_vere_restart
   else
     [ -e "$GW_PIER" ] && die "$GW_PIER exists but is not a pier; refusing to touch it"
