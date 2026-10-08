@@ -1957,17 +1957,50 @@ stop_vere_wait() {
   [ -z "$(gwl_king_pid)$(gwl_serf_pid)" ]
 }
 
+# Keep a tcp-sidecar on the pier for as long as process $1 lives.  The
+# sidecar exits when vere's Lick socket closes and when its first connect
+# fails (gwbtc/tcp-sidecar#4), so the handoff's stop kills the one
+# start_sidecar made, and the dojo's vere came up with a light client that
+# had no transport and nothing to give it one.  The supervisor cannot do
+# this job here: it would relaunch a background vere under the foreground
+# one.  So this is the one piece of it the dojo needs, and no more: wait
+# for vere to bind the socket, start a sidecar, start another if it dies,
+# stop when vere does.  It never touches vere.
+#
+# $1 is this shell's own pid: handoff_dojo calls this and then execs vere,
+# which keeps the pid.  INT and HUP are ignored (and stay ignored in the
+# sidecar it starts) because the job shares the dojo's terminal, and a
+# Ctrl-C meant for the dojo must not take the transport down.
+#
+# When the sidecar reconnects by itself (tcp-sidecar#4) this goes.
+keep_sidecar() {
+  local vere_pid="$1" sock="$GW_PIER/.urb/dev/tcp/tcp"
+  ( trap '' INT HUP
+    while kill -0 "$vere_pid" 2>/dev/null; do
+      if [ -S "$sock" ] && [ -z "$(gwl_sidecar_pids)" ]; then
+        # a socket file left by the old vere refuses the connect and the
+        # sidecar exits; the next pass tries again
+        gwl_start_sidecar \
+          && echo "boot.sh: sidecar started for the dojo's vere (pid $(gwl_sidecar_pids))"
+      fi
+      sleep 5
+    done ) </dev/null >> "$GW_SC_LOG" 2>&1 &
+}
+
 # Stop the detached ship and replace this process with vere attached to
 # the real terminal: the user lands in their dojo, and quitting it
 # (Ctrl-D) stops the ship -- the same contract gw-onboard had.  The
 # supervisor must not be running here or it would fight the foreground
-# vere; in the dojo path it was never started.
+# vere; in the dojo path it was never started.  keep_sidecar stands in
+# for the one part of it this path cannot do without.
 handoff_dojo() {
   step "Handing you the dojo"
   info "your ship restarts attached to this terminal (one short replay)."
   info "type +code in the dojo for your web login key."
   info "Ctrl-D quits the dojo and stops the ship; restart with"
   info "  $GW_DIR/boot.sh --comet '$COMET'"
+  info "the tcp-sidecar restarts with it. Nothing restarts the ship if it"
+  info "crashes: for that, run it with --detach."
   printf '\n'
   # The old 60 s grace removed the lock and exec'd a second vere onto a
   # pier the first was still snapshotting.  No exit, no handoff.
@@ -1977,6 +2010,7 @@ handoff_dojo() {
       $GW_DIR/boot.sh --stop --comet '$COMET'
     and run this again when it is gone."
   rm -f "$GW_PIER/.vere.lock"
+  keep_sidecar $$
   # shellcheck disable=SC2086
   exec "$VERE" --loom "$LOOM" --http-port "$HTTP_PORT" ${AMES_PORT:+-p $AMES_PORT} "$GW_PIER" </dev/tty >/dev/tty 2>&1
 }
