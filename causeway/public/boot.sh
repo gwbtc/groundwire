@@ -117,6 +117,7 @@ DO_BITCOIN=1
 DO_SUPERVISOR=1
 DO_WAIT=1
 DO_DOMAIN=0
+SHIP_RUNS=detached          # how this run leaves the ship; see write_ship_readme
 FORCE_REDOWNLOAD=0
 SEED_BATCHES="${GROUNDWIRE_SEED_BATCHES:-6}"
 SEED_BATCH_SIZE=25          # OPERATIONS.md 5.6: bulk adds SIGSEGV the sidecar
@@ -1135,6 +1136,7 @@ start_supervisor() {
     p="$(cat "$GW_DIR/var/sup-$NAME.lock/pid" 2>/dev/null || echo)"
     if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then
       info "already supervised (pid $p)"
+      SHIP_RUNS=supervised
       return 0
     fi
   fi
@@ -1144,6 +1146,7 @@ start_supervisor() {
     nohup "$GW_DIR/bin/gwsup.sh" "$NAME" >> "$GW_DIR/var/sup-$NAME.out" 2>&1 </dev/null &
   fi
   sleep 2
+  SHIP_RUNS=supervised
   good "supervisor running; log $GW_DIR/var/sup-$NAME.log"
   info "it restarts vere and the sidecar, and after a sidecar restart it also"
   info "runs the gwbtc/node#1 recovery -- kill-peer-connections and a re-seed"
@@ -1878,6 +1881,7 @@ cmd_install() {
       $GW_DIR/boot.sh --stop --comet '$COMET'
     and start it with --detach when it is gone. Refusing to pretend it stopped."
     rm -f "$GW_PIER/.vere.lock"
+    SHIP_RUNS=stopped
     write_ship_readme
     printf '\n'
     good "$COMET is ready.  It is NOT running right now."
@@ -1920,6 +1924,7 @@ cmd_install() {
   # --detach, --headless minting, or no tty keep the supervised
   # background shape, which is what servers want.
   if [ -z "$DETACH" ] && [ -e /dev/tty ]; then
+    SHIP_RUNS=dojo
     summary_lines
     handoff_dojo
     # not reached: handoff_dojo execs vere
@@ -2035,7 +2040,20 @@ summary_lines() {
   write_ship_readme
 }
 
+# The README says how the ship was left, so it must be told: SHIP_RUNS is
+# set by whoever decided.  It used to claim a supervisor always, which was
+# false in the dojo, after a mint, and under --no-supervisor.
 write_ship_readme() {
+  local runs
+  case "$SHIP_RUNS" in
+    supervised) runs="The ship runs detached with a supervisor that restarts it if it crashes." ;;
+    dojo)       runs="The ship runs in the terminal that started it, with no supervisor:
+quitting the dojo (Ctrl-D) stops the ship, and nothing restarts it if it
+crashes." ;;
+    stopped)    runs="The ship is not running: start it with one of the run lines above." ;;
+    *)          runs="The ship runs detached with no supervisor: nothing restarts it if it
+crashes." ;;
+  esac
   cat > "$GW_DIR/README" <<EOF
 Your Groundwire ship: $COMET
 
@@ -2052,7 +2070,7 @@ ${GW_DOMAIN:+  address (use this one):          https://$GW_DOMAIN
   run in the background (supervised):      $GW_DIR/boot.sh --detach --comet '$COMET'
   (resuming needs no feed -- it boots off the pier that is already here)
 
-The ship runs detached with a supervisor that restarts it if it crashes.
+$runs
 It does NOT survive a reboot of this machine: run the start line above.
 Stopping is always safe; the pier holds everything.
 
