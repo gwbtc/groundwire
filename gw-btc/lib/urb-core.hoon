@@ -36,6 +36,10 @@
 /-  bitcoin, ord, urb, sa=self-attestation
 /+  cc=gw-btc-pass, ol=ord
 |%
+::  +dbg: debug prints (routine scanner findings); flip to & to see them
+::
+++  dbg  ^-(? |)
+::
 ++  urb-core
   =|  state:urb
   =*  state  -
@@ -96,7 +100,7 @@
     =|  reveals=(map [txid:ord vout:ord] [sots=(list raw-sotx:urb) value=(unit @ud)])
     ^+  [reveals block]
     ?~  txs.block
-      ~&  >>>  ["%urb-core: This block has no transactions:" block]  !!
+      ~|  %urb-core-block-has-no-transactions  !!
     =/  cb-tx  i.txs.block
     =/  txs    t.txs.block
     =|  saved-txs=(list tx:bitcoin)
@@ -290,17 +294,17 @@
       =*  pass  pass.u.pub
       =*  op    opening.u.pub
       ?~  meta=(parse-pass:cc pass)
-        ~&  >>>  '%urb-core: publication carries a pass that does not parse'
+        ~>  %slog.[2 leaf+"%urb-core: on-chain publication ignored: its pass does not parse; republish with a current Causeway"]
         cor
       ?.  =(domain:cc dom.u.meta)
-        ~&  >>>  ['%urb-core: publication pass names another PKI domain' dom.u.meta]
+        ~>  %slog.[2 leaf+"%urb-core: on-chain publication ignored: its pass names PKI domain {<dom.u.meta>}, not {<domain:cc>}; republish under {<domain:cc>}"]
         cor
       ?.  =(kelvin:cc kel.u.meta)
-        ~&  >>>  ['%urb-core: publication pass is at another protocol kelvin' kel.u.meta]
+        ~>  %slog.[2 leaf+"%urb-core: on-chain publication ignored: its pass is at protocol kelvin {<kel.u.meta>}, ours is {<kelvin:cc>}; one of the two sides needs an update"]
         cor
       =/  cac  (com:nu:cric:crypto pass)
       ?.  ?=(%c suite.+<.cac)
-        ~&  >>>  '%urb-core: publication pass is not suite-C, so it is not a comet'
+        ~>  %slog.[2 leaf+"%urb-core: on-chain publication ignored: its pass is not suite-C, so it is not a comet; publish a comet's own pass"]
         cor
       =/  who  `@p`fig:ex:cac
       ::  Decode the carried log.  An EMPTY xtr is the spawn case and is
@@ -315,7 +319,7 @@
         ?~  dec  ~
         ?.(=(xtr.u.meta (jam u.dec)) ~ dec)
       ?~  base
-        ~&  >>>  ['%urb-core: publication pass carries an unreadable custody log' who]
+        ~>  %slog.[2 leaf+"%urb-core: on-chain publication by {(scow %p who)} ignored: its custody log is unreadable; republish with a current Causeway"]
         cor
       ::  The entry this transaction IS.  Its txid is why the publisher
       ::  could not include it: the OP_RETURN is inside the transaction
@@ -324,9 +328,9 @@
       =/  full=custody-log:sa
         (snoc u.base [`txid:ord`id.tx num.block-id `op])
       ?~  done=(with-xtr:cc pass (jam full))
-        ~&  >>>  ['%urb-core: publication pass could not be re-encoded' who]
+        ~>  %slog.[2 leaf+"%urb-core: on-chain publication by {(scow %p who)} ignored: its pass could not be re-encoded with the carrying entry; republish with a current Causeway"]
         cor
-      ~&  >  ["%gw-btc: on-chain self-attestation published by" who]
+      ~?  dbg  leaf+"%gw-btc: on-chain self-attestation published by {(scow %p who)}"
       (emit [%claim who u.done])
     ::
     ::  Find the first OP_RETURN "gw" publication among a tx's outputs.
