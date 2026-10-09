@@ -12,6 +12,9 @@ and walks you through creating the droplet in your own DigitalOcean account
 you, fill in its address and the key file instead. Either way the key belongs
 to that Claude, not to you, so its access can be revoked on its own.
 
+To test the flow first with no sats and no droplet, skip this prompt and
+follow "Dry run" in `TEAM-ONBOARDING.md`.
+
 > ```
 > INVITE     = <74-character hex invite code from Trent, or: none>
 > DROPLET_IP = new   (or the address of an existing droplet)
@@ -86,7 +89,8 @@ to that Claude, not to you, so its access can be revoked on its own.
 > `python3-venv` and 8 GB of swap installed first; the sponsor's leading `~`
 > quoted inside the wrapper file; `PYTHONUNBUFFERED=1` so the funding address
 > actually reaches the log). Start it in tmux, then poll `~/mint.log` and answer
-> with `tmux send-keys`.
+> with `tmux send-keys`. The mint is done when the log prints `<@p> is ready.
+> It is NOT running right now.`; a line starting `error:` means it died.
 >
 > If `INVITE` is a code (not `none`): add `--invite INVITE` to the `boot.sh
 > --mint` line in the guide's wrapper file (step 2), exactly as the guide's
