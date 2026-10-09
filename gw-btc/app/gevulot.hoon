@@ -224,6 +224,27 @@
   ?.  =(%pawn (clan:title who))  (cite:title who)
   (cite:title (en:ship:me (de:ship:me who)))
 ::
+::  +name-key: the text a ship sorts by -- a comet's full mnemonym,
+::  anything else its @p.  A nym opens with `.` and a @p with `~`, so
+::  comets come first.
+::
+++  name-key
+  |=  who=@p
+  ^-  @t
+  ?.  =(%pawn (clan:title who))  (scot %p who)
+  (de:ship:me who)
+::
+::  +sort-ships: ships in alphabetical order of +name-key.  Each key is
+::  computed once, not once per comparison.
+::
+++  sort-ships
+  |=  ships=(list @p)
+  ^-  (list @p)
+  %+  turn
+    %+  sort  (turn ships |=(who=@p [(name-key who) who]))
+    |=([a=[key=@t @p] b=[key=@t @p]] (aor key.a key.b))
+  |=([@t who=@p] who)
+::
 ::  +our-sponsor: the sponsor we COMMITTED, if any.
 ::
 ::    Two sources, in order.  jael's own point, when it names one (a comet
@@ -1084,7 +1105,7 @@
     %-  ~(uni in (~(uni in ~(key by trusted)) conf))
     ~(key by public)
   =/  peers=(list [who=@p p=peer:gev])
-    %+  turn  ~(tap in ships)
+    %+  turn  (sort-ships ~(tap in ships))
     |=  who=@p
     ^-  [@p peer:gev]
     ?^  a=(~(get by installed) who)  [who u.a]
@@ -1183,7 +1204,7 @@
 ++  roster-list
   |=  spees=(map @p @ud)
   ^-  manx
-  =/  rs  ~(tap in ~(key by roster))
+  =/  rs  (sort-ships ~(tap in ~(key by roster)))
   ?~  rs
     ;p.empty: No sponsees have asked to be broadcast yet.
   ;div.peers
