@@ -2,8 +2,10 @@
 
 **Audience: a teammate, or a teammate's Claude, standing up a comet on a fresh
 DigitalOcean droplet.** Follow this top to bottom. It is the supported happy
-path as of 2026-09-09; the deep reference is
+path for release `groundwire-alpha-2026.10.8`; the deep reference is
 [`ops/doc/OPERATIONS.md`](../ops/doc/OPERATIONS.md).
+
+To try the flow first with no sats and no droplet, see "Dry run" below.
 
 ## What you're building
 
@@ -20,14 +22,14 @@ already paid for, handed over as one hex code, so the mint never waits on him.
 |---|---|
 | Desk (`%gw-btc` + `%gevulot`) | `gwbtc/groundwire` @ **`hd/cc-landing`** |
 | Kernel + vere | `gwbtc/urbit` @ **`hd/cc-kernel`** |
-| Release to boot from | the newest **`groundwire-alpha-*`** prerelease of `gwbtc/urbit` |
+| Release to boot from | **`groundwire-alpha-2026.10.8`**, a prerelease of `gwbtc/urbit` |
 
-Find the exact RC tag (do not use `latest` — that's the daily, which can't do
-confidential comets):
+Use exactly that tag in every `boot.sh --version`. Do not use `latest` (the
+daily, which can't do confidential comets) or a tag you looked up yourself.
+Confirm the tag exists before you start:
 
 ```bash
-gh release list -R gwbtc/urbit | grep groundwire-alpha | head -1
-# e.g. groundwire-alpha-2026.10.8
+curl -fsI https://github.com/gwbtc/urbit/releases/tag/groundwire-alpha-2026.10.8
 ```
 
 ## The sponsor — nothing to memorize
@@ -63,42 +65,9 @@ network now runs (gwbtc/node develop, which heals its own peers) and the
 %gw-btc that reads it. 2026.10.1 was the first release whose Causeway
 accepts invite codes; anything older, 2026.9.16 included, sends `--invite`
 to a retired faucet and stops with "Faucet error: Invalid invite code"
-(nothing is spent; re-run with 2026.10.2).
+(nothing is spent; re-run with 2026.10.8).
 
-Release history, for reference only. Earlier RCs have one or both of:
-a `gwlib.sh` whose peer seeding pokes a renamed mark (the light client never
-gets a peer and sync never starts — fixed in 2026.9.10), and a Causeway that
-does not record the sponsor's attestation in the spawn proof (the comet can't
-reach its sponsor until its own sync finishes, hours later, and the Gevulot
-pane reads "SPONSOR none" the whole time — fixed in 2026.9.10_2; see "How a
-fresh comet finds its sponsor" below). 2026.9.10_4 adds the peer-seeding fixes
-from the second real mint: the seeding thread no longer crashes on its own
-Hoon literal, and the supervisor's post-crash re-seed can resolve DNS.
-**2026.9.10_5 carries the runtime fix for the crash both real mints hit**
-(gwbtc/vere#24): the king died whenever a control-socket client gave up on a
-reply still in flight — `boot.sh`'s own setup pokes on a slow first boot, an
-operator's eval during a long event. Symptom in the ship log:
-`newt: write failed broken pipe` then `loom: external fault … u3_king_commence`.
-Earlier RCs crash-loop under load; do not mint on them. **2026.9.11** puts the
-Gevulot state model in the pill: a fresh comet indexes from its own spawn
-block once its sponsor is installed (no day-long epoch scan), the pane shows
-where the index started and who decided, and peers are re-verified
-incrementally instead of from scratch on every attempt. **2026.9.13** is the
-same kernel with the desk brought up to date: the index scanner takes five
-blocks at a time with a pause between batches, so the light client keeps
-syncing while the index runs (2026.9.11's larger batches starved it), and the
-pane's public-index row wraps and reads as a status, a progress bar, and a
-provenance line. A ship already running follows the sponsor's `%gw-btc`
-automatically and does not need reinstalling for this.
-**2026.9.16** (superseded by 2026.10.1, above) brought: the light client keeps its peers
-(stale connects are reaped and a sweep reconnects every minute; a ship no
-longer sits at zero peers looking healthy), a full block parses in well under
-a second instead of tens of seconds, the sidecar hands blocks over in a few
-events instead of hundreds, the comet tells jael who its sponsor is (so the
-base desk's `%ping` refreshes the sponsor's route to it on every restart),
-and the first boot fetches the galaxy table from the sponsor's web server --
-the old gateway host is gone, and a mint on any earlier release now hangs at
-"retrieving galaxy table".
+Older releases and what each fixed: see "Release history" at the end.
 
 **Droplet prerequisites** (learned the hard way on the first real run): a stock
 4 GB DigitalOcean droplet is *not* enough on its own. The comet miner maps an
@@ -158,12 +127,17 @@ S 'tmux send-keys -t mint "<the twelve words>" Enter'
 #   d) it then waits for the spawn tx to confirm (~10-60 min), bakes the feed,
 #      boots the ship once to set its peer-discovery opt-in, and STOPS it.
 #      The mint ends with the ship NOT running. That is by design.
+#   The lines to poll for, in order:
+#      "ship is up and answering", then "identity confirmed: <@p>"  (the one boot)
+#      "<@p> is ready.  It is NOT running right now."               (the mint is DONE)
+#      "error:"                                                     (it died; read on up)
 
 # 5. run the ship, then verify (a plain ssh is fine here: --detach needs no
 #    tty, and it returns as soon as the ship is up -- it no longer sits
 #    watching the sync). Pass the SAME --version as the mint: boot.sh now pins
 #    the installed release by itself, but say it anyway -- an older boot.sh
 #    resolved "latest" to the daily and overwrote bin/ under a running pier.
+#    It is done when it prints "==> Running (detached)".
 S "bash ~/boot.sh --detach --vps --version groundwire-alpha-2026.10.8 --comet '<the @p it printed>'"
 S "bash ~/boot.sh --status --comet '<@p>'; bash ~/boot.sh --code --comet '<@p>'"
 
@@ -262,12 +236,58 @@ What happens, in order:
    **once** to set its `%gevulot` peer-discovery opt-in, then **stops it** and
    prints the run command. You start it: `boot.sh --detach --comet '<@p>'`.
 
+## Dry run: an unattested comet, no sats, no droplet
+
+`boot.sh --skip-attestation` mines and boots a comet with no wallet, no
+funding and no spawn transaction. Use it to test the install and boot path on
+any machine, a laptop included. The comet commits to a zeroed satpoint and has
+an empty custody log, so no peer can ever verify it: throw it away afterwards.
+
+The flag implies `--mint` and asks no prompts: no recovery phrase, no funding
+address. Like a real mint, it boots the ship once, stops it, and prints the run
+command. Tested on macOS (Apple Silicon) with 2026.10.8:
+
+```bash
+# --dir keeps the test out of ~/.groundwire (the default install root)
+D=~/.groundwire-test; mkdir -p $D
+curl -fsSL -o $D/boot.sh https://raw.githubusercontent.com/gwbtc/groundwire/hd/cc-landing/causeway/public/boot.sh
+
+# mint. Done at "<@p> is ready.  It is NOT running right now."
+bash $D/boot.sh --mint --skip-attestation --headless --detach --dir $D \
+  --version groundwire-alpha-2026.10.8 2>&1 | tee $D/mint.log
+
+# run. At a terminal with no --detach, this ends in the ship's dojo.
+bash $D/boot.sh --dir $D --version groundwire-alpha-2026.10.8 --comet '<the @p it printed>'
+```
+
+Things to know:
+
+- **How the run step ends depends on the flags.** At a terminal with no
+  `--detach`, `boot.sh` execs vere and you get the dojo; no supervisor runs.
+  With `--detach`, or with no terminal, the ship runs in the background under
+  the supervisor. With `--no-bitcoin`, `boot.sh` starts no sidecar, no peers
+  and no sync, leaves the ship in the background with no supervisor, and
+  exits: you get no dojo.
+- **The light client syncs unless you pass `--no-bitcoin`**, and the sync pins
+  the ship for hours, as on a real comet.
+- **To keep the dojo up, run that last command inside tmux or screen.** macOS
+  ships no tmux. Its stock `screen` (4.00.03) rejects `-Logfile`, and
+  `hardcopy` of a detached session wrote an empty file, so read the ship log
+  (`$D/var/<comet>.log`) to see what the ship is doing.
+- **The HTTP port may not be 8080.** If another ship holds it, `boot.sh`
+  prints `port 8080 is in use; using 8081 for HTTP instead`.
+- **The mint's stop step kills vere** after 30 s (`vere did not exit on
+  SIGTERM within 30s; sending SIGKILL`). The pier is fine.
+
 ## Verify it worked
 
 ```bash
 bash boot.sh --status              # ship up? which comet? sync state?
 bash boot.sh --code                # web login code (+code) for Landscape
-# the web UI is http://<DROPLET_IP>:<port>; read the port off the running ship
+# the web UI. With --vps (step 5) it is the https://<name>.groundwire.me that
+# --status shows as `web`; once the certificate is in, http://<ip>:<port>
+# redirects there and fails TLS (step 7). Without --vps, or before the name
+# exists, it is http://<DROPLET_IP>:<port>; read the port off the running ship
 # (boot.sh picks a nearby free port if 8080 is busy, so don't assume it):
 pgrep -a -f gw-vere | grep -o -- '--http-port [0-9]*'
 ```
@@ -289,7 +309,8 @@ In the dojo (`boot.sh --comet '<@p>'` attaches, or via the control socket):
 
 ## For a driving Claude
 
-- This is **not** fully autonomous: step 2 blocks until Trent funds the address.
+- This is **not** fully autonomous: without an invite, the mint blocks at flow
+  step 4b until Trent funds the address.
   Relay the address to Trent, then wait — `boot.sh` continues on its own once
   the funding tx confirms. Do not fabricate the funding.
 - Read `~/mint.log` on the droplet (the wrapper tees everything there): the
@@ -353,3 +374,42 @@ sponsees to every opted-in comet. Every desk in the pill names `~barmul` as
 publisher, so a newer desk installed on barmul (e.g. Drive) propagates to
 sponsees over Clay once they can reach it — which the install above makes
 immediate.
+
+## Release history
+
+For reference only; mint on the release named above.
+
+RCs before 2026.9.10_2 have one or both of:
+a `gwlib.sh` whose peer seeding pokes a renamed mark (the light client never
+gets a peer and sync never starts — fixed in 2026.9.10), and a Causeway that
+does not record the sponsor's attestation in the spawn proof (the comet can't
+reach its sponsor until its own sync finishes, hours later, and the Gevulot
+pane reads "SPONSOR none" the whole time — fixed in 2026.9.10_2; see "How a
+fresh comet finds its sponsor" below). 2026.9.10_4 adds the peer-seeding fixes
+from the second real mint: the seeding thread no longer crashes on its own
+Hoon literal, and the supervisor's post-crash re-seed can resolve DNS.
+**2026.9.10_5 carries the runtime fix for the crash both real mints hit**
+(gwbtc/vere#24): the king died whenever a control-socket client gave up on a
+reply still in flight — `boot.sh`'s own setup pokes on a slow first boot, an
+operator's eval during a long event. Symptom in the ship log:
+`newt: write failed broken pipe` then `loom: external fault … u3_king_commence`.
+Earlier RCs crash-loop under load; do not mint on them. **2026.9.11** puts the
+Gevulot state model in the pill: a fresh comet indexes from its own spawn
+block once its sponsor is installed (no day-long epoch scan), the pane shows
+where the index started and who decided, and peers are re-verified
+incrementally instead of from scratch on every attempt. **2026.9.13** is the
+same kernel with the desk brought up to date: the index scanner takes five
+blocks at a time with a pause between batches, so the light client keeps
+syncing while the index runs (2026.9.11's larger batches starved it), and the
+pane's public-index row wraps and reads as a status, a progress bar, and a
+provenance line. A ship already running follows the sponsor's `%gw-btc`
+automatically and does not need reinstalling for this.
+**2026.9.16** (superseded by 2026.10.1) brought: the light client keeps its peers
+(stale connects are reaped and a sweep reconnects every minute; a ship no
+longer sits at zero peers looking healthy), a full block parses in well under
+a second instead of tens of seconds, the sidecar hands blocks over in a few
+events instead of hundreds, the comet tells jael who its sponsor is (so the
+base desk's `%ping` refreshes the sponsor's route to it on every restart),
+and the first boot fetches the galaxy table from the sponsor's web server --
+the old gateway host is gone, and a mint on any earlier release now hangs at
+"retrieving galaxy table".
