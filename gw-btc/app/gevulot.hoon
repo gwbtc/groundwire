@@ -361,8 +361,7 @@
   p.res
 ::
 ::  +gw-inflight: ships with a verification in flight in %gw-btc.  Its
-::  verifier is single-flight, so we recheck one peer at a time and wait
-::  on this before starting another.
+::  verifier is single-flight per ship, so the sweep skips these.
 ::
 ++  gw-inflight
   ^-  (set @p)
@@ -456,9 +455,8 @@
 ::    %confirmed -- %gw-btc has verified it on chain.
 ::    %syncing   -- our light client is not synced; we trust it for now.
 ::    %checking  -- synced; ITS verification is running right now.
-::    %queued    -- synced; waiting for the verifier's single slot (some
-::                  other ship's verification is running).  Used to be
-::                  shown as "re-checking" too, which read as if this
+::    %queued    -- synced; waiting for the next recheck sweep.  Used to
+::                  be shown as "re-checking" too, which read as if this
 ::                  peer's check were the slow thing.
 ::    %failed    -- synced and exhausted; never confirmed (stale or forged).
 ::
@@ -483,6 +481,9 @@
 ::  same %jael-writ path a peer's own packet takes.  This is the double
 ::  check of a trusted install: valid -> confirmed, stale -> demoted (no
 ::  snub), forged -> snubbed.  Only meaningful once %gw-btc is synced.
+::  Writs that arrive together are verified together: %gw-btc walks the
+::  chain ONCE for every writ it holds when its launch timer fires (see
+::  .batch in app/gw-btc), so a sweep sends all of its peers at once.
 ::
 ++  poke-gw-verify
   |=  [who=@p =pass]
@@ -515,15 +516,15 @@
   =/  entry=peer:gev  [pass via now.bowl ?:(synced.rdy 1 0)]
   :_  state(installed (~(put by installed) who entry))
   ::  Arm the recheck sweep on BOTH paths.  The on-chain verifier is
-  ::  single-flight (%gw-btc drops any %jael-writ that arrives while a
-  ::  verification is running, silently), so the one poke-gw-verify below
-  ::  can be dropped -- most often right after our light client syncs,
-  ::  when the sweep is already working through the trust-installed
-  ::  backlog one at a time and a freshly pushed peer lands on the synced
-  ::  branch.  Without a timer that peer sat unconfirmed forever, only
-  ::  cleared by a manual "recheck all".  The sweep is idempotent: it
-  ::  waits while a verification is in flight, skips confirmed peers, and
-  ::  stops once every peer is confirmed or has spent its tries.
+  ::  single-flight per ship (%gw-btc drops a %jael-writ for a ship whose
+  ::  verification is running, with a log line), so the one
+  ::  poke-gw-verify below can be dropped -- most often right after our
+  ::  light client syncs, when the sweep's batch is already walking and a
+  ::  freshly pushed peer lands on the synced branch.  Without a timer
+  ::  that peer sat unconfirmed forever, only cleared by a manual "recheck
+  ::  all".  The sweep is idempotent: it skips confirmed peers and peers
+  ::  in flight, and stops once every peer is confirmed or has spent its
+  ::  tries.
   ?:  synced.rdy
     ~[(poke-gw-verify who pass) (recheck-timer ~m2)]
   ~[(poke-gw-install who pass) (recheck-timer ~m2)]
@@ -604,9 +605,13 @@
     ==
   ==
 ::
-::  +recheck-sweep: re-verify unconfirmed installs on chain, one at a time
-::  (the verifier is single-flight), re-arming until every peer is
-::  confirmed or has exhausted its tries.
+::  +recheck-sweep: re-verify unconfirmed installs on chain, all at once
+::
+::    One %jael-writ per unconfirmed peer not already in flight, all in
+::    one event, so %gw-btc verifies them in one batch (one chain walk).
+::    The verifier is single-flight per SHIP, so a peer still in flight
+::    is left for the next sweep.  Re-arms until every peer is confirmed
+::    or has exhausted its tries.
 ::
 ++  recheck-sweep
   ^-  (quip card _state)
@@ -623,15 +628,19 @@
     :_  state
     ~[(recheck-timer ~m5)]
   =/  infl  gw-inflight
-  ?^  infl                               :: a verification is running; wait
+  =/  go=(list [who=@p p=peer:gev])
+    %+  skip  `(list [who=@p p=peer:gev])`todo
+    |=([who=@p *] (~(has in infl) who))
+  ?~  go                                 :: all of them running; wait
     :_  state
     ~[(recheck-timer ~m1)]
-  =/  who  who.i.todo
-  =/  p    p.i.todo
-  :_  state(installed (~(put by installed) who p(tries +(tries.p))))
-  :~  (poke-gw-verify who pass.p)
-      (recheck-timer ~m2)
-  ==
+  =.  installed
+    %-  ~(gas by installed)
+    (turn go |=([who=@p p=peer:gev] [who p(tries +(tries.p))]))
+  :_  state
+  %+  snoc
+    (turn go |=([who=@p p=peer:gev] (poke-gw-verify who pass.p)))
+  (recheck-timer ~m2)
 ::
 ::  =====================================================================
 ::  inter-ship wire (sponsor <-> sponsee)

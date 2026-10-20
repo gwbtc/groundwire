@@ -601,6 +601,13 @@
           leaf+"  (the stored custody log is UNCHANGED and no pass was published;"
           leaf+"   re-poke %gw-custody-entry or %jael-anew to try again)"
       ==
+    ::
+        %batch
+      :~  leaf+"%gw-btc: batch verification job {<job.strand-death>} DIED; no verdict for any of {<(lent whos.strand-death)>} peers, and no snub"
+          leaf+"  peers: {<whos.strand-death>}"
+          leaf+"  (every slot is released; a dead strand is our infrastructure failing,"
+          leaf+"   never evidence.  The next sweep or retransmission retries them.)"
+      ==
     ==
   =/  why=tang
     ?^  err  [leaf+"  khan reported {<mote>}:" err]

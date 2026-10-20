@@ -2300,4 +2300,206 @@
     (expect !>((lien out |=(c=card:agent:gall =(c synced-watch)))))
     (expect !>((levy out |=(c=card:agent:gall ?=(~ (fact-mark c))))))
   ==
+::
+::  ---------------------------------------------------------------------
+::  BATCHED VERIFICATION: writs park, a timer launches ONE shared walk
+::  ---------------------------------------------------------------------
+::
+::  A %jael-writ no longer launches a thread.  It takes the ship's slot
+::  under the batch being assembled (.batch), the first writ of a batch
+::  arms a zero-delay /launch-batch timer, and that timer launches one
+::  thread for every writ parked meanwhile.  Its verdicts must each take
+::  the single-ship path, and its death or its leak guard must release
+::  all of its slots and judge nobody.
+::
+++  batch-pass
+  |=  n=@
+  ^-  pass
+  =/  seed  (shaz (cat 3 'gw-btc-batch-' n))
+  pub:ex:(pit:nu:cric:crypto 512 seed %c (kelvin-dat kelvin:cc) (jam ~[entry0]))
+::
+::  poke one %jael-writ per pass, in order; the agent's own cards, in order
+++  poke-writs
+  |=  [agent=_gw-btc ps=(list pass)]
+  ^-  [(list card:agent:gall) _gw-btc]
+  =|  acc=(list card:agent:gall)
+  |-
+  ?~  ps  [acc agent]
+  =^  cards  agent
+    (~(on-poke agent bowl0) %noun (writ-vase-pass (fig-of i.ps) i.ps))
+  $(ps t.ps, acc (weld acc (app-cards cards)))
+::
+++  launch-wire  |=(j=@ud /launch-batch/(scot %ud j))
+++  wake  ^-(sign-arvo [%behn %wake ~])
+::
+::  the khan sign +verify-lc-batch:lca delivers: [who result tip-spk]s
+++  batch-sign
+  |=  outs=(list [who=ship bad=(list cord)])
+  ^-  sign-arvo
+  :^  %khan  %arow  %.y
+  :-  %noun
+  !>  ^-  (list [ship result:sa hexb:bitcoin])
+  %+  turn  outs
+  |=  [who=ship bad=(list cord)]
+  [who [[who %.n (turn bad |=(c=cord `check:sa`[c %.n]))] ~ 0] *hexb:bitcoin]
+::
+++  card-wire
+  |=  c=card:agent:gall
+  ^-  wire
+  ?.(?=([%pass *] c) /not-a-pass p.c)
+::
+++  inflight-of
+  |=  agent=_gw-btc
+  ^-  (set ship)
+  ;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/inflight)))
+::
+++  test-writs-park-under-one-batch
+  =/  [p1=pass p2=pass]  [(batch-pass 1) (batch-pass 2)]
+  =/  agent  gw-btc
+  =^  *  agent  (~(on-load agent bowl0) !>(synced-state))
+  ::  p1 twice: the second is a duplicate of a slot the first just took
+  =^  out  agent  (poke-writs agent ~[p1 p2 p1])
+  ;:  weld
+    ::  ONE card in all: the first writ's launch timer.  No thread yet,
+    ::  no per-ship leak guard, nothing for the duplicate.
+    (expect-eq !>(~[(launch-wire 0)]) !>((turn out card-wire)))
+    (expect !>(?=([[%pass * %arvo %b %wait *] ~] out)))
+    ::  both admitted ships hold a slot, both under batch 0
+    %+  expect-eq
+      !>((malt ~[[(fig-of p1) [0 900.001]] [(fig-of p2) [0 900.001]]]))
+      !>(;;((map ship [@ud @ud]) (peek-noun (~(on-peek agent bowl0) /x/inflight-detail))))
+  ==
+::
+++  test-launch-starts-one-walk-and-closes-the-batch
+  =/  [p1=pass p2=pass p3=pass]  [(batch-pass 1) (batch-pass 2) (batch-pass 3)]
+  =/  agent  gw-btc
+  =^  *  agent  (~(on-load agent bowl0) !>(synced-state))
+  =^  *  agent  (poke-writs agent ~[p1 p2])
+  =^  cards  agent  (~(on-arvo agent bowl0) (launch-wire 0) wake)
+  =/  out  (app-cards cards)
+  ::  a writ arriving AFTER the launch opens the next batch
+  =^  later  agent  (poke-writs agent ~[p3])
+  ::  ... and the old batch's timer firing again does nothing
+  =^  again  agent  (~(on-arvo agent bowl0) (launch-wire 0) wake)
+  ;:  weld
+    ::  ONE thread and ONE leak guard, for the batch
+    (expect-eq !>(~[/verify-batch/0 /stuck-batch/0]) !>((turn out card-wire)))
+    (expect !>(?=([[%pass * %arvo %k %lard *] *] out)))
+    (expect-eq !>(~[(launch-wire 1)]) !>((turn later card-wire)))
+    %+  expect-eq
+      !>(`(unit [@ud @ud])``[1 900.001])
+      !>  %-  ~(get by ;;((map ship [@ud @ud]) (peek-noun (~(on-peek agent bowl0) /x/inflight-detail))))
+          (fig-of p3)
+    (expect-eq !>(~) !>((app-cards again)))
+  ==
+::
+++  test-stale-launch-timer-is-silent
+  =/  agent  gw-btc
+  =^  *  agent  (~(on-load agent bowl0) !>(synced-state))
+  =^  cards  agent  (~(on-arvo agent bowl0) (launch-wire 0) wake)
+  ;:  weld
+    (expect-eq !>(~) !>((app-cards cards)))
+    (expect-eq !>(*(set ship)) !>((inflight-of agent)))
+  ==
+::
+::  Admission is unchanged: with the light client unsynced nothing is
+::  parked, no batch opens, and nobody is judged.
+++  test-writs-unsynced-park-nobody
+  =/  agent  gw-btc
+  =^  *  agent  (~(on-load agent bowl0) !>(tip-state))
+  =^  out  agent  (poke-writs agent ~[(batch-pass 1) (batch-pass 2)])
+  ;:  weld
+    (expect !>(!(lien out |=(c=card:agent:gall ?=([%pass [%launch-batch *] *] c)))))
+    (expect !>((levy out |=(c=card:agent:gall ?=(~ (fact-mark c))))))
+    (expect-eq !>(*(set ship)) !>((inflight-of agent)))
+  ==
+::
+++  test-batch-verdicts-take-the-single-ship-path
+  =/  [p1=pass p2=pass]  [(batch-pass 1) (batch-pass 2)]
+  =/  agent  gw-btc
+  =^  *  agent  (~(on-load agent bowl0) !>(synced-state))
+  =^  *  agent  (poke-writs agent ~[p1 p2])
+  =^  *  agent  (~(on-arvo agent bowl0) (launch-wire 0) wake)
+  =^  cards  agent
+    %+  ~(on-arvo agent bowl0)  /verify-batch/0
+    (batch-sign ~[[(fig-of p1) ~['spawn-matches']] [(fig-of p2) ~['tip-unspent']]])
+  =/  out  (app-cards cards)
+  ;:  weld
+    (expect-eq !>(2) !>((lent out)))
+    ::  p1: fraud, so a negative %verdict (the snub) ...
+    (expect-eq !>(`%verdict) !>((fact-mark (snag 0 out))))
+    %+  expect-eq
+      !>  `(unit *)`~
+      !>  ^-  (unit *)
+          ?~  pay=(fact-payload (snag 0 out))  `**
+          res:;;([dom=@tas =ship res=(unit *)] u.pay)
+    ::  ... p2: stale, so a %stale-notice and never a snub
+    (expect-eq !>(`%stale-notice) !>((fact-mark (snag 1 out))))
+    (expect-eq !>(*(set ship)) !>((inflight-of agent)))
+  ==
+::
+++  test-batch-crash-releases-every-slot-and-judges-nobody
+  =/  agent  gw-btc
+  =^  *  agent  (~(on-load agent bowl0) !>(synced-state))
+  =^  *  agent  (poke-writs agent ~[(batch-pass 1) (batch-pass 2)])
+  =^  *  agent  (~(on-arvo agent bowl0) (launch-wire 0) wake)
+  =^  cards  agent
+    (~(on-arvo agent bowl0) /verify-batch/0 [%khan %arow %.n %thread-fail ~])
+  ;:  weld
+    (expect-eq !>(~) !>((app-cards cards)))
+    (expect-eq !>(*(set ship)) !>((inflight-of agent)))
+  ==
+::
+::  The batch's leak guard releases ITS slots and no one else's -- not
+::  the next batch's, still being assembled; a verdict that arrives after
+::  it judges nobody.
+++  test-stuck-batch-releases-only-its-own-slots
+  =/  [p1=pass p2=pass p3=pass]  [(batch-pass 1) (batch-pass 2) (batch-pass 3)]
+  =/  agent  gw-btc
+  =^  *  agent  (~(on-load agent bowl0) !>(synced-state))
+  =^  *  agent  (poke-writs agent ~[p1 p2])
+  =^  *  agent  (~(on-arvo agent bowl0) (launch-wire 0) wake)
+  =^  *  agent  (poke-writs agent ~[p3])
+  =^  cards  agent  (~(on-arvo agent bowl0) /stuck-batch/0 wake)
+  =/  left  (inflight-of agent)
+  =^  late  agent
+    %+  ~(on-arvo agent bowl0)  /verify-batch/0
+    (batch-sign ~[[(fig-of p1) ~['spawn-matches']]])
+  ;:  weld
+    (expect-eq !>(~) !>((app-cards cards)))
+    (expect-eq !>((silt ~[(fig-of p3)])) !>(left))
+    (expect-eq !>(~) !>((app-cards late)))
+  ==
+::
+::  A state written by the revision before .batch (every field up to
+::  .trusted) loads with no batch open: the first writ opens one.
+::
+++  pre-batch-state
+  ^-  *
+  :*  `state:urb`[[0xdead.beef 961.100] ~ ~ ~]  :: urb-state
+      %.y                                        :: indexing
+      `[0xdead.beef 961.100]                     :: best
+      ~                                          :: inflight
+      ~                                          :: confidential
+      ~                                          :: attested
+      0                                          :: next-job
+      ~                                          :: sponsees
+      (silt ~[~wes])                             :: declined
+      [`custody-log:sa`~ ~]                      :: own
+      %.y                                        :: synced
+      ~                                          :: clean
+      [%from-epoch 963.104 %default ~2000.1.1]   :: origin
+      ~                                          :: trusted
+  ==
+::
+++  test-on-load-takes-a-pre-batch-state
+  =/  agent  gw-btc
+  =^  *  agent  (~(on-load agent bowl0) !>(pre-batch-state))
+  =^  out  agent  (poke-writs agent ~[(batch-pass 1)])
+  ;:  weld
+    ::  the rest of the state came through ...
+    (expect-eq !>((silt ~[~wes])) !>(;;((set ship) (peek-noun (~(on-peek agent bowl0) /x/declined)))))
+    ::  ... and a writ parks under a fresh batch 0
+    (expect-eq !>(~[(launch-wire 0)]) !>((turn out card-wire)))
+  ==
 --
