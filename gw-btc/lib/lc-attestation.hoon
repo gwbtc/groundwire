@@ -614,6 +614,14 @@
 ::    and answers per target, with exactly +match's arithmetic: target i
 ::    is in the result iff `(match:b-fil haz filter ~[spk-i])`.
 ::
+::    It does NOT decode with +de:gol:b-fil.  That reads one bit at a time
+::    by re-slicing the WHOLE remaining stream (+read-bit:str: a +met and
+::    an +end over the atom), so a filter costs O(values x size): about
+::    365 ms of a 380 ms block on a real-sized 8,000-element filter
+::    (ted/bench/liveness).  +gcs-at reads the same bits in place with a
+::    cursor.  Same values, same order, same crash on a truncated stream;
+::    tests/lib/lc-attestation checks it against +match:b-fil.
+::
 ++  match-many
   |=  [haz=@ux filter=hexb:bcm targets=(list [i=@ud spk=hexb:bcm])]
   ^-  (set @ud)
@@ -627,15 +635,35 @@
     |=([a=[v=@ *] b=[v=@ *]] (lth v.a v.b))
   =|  acc=(set @ud)
   =/  last-val=@  0
+  =/  pos=@ud  0
   |-  ^-  (set @ud)
   ?~  want  acc
   ?:  =(last-val v.i.want)
     $(want t.want, acc (~(put in acc) i.i.want))
   ?:  (gth last-val v.i.want)
     $(want t.want)
-  ?:  (lth wid.gcs p)  acc
-  =^  delta  gcs  (de:gol:b-fil gcs p)
+  ?:  (lth (sub wid.gcs pos) p)  acc
+  =^  delta  pos  (gcs-at gcs pos p)
   $(last-val (add delta last-val))
+::
+::  +gcs-at: the Golomb-Rice value at bit .pos of .gcs, and the next .pos
+::
+::    +de:gol:b-fil over the stream with its first .pos bits already
+::    read.  The stream is MSB-first: bit .pos of the stream is bit
+::    (wid - 1 - pos) of the atom.
+::
+++  gcs-at
+  |=  [gcs=bits:b-fil pos=@ud p=@ud]
+  ^-  [delta=@ pos=@ud]
+  =/  [q=@ud pos=@ud]
+    =|  q=@ud
+    |-  ^-  [@ud @ud]
+    ?>  (lth pos wid.gcs)
+    ?:  =(0 (cut 0 [(sub wid.gcs +(pos)) 1] dat.gcs))  [q +(pos)]
+    $(q +(q), pos +(pos))
+  ?>  (lte (add pos p) wid.gcs)
+  :_  (add pos p)
+  (add (cut 0 [(sub wid.gcs (add pos p)) p] dat.gcs) (lsh [0 p] q))
 ::
 ::  +scan-height: liveness signal contributed by a single block height.
 ::
@@ -653,7 +681,8 @@
   ::  a protocol violation and must be undeterminable, not clean.
   ?:  =(0 wid.filter.fres)
     (pure:m %error)
-  ?.  (match:b-fil block-hash.fres filter.fres ~[spk])
+  ::  +match-many, not +match:b-fil: the same answer, linear time
+  ?:  =(~ (match-many block-hash.fres filter.fres ~[[0 spk]]))
     (pure:m %no-match)
   ;<  b-cage=cage  bind:m  (watch-block-height our h)
   =/  bres  =/(u (lc-update b-cage) ?>(?=(%block-by-height -.u) p.u))

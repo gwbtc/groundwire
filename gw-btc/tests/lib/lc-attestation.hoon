@@ -1357,6 +1357,72 @@
     (expect !>((lth ~(wyt in got) 25)))
   ==
 ::
+::  ... on a real-sized filter too, and +gcs-at (the in-place decoder
+::  under +match-many) crashes exactly where +de:gol:b-fil does on a
+::  truncated stream.  A matcher that read one value too many, or one bit
+::  off, would disagree here on some probe.
+::
+++  test-match-many-is-match-on-a-big-filter
+  =/  haz  0xbead.feed
+  =/  ins=(list hexb:bcm)  (turn (gulf 1 2.000) |=(k=@ (w-spk-n (mul 7 k))))
+  =/  fil  (mk-filter haz ins)
+  ::  every member, and the outsiders between them
+  =/  probe=(list hexb:bcm)  (turn (gulf 1 600) |=(k=@ (w-spk-n (mul 5 k))))
+  =/  got  (match-many:lca haz fil (spun probe |=([s=hexb:bcm i=@ud] [[i s] +(i)])))
+  =/  want=(set @ud)
+    %-  silt
+    %+  murn  (gulf 0 (dec (lent probe)))
+    |=(i=@ud ?.((match:b-fil haz fil ~[(snag i probe)]) ~ `i))
+  ::  the multiples of 35 up to 3.000 are members: 85 of them
+  ;:  weld
+    (expect-eq !>(want) !>(got))
+    (expect !>((gte ~(wyt in got) 85)))
+  ==
+::
+++  test-gcs-at-decodes-like-de-gol
+  =/  fil  (mk-filter 0xbead.feed (turn (gulf 1 300) |=(k=@ (w-spk-n k))))
+  =/  [* gcs=bits:b-fil]  (parse-filter:b-fil fil)
+  =/  p  p:params:b-fil
+  ::  every value the stream holds, both ways, until either runs out
+  =/  slow
+    =|  acc=(list @)
+    |-  ^-  (list @)
+    ?:  (lth wid.gcs p)  (flop acc)
+    =/  r  (mule |.((de:gol:b-fil gcs p)))
+    ?:  ?=(%| -.r)  (flop `(list @)`[%crash acc])
+    $(gcs rest.p.r, acc [delta.p.r acc])
+  =/  fast
+    =|  acc=(list @)
+    =/  pos=@ud  0
+    |-  ^-  (list @)
+    ?:  (lth (sub wid.gcs pos) p)  (flop acc)
+    =/  r  (mule |.((gcs-at:lca gcs pos p)))
+    ?:  ?=(%| -.r)  (flop `(list @)`[%crash acc])
+    $(pos pos.p.r, acc [delta.p.r acc])
+  ::  a stream cut off inside a value: both must crash at the same value
+  =/  cut-gcs=bits:b-fil  [(sub wid.gcs 30) (rsh [0 30] dat.gcs)]
+  =/  slow-cut
+    =|  acc=(list @)
+    =/  g  cut-gcs
+    |-  ^-  (list @)
+    ?:  (lth wid.g p)  (flop acc)
+    =/  r  (mule |.((de:gol:b-fil g p)))
+    ?:  ?=(%| -.r)  (flop `(list @)`[%crash acc])
+    $(g rest.p.r, acc [delta.p.r acc])
+  =/  fast-cut
+    =|  acc=(list @)
+    =/  pos=@ud  0
+    |-  ^-  (list @)
+    ?:  (lth (sub wid.cut-gcs pos) p)  (flop acc)
+    =/  r  (mule |.((gcs-at:lca cut-gcs pos p)))
+    ?:  ?=(%| -.r)  (flop `(list @)`[%crash acc])
+    $(pos pos.p.r, acc [delta.p.r acc])
+  ;:  weld
+    (expect-eq !>(slow) !>(fast))
+    (expect-eq !>(300) !>((lent fast)))
+    (expect-eq !>(slow-cut) !>(fast-cut))
+  ==
+::
 ::  +verify-lc-batch: each peer's verdict is the one +verify-lc gives it,
 ::  and a peer whose log cannot be fetched gets none -- without taking the
 ::  others down with it.
