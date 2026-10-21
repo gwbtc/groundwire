@@ -99,6 +99,10 @@
 ++  synced-watch
   ^-  card:agent:gall
   [%pass /is-synced %agent [~zod %bitcoin-client] %watch /is-synced]
+::  the /best-block watch, which opens only once the light client is synced
+++  best-watch
+  ^-  card:agent:gall
+  [%pass /best-block %agent [~zod %bitcoin-client] %watch /best-block]
 ::
 ++  app-cards
   |=  cards=(list card:agent:gall)
@@ -773,8 +777,9 @@
     (expect-eq !>(`id:block:bitcoin`[0x0 0]) !>(;;(id:block:bitcoin bid)))
     ::  ... synced, NOT indexing ...
     (expect-eq !>(`*`[%.y [~ 963.150] %.n]) !>(`*`rdy))
-    ::  ... no timer, and the pane can see why
-    (expect-eq !>(0) !>((lent (app-cards cards))))
+    ::  ... no timer (only the /best-block watch the transition opens),
+    ::  and the pane can see why
+    (expect-eq !>(~[best-watch]) !>((app-cards cards)))
     (expect-eq !>(%pending) !>((scan-origin-mode scn)))
   ==
 ::  An %index-origin poke on a synced ship starts the scanner where it
@@ -814,7 +819,7 @@
   =/  scn  (peek-noun (~(on-peek agent bowl0) /x/scan))
   ;:  weld
     (expect-eq !>(`id:block:bitcoin`[0x0 0]) !>(;;(id:block:bitcoin bid)))
-    (expect-eq !>(0) !>((lent (app-cards cards))))
+    (expect-eq !>(~[best-watch]) !>((app-cards cards)))
     (expect-eq !>(%from-epoch) !>((scan-origin-mode scn)))
   ==
 ::  ... and never over an index that exists: an operator who chose a
@@ -831,7 +836,7 @@
   =/  bid  (peek-noun (~(on-peek agent bowl0) /x/block-id))
   ;:  weld
     (expect-eq !>(`id:block:bitcoin`[0x0 961.054]) !>(;;(id:block:bitcoin bid)))
-    (expect-eq !>(0) !>((lent (app-cards cards))))
+    (expect-eq !>(~[best-watch]) !>((app-cards cards)))
   ==
 ::  Bootstrap is one-shot: a second poke must not silently rewind the
 ::  cursor (it would mix two index epochs).
@@ -2206,5 +2211,93 @@
     %+  expect-eq
       !>  *(set ship)
       !>  (orphaned-points:uc index (silt ~[`@ux`0xb.10c1 0xb.10c2 0xdead.beef]))
+  ==
+::
+::  ---------------------------------------------------------------------
+::  /best-block OPENS AFTER THE SYNC, NOT AT BOOT
+::  ---------------------------------------------------------------------
+::
+::  %bitcoin-client gives a /best-block fact for every header it accepts.
+::  Subscribed from boot, the agent woke ~972,000 times during the initial
+::  sync for a tip nothing reads until .synced, and the sync ran ~30x
+::  slower than with the agent suspended (measured 2026-10-21).
+::
+++  test-boot-opens-no-best-block-watch
+  =/  agent  gw-btc
+  =^  cards  agent  ~(on-init agent bowl0)
+  ;:  weld
+    (expect !>(!(lien (app-cards cards) |=(c=card:agent:gall =(c best-watch)))))
+    ::  ... but it does watch /is-synced, which is what opens it later
+    (expect !>((lien (app-cards cards) |=(c=card:agent:gall =(c synced-watch)))))
+  ==
+::
+::  The order a real ship sees: synced first (no tip yet), the watch
+::  opens, the first tip arrives, and an index already told where to start
+::  starts THEN.
+++  test-first-tip-after-sync-starts-the-index
+  =/  agent  gw-btc
+  =^  *  agent  ~(on-init agent bowl0)
+  =^  *  agent
+    (~(on-poke agent bowl0) %noun !>([%index-origin %from-epoch 0 %user]))
+  =^  c-sync  agent  (~(on-agent agent bowl0) /is-synced (synced-sign &))
+  =/  bid0  ;;(id:block:bitcoin (peek-noun (~(on-peek agent bowl0) /x/block-id)))
+  =^  c-tip  agent  (~(on-agent agent bowl0) /best-block (new-block-sign 963.150))
+  =/  bid1  ;;(id:block:bitcoin (peek-noun (~(on-peek agent bowl0) /x/block-id)))
+  ;:  weld
+    (expect-eq !>(~[best-watch]) !>((app-cards c-sync)))
+    ::  nothing can start without a tip ...
+    (expect-eq !>(`id:block:bitcoin`[0x0 0]) !>(bid0))
+    ::  ... and it starts on the first one: cursor one below the epoch, timer armed
+    (expect-eq !>(`id:block:bitcoin`[0x0 963.103]) !>(bid1))
+    (expect !>(?=([[%pass [%timer ~] %arvo %b %wait *] ~] (app-cards c-tip))))
+  ==
+::
+::  A later tip is just a tip: no second bootstrap, no cards.
+++  test-later-tips-do-not-restart-anything
+  =/  agent  gw-btc
+  =^  *  agent  ~(on-init agent bowl0)
+  =^  *  agent  (~(on-agent agent bowl0) /is-synced (synced-sign &))
+  =^  *  agent  (~(on-agent agent bowl0) /best-block (new-block-sign 963.150))
+  =^  cards  agent  (~(on-agent agent bowl0) /best-block (new-block-sign 963.151))
+  (expect-eq !>(~) !>((app-cards cards)))
+::
+::  Already subscribed (a re-sync after the light client lost its peers):
+::  the transition opens no second watch.
+++  test-resync-opens-no-second-watch
+  =/  agent  gw-btc
+  =/  bow  bowl0
+  =.  wex.bow  (my ~[[[/best-block ~zod %bitcoin-client] [%.y /best-block]]])
+  =^  *  agent  ~(on-init agent bow)
+  =^  cards  agent  (~(on-agent agent bow) /is-synced (synced-sign &))
+  (expect !>(!(lien (app-cards cards) |=(c=card:agent:gall =(c best-watch)))))
+::
+::  A kick while unsynced does not re-open the flood; the next sync
+::  transition will.  A kick while synced re-opens at once.
+++  test-best-block-kick-rewatches-only-when-synced
+  =/  agent  gw-btc
+  =^  *  agent  ~(on-init agent bowl0)
+  =^  c-cold  agent  (~(on-agent agent bowl0) /best-block [%kick ~])
+  =^  *  agent  (~(on-agent agent bowl0) /is-synced (synced-sign &))
+  =^  c-warm  agent  (~(on-agent agent bowl0) /best-block [%kick ~])
+  ;:  weld
+    (expect-eq !>(~) !>((app-cards c-cold)))
+    (expect-eq !>(~[best-watch]) !>((app-cards c-warm)))
+  ==
+::
+::  With no tip until the sync, a writ on an unsynced ship must still be
+::  held as %unsynced -- whose fate re-reads /is-synced -- and not dropped
+::  as %no-tip, which would never ask again.
+++  test-unsynced-writ-with-no-tip-still-refreshes
+  =/  pas  (logged-pass ~[entry0])
+  =/  agent  gw-btc
+  =^  *  agent  ~(on-init agent bowl0)
+  =^  cards  agent
+    (~(on-poke agent bowl0) %noun (writ-vase-pass (fig-of pas) pas))
+  =/  out  (app-cards cards)
+  ;:  weld
+    ::  the %leave + %watch pair of +refresh-synced, and no verdict
+    (expect-eq !>(2) !>((lent out)))
+    (expect !>((lien out |=(c=card:agent:gall =(c synced-watch)))))
+    (expect !>((levy out |=(c=card:agent:gall ?=(~ (fact-mark c))))))
   ==
 --
