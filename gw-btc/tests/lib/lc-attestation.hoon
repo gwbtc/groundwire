@@ -832,6 +832,9 @@
     (expect-eq !>(2) !>((lent cards.s0)))
   ==
 ::  ---- height mismatch on a tx fetch -> strand fail ------------------
+::  (The refusal is returned through +set-timeout before the strand fails,
+::  so the fetch's own timer is rested on the way out: no-timers.)
+::
 ++  test-header-height-mismatch-fails-strand
   =/  s0  (start-verify 101)
   =/  s1  (answer-watch s0 (hdr-wire 778.000) (hdr-fact h-start 778.000))
@@ -840,7 +843,7 @@
   =/  s3  (answer-watch s2 (hdr-wire 100) (hdr-fact h-c0 99))
   ?>  ?=(%fail -.halt.s3)
   ;:  weld
-    (expect !>(=(~ cards.s3)))
+    (expect !>(=(~ (no-timers cards.s3))))
     (expect-eq !>(%attestation-height-mismatch) !>(-.err.halt.s3))
   ==
 ::  ---- txid mismatch on a tx fetch -> strand fail --------------------
@@ -851,7 +854,7 @@
   =/  s2  (answer-watch s1 (tx-wire h-start start-id) (tx-fact h-start 778.000 0xdead.beef start-tx))
   ?>  ?=(%fail -.halt.s2)
   ;:  weld
-    (expect !>(=(~ cards.s2)))
+    (expect !>(=(~ (no-timers cards.s2))))
     (expect-eq !>(%attestation-txid-mismatch) !>(-.err.halt.s2))
   ==
 ::  ---- the node's blocks carry no txids; we recompute them -----------
@@ -934,7 +937,7 @@
   =/  s2  (answer-watch s1 (tx-wire h-start start-id) tx-fact-empty)
   ?>  ?=(%fail -.halt.s2)
   ;:  weld
-    (expect !>(=(~ cards.s2)))
+    (expect !>(=(~ (no-timers cards.s2))))
     (expect-eq !>(%attestation-tx-not-found) !>(-.err.halt.s2))
   ==
 ::  ---- +verify-lc's EARLY ABORTS, and what each one is worth -----------
@@ -1048,5 +1051,431 @@
     (expect !>((shape a)))
     (expect !>((shape b)))
     (expect !>((shape c)))
+  ==
+::
+::  ====================================================================
+::  THE SHARED WALK: +scan-liveness-many and +verify-lc-batch
+::  ====================================================================
+::
+::  One walk for many outpoints must give each outpoint EXACTLY the answer
+::  its own +scan-liveness gives it, on any chain: same result, same
+::  progress pokes.  These tests drive both against a synthetic chain
+::  (+drive answers every light-client request from a model) and compare,
+::  and also pin the expected answers outright so a bug common to both
+::  walks cannot pass.
+::
+::  $blk: one block of the model.  .fil is exactly what its filter holds;
+::  .bad makes the light client misbehave at this height.
+::
++$  blk
+  $:  haz=@ux
+      fil=(list hexb:bcm)
+      txs=(list transaction:bcm)
+      bad=?(%ok %filter %block %empty)
+  ==
+::  the transaction store, for +verify-lc-batch's custody fetches
++$  lc-db
+  $:  hdrs=(map @ud @ux)
+      txs=(map [@ux @ux] [het=@ud t=tx:bc])
+  ==
+::
+::  +drive: run a strand to completion against the model
+::
+::    Answers each request the strand makes from .ch / .db and acks each
+::    progress poke, recording both.  Crashes if the strand waits without
+::    asking for anything (a hang) or asks for a block the model lacks.
+::
+++  drive
+  |=  [st=pace ch=(map @ud blk) db=lc-db]
+  ^-  [reqs=(list path) pokes=(list [ship @ud]) =pace]
+  =|  reqs=(list path)
+  =|  pokes=(list [ship @ud])
+  |-
+  ?.  ?=(%wait -.halt.st)  [(flop reqs) (flop pokes) st]
+  =/  cs  (no-timers cards.st)
+  ?>  ?=([* ~] cs)
+  =/  c=*  i.cs
+  ?:  ?=([%pass * %agent * %poke *] c)
+    =/  pn
+      ;;  $:  %pass  wir=path  %agent  gil=[@p @tas]  %poke  mar=@tas  typ=*
+              nun=[%gw-liveness-progress who=@p last=* to=@ud]
+          ==
+      c
+    $(st (answer-poke st), pokes [[who.nun.pn to.nun.pn] pokes])
+  =/  wn  ;;([%pass wir=path %agent gil=[@p @tas] %watch pax=path] c)
+  ?>  ?=([%watch *] wir.wn)
+  =/  wir=wire  t.wir.wn
+  =/  pax=path  pax.wn
+  =.  reqs  [pax reqs]
+  ?+    pax  ~|(unexpected-request+pax !!)
+      [%block-filter %height @ ~]
+    =/  h  (slav %ud i.t.t.pax)
+    =/  b  (~(got by ch) h)
+    =/  fact
+      ?-  bad.b
+        %filter  (filter-fact haz.b +(h) (mk-filter haz.b fil.b))
+        %empty   (filter-fact haz.b h [0 0x0])
+        ?(%ok %block)  (filter-fact haz.b h (mk-filter haz.b fil.b))
+      ==
+    $(st (answer-watch st wir fact))
+  ::
+      [%block %height @ ~]
+    =/  h  (slav %ud i.t.t.pax)
+    =/  b  (~(got by ch) h)
+    =/  het  ?:(?=(%block bad.b) +(h) h)
+    $(st (answer-watch st wir (block-fact haz.b het txs.b)))
+  ::
+      [%block-header %height @ ~]
+    =/  h  (slav %ud i.t.t.pax)
+    $(st (answer-watch st wir (hdr-fact (~(got by hdrs.db) h) h)))
+  ::
+      [%transaction @ @ ~]
+    =/  haz  (slav %ux i.t.pax)
+    =/  tid  (slav %ux i.t.t.pax)
+    =/  got  (~(get by txs.db) [haz tid])
+    ?~  got  $(st (answer-watch st wir tx-fact-empty))
+    $(st (answer-watch st wir (tx-fact haz het.u.got tid t.u.got)))
+  ==
+::
+::  the walk's value, out of a finished strand
+++  live-of
+  |=  st=pace
+  ^-  (unit ?)
+  ?>  ?=(%done -.halt.st)
+  !<((unit ?) value.halt.st)
+::
+++  lives-of
+  |=  st=pace
+  ^-  (list (unit ?))
+  ?>  ?=(%done -.halt.st)
+  !<((list (unit ?)) value.halt.st)
+::
+::  +one-walk / +many-walk: the two walks as vase strands, so +step runs them
+::
+++  one-walk
+  |=  [t=walk-target:lca best=@ud]
+  ^-  form:m
+  ;<  r=(unit ?)  bind:m
+    %:  scan-liveness:lca
+        ~zod  tip.t  tip-spk.t  tip-height.t  best
+        from.t  who.t  last.t  %.n
+    ==
+  (pure:m !>(r))
+::
+++  many-walk
+  |=  [ts=(list walk-target:lca) best=@ud]
+  ^-  form:m
+  ;<  r=(list (unit ?))  bind:m  (scan-liveness-many:lca ~zod ts best %.n)
+  (pure:m !>(r))
+::
+::  an outpoint [k 0], paying the P2TR key k, owned by .who
+++  w-spk     |=(k=@ux `hexb:bitcoin`(p2tr-spk k))
+++  w-spk-n   |=(k=@ux (bc-hexb-to-common (w-spk k)))
+++  w-target
+  |=  [k=@ux who=ship th=@ud from=(unit @ud)]
+  ^-  walk-target:lca
+  [[k 0 0] (w-spk k) th from who [th k]]
+::  a transaction spending [k 0]
+++  w-spend
+  |=  k=@ux
+  ^-  transaction:bcm
+  :*  0x0  0
+      ~[`transaction-input:bcm`[k 0 [0 0x0] 0xffff.ffff ~]]
+      ~[`transaction-output:bcm`[1 (w-spk-n 0xeeee)]]
+      0
+  ==
+::  a transaction paying .k AGAIN (a filter hit that is not a spend)
+++  w-pay
+  |=  k=@ux
+  ^-  transaction:bcm
+  :*  0x0  0
+      ~[`transaction-input:bcm`[0x1234 0 [0 0x0] 0xffff.ffff ~]]
+      ~[`transaction-output:bcm`[1 (w-spk-n k)]]
+      0
+  ==
+::
+::  The targets, across a +progress-every boundary (1.024):
+::
+::    A  tip 1.015, spent at 1.020
+::    B  tip 1.017, paid again at 1.022 (filter hit, no spend): unspent
+::    C  tip 1.016, resumed clean through 1.021: walks from 1.022
+::    D  tip 1.040, above the chain tip: degenerate, undeterminable
+::    F  tip 1.015, spent in its own block
+::    G  tip 1.025, resumed clean through 1.035: nothing left to walk
+::    H  tip 1.030 = the chain tip: one block, no checkpoint
+::
+++  w-best  1.030
+++  w-targets
+  ^-  (list walk-target:lca)
+  :~  (w-target 0xa1 ~nec 1.015 ~)
+      (w-target 0xb1 ~bud 1.017 ~)
+      (w-target 0xc1 ~wes 1.016 `1.021)
+      (w-target 0xd1 ~sev 1.040 ~)
+      (w-target 0xf1 ~per 1.015 ~)
+      (w-target 0x91 ~sut 1.025 `1.035)
+      (w-target 0x81 ~let 1.030 ~)
+  ==
+::
+::  the chain, 1.015 through 1.030; a coinbase in every block
+++  w-chain
+  |=  faults=(map @ud ?(%filter %block %empty))
+  ^-  (map @ud blk)
+  %-  malt
+  %+  turn  (gulf 1.015 1.030)
+  |=  h=@ud
+  ^-  [@ud blk]
+  =/  cb  (w-spk-n (add 0xcb00 h))
+  =/  bad  (fall (~(get by faults) h) %ok)
+  =/  haz=@ux  (add 0xab.0000 h)
+  :-  h
+  ?+  h  [haz ~[cb] ~ bad]
+    %1.015  [haz ~[cb (w-spk-n 0xa1) (w-spk-n 0xf1)] ~[(w-spend 0xf1)] bad]
+    %1.016  [haz ~[cb (w-spk-n 0xc1)] ~ bad]
+    %1.017  [haz ~[cb (w-spk-n 0xb1)] ~ bad]
+    %1.019  [haz ?:(=(%block bad) ~[cb (w-spk-n 0xb1)] ~[cb]) ~ bad]
+    %1.020  [haz ~[cb (w-spk-n 0xa1)] ~[(w-spend 0xa1)] bad]
+    %1.022  [haz ~[cb (w-spk-n 0xb1)] ~[(w-pay 0xb1)] bad]
+    %1.025  [haz ~[cb (w-spk-n 0x91)] ~ bad]
+    %1.030  [haz ~[cb (w-spk-n 0x81)] ~ bad]
+  ==
+::
+::  a clean chain, and one that misbehaves three ways: B's block at 1.019
+::  comes back at the wrong height (only B matched there), the 1.023
+::  filter comes back at the wrong height (everything walking there), and
+::  the 1.030 filter is zero-width.
+::
+++  clean-chain  (w-chain ~)
+++  faulty-chain
+  %-  w-chain
+  %-  malt
+  ^-  (list [@ud ?(%filter %block %empty)])
+  ~[[1.019 %block] [1.023 %filter] [1.030 %empty]]
+::
+::  each target's answer and checkpoints on .ch, walked one at a time
+++  lone-walks
+  |=  ch=(map @ud blk)
+  ^-  (list [(unit ?) (list [ship @ud]) (list path)])
+  %+  turn  w-targets
+  |=  t=walk-target:lca
+  =/  out  (drive (step (one-walk t w-best) ~) ch *lc-db)
+  [(live-of pace.out) pokes.out reqs.out]
+::
+::  ... and the same, from one shared walk
+++  shared-walk
+  |=  ch=(map @ud blk)
+  ^-  [lives=(list (unit ?)) pokes=(list [ship @ud]) reqs=(list path)]
+  =/  out  (drive (step (many-walk w-targets w-best) ~) ch *lc-db)
+  [(lives-of pace.out) pokes.out reqs.out]
+::
+::  Every target: shared answer = lone answer, and shared checkpoints for
+::  it = its lone checkpoints, in order.
+++  agree
+  |=  ch=(map @ud blk)
+  ^-  tang
+  =/  lone  (lone-walks ch)
+  =/  many  (shared-walk ch)
+  %-  zing
+  %+  turn  (gulf 0 (dec (lent w-targets)))
+  |=  i=@ud
+  =/  t  (snag i w-targets)
+  =/  [l=(unit ?) lp=(list [ship @ud]) *]  (snag i lone)
+  ;:  weld
+    (expect-eq !>(l) !>((snag i lives.many)))
+    %+  expect-eq  !>(lp)
+    !>((skim pokes.many |=([w=ship @] =(w who.t))))
+  ==
+::
+++  test-shared-walk-agrees-with-lone-walks
+  (agree clean-chain)
+::
+++  test-shared-walk-agrees-with-lone-walks-on-a-faulty-chain
+  (agree faulty-chain)
+::
+::  ... and both say what they should, outright.
+++  test-shared-walk-answers
+  =/  c  lives:(shared-walk clean-chain)
+  =/  f  lives:(shared-walk faulty-chain)
+  ;:  weld
+    %+  expect-eq
+      !>(`(list (unit ?))`~[`%.n `%.y `%.y ~ `%.n `%.y `%.y])
+      !>(c)
+    ::  B: its block came back wrong; C: walking at 1.023; H: empty filter.
+    ::  A was decided at 1.020 before any fault and keeps its answer.
+    %+  expect-eq
+      !>(`(list (unit ?))`~[`%.n ~ ~ ~ `%.n `%.y ~])
+      !>(f)
+  ==
+::
+::  The checkpoints: B and C cross 1.024 and finish; G finishes at once;
+::  H walked one block and leaves none; A and F were spent; D never ran.
+++  test-shared-walk-checkpoints
+  %+  expect-eq
+    !>  ^-  (list [ship @ud])
+        ~[[~bud 1.024] [~wes 1.024] [~bud 1.030] [~wes 1.030] [~sut 1.030]]
+    !>  pokes:(shared-walk clean-chain)
+::
+::  THE POINT: each filter once, each hit block once.  The lone walks
+::  fetch 1.015..1.030 between them many times over.
+++  test-shared-walk-fetches-each-block-once
+  =/  many  (shared-walk clean-chain)
+  =/  lone  (lone-walks clean-chain)
+  =/  filters
+    |=  ps=(list path)
+    (skim ps |=(p=path ?=([%block-filter *] p)))
+  =/  lone-filters
+    (roll (turn lone |=([* * r=(list path)] (lent (filters r)))) add)
+  ;:  weld
+    %+  expect-eq
+      !>((turn (gulf 1.015 1.030) |=(h=@ud /block-filter/height/(scot %ud h))))
+      !>((filters reqs.many))
+    ::  blocks: 1.015 (A F), 1.017 (B's own), 1.020 (A), 1.022 (B), 1.030 (H)
+    %+  expect-eq
+      !>  %+  turn  ~[1.015 1.017 1.020 1.022 1.030]
+          |=(h=@ud /block/height/(scot %ud h))
+      !>((skim reqs.many |=(p=path ?=([%block *] p))))
+    ::  A 6, B 14, C 9, F 1, H 1; D and G none
+    (expect-eq !>(31) !>(lone-filters))
+  ==
+::
+::  +match-many is +match, target by target.
+++  test-match-many-is-match-per-target
+  =/  haz  0xfeed.f00d
+  =/  ins=(list hexb:bcm)  (turn (gulf 1 40) |=(k=@ (w-spk-n k)))
+  =/  fil  (mk-filter haz ins)
+  =/  probe=(list hexb:bcm)
+    (weld (turn (gulf 1 12) |=(k=@ (w-spk-n (mul 3 k)))) (turn (gulf 100 112) w-spk-n))
+  =/  got  (match-many:lca haz fil (spun probe |=([s=hexb:bcm i=@ud] [[i s] +(i)])))
+  =/  want=(set @ud)
+    %-  silt
+    %+  murn  (gulf 0 (dec (lent probe)))
+    |=(i=@ud ?.((match:b-fil haz fil ~[(snag i probe)]) ~ `i))
+  ;:  weld
+    (expect-eq !>(want) !>(got))
+    ::  and it is not vacuous: the 12 members match, all but a false
+    ::  positive of the 13 outsiders do not
+    (expect !>((gte ~(wyt in got) 12)))
+    (expect !>((lth ~(wyt in got) 25)))
+  ==
+::
+::  ... on a real-sized filter too, and +gcs-at (the in-place decoder
+::  under +match-many) crashes exactly where +de:gol:b-fil does on a
+::  truncated stream.  A matcher that read one value too many, or one bit
+::  off, would disagree here on some probe.
+::
+++  test-match-many-is-match-on-a-big-filter
+  =/  haz  0xbead.feed
+  =/  ins=(list hexb:bcm)  (turn (gulf 1 2.000) |=(k=@ (w-spk-n (mul 7 k))))
+  =/  fil  (mk-filter haz ins)
+  ::  every member, and the outsiders between them
+  =/  probe=(list hexb:bcm)  (turn (gulf 1 600) |=(k=@ (w-spk-n (mul 5 k))))
+  =/  got  (match-many:lca haz fil (spun probe |=([s=hexb:bcm i=@ud] [[i s] +(i)])))
+  =/  want=(set @ud)
+    %-  silt
+    %+  murn  (gulf 0 (dec (lent probe)))
+    |=(i=@ud ?.((match:b-fil haz fil ~[(snag i probe)]) ~ `i))
+  ::  the multiples of 35 up to 3.000 are members: 85 of them
+  ;:  weld
+    (expect-eq !>(want) !>(got))
+    (expect !>((gte ~(wyt in got) 85)))
+  ==
+::
+++  test-gcs-at-decodes-like-de-gol
+  =/  fil  (mk-filter 0xbead.feed (turn (gulf 1 300) |=(k=@ (w-spk-n k))))
+  =/  [* gcs=bits:b-fil]  (parse-filter:b-fil fil)
+  =/  p  p:params:b-fil
+  ::  every value the stream holds, both ways, until either runs out
+  =/  slow
+    =|  acc=(list @)
+    |-  ^-  (list @)
+    ?:  (lth wid.gcs p)  (flop acc)
+    =/  r  (mule |.((de:gol:b-fil gcs p)))
+    ?:  ?=(%| -.r)  (flop `(list @)`[%crash acc])
+    $(gcs rest.p.r, acc [delta.p.r acc])
+  =/  fast
+    =|  acc=(list @)
+    =/  pos=@ud  0
+    |-  ^-  (list @)
+    ?:  (lth (sub wid.gcs pos) p)  (flop acc)
+    =/  r  (mule |.((gcs-at:lca gcs pos p)))
+    ?:  ?=(%| -.r)  (flop `(list @)`[%crash acc])
+    $(pos pos.p.r, acc [delta.p.r acc])
+  ::  a stream cut off inside a value: both must crash at the same value
+  =/  cut-gcs=bits:b-fil  [(sub wid.gcs 30) (rsh [0 30] dat.gcs)]
+  =/  slow-cut
+    =|  acc=(list @)
+    =/  g  cut-gcs
+    |-  ^-  (list @)
+    ?:  (lth wid.g p)  (flop acc)
+    =/  r  (mule |.((de:gol:b-fil g p)))
+    ?:  ?=(%| -.r)  (flop `(list @)`[%crash acc])
+    $(g rest.p.r, acc [delta.p.r acc])
+  =/  fast-cut
+    =|  acc=(list @)
+    =/  pos=@ud  0
+    |-  ^-  (list @)
+    ?:  (lth (sub wid.cut-gcs pos) p)  (flop acc)
+    =/  r  (mule |.((gcs-at:lca cut-gcs pos p)))
+    ?:  ?=(%| -.r)  (flop `(list @)`[%crash acc])
+    $(pos pos.p.r, acc [delta.p.r acc])
+  ;:  weld
+    (expect-eq !>(slow) !>(fast))
+    (expect-eq !>(300) !>((lent fast)))
+    (expect-eq !>(slow-cut) !>(fast-cut))
+  ==
+::
+::  +verify-lc-batch: each peer's verdict is the one +verify-lc gives it,
+::  and a peer whose log cannot be fetched gets none -- without taking the
+::  others down with it.
+::
+++  b-chain
+  ^-  (map @ud blk)
+  %-  malt
+  ^-  (list [@ud blk])
+  :~  [101 [h-c1 ~[tip-spk-bcm] ~[(bc-to-common c1-tx)] %ok]]
+      [102 [0xc2 ~[(bc-hexb-to-common (p2tr-spk 0xc0ff.ee00))] ~ %ok]]
+  ==
+++  b-db
+  ^-  lc-db
+  :-  (malt `(list [@ud @ux])`~[[778.000 h-start] [100 h-c0] [101 h-c1]])
+  %-  malt
+  ^-  (list [[@ux @ux] @ud tx:bc])
+  :~  [[h-start start-id] [778.000 start-tx]]
+      [[h-c0 c0-id] [100 c0-tx]]
+      [[h-c1 c1-id] [101 c1-tx]]
+  ==
+::  a log whose tip transaction the light client does not have
+++  lost-sat
+  ^-  self-attestation:sa
+  [~bud carried-pass ~[[c0-id 100 `open0] [0xdead 101 ~]]]
+::
+++  test-batch-verdicts-match-lone-verdicts
+  =/  other=self-attestation:sa  [~nec carried-pass chain]
+  =/  lone
+    |=  sat=self-attestation:sa
+    =/  out  (drive (step (verify-lc:lca sat ~ no-points 102 ~) ~) b-chain b-db)
+    (done-result pace.out)
+  =/  out
+    %-  drive  :_  [b-chain b-db]
+    %+  step
+      %:  verify-lc-batch:lca
+          ~[[good-sat ~ ~] [lost-sat ~ ~] [other ~ ~]]
+          no-points  102
+      ==
+    ~
+  ?>  ?=(%done -.halt.pace.out)
+  =/  got  !<((list [ship result:sa hexb:bitcoin]) value.halt.pace.out)
+  ;:  weld
+    %+  expect-eq
+      !>  ^-  (list [ship result:sa hexb:bitcoin])
+          :~  [who.good-sat (lone good-sat)]
+              [~nec (lone other)]
+          ==
+      !>(got)
+    ::  the real peer's verdict passed, so the comparison has teeth
+    (expect !>(ok.verdict:-:(lone good-sat)))
+    ::  and the shared walk ran once, for both: 101 and 102, once each
+    %+  expect-eq
+      !>(~[/block-filter/height/101 /block-filter/height/102])
+      !>((skim reqs.out |=(p=path ?=([%block-filter *] p))))
   ==
 --

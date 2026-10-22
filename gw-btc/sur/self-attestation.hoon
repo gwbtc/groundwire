@@ -284,6 +284,7 @@
 +$  strand-death
   $%  [%peer who=@p job=@ud]        ::  verifying somebody else's attestation
       [%own job=@ud entries=@ud]    ::  validating our own custody log
+      [%batch job=@ud whos=(list @p)]  ::  one shared walk for many peers
   ==
 ::
 ::  On success, `sont.own` in point is the derived (and checked-unspent) tip.

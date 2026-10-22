@@ -48,8 +48,10 @@
 ::  $inflight-writ: the single verification job a ship may have
 ::
 ::    single-flight per ship: while one exists, every further
-::    %jael-writ for that ship is dropped silently.  job disambiguates
-::    the thread/timeout wires of successive jobs for the same ship.
+::    %jael-writ for that ship is dropped (with a line).  job names the
+::    BATCH the ship is verified in: every ship parked under the same
+::    .batch shares one thread, one wire (/verify-batch/<job>) and one
+::    leak guard (/stuck-batch/<job>).
 ::
 +$  inflight-writ
   $:  dom=@tas
@@ -186,6 +188,18 @@
       ::  otherwise.  ops/doc/gevulot-state-model.md section 9.
       ::
       trusted=(map ship [=pass since=@da])
+      ::  .batch: the verification batch now being ASSEMBLED, by job.
+      ::  A %jael-writ does not launch a thread; it parks under this job
+      ::  (opening it, and arming a zero-delay behn timer, if none is
+      ::  open) and the timer launches ONE thread for every writ parked
+      ::  meanwhile (+verify-lc-batch:lca walks the chain once for all
+      ::  of them).  Writs arrive in bursts -- every peer's packet after
+      ::  a restart, %gevulot's recheck sweep -- and the walk, one
+      ::  compact filter per block since the peer last moved its sat, is
+      ::  nearly all of a verification's cost, so a burst of N peers
+      ::  costs about one walk instead of N.  ~ when no batch is open.
+      ::
+      batch=(unit @ud)
   ==
 ::  $index-origin: the public index's start and its provenance.
 ::
@@ -199,6 +213,24 @@
       start=@ud
       decided-by=?(%causeway %user %default)
       at=@da
+  ==
+::  $gw-state-16: the shape immediately before .batch.
+::
++$  gw-state-16
+  $:  urb-state=state:urb
+      indexing=?
+      best=(unit id:block:bc)
+      inflight=(map ship inflight-writ)
+      confidential=(set ship)
+      attested=(map ship sont:ord)
+      next-job=@ud
+      sponsees=(map ship sponsee)
+      declined=(set ship)
+      own=own-custody
+      synced=?
+      clean=(map ship [last=[height=@ud =txid:ord] to=@ud])
+      origin=index-origin
+      trusted=(map ship [=pass since=@da])
   ==
 ::  $gw-state-15: the shape immediately before .clean and .origin.
 ::
@@ -439,6 +471,22 @@
     =.  state  u.cur
     :_  this
     (own-spon-cards our.bowl now.bowl)
+  ::  -16 is the current shape minus .batch: no batch is being assembled,
+  ::  and the jobs in .inflight were launched one thread each by the old
+  ::  revision, which answer on /verify as before.
+  ::
+  =/  o16  (mole |.(;;(gw-state-16 nou)))
+  ?^  o16
+    =/  ext=gw-state
+      :*  urb-state.u.o16
+          indexing.u.o16  best.u.o16  inflight.u.o16
+          confidential.u.o16  attested.u.o16
+          next-job.u.o16  sponsees.u.o16  declined.u.o16  own.u.o16
+          synced.u.o16  clean.u.o16  origin.u.o16  trusted.u.o16  ~
+      ==
+    =.  state  ext
+    :_  this
+    (own-spon-cards our.bowl now.bowl)
   ::  -15 is the current shape minus .clean and .origin; every walk simply
   ::  starts from its custody entry once more, and an index that exists
   ::  is recorded as what every ship so far did: the epoch bootstrap.
@@ -451,7 +499,7 @@
           confidential.u.o15  attested.u.o15
           next-job.u.o15  sponsees.u.o15  declined.u.o15  own.u.o15
           synced.u.o15  ~
-          (migrated-origin num.block-id.urb-state.u.o15 now.bowl)  ~
+          (migrated-origin num.block-id.urb-state.u.o15 now.bowl)  ~  ~
       ==
     `this(state ext)
   ::  A -14 state carries .reorg-halt, the scanner's reorg STOP flag.  It
@@ -475,7 +523,7 @@
           confidential.u.o14  attested.u.o14
           next-job.u.o14  sponsees.u.o14  declined.u.o14  own.u.o14
           synced.u.o14  ~
-          (migrated-origin num.block-id.urb-state.u.o14 now.bowl)  ~
+          (migrated-origin num.block-id.urb-state.u.o14 now.bowl)  ~  ~
       ==
     ?~  reorg-halt.u.o14  `this(state ext)
     %-  %-  slog
@@ -497,7 +545,7 @@
           confidential.u.o13  attested.u.o13
           next-job.u.o13  sponsees.u.o13  declined.u.o13  own.u.o13
           synced.u.o13  ~
-          (migrated-origin num.block-id.urb-state.u.o13 now.bowl)  ~
+          (migrated-origin num.block-id.urb-state.u.o13 now.bowl)  ~  ~
       ==
     `this(state ext)
   ::  A -12 state carries .publicizing, which no longer exists: the block
@@ -514,7 +562,7 @@
           confidential.u.o12  attested.u.o12
           next-job.u.o12  sponsees.u.o12  declined.u.o12  own.u.o12
           synced.u.o12  ~
-          (migrated-origin num.block-id.urb-state.u.o12 now.bowl)  ~
+          (migrated-origin num.block-id.urb-state.u.o12 now.bowl)  ~  ~
       ==
     `this(state ext)
   =/  o11  (mole |.(;;(gw-state-11 nou)))
@@ -525,7 +573,7 @@
           confidential.u.o11  attested.u.o11
           next-job.u.o11  sponsees.u.o11  declined.u.o11  own.u.o11
           %.n  ~
-          (migrated-origin num.block-id.urb-state.u.o11 now.bowl)  ~
+          (migrated-origin num.block-id.urb-state.u.o11 now.bowl)  ~  ~
       ==
     :_  this(state ext)
     ~[(watch-synced our.bowl)]
@@ -535,7 +583,7 @@
         indexing.o  best.o  inflight.o  confidential.o
         attested.o  next-job.o  sponsees.o  declined.o
         *own-custody  %.n  ~
-        (migrated-origin num.block-id.urb-state.o now.bowl)  ~
+        (migrated-origin num.block-id.urb-state.o now.bowl)  ~  ~
     ==
   :_  this(state ext)
   ~[(watch-synced our.bowl)]
@@ -679,141 +727,24 @@
     =/  poke  ;;(jael-poke:urb q.vase)
     ?-    -.poke
         %jael-writ
-      ::  EVERY drop below is announced, and now that is TRUE.  Phase 5b's
-      ::  finding 9 was that %jael-writ has eleven distinct pre-verification
-      ::  exits which from outside look identical to "nobody is talking to
-      ::  this ship".  Phase 6.2 then paid for it for real: a runtime fault
-      ::  stranded the single-flight slot and the two retries that would
-      ::  have diagnosed it were swallowed without a word.  bf90840
-      ::  announced nine of them and this comment claimed all of
-      ::  them; the clean-room run (6.7) found the other three still mute
-      ::  -- and all three of THOSE emit a sticky snub.
+      ::  Admit it (+admit-writ announces every drop), then PARK it: the
+      ::  ship takes its single-flight slot now, under the batch being
+      ::  assembled, and the thread is launched for the whole batch when
+      ::  /launch-batch fires -- in the very next event, so everything
+      ::  jael or %gevulot pokes in THIS event (a burst of packets after
+      ::  a restart, a recheck sweep) walks the chain once.  See .batch.
       ::
-      ::  So every exit goes through +drop-writ, which takes a $writ-drop
-      ::  and derives BOTH the log line (+writ-drop-report:lsa) and the
-      ::  cards (+writ-drop-fate:lsa) from it.  Neither can be omitted and
-      ::  the two cannot disagree; a twelfth disposition does not
-      ::  compile until it has a line and a fate.
-      ::
-      ::  These lines are one-per-dropped-writ, so they are also the rate
-      ::  at which a peer is retrying, which is itself the thing you want
-      ::  to know.
-      ::
-      ::  Single-flight per ship: at most one verification job, and that
-      ::  is now the ONLY single-flight there is -- an on-chain
-      ::  publication takes the same slot, because it is the same
-      ::  self-attestation arriving by a different road.  A duplicate or
-      ::  replacement writ while one is in flight is dropped -- the
-      ::  peer's retries re-enter after the verdict, and the on-chain
-      ::  cost of minting states is the rate limit.  No queue, no slot
-      ::  economy.
-      ?:  (~(has by inflight) who.poke)
-        :_  this
-        (drop-writ our.bowl dom.poke who.poke %in-flight ~)
-      ::  A ship whose sponsorship we declined re-attests on every
-      ::  retry; short-circuit before spending a full verification on
-      ::  it.  Clearing the entry (%gw-sponsor-clear) restores normal
-      ::  handling immediately -- the refusal is never sticky in the
-      ::  kernel, only here.
-      ?:  (~(has in declined) who.poke)
-        :_  this
-        (drop-writ our.bowl dom.poke who.poke %declined ~)
-      ?~  sat=(pass-attestation [dom who pass]:poke)
-        ::  Two shapes we decline to JUDGE rather than judge negatively,
-        ::  because a negative verdict becomes a Jael %fail and an Ames
-        ::  snub:
-        ::
-        ::    - the public onboarding packet: a valid suite-C %gw-btc pass
-        ::      with no xtr tail at all, resolved by the block scanner.
-        ::      Its temporary absence from the index is not evidence.
-        ::
-        ::    - a pass minted under a FOREIGN protocol kelvin: we cannot
-        ::      verify it and must not blacklist it.  Snubbing here would
-        ::      make old and new ships mutually snub each other across a
-        ::      kelvin bump, i.e. partition the network on upgrade.
-        ::
-        ::  Everything else that fails to decode really is malformed.
-        ::  All three were silent, and the third SNUBS -- an operator
-        ::  watching a peer get blacklisted saw nothing whatsoever, on
-        ::  the one path where the two harmless cases and the destructive
-        ::  one are told apart by a predicate they cannot see.
-        ::
-        ?:  (public-pass [dom who pass]:poke)
-          :_  this
-          (drop-writ our.bowl dom.poke who.poke %onboarding ~)
-        ?:  (foreign-kelvin [dom who pass]:poke)
-          :_  this
-          (drop-writ our.bowl dom.poke who.poke %foreign-kelvin ~)
-        :_  this
-        (drop-writ our.bowl dom.poke who.poke %undecodable ~)
-      ::  A present, canonically decoded xtr must contain the spawn opening.
-      ::  The raw-0 public shape was classified above before +from-xtr.
-      ?~  chain.u.sat
-        :_  this
-        (drop-writ our.bowl dom.poke who.poke %empty-log ~)
-      ?:  (gth (lent chain.u.sat) max-custody-log)
-        :_  this
-        %-  drop-writ
-        :*  our.bowl  dom.poke  who.poke
-            %log-too-long  (lent chain.u.sat)  max-custody-log
-        ==
-      ?:  (known-public who.poke)
-        :_  this
-        (drop-writ our.bowl dom.poke who.poke %already-public ~)
-      ::  ------------------------------------------------------------
-      ::  READINESS.  Drop until the LIGHT CLIENT can actually answer;
-      ::  readiness is infrastructure, never evidence.
-      ::  ------------------------------------------------------------
-      ::
-      ::  This gate was `?~ best` and that was NOT a readiness check.
-      ::  %bitcoin-client answers a fresh /best-block subscription with the
-      ::  GENESIS block, so `best` is set within milliseconds of boot and a
-      ::  ship 961,000 blocks behind sailed straight through.  It then
-      ::  judged a real attestation against a chain it had never seen and
-      ::  snubbed the honest comet it sponsors (live mainnet 2026-08-06,
-      ::  Phase 6.1).  Three things must hold now:
-      ::
-      ::    1. `best` exists -- it is the tip the strand scans up to, and
-      ::       the strand must NOT re-read /best-block itself (persistent
-      ::       subscription, never kicks).
-      ::    2. the light client says it is SYNCED: block headers AND filter
-      ::       headers at the tip, with live peers.  The BIP-158 liveness
-      ::       scan is a filter-header consumer, so nothing less will do.
-      ::    3. the tip we believe in actually COVERS this log's evidence.
-      ::       Belt and braces for (2): it is the property the verification
-      ::       mathematically needs, it is checkable from the writ itself,
-      ::       and it is what stops +scan-liveness being handed a range
-      ::       that runs backwards.
-      ::
-      ::  A writ that fails any of these gets NO verdict.  Dropping is
-      ::  already safe -- the peer retransmits, and the log line above says
-      ::  how often -- whereas judging is not.
-      ::
-      ::  Deliberately NOT gated on .indexing.  Confidential verification
-      ::  needs nothing from the public index except the sponsor-existence
-      ::  set, which is now unevaluable-when-empty rather than false, so a
-      ::  light-client-only deployment still verifies unsponsored comets.
-      ::
-      ::  .synced FIRST: there is no tip until the light client is synced
-      ::  (+best-block-cards), and only the %unsynced fate re-reads the
-      ::  light client's answer, because it may have caught up without
-      ::  telling us.  See +refresh-synced and +writ-drop-fate:lsa.
-      ?.  synced
-        :_  this
-        (drop-writ our.bowl dom.poke who.poke %unsynced ?~(best 0 num.u.best))
-      ?~  best
-        :_  this
-        (drop-writ our.bowl dom.poke who.poke %no-tip ~)
-      =/  need=@ud  (log-top-height u.sat)
-      ?.  (gte num.u.best need)
-        :_  this
-        (drop-writ our.bowl dom.poke who.poke %tip-below-log num.u.best need)
-      =/  job  next-job
-      =.  next-job  +(next-job)
-      =/  req=inflight-writ  [dom.poke pass.poke u.sat job]
+      =/  adm  (admit-writ our.bowl [dom who pass]:poke)
+      ?:  ?=(%| -.adm)  [p.adm this]
+      =/  job=@ud  ?~(batch next-job u.batch)
+      =/  req=inflight-writ  [dom.poke pass.poke p.adm job]
       =.  inflight  (~(put by inflight) who.poke req)
+      ?.  =(~ batch)  `this
+      =:  batch     `job
+          next-job  +(job)
+        ==
       :_  this
-      (verify-cards %verify q.byk.bowl now.bowl who.poke req num.u.best)
+      ~[[%pass /launch-batch/(scot %ud job) %arvo %b %wait now.bowl]]
     ::
         %jael-anew
       ::  Our own comet asking for a fresh self-attestation.
@@ -1315,6 +1246,90 @@
     %-  (slog leaf+"%gw-btc: releasing stuck %anew self-validation slot" ~)
     `this(pending.own ~)
   ::
+      ::  The batch being assembled is complete: every %jael-writ parked
+      ::  under .job since the first one opened it.  ONE thread for all of
+      ::  them, and one leak guard.  A writ arriving from here on opens the
+      ::  next batch.  Entries can have left meanwhile (the block scanner
+      ::  drops a slot it indexes as public, %gw-forget-peer), so an empty
+      ::  batch is possible and launches nothing.
+      ::
+      [%launch-batch job=@ ~]
+    ?.  ?=([%behn %wake *] sign-arvo)
+      (on-arvo:def wire sign-arvo)
+    =/  job  (slav %ud i.t.wire)
+    ?.  =(batch `job)  `this
+    =.  batch  ~
+    =/  mine  -:(split-batch job)
+    ?~  mine  `this
+    ?~  best
+      ::  Unreachable: +admit-writ held every parked writ to a tip, and
+      ::  .best is never unset.  No verdict is safe without one, so
+      ::  release the slots and let the peers' retries re-enter.
+      %-  (slog leaf+"%gw-btc: no chain tip at launch; releasing {<(lent mine)>} verification slots (batch job {<job>})" ~)
+      `this(inflight +:(split-batch job))
+    :_  this
+    (verify-batch-cards q.byk.bowl now.bowl job mine num.u.best)
+  ::
+      ::  A batch's leak guard: release every slot the batch still holds,
+      ::  with no verdict, exactly as +stuck-job-guard does for one ship.
+      ::  Silent when there is nothing left, for the same reason.
+      ::
+      [%stuck-batch job=@ ~]
+    ?.  ?=([%behn %wake *] sign-arvo)
+      (on-arvo:def wire sign-arvo)
+    =/  job  (slav %ud i.t.wire)
+    =/  [mine=(list [who=ship req=inflight-writ]) rest=(map ship inflight-writ)]
+      (split-batch job)
+    ?~  mine  `this
+    %-  (slog leaf+"%gw-btc: releasing {<(lent mine)>} stuck verification slots (batch job {<job>})" ~)
+    `this(inflight rest)
+  ::
+      ::  A batch's shared liveness walk finished (+verify-lc-batch:lca).
+      ::  Every slot the batch still holds is released first; then each
+      ::  verdict takes +settle-verdict.  A ship whose slot was released
+      ::  meanwhile is discarded with one line.  A crash judges nobody.
+      ::
+      ::  (/verify, below, is the pre-batch one-ship wire.  It stays so a
+      ::  thread launched by the previous revision, still running across
+      ::  the upgrade, lands on the same settlement rather than crashing
+      ::  the agent; %claim threads never used it.)
+      ::
+      [%verify-batch job=@ ~]
+    =/  job  (slav %ud i.t.wire)
+    =/  [mine=(list [who=ship req=inflight-writ]) rest=(map ship inflight-writ)]
+      (split-batch job)
+    =.  inflight  rest
+    ?+    sign-arvo  (on-arvo:def wire sign-arvo)
+        [%khan %arow *]
+      ?.  -.p.sign-arvo
+        ?>  ?=([%khan %arow %.n *] sign-arvo)
+        %-  %-  slog
+            %:  strand-death-report:lsa
+                [%batch job (turn mine head)]
+                -.p.p.sign-arvo
+              +.p.p.sign-arvo
+            ==
+        `this
+      ?>  ?=([%khan %arow %.y %noun *] sign-arvo)
+      =/  [%khan %arow %.y %noun =vase]  sign-arvo
+      =/  outs  !<((list [who=ship res=result:sa tip-spk=hexb:bc]) vase)
+      =/  held=(map ship inflight-writ)  (malt mine)
+      =|  cards=(list card)
+      |-
+      ?~  outs  [cards this]
+      =/  req  (~(get by held) who.i.outs)
+      ?~  req
+        %-  %-  slog
+            :~  leaf+"%gw-btc: discarding a verdict for {(scow %p who.i.outs)} (batch job {<job>}): it holds no verification slot"
+                leaf+"  (released by the ~h2 leak guard, or dropped by the block scanner;"
+                leaf+"   no verdict is emitted, and the peer's next packet re-runs it)"
+            ==
+        $(outs t.outs)
+      =^  cs  state
+        (settle-verdict our.bowl now.bowl who.i.outs u.req res.i.outs)
+      $(outs t.outs, cards (weld cards cs))
+    ==
+  ::
       [%verify ship=@ job=@ ~]
     =/  who  (slav %p i.t.wire)
     =/  job  (slav %ud i.t.t.wire)
@@ -1362,160 +1377,8 @@
       =/  [%khan %arow %.y %noun =vase]  sign-arvo
       =/  [res=result:sa tip-spk=hexb:bc]
         !<([result:sa hexb:bc] vase)
-      ::  A concurrently indexed public spawn wins this race.  It no longer
-      ::  belongs to the confidential verifier, but that is not evidence the
-      ::  peer supplied a bad attestation, so do not emit a sticky failure.
-      ?:  (known-public who)
-        %-  %-  slog
-            :~  leaf+"%gw-btc: verdict for {(scow %p who)} discarded: the block scanner indexed it as PUBLIC first"
-                leaf+"  (it is no longer the confidential verifier's to judge; not evidence"
-                leaf+"   against the peer, so no verdict is emitted and nothing is snubbed)"
-            ==
-        `this
-      %-  (slog (report:lsa verdict.res))
-      ::  THE SECOND DOORWAY ONTO THE SNUB PATH.  ++run-checks can say ok
-      ::  and this agent can still decline, for reasons that are about OUR
-      ::  state rather than the peer's evidence.  Those refusals used to
-      ::  fall straight through to the negative branch below, so a peer
-      ::  with a cryptographically perfect attestation could be snubbed --
-      ::  stickily -- for something it neither sent nor could observe.
-      ::  +local-refusal names them; +refusal-class:lsa classes them.
-      ::
-      =/  refused=(unit refusal:sa)  (local-refusal who req res)
-      =/  verified=(unit point:urb)
-        ?.  &(ok.verdict.res ?=(~ refused))  ~
-        ?~  point.res  ~
-        `u.point.res(pass.net pass.req)
-      ?~  verified
-        ::  Decisions addendum section 3, on the PACKET path.  A verdict
-        ::  that failed ONLY because the evidence is out of date is not
-        ::  fraud, and emitting res=~ here would make jael %fail and ames
-        ::  SNUB -- which then blocks the very packet that would fix it.
-        ::  Observed on mainnet: a comet performed an honest, correctly
-        ::  formed state update; its ship kept sending the attestation it
-        ::  booted with; its own SPONSOR verified that packet, found the
-        ::  tip spent, and snubbed it forever.
-        ::
-        ::  So route staleness to the same %stale outcome the scanner
-        ::  path already produces (+detect-stale -> +stale-card): jael
-        ::  drops the point if it holds one and ames demotes the peer to
-        ::  a fresh alien, never a snub, so the refreshed attestation can
-        ::  arrive.  The same physical fact must take the same path
-        ::  whether the scanner or the inbox saw it first.
-        ::
-        ::  Emitting %stale for a ship jael never verified under this
-        ::  domain is a no-op there (it checks .hep first), so this is
-        ::  also the "stay silent" case, without a second code path.
-        ::
-        ::  We deliberately do NOT drop our own indexes here.  The peer
-        ::  is the only thing that can fix this, by re-attesting, and
-        ::  keeping .attested/.unv-ids means +tracked-anchor still
-        ::  supplies the anchor that proves the REPLACEMENT log extends
-        ::  the one we already verified.  Our scanner drops them itself
-        ::  when it reaches the block that spent the sat.
-        ::
-        ::  The THIRD outcome, and the one Phase 6.1 proved was missing.
-        ::  A verdict whose only failures are checks we could not EVALUATE
-        ::  says nothing about the peer, so we say nothing about the peer.
-        ::  Not %fail (a snub), not even %stale (a demotion): silence, and
-        ::  the peer's next retransmission gets a fresh look once whatever
-        ::  we were missing has arrived.  See +unknown-checks in
-        ::  lib/self-attestation for what qualifies and why.
-        ::
-        ::  ALL THREE OUTCOMES, IN ONE SWITCH OVER A CLOSED UNION.  This
-        ::  used to be a chain of ?: whose final else-branch was the snub,
-        ::  so anything the two predicates did not recognise -- a
-        ::  +verify-lc early abort, a local refusal -- arrived at the
-        ::  destructive outcome by DEFAULT.  A ?- over $verdict-class has
-        ::  no default: a fourth outcome stops the compiler right here.
-        ::
-        ::  The class comes from the refusal when there was one (the
-        ::  verdict itself passed every check, so it has nothing to say
-        ::  about the peer), and otherwise from the failing checks.
-        ::
-        =/  class=verdict-class:sa
-          ?^  refused  (refusal-class:lsa u.refused)
-          (classify:lsa verdict.res)
-        ?-    class
-            %unknown
-          %-  %-  slog
-              ?^  refused
-                :~  leaf+"%gw-btc: attestation for {(scow %p who)} passed, but we refused it locally ({<u.refused>}); emitting no verdict"
-                    leaf+"  (that refusal is about OUR state, not the peer's evidence, so it"
-                    leaf+"   is not something the peer can be blamed -- or snubbed -- for)"
-                ==
-              :~  leaf+"%gw-btc: attestation for {(scow %p who)} is UNDETERMINED; emitting no verdict"
-                  leaf+"  (the [??] checks above could not be evaluated from what we can see;"
-                  leaf+"   that is our ignorance, not the peer's fraud -- it will be retried)"
-              ==
-          `this
-        ::
-            %stale
-          %-  %-  slog
-              :~  leaf+"%gw-btc: attestation for {(scow %p who)} is STALE, not invalid"
-                  leaf+"  (its identity sat has moved; demoting to alien, never snubbing)"
-              ==
-          :_  this
-          ~[(stale-card dom.req who)]
-        ::
-            %fraud
-          ::  A negative verdict is destructive: jael %fails and ames snubs,
-          ::  stickily, which then blocks the packet that could correct it.
-          ::  It has never announced itself -- Phase 6.7 found the snub
-          ::  itself to be invisible in the logs, discoverable only through
-          ::  .^(/snubbed) -- so say it here, at the one place that causes
-          ::  it.
-          ::
-          =/  why=tape
-            ?^  refused
-              "its checks passed but the result was refused locally ({<u.refused>}), and that refusal is classed as fraud"
-            "the [XX] checks above are fraud-class: evidence that was never true, not evidence that expired"
-          %-  %-  slog
-              :~  leaf+"%gw-btc: SNUBBING {(scow %p who)} on a negative %gw-btc verdict"
-                  leaf+"  {why}"
-                  leaf+"  (a snub is sticky and blocks the packet that would correct it;"
-                  leaf+"   inspect with .^(/snubbed) and undo with %snub %deny %del)"
-              ==
-          :_  this
-          ~[(verdict-card dom.req who ~)]
-        ==
-      ::  Sponsorship decision point.  A valid attestation whose snapshot
-      ::  names US as sponsor IS the sponsorship request -- there is no
-      ::  separate handshake and no consent signature.  Declining is
-      ::  NOT a %fail: the attestation is valid, only the sponsorship
-      ::  role is refused, so we stay silent (no verdict) rather than
-      ::  emitting a negative one that would snub a legitimate ship.
-      ::
-      ::  Silence withholds the point, so the peer never becomes %known
-      ::  here and we never acquire a lane for it -- which is exactly
-      ::  what stops us relaying (+on-hear-forward forwards for any
-      ::  ship we hold a lane to).  It also declines direct contact;
-      ::  splitting those two would need a kernel no-relay gate, which
-      ::  is deferred until a policy actually wants it.
-      ::
-      =/  claims-us=?
-        ?&  has.sponsor.net.u.verified
-            =(our.bowl who.sponsor.net.u.verified)
-        ==
-      ?:  ?&  claims-us
-              ?=(%decline (sponsor-policy who life.net.u.verified))
-          ==
-        %-  (slog leaf+"%gw-btc: declining sponsorship of {<who>}" ~)
-        `this(declined (~(put in declined) who))
-      =/  applied  (apply-verified who u.verified tip-value.res)
-      ::  Verified now: the index is the truth for it, not the trusted mirror.
-      =.  trusted  (~(del by trusted) who)
-      =.  urb-state  -.applied
-      =.  confidential  +.applied
-      =.  attested  (~(put by attested) who sont.own.u.verified)
-      =?  sponsees  claims-us
-        (~(put by sponsees) who [life.net.u.verified now.bowl])
-      =?  declined  claims-us  (~(del in declined) who)
-      ::  Operator visibility only -- an unroutable comet is legal and
-      ::  its verdict is unaffected.
-      %-  (slog (unroutable-point who verified))
-      :_  this
-      ~[(verdict-card dom.req who `(urb-point-to-jael u.verified who))]
+      =^  cards  state  (settle-verdict our.bowl now.bowl who req res)
+      [cards this]
     ==
   ::
       ::  An ON-CHAIN self-attestation finished verifying.
@@ -2122,6 +1985,299 @@
   ?:  (~(has by wex) [/best-block our light-client-agent:lca])  ~
   ~[[%pass /best-block %agent [our light-client-agent:lca] %watch /best-block]]
 ::
+::  +admit-writ: every pre-verification check a %jael-writ must pass
+::
+::    %& is the decoded attestation, ready to park under a batch; %| is
+::    the drop, already announced.
+::
+++  admit-writ
+  |=  [our=@p dom=@tas who=ship =pass]
+  ^-  (each self-attestation:sa (list card))
+  ::  EVERY drop below is announced, and now that is TRUE.  Phase 5b's
+  ::  finding 9 was that %jael-writ has eleven distinct pre-verification
+  ::  exits which from outside look identical to "nobody is talking to
+  ::  this ship".  Phase 6.2 then paid for it for real: a runtime fault
+  ::  stranded the single-flight slot and the two retries that would
+  ::  have diagnosed it were swallowed without a word.  bf90840
+  ::  announced nine of them and this comment claimed all of
+  ::  them; the clean-room run (6.7) found the other three still mute
+  ::  -- and all three of THOSE emit a sticky snub.
+  ::
+  ::  So every exit goes through +drop-writ, which takes a $writ-drop
+  ::  and derives BOTH the log line (+writ-drop-report:lsa) and the
+  ::  cards (+writ-drop-fate:lsa) from it.  Neither can be omitted and
+  ::  the two cannot disagree; a twelfth disposition does not
+  ::  compile until it has a line and a fate.
+  ::
+  ::  These lines are one-per-dropped-writ, so they are also the rate
+  ::  at which a peer is retrying, which is itself the thing you want
+  ::  to know.
+  ::
+  ::  Single-flight per ship: at most one verification job, and that
+  ::  is now the ONLY single-flight there is -- an on-chain
+  ::  publication takes the same slot, because it is the same
+  ::  self-attestation arriving by a different road.  A duplicate or
+  ::  replacement writ while one is in flight is dropped -- the
+  ::  peer's retries re-enter after the verdict, and the on-chain
+  ::  cost of minting states is the rate limit.  No queue, no slot
+  ::  economy.
+  ?:  (~(has by inflight) who)
+    [%| (drop-writ our dom who %in-flight ~)]
+  ::  A ship whose sponsorship we declined re-attests on every
+  ::  retry; short-circuit before spending a full verification on
+  ::  it.  Clearing the entry (%gw-sponsor-clear) restores normal
+  ::  handling immediately -- the refusal is never sticky in the
+  ::  kernel, only here.
+  ?:  (~(has in declined) who)
+    [%| (drop-writ our dom who %declined ~)]
+  ?~  sat=(pass-attestation [dom who pass])
+    ::  Two shapes we decline to JUDGE rather than judge negatively,
+    ::  because a negative verdict becomes a Jael %fail and an Ames
+    ::  snub:
+    ::
+    ::    - the public onboarding packet: a valid suite-C %gw-btc pass
+    ::      with no xtr tail at all, resolved by the block scanner.
+    ::      Its temporary absence from the index is not evidence.
+    ::
+    ::    - a pass minted under a FOREIGN protocol kelvin: we cannot
+    ::      verify it and must not blacklist it.  Snubbing here would
+    ::      make old and new ships mutually snub each other across a
+    ::      kelvin bump, i.e. partition the network on upgrade.
+    ::
+    ::  Everything else that fails to decode really is malformed.
+    ::  All three were silent, and the third SNUBS -- an operator
+    ::  watching a peer get blacklisted saw nothing whatsoever, on
+    ::  the one path where the two harmless cases and the destructive
+    ::  one are told apart by a predicate they cannot see.
+    ::
+    ?:  (public-pass [dom who pass])
+      [%| (drop-writ our dom who %onboarding ~)]
+    ?:  (foreign-kelvin [dom who pass])
+      [%| (drop-writ our dom who %foreign-kelvin ~)]
+    [%| (drop-writ our dom who %undecodable ~)]
+  ::  A present, canonically decoded xtr must contain the spawn opening.
+  ::  The raw-0 public shape was classified above before +from-xtr.
+  ?~  chain.u.sat
+    [%| (drop-writ our dom who %empty-log ~)]
+  ?:  (gth (lent chain.u.sat) max-custody-log)
+    :-  %|
+    %-  drop-writ
+    :*  our  dom  who
+        %log-too-long  (lent chain.u.sat)  max-custody-log
+    ==
+  ?:  (known-public who)
+    [%| (drop-writ our dom who %already-public ~)]
+  ::  ------------------------------------------------------------
+  ::  READINESS.  Drop until the LIGHT CLIENT can actually answer;
+  ::  readiness is infrastructure, never evidence.
+  ::  ------------------------------------------------------------
+  ::
+  ::  This gate was `?~ best` and that was NOT a readiness check.
+  ::  %bitcoin-client answers a fresh /best-block subscription with the
+  ::  GENESIS block, so `best` is set within milliseconds of boot and a
+  ::  ship 961,000 blocks behind sailed straight through.  It then
+  ::  judged a real attestation against a chain it had never seen and
+  ::  snubbed the honest comet it sponsors (live mainnet 2026-08-06,
+  ::  Phase 6.1).  Three things must hold now:
+  ::
+  ::    1. `best` exists -- it is the tip the strand scans up to, and
+  ::       the strand must NOT re-read /best-block itself (persistent
+  ::       subscription, never kicks).
+  ::    2. the light client says it is SYNCED: block headers AND filter
+  ::       headers at the tip, with live peers.  The BIP-158 liveness
+  ::       scan is a filter-header consumer, so nothing less will do.
+  ::    3. the tip we believe in actually COVERS this log's evidence.
+  ::       Belt and braces for (2): it is the property the verification
+  ::       mathematically needs, it is checkable from the writ itself,
+  ::       and it is what stops +scan-liveness being handed a range
+  ::       that runs backwards.
+  ::
+  ::  A writ that fails any of these gets NO verdict.  Dropping is
+  ::  already safe -- the peer retransmits, and the log line above says
+  ::  how often -- whereas judging is not.
+  ::
+  ::  Deliberately NOT gated on .indexing.  Confidential verification
+  ::  needs nothing from the public index except the sponsor-existence
+  ::  set, which is now unevaluable-when-empty rather than false, so a
+  ::  light-client-only deployment still verifies unsponsored comets.
+  ::
+  ::  .synced FIRST: there is no tip until the light client is synced
+  ::  (+best-block-cards), and only the %unsynced fate re-reads the
+  ::  light client's answer, because it may have caught up without
+  ::  telling us.  See +refresh-synced and +writ-drop-fate:lsa.
+  ?.  synced
+    [%| (drop-writ our dom who %unsynced ?~(best 0 num.u.best))]
+  ?~  best
+    [%| (drop-writ our dom who %no-tip ~)]
+  =/  need=@ud  (log-top-height u.sat)
+  ?.  (gte num.u.best need)
+    [%| (drop-writ our dom who %tip-below-log num.u.best need)]
+  [%& u.sat]
+::
+::  +settle-verdict: act on a finished verification of .who
+::
+::    The slot is already released.  The /verify-batch handler calls it
+::    per ship; the pre-batch /verify handler calls it too, so a verdict
+::    reached in a batch takes exactly the path a lone one did.
+::
+++  settle-verdict
+  |=  [our=@p now=@da who=ship req=inflight-writ res=result:sa]
+  ^-  (quip card _state)
+  ::  A concurrently indexed public spawn wins this race.  It no longer
+  ::  belongs to the confidential verifier, but that is not evidence the
+  ::  peer supplied a bad attestation, so do not emit a sticky failure.
+  ?:  (known-public who)
+    %-  %-  slog
+        :~  leaf+"%gw-btc: verdict for {(scow %p who)} discarded: the block scanner indexed it as PUBLIC first"
+            leaf+"  (it is no longer the confidential verifier's to judge; not evidence"
+            leaf+"   against the peer, so no verdict is emitted and nothing is snubbed)"
+        ==
+    `state
+  %-  (slog (report:lsa verdict.res))
+  ::  THE SECOND DOORWAY ONTO THE SNUB PATH.  ++run-checks can say ok
+  ::  and this agent can still decline, for reasons that are about OUR
+  ::  state rather than the peer's evidence.  Those refusals used to
+  ::  fall straight through to the negative branch below, so a peer
+  ::  with a cryptographically perfect attestation could be snubbed --
+  ::  stickily -- for something it neither sent nor could observe.
+  ::  +local-refusal names them; +refusal-class:lsa classes them.
+  ::
+  =/  refused=(unit refusal:sa)  (local-refusal who req res)
+  =/  verified=(unit point:urb)
+    ?.  &(ok.verdict.res ?=(~ refused))  ~
+    ?~  point.res  ~
+    `u.point.res(pass.net pass.req)
+  ?~  verified
+    ::  Decisions addendum section 3, on the PACKET path.  A verdict
+    ::  that failed ONLY because the evidence is out of date is not
+    ::  fraud, and emitting res=~ here would make jael %fail and ames
+    ::  SNUB -- which then blocks the very packet that would fix it.
+    ::  Observed on mainnet: a comet performed an honest, correctly
+    ::  formed state update; its ship kept sending the attestation it
+    ::  booted with; its own SPONSOR verified that packet, found the
+    ::  tip spent, and snubbed it forever.
+    ::
+    ::  So route staleness to the same %stale outcome the scanner
+    ::  path already produces (+detect-stale -> +stale-card): jael
+    ::  drops the point if it holds one and ames demotes the peer to
+    ::  a fresh alien, never a snub, so the refreshed attestation can
+    ::  arrive.  The same physical fact must take the same path
+    ::  whether the scanner or the inbox saw it first.
+    ::
+    ::  Emitting %stale for a ship jael never verified under this
+    ::  domain is a no-op there (it checks .hep first), so this is
+    ::  also the "stay silent" case, without a second code path.
+    ::
+    ::  We deliberately do NOT drop our own indexes here.  The peer
+    ::  is the only thing that can fix this, by re-attesting, and
+    ::  keeping .attested/.unv-ids means +tracked-anchor still
+    ::  supplies the anchor that proves the REPLACEMENT log extends
+    ::  the one we already verified.  Our scanner drops them itself
+    ::  when it reaches the block that spent the sat.
+    ::
+    ::  The THIRD outcome, and the one Phase 6.1 proved was missing.
+    ::  A verdict whose only failures are checks we could not EVALUATE
+    ::  says nothing about the peer, so we say nothing about the peer.
+    ::  Not %fail (a snub), not even %stale (a demotion): silence, and
+    ::  the peer's next retransmission gets a fresh look once whatever
+    ::  we were missing has arrived.  See +unknown-checks in
+    ::  lib/self-attestation for what qualifies and why.
+    ::
+    ::  ALL THREE OUTCOMES, IN ONE SWITCH OVER A CLOSED UNION.  This
+    ::  used to be a chain of ?: whose final else-branch was the snub,
+    ::  so anything the two predicates did not recognise -- a
+    ::  +verify-lc early abort, a local refusal -- arrived at the
+    ::  destructive outcome by DEFAULT.  A ?- over $verdict-class has
+    ::  no default: a fourth outcome stops the compiler right here.
+    ::
+    ::  The class comes from the refusal when there was one (the
+    ::  verdict itself passed every check, so it has nothing to say
+    ::  about the peer), and otherwise from the failing checks.
+    ::
+    =/  class=verdict-class:sa
+      ?^  refused  (refusal-class:lsa u.refused)
+      (classify:lsa verdict.res)
+    ?-    class
+        %unknown
+      %-  %-  slog
+          ?^  refused
+            :~  leaf+"%gw-btc: attestation for {(scow %p who)} passed, but we refused it locally ({<u.refused>}); emitting no verdict"
+                leaf+"  (that refusal is about OUR state, not the peer's evidence, so it"
+                leaf+"   is not something the peer can be blamed -- or snubbed -- for)"
+            ==
+          :~  leaf+"%gw-btc: attestation for {(scow %p who)} is UNDETERMINED; emitting no verdict"
+              leaf+"  (the [??] checks above could not be evaluated from what we can see;"
+              leaf+"   that is our ignorance, not the peer's fraud -- it will be retried)"
+          ==
+      `state
+    ::
+        %stale
+      %-  %-  slog
+          :~  leaf+"%gw-btc: attestation for {(scow %p who)} is STALE, not invalid"
+              leaf+"  (its identity sat has moved; demoting to alien, never snubbing)"
+          ==
+      :_  state
+      ~[(stale-card dom.req who)]
+    ::
+        %fraud
+      ::  A negative verdict is destructive: jael %fails and ames snubs,
+      ::  stickily, which then blocks the packet that could correct it.
+      ::  It has never announced itself -- Phase 6.7 found the snub
+      ::  itself to be invisible in the logs, discoverable only through
+      ::  .^(/snubbed) -- so say it here, at the one place that causes
+      ::  it.
+      ::
+      =/  why=tape
+        ?^  refused
+          "its checks passed but the result was refused locally ({<u.refused>}), and that refusal is classed as fraud"
+        "the [XX] checks above are fraud-class: evidence that was never true, not evidence that expired"
+      %-  %-  slog
+          :~  leaf+"%gw-btc: SNUBBING {(scow %p who)} on a negative %gw-btc verdict"
+              leaf+"  {why}"
+              leaf+"  (a snub is sticky and blocks the packet that would correct it;"
+              leaf+"   inspect with .^(/snubbed) and undo with %snub %deny %del)"
+          ==
+      :_  state
+      ~[(verdict-card dom.req who ~)]
+    ==
+  ::  Sponsorship decision point.  A valid attestation whose snapshot
+  ::  names US as sponsor IS the sponsorship request -- there is no
+  ::  separate handshake and no consent signature.  Declining is
+  ::  NOT a %fail: the attestation is valid, only the sponsorship
+  ::  role is refused, so we stay silent (no verdict) rather than
+  ::  emitting a negative one that would snub a legitimate ship.
+  ::
+  ::  Silence withholds the point, so the peer never becomes %known
+  ::  here and we never acquire a lane for it -- which is exactly
+  ::  what stops us relaying (+on-hear-forward forwards for any
+  ::  ship we hold a lane to).  It also declines direct contact;
+  ::  splitting those two would need a kernel no-relay gate, which
+  ::  is deferred until a policy actually wants it.
+  ::
+  =/  claims-us=?
+    ?&  has.sponsor.net.u.verified
+        =(our who.sponsor.net.u.verified)
+    ==
+  ?:  ?&  claims-us
+          ?=(%decline (sponsor-policy who life.net.u.verified))
+      ==
+    %-  (slog leaf+"%gw-btc: declining sponsorship of {<who>}" ~)
+    `state(declined (~(put in declined) who))
+  =/  applied  (apply-verified who u.verified tip-value.res)
+  ::  Verified now: the index is the truth for it, not the trusted mirror.
+  =.  trusted  (~(del by trusted) who)
+  =.  urb-state  -.applied
+  =.  confidential  +.applied
+  =.  attested  (~(put by attested) who sont.own.u.verified)
+  =?  sponsees  claims-us
+    (~(put by sponsees) who [life.net.u.verified now])
+  =?  declined  claims-us  (~(del in declined) who)
+  ::  Operator visibility only -- an unroutable comet is legal and
+  ::  its verdict is unaffected.
+  %-  (slog (unroutable-point who verified))
+  :_  state
+  ~[(verdict-card dom.req who `(urb-point-to-jael u.verified who))]
+::
 ::  +refuse-anew: decline to refresh OUR OWN pass, out loud
 ::
 ::    The %anew counterpart of +drop-writ, and the same discipline: the
@@ -2419,15 +2575,7 @@
   ^-  (list card)
   =/  wir  /(scot %p who)/(scot %ud job.req)
   =/  gud=@tas  ?:(?=(%verify kin) %stuck-job %claim-stuck)
-  ::  Resume the liveness walk where the last one left off, if that was a
-  ::  walk for the same custody entry (see $gw-state's .clean).
-  ::
-  =/  from=(unit @ud)
-    ?~  chain.sat.req  ~
-    =/  last  (rear chain.sat.req)
-    ?~  cur=(~(get by clean) who)  ~
-    ?.  =(last.u.cur [height.last txid.last])  ~
-    `to.u.cur
+  =/  from=(unit @ud)  (resume-from who sat.req)
   :~  :*  %pass  [kin wir]  %arvo  %k
           %lard  byk
           %+  (set-timeout:strandio ,vase)  stuck-job-guard
@@ -2443,6 +2591,57 @@
           %arvo  %b  %wait  (add now stuck-job-guard)
       ==
   ==
+::  +resume-from: where .who's liveness walk may resume
+::
+::    The height an earlier walk for the SAME custody entry already found
+::    clean (see $gw-state's .clean), or ~ to walk from the entry itself.
+::
+++  resume-from
+  |=  [who=ship sat=self-attestation:sa]
+  ^-  (unit @ud)
+  ?~  chain.sat  ~
+  =/  last  (rear chain.sat)
+  ?~  cur=(~(get by clean) who)  ~
+  ?.  =(last.u.cur [height.last txid.last])  ~
+  `to.u.cur
+::
+::  +verify-batch-cards: one thread, one walk, for every ship in .reqs
+::
+::    Each ship already holds its slot under .job.  The batch has ONE leak
+::    guard (/stuck-batch/<job>), which releases all of them.
+::
+++  verify-batch-cards
+  |=  $:  byk=desk
+          now=@da
+          job=@ud
+          reqs=(list [who=ship req=inflight-writ])
+          best-height=@ud
+      ==
+  ^-  (list card)
+  =/  wir  /(scot %ud job)
+  =/  items=(list batch-item:lca)
+    %+  turn  reqs
+    |=  [who=ship req=inflight-writ]
+    [sat.req (tracked-anchor urb-state who) (resume-from who sat.req)]
+  :~  :*  %pass  [%verify-batch wir]  %arvo  %k
+          %lard  byk
+          %+  (set-timeout:strandio ,vase)  stuck-job-guard
+          (verify-lc-batch:lca items ~(key by unv-ids.urb-state) best-height)
+      ==
+      :*  %pass  [%stuck-batch wir]
+          %arvo  %b  %wait  (add now stuck-job-guard)
+      ==
+  ==
+::
+::  +split-batch: the slots batch .job holds, and every other slot
+::
+++  split-batch
+  |=  job=@ud
+  ^-  [(list [who=ship req=inflight-writ]) (map ship inflight-writ)]
+  =/  all  ~(tap by inflight)
+  :-  (skim all |=([* w=inflight-writ] =(job job.w)))
+  (malt (skip all |=([* w=inflight-writ] =(job job.w))))
+::
 ::  +start-claims: launch a verification for each publication in a batch
 ::
 ::    The %claim effects a block batch produced, turned into jobs.  Every

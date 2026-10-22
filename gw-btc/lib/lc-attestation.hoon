@@ -95,6 +95,60 @@
   =/  m  (strand:strandio ,vase)
   ^-  form:m
   ;<  our=@p  bind:m  get-our:strandio
+  ;<  pre=verify-pre  bind:m  (fetch-pre our sat)
+  ?:  ?=(%done -.pre)
+    (pure:m !>([result.pre tip-spk.pre]))
+  ::  TIP LIVENESS: scan every block above the tip for a spend of the exact
+  ::  outpoint.  `%.y`/`%.n`/~ = unspent/spent/undeterminable (fails closed).
+  ;<  live=(unit ?)  bind:m
+    %:  scan-liveness
+        our  tip.pre  tip-spk.pre  tip-height.pre  best-height
+        from  who.sat  last.pre  %.n
+    ==
+  (pure:m !>([(post-checks sat pre live tracked known-public) tip-spk.pre]))
+::
+::  $verify-pre: everything +verify-lc learns before the liveness walk
+::
+::    %done is an early return, already a result.  %walk is a log whose
+::    transactions are all fetched and whose tip is derived: what is left
+::    is the walk and ++run-checks.  Split out so +verify-lc-batch can
+::    fetch every peer's log first and then walk the chain once for all.
+::
++$  verify-pre
+  $%  [%done =result:sa tip-spk=hexb:bc]
+      $:  %walk
+          start=tx:bc
+          txl=(list tx:bc)
+          tip=sont:ord
+          tip-spk=hexb:bc
+          tip-height=@ud
+          last=[height=@ud =txid:ord]
+          tip-hash=(unit hax:block:bc)
+      ==
+  ==
+::
+::  +fetch-pre: fetch .sat's custody log and derive its tip
+::
+++  fetch-pre
+  |=  [our=@p sat=self-attestation:sa]
+  =/  m  (strand:strandio ,verify-pre)
+  ^-  form:m
+  ;<  got=(each verify-pre [term tang])  bind:m  (try-pre our sat)
+  ?:  ?=(%| -.got)  (strand-fail:strandio p.got)
+  (pure:m p.got)
+::
+::  +try-pre: +fetch-pre, but a refused fetch is returned, not thrown
+::
+::    The batch must not let ONE peer's bad log kill every other peer's
+::    verification, so the fetch refusals +fetch-tx-at strand-fails on
+::    (wrong height, unknown tx, wrong txid) come back as %| with the same
+::    mote and tang.  A fetch that TIMES OUT still fails the strand: that
+::    is the light client going quiet, which is everyone's problem.
+::
+++  try-pre
+  |=  [our=@p sat=self-attestation:sa]
+  =/  m  (strand:strandio ,(each verify-pre [term tang]))
+  ^-  form:m
   =*  who  who.sat
   ::  EVERY early return below is a $abort, and every $abort has a class
   ::  in +abort-class:lsa.  They used to be bare cords in no class at all,
@@ -103,11 +157,12 @@
   ::  wrong.  Do not add an early return with a bare cord: +fail-result
   ::  will not take one.
   ::
-  ?~  chain.sat
-    (pure:m !>([(fail-result:lsa who %empty-chain) *hexb:bc]))
+  =/  done
+    |=  =abort:sa
+    (pure:m %& %done (fail-result:lsa who abort) *hexb:bc)
+  ?~  chain.sat  (done %empty-chain)
   =/  spawn-open  (spawn-of:lsa chain.sat)
-  ?~  spawn-open
-    (pure:m !>([(fail-result:lsa who %spawn-opening) *hexb:bc]))
+  ?~  spawn-open  (done %spawn-opening)
   =/  spawn=sont:ord  spawn.u.spawn-open
   ::  Fetch the spawn transaction by [height txid].  +fetch-tx-at resolves
   ::  the canonical block hash from the height, requests the verified tx in
@@ -115,13 +170,17 @@
   ::  returns that block hash alongside the transaction: it is the one
   ::  place that knows it, and the LAST one is the provenance stamped onto
   ::  the point (.seen, sur/urb).
-  ;<  start-at=confirmed  bind:m
-    %+  (set-timeout:strandio ,confirmed)  lc-fetch-timeout
-    (fetch-tx-at our start-height.u.spawn-open txid.spawn)
-  =/  start=tx:bc  tx.start-at
+  ;<  start-at=(each confirmed [term tang])  bind:m
+    %+  (set-timeout:strandio ,(each confirmed [term tang]))  lc-fetch-timeout
+    (try-tx-at our start-height.u.spawn-open txid.spawn)
+  ?:  ?=(%| -.start-at)  (pure:m %| p.start-at)
+  =/  start=tx:bc  tx.p.start-at
   ::  Every custody entry supplies a height; resolve each entry's tx the
   ::  same way, in custody order.
-  ;<  fetched=(list confirmed)  bind:m  (fetch-entries our chain.sat)
+  ;<  got=(each (list confirmed) [term tang])  bind:m
+    (try-entries our chain.sat)
+  ?:  ?=(%| -.got)  (pure:m %| p.got)
+  =/  fetched=(list confirmed)  p.got
   =/  txl=(list tx:bc)  (turn fetched |=(c=confirmed tx.c))
   ::  Every transaction below is confirmed on the main chain at the height
   ::  and txid the log claimed -- +fetch-tx-at strand-fails rather than
@@ -130,36 +189,102 @@
   ::  +abort-class:lsa for the full argument.
   ::
   =/  tip  (derive-tip:lsa spawn start txl)
-  ?~  tip
-    (pure:m !>([(fail-result:lsa who %derive-tip) *hexb:bc]))
+  ?~  tip  (done %derive-tip)
   ::  Unreachable: +derive-tip took vout from +index-to-sont over this very
   ::  output list.  Kept as a bound because +snag below would crash without
   ::  it, and classed %unknown because reaching it means our own arithmetic
   ::  disagreed with itself -- which says nothing about the peer.
   ::
   =/  last=tx:bc  (rear txl)
-  ?.  (lth vout.u.tip (lent os.last))
-    (pure:m !>([(fail-result:lsa who %tip-vout-range) *hexb:bc]))
+  ?.  (lth vout.u.tip (lent os.last))  (done %tip-vout-range)
   =/  tip-out=output:tx:bc  (snag vout.u.tip os.last)
-  =/  tip-spk=hexb:bc  script-pubkey.tip-out
   ::  The tip transaction sits in the last custody entry's block.
-  =/  tip-height=@ud  height:(rear chain.sat)
-  ::  TIP LIVENESS: scan every block above the tip for a spend of the exact
-  ::  outpoint.  `%.y`/`%.n`/~ = unspent/spent/undeterminable (fails closed).
   =/  last-entry  (rear chain.sat)
-  ;<  live=(unit ?)  bind:m
-    %:  scan-liveness
-        our  u.tip  tip-spk  tip-height  best-height
-        from  who  [height.last-entry txid.last-entry]
-    ==
   ::  .fetched is non-empty: chain.sat was checked non-empty above and
-  ::  +fetch-entries returns one entry per custody entry.
+  ::  +try-entries returns one entry per custody entry.
   ::
-  =/  tip-hash=(unit hax:block:bc)
-    ?~(fetched ~ `hax:(rear fetched))
-  =/  result=result:sa
-    (run-checks:lsa sat start txl live tracked known-public tip-hash)
-  (pure:m !>([result tip-spk]))
+  %-  pure:m
+  :*  %&  %walk  start  txl  u.tip  script-pubkey.tip-out
+      height.last-entry
+      [height.last-entry txid.last-entry]
+      ?~(fetched ~ `hax:(rear fetched))
+  ==
+::
+::  +post-checks: ++run-checks over a fetched log and its walk's answer
+::
+++  post-checks
+  |=  $:  sat=self-attestation:sa
+          pre=verify-pre
+          live=(unit ?)
+          tracked=(unit anchor:sa)
+          known-public=(set ship)
+      ==
+  ^-  result:sa
+  ?>  ?=(%walk -.pre)
+  (run-checks:lsa sat start.pre txl.pre live tracked known-public tip-hash.pre)
+::
+::  +verify-lc-batch: +verify-lc for many peers, walking the chain ONCE
+::
+::    Each peer's log is fetched in turn, exactly as +verify-lc fetches
+::    it; then ONE +scan-liveness-many walk answers every peer's liveness
+::    question; then each peer's ++run-checks.  A peer's verdict is the
+::    one +verify-lc would give it alone (tests/lib/lc-attestation checks
+::    that).  The answer is a list of [who result tip-spk], one per peer
+::    whose log could be fetched: a peer whose fetch was refused gets no
+::    verdict, exactly as its lone strand would have died.
+::
++$  batch-item
+  $:  sat=self-attestation:sa
+      tracked=(unit anchor:sa)
+      from=(unit @ud)
+  ==
+::
+++  verify-lc-batch
+  |=  $:  items=(list batch-item)
+          known-public=(set ship)
+          best-height=@ud
+      ==
+  ^-  shed:khan
+  =/  m  (strand:strandio ,vase)
+  ^-  form:m
+  ;<  our=@p  bind:m  get-our:strandio
+  =|  pres=(list [item=batch-item pre=verify-pre])
+  =/  its  items
+  |-  ^-  form:m
+  ?^  its
+    ;<  got=(each verify-pre [term tang])  bind:m  (try-pre our sat.i.its)
+    ?:  ?=(%| -.got)
+      %-  (slog leaf+"%gw-btc: batch: {(scow %p who.sat.i.its)} gets no verdict, fetching its log failed ({<-.p.got>})" +.p.got)
+      $(its t.its)
+    $(its t.its, pres [[i.its p.got] pres])
+  =.  pres  (flop pres)
+  =/  walks=(list [item=batch-item pre=verify-pre])
+    (skim pres |=([* pre=verify-pre] ?=(%walk -.pre)))
+  ;<  lives=(list (unit ?))  bind:m
+    %^  scan-liveness-many  our
+      %+  turn  walks
+      |=  [item=batch-item pre=verify-pre]
+      ^-  walk-target
+      ?>  ?=(%walk -.pre)
+      [tip.pre tip-spk.pre tip-height.pre from.item who.sat.item last.pre]
+    [best-height %.n]
+  =/  live-of=(map ship (unit ?))
+    =|  acc=(map ship (unit ?))
+    |-  ^+  acc
+    ?~  walks  acc
+    ?>  ?=(^ lives)
+    $(walks t.walks, lives t.lives, acc (~(put by acc) who.sat.item.i.walks i.lives))
+  %-  pure:m
+  !>  ^-  (list [ship result:sa hexb:bc])
+  %+  turn  pres
+  |=  [item=batch-item pre=verify-pre]
+  ?:  ?=(%done -.pre)  [who.sat.item result.pre tip-spk.pre]
+  :+  who.sat.item
+    %:  post-checks
+        sat.item  pre  (~(got by live-of) who.sat.item)
+        tracked.item  known-public
+    ==
+  tip-spk.pre
 ::
 ::  +confirmed: a fetched transaction and the block hash it was found in
 ::
@@ -183,40 +308,47 @@
   |=  [our=@p height=@ud tid=@ux]
   =/  m  (strand:strandio ,confirmed)
   ^-  form:m
+  ;<  got=(each confirmed [term tang])  bind:m  (try-tx-at our height tid)
+  ?:  ?=(%| -.got)  (strand-fail:strandio p.got)
+  (pure:m p.got)
+::
+::  +try-tx-at: +fetch-tx-at, with a refusal returned rather than thrown
+::
+++  try-tx-at
+  |=  [our=@p height=@ud tid=@ux]
+  =/  m  (strand:strandio ,(each confirmed [term tang]))
+  ^-  form:m
   ;<  h-cage=cage  bind:m  (watch-header-height our height)
   =/  hres  =/(u (lc-update h-cage) ?>(?=(%block-header-by-height -.u) p.u))
   ?.  =(height block-height.hres)
-    %+  strand-fail:strandio  %attestation-height-mismatch
-    [>[height block-height.hres]< ~]
+    (pure:m %| %attestation-height-mismatch >[height block-height.hres]< ~)
   ;<  t-cage=cage  bind:m  (watch-transaction our block-hash.hres tid)
   =/  tres  =/(u (lc-update t-cage) ?>(?=(%transaction -.u) p.u))
   ?~  tres
-    %+  strand-fail:strandio  %attestation-tx-not-found
-    [>[height tid]< ~]
+    (pure:m %| %attestation-tx-not-found >[height tid]< ~)
   ?.  =(height block-height.tres)
-    %+  strand-fail:strandio  %attestation-height-mismatch
-    [>[height block-height.tres]< ~]
+    (pure:m %| %attestation-height-mismatch >[height block-height.tres]< ~)
   ?.  =(tid txid.tres)
-    %+  strand-fail:strandio  %attestation-txid-mismatch
-    [>[tid txid.tres]< ~]
+    (pure:m %| %attestation-txid-mismatch >[tid txid.tres]< ~)
   ::  block-hash.hres and block-hash.tres are the same block: the header
   ::  fact fixed the canonical hash at .height and the transaction was
   ::  requested IN that block, with its own block-info height re-checked
   ::  above.  Carry the one we addressed the request with.
   ::
-  (pure:m [block-hash.hres (common-tx-to-bc tid transaction.tres)])
+  (pure:m %& block-hash.hres (common-tx-to-bc tid transaction.tres))
 ::
-++  fetch-entries
+++  try-entries
   |=  [our=@p entries=custody-log:sa]
-  =/  m  (strand:strandio ,(list confirmed))
+  =/  m  (strand:strandio ,(each (list confirmed) [term tang]))
   ^-  form:m
   =|  acc=(list confirmed)
   |-
-  ?~  entries  (pure:m (flop acc))
-  ;<  con=confirmed  bind:m
-    %+  (set-timeout:strandio ,confirmed)  lc-fetch-timeout
-    (fetch-tx-at our height.i.entries txid.i.entries)
-  $(entries t.entries, acc [con acc])
+  ?~  entries  (pure:m %& (flop acc))
+  ;<  con=(each confirmed [term tang])  bind:m
+    %+  (set-timeout:strandio ,(each confirmed [term tang]))  lc-fetch-timeout
+    (try-tx-at our height.i.entries txid.i.entries)
+  ?:  ?=(%| -.con)  (pure:m %| p.con)
+  $(entries t.entries, acc [p.con acc])
 ::
 ::  +scan-liveness: is the tip output still unspent?
 ::
@@ -262,6 +394,7 @@
           from=(unit @ud)
           who=ship
           last=[height=@ud =txid:ord]
+          dry=?
       ==
   =/  m  (strand:strandio ,(unit ?))
   =/  n  (strand:strandio ,~)
@@ -269,9 +402,11 @@
   ?:  (gth tip-height best-height)
     ~&  [%gw-btc-lc-scan-degenerate tip=tip from=tip-height to=best-height]
     (pure:m ~)
+  ::  .dry: report no progress (ted/bench/liveness walks made-up outpoints)
   =/  progress
     |=  to=@ud
     ^-  form:n
+    ?:  dry  (pure:n ~)
     %+  poke-our:strandio  %gw-btc
     noun+!>([%gw-liveness-progress who last to])
   ::  Back into the NODE's byte order for the GCS matcher.  +match:b-fil is
@@ -317,6 +452,219 @@
     $(h +(h))
   ==
 ::
+::  +scan-liveness-many: +scan-liveness for many outpoints, in ONE pass
+::
+::    The walk is the cost of verifying a peer: one compact filter per
+::    block from its last custody entry to the chain tip.  Peers whose
+::    entries are near each other walk almost the same blocks, so this
+::    walks the union once, upward from the lowest start.  At each height
+::    the ACTIVE targets are the undecided ones whose own walk has begun;
+::    the filter is fetched once and tested for all of them
+::    (+match-many), and on a hit the block is fetched once and searched
+::    for each hit target's outpoint.
+::
+::    Every target gets exactly the answer its own +scan-liveness would:
+::    the same start (resume point included), the same degenerate-range
+::    refusal, the same %.n at the first spending block, ~ where its walk
+::    would have hit an unusable filter or block, the same progress pokes
+::    (every +progress-every blocks and at the end).  A height its own
+::    walk would not visit is never fetched on its behalf, and a fault at
+::    a height decides only the targets active there.  A request that
+::    times out still fails the strand, as it does for one target.
+::
++$  walk-target
+  $:  tip=sont:ord
+      tip-spk=hexb:bc
+      tip-height=@ud
+      from=(unit @ud)
+      who=ship
+      last=[height=@ud =txid:ord]
+  ==
+::
+++  scan-liveness-many
+  |=  [our=@p tars=(list walk-target) best-height=@ud dry=?]
+  =/  m  (strand:strandio ,(list (unit ?)))
+  =/  n  (strand:strandio ,~)
+  ^-  form:m
+  =/  ids=(list @ud)  (gulf 1 (lent tars))
+  =/  tv=(map @ud walk-target)
+    =<  q
+    %^  spin  tars  *(map @ud walk-target)
+    |=([t=walk-target acc=(map @ud walk-target)] [~ (~(put by acc) +(~(wyt by acc)) t)])
+  ::  node byte order for the GCS matcher; see the flip note in +scan-liveness
+  =/  spk=(map @ud hexb:bcm)
+    (~(run by tv) |=(t=walk-target (unflip-hexb tip-spk.t)))
+  =/  start=(map @ud @ud)
+    %-  ~(run by tv)
+    |=  t=walk-target
+    ?~(from.t tip-height.t (max tip-height.t +(u.from.t)))
+  =|  done=(map @ud (unit ?))
+  =.  done
+    %-  ~(gas by done)
+    %+  murn  ids
+    |=  i=@ud
+    =/  t  (~(got by tv) i)
+    ?.  (gth tip-height.t best-height)  ~
+    ~&  [%gw-btc-lc-scan-degenerate tip=tip.t from=tip-height.t to=best-height]
+    `[i ~]
+  =/  progress
+    |=  [is=(list @ud) to=@ud]
+    ^-  form:n
+    ?:  |(dry ?=(~ is))  (pure:n ~)
+    =/  t  (~(got by tv) i.is)
+    ;<  ~  bind:n
+      %+  poke-our:strandio  %gw-btc
+      noun+!>([%gw-liveness-progress who.t last.t to])
+    $(is t.is)
+  ::  the undecided targets, and the lowest height any of them starts at
+  ::  (above .best-height when there is none)
+  =/  open
+    |=  d=(map @ud (unit ?))
+    ^-  (list @ud)
+    (skip ids |=(i=@ud (~(has by d) i)))
+  =/  next-start
+    |=  d=(map @ud (unit ?))
+    ^-  @ud
+    %+  roll  (open d)
+    |=([i=@ud lo=_+(best-height)] (min lo (~(got by start) i)))
+  =/  h=@ud  (next-start done)
+  ~&  [%gw-btc-lc-scan-many targets=(lent tars) from=h to=best-height]
+  |-  ^-  form:m
+  =/  live=(list @ud)
+    (skim (open done) |=(i=@ud (lte (~(got by start) i) h)))
+  ?:  |((gth h best-height) ?=(~ (open done)))
+    ::  Every target still open walked clean to the tip.  Same end report
+    ::  as +scan-liveness, per target.
+    =/  rest  (open done)
+    ;<  ~  bind:m
+      %+  progress
+        (skim rest |=(i=@ud (gth best-height tip-height:(~(got by tv) i))))
+      best-height
+    =.  done  (~(gas by done) (turn rest |=(i=@ud [i `%.y])))
+    ~&  [%gw-btc-lc-scan-many-clean clean=(lent rest) to=best-height]
+    (pure:m (turn ids |=(i=@ud (~(got by done) i))))
+  ?~  live
+    ::  a gap below the next target's start: nothing to look at here
+    $(h (next-start done))
+  ;<  res=(map @ud ?(%error %spent %clean))  bind:m
+    %+  (set-timeout:strandio ,(map @ud ?(%error %spent %clean)))
+      lc-fetch-timeout
+    (scan-height-many our h live spk tv)
+  =/  fin=(list [@ud (unit ?)])
+    %+  murn  ~(tap by res)
+    |=  [i=@ud r=?(%error %spent %clean)]
+    ?-  r
+      %clean  ~
+      %error  ~&([%gw-btc-lc-scan-undeterminable height=h] `[i ~])
+      %spent  ~&([%gw-btc-lc-scan-spent tip=tip:(~(got by tv) i) height=h] `[i `%.n])
+    ==
+  =.  done  (~(gas by done) fin)
+  ;<  ~  bind:m
+    ?.  =(0 (mod h progress-every))  (pure:n ~)
+    (progress (skim `(list @ud)`live |=(i=@ud =(%clean (~(got by res) i)))) h)
+  $(h +(h))
+::
+::  +scan-height-many: +scan-height for every target in .live, at .h
+::
+::    One filter, one block at most.  An unusable filter decides every
+::    live target %error (each one's own +scan-height would have read the
+::    same filter); an unusable block decides only the targets that
+::    matched, the only ones whose walk would have fetched it.
+::
+++  scan-height-many
+  |=  $:  our=@p
+          h=@ud
+          live=(list @ud)
+          spk=(map @ud hexb:bcm)
+          tv=(map @ud walk-target)
+      ==
+  =/  m  (strand:strandio ,(map @ud ?(%error %spent %clean)))
+  ^-  form:m
+  =/  all
+    |=  r=?(%error %spent %clean)
+    (malt (turn live |=(i=@ud [i r])))
+  ;<  f-cage=cage  bind:m  (watch-filter-height our h)
+  =/  fres  =/(u (lc-update f-cage) ?>(?=(%block-filter-by-height -.u) p.u))
+  ?.  =(h block-height.fres)  (pure:m (all %error))
+  ::  zero-width: see +scan-height
+  ?:  =(0 wid.filter.fres)  (pure:m (all %error))
+  =/  hit=(set @ud)
+    %:  match-many
+        block-hash.fres  filter.fres
+        (turn live |=(i=@ud [i (~(got by spk) i)]))
+    ==
+  ?:  =(~ hit)  (pure:m (all %clean))
+  ;<  b-cage=cage  bind:m  (watch-block-height our h)
+  =/  bres  =/(u (lc-update b-cage) ?>(?=(%block-by-height -.u) p.u))
+  %-  pure:m
+  %-  malt
+  %+  turn  live
+  |=  i=@ud
+  :-  i
+  ?.  (~(has in hit) i)  %clean
+  ?.  =(h block-height.bres)  %error
+  =/  tip  tip:(~(got by tv) i)
+  ?:((block-spends +.bres txid.tip vout.tip) %spent %clean)
+::
+::  +match-many: which of .targets the filter matches, each on its own
+::
+::    +match:b-fil answers "any of these?", and +all-match:b-fil keys its
+::    targets by GCS value, so two targets that hash alike come back as
+::    one -- a missed spend.  This walks the filter once for all of them
+::    and answers per target, with exactly +match's arithmetic: target i
+::    is in the result iff `(match:b-fil haz filter ~[spk-i])`.
+::
+::    It does NOT decode with +de:gol:b-fil.  That reads one bit at a time
+::    by re-slicing the WHOLE remaining stream (+read-bit:str: a +met and
+::    an +end over the atom), so a filter costs O(values x size): about
+::    365 ms of a 380 ms block on a real-sized 8,000-element filter
+::    (ted/bench/liveness).  +gcs-at reads the same bits in place with a
+::    cursor.  Same values, same order, same crash on a truncated stream;
+::    tests/lib/lc-attestation checks it against +match:b-fil.
+::
+++  match-many
+  |=  [haz=@ux filter=hexb:bcm targets=(list [i=@ud spk=hexb:bcm])]
+  ^-  (set @ud)
+  =/  k  (to-key:b-fil haz)
+  =/  p  p:params:b-fil
+  =/  [n=@ux gcs=bits:b-fil]  (parse-filter:b-fil filter)
+  =/  f  (mul n m:params:b-fil)
+  =/  want=(list [v=@ i=@ud])
+    %+  sort
+      (turn targets |=([i=@ud spk=hexb:bcm] [(to-range:hsh:b-fil spk f k) i]))
+    |=([a=[v=@ *] b=[v=@ *]] (lth v.a v.b))
+  =|  acc=(set @ud)
+  =/  last-val=@  0
+  =/  pos=@ud  0
+  |-  ^-  (set @ud)
+  ?~  want  acc
+  ?:  =(last-val v.i.want)
+    $(want t.want, acc (~(put in acc) i.i.want))
+  ?:  (gth last-val v.i.want)
+    $(want t.want)
+  ?:  (lth (sub wid.gcs pos) p)  acc
+  =^  delta  pos  (gcs-at gcs pos p)
+  $(last-val (add delta last-val))
+::
+::  +gcs-at: the Golomb-Rice value at bit .pos of .gcs, and the next .pos
+::
+::    +de:gol:b-fil over the stream with its first .pos bits already
+::    read.  The stream is MSB-first: bit .pos of the stream is bit
+::    (wid - 1 - pos) of the atom.
+::
+++  gcs-at
+  |=  [gcs=bits:b-fil pos=@ud p=@ud]
+  ^-  [delta=@ pos=@ud]
+  =/  [q=@ud pos=@ud]
+    =|  q=@ud
+    |-  ^-  [@ud @ud]
+    ?>  (lth pos wid.gcs)
+    ?:  =(0 (cut 0 [(sub wid.gcs +(pos)) 1] dat.gcs))  [q +(pos)]
+    $(q +(q), pos +(pos))
+  ?>  (lte (add pos p) wid.gcs)
+  :_  (add pos p)
+  (add (cut 0 [(sub wid.gcs (add pos p)) p] dat.gcs) (lsh [0 p] q))
+::
 ::  +scan-height: liveness signal contributed by a single block height.
 ::
 ++  scan-height
@@ -333,7 +681,8 @@
   ::  a protocol violation and must be undeterminable, not clean.
   ?:  =(0 wid.filter.fres)
     (pure:m %error)
-  ?.  (match:b-fil block-hash.fres filter.fres ~[spk])
+  ::  +match-many, not +match:b-fil: the same answer, linear time
+  ?:  =(~ (match-many block-hash.fres filter.fres ~[[0 spk]]))
     (pure:m %no-match)
   ;<  b-cage=cage  bind:m  (watch-block-height our h)
   =/  bres  =/(u (lc-update b-cage) ?>(?=(%block-by-height -.u) p.u))
