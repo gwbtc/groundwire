@@ -393,8 +393,10 @@
   ::  at its first synced tick (found by the test suite, 2026-09-10).
   ::
   :_  this(indexing %.n, synced %.n, origin [%unstarted 0 %default now.bowl])
+  ::  No /best-block watch here: it opens when the light client first
+  ::  says it is synced (see +best-block-cards).
+  ::
   :~  [%pass /anex %arvo %j %anex /writs]
-      [%pass /best-block %agent [our.bowl light-client-agent:lca] %watch /best-block]
       (watch-synced our.bowl)
   ==
 ::
@@ -792,15 +794,16 @@
       ::  set, which is now unevaluable-when-empty rather than false, so a
       ::  light-client-only deployment still verifies unsponsored comets.
       ::
-      ?~  best
-        :_  this
-        (drop-writ our.bowl dom.poke who.poke %no-tip ~)
-      ::  ... and the %unsynced fate re-reads the light client's answer
-      ::  while we are at it, because it may have caught up without
+      ::  .synced FIRST: there is no tip until the light client is synced
+      ::  (+best-block-cards), and only the %unsynced fate re-reads the
+      ::  light client's answer, because it may have caught up without
       ::  telling us.  See +refresh-synced and +writ-drop-fate:lsa.
       ?.  synced
         :_  this
-        (drop-writ our.bowl dom.poke who.poke %unsynced num.u.best)
+        (drop-writ our.bowl dom.poke who.poke %unsynced ?~(best 0 num.u.best))
+      ?~  best
+        :_  this
+        (drop-writ our.bowl dom.poke who.poke %no-tip ~)
       =/  need=@ud  (log-top-height u.sat)
       ?.  (gte num.u.best need)
         :_  this
@@ -1178,6 +1181,7 @@
   ::  A %light-client-backed attestation verification returned.
       [%lc-retry ~]
     :_  this
+    ?.  synced  ~
     :~  [%pass /best-block %agent [our.bowl light-client-agent:lca] %watch /best-block]
     ==
   ::
@@ -1808,45 +1812,10 @@
           ?:  syn
             "%gw-btc: light client is SYNCED; confidential verification enabled"
           "%gw-btc: light client is NOT synced; holding all attestations (no verdicts)"
-      =/  new  this(synced syn)
-      ::  EPOCH AUTO-BOOTSTRAP.  The first time the client reports
-      ::  synced on a chain that has reached the kelvin-9 epoch, a
-      ::  VIRGIN index (cursor never moved, nothing indexed -- the same
-      ::  evidence the %gw-index-from guard reads, so a bootstrap that
-      ::  already happened, by poke or by this arm, refuses here too)
-      ::  starts itself from +gw-epoch.  Without this every fresh ship
-      ::  held an empty public index until an operator poked it, and
-      ::  could not resolve even the sponsor its own snapshot names.
-      ::
-      =/  virgin=?
-        ?&  syn
-            !indexing
-            =(0 num.block-id.urb-state)
-            =(~ unv-ids.urb-state)
-        ==
-      ?.  ?&(virgin ?=(^ best))
-        `new
-      ::  A virgin index starts only where it was TOLD to (.origin, set by
-      ::  an %index-origin poke).  Nobody decided yet: park, say so, and
-      ::  let the pane ask.  It used to start from the epoch here on its
-      ::  own -- a day of pinned CPU nobody chose (see $index-origin).
-      ::
-      ?.  ?&  ?=(?(%from-spawn %from-height %from-epoch) mode.origin)
-              !=(0 start.origin)
-          ==
-        ?:  ?=(%pending mode.origin)  `new
-        %-  %-  slog  :_  ~
-            leaf+"%gw-btc: public index: synced but no start was chosen; waiting (poke %index-origin, or use the Gevulot pane)"
-        `new(origin [%pending 0 decided-by.origin now.bowl])
-      ?.  (gte num.u.best start.origin)
-        `new
-      %-  %-  slog  :_  ~
-          leaf+"%gw-btc: public index: starting from block {<start.origin>} ({<mode.origin>}, decided by {<decided-by.origin>})"
-      :_  %=  new
-            urb-state  (start-index start.origin urb-state)
-            indexing   %.y
-          ==
-      ~[[%pass /timer %arvo %b %wait now.bowl]]
+      =.  synced  syn
+      =/  watch=(list card)  (best-block-cards our.bowl wex.bowl)
+      =^  cards  state  (maybe-start-index now.bowl)
+      [(weld watch cards) this]
     ==
   ::
       [%best-block ~]
@@ -1859,7 +1828,10 @@
       ==
     ::
         %kick
-      :_  this(best ~)
+      ::  re-open now if synced; otherwise the /is-synced transition will
+      =.  best  ~
+      :_  this
+      ?.  synced  ~
       :~  [%pass /best-block %agent [our.bowl light-client-agent:lca] %watch /best-block]
       ==
     ::
@@ -1882,7 +1854,12 @@
       ?.  ?=(%best-block -.u)  `this
       =/  upd  p.u
       ?:  ?=(%new -.upd)
-        `this(best ``id:block:bc`[block-hash.upd block-height.upd])
+        =/  first=?  ?=(~ best)
+        =.  best  ``id:block:bc`[block-hash.upd block-height.upd]
+        ?.  first  `this
+        ::  the first tip since the sync: a virgin index may start now
+        =^  cards  state  (maybe-start-index now.bowl)
+        [cards this]
       ?>  ?=(%reorg-rollback -.upd)
       ::  A REORG.  Until 2026-08-06 this arm was byte-identical to %new:
       ::  only .best moved, the scan cursor never rewound, and every fact
@@ -2076,6 +2053,74 @@
     %refresh  (refresh-synced our)
     %fail     ~[(verdict-card dom who ~)]
   ==
+::
+::  +maybe-start-index: start a virgin public index, if it is time
+::
+::    Needs BOTH the light client synced and a chain tip, and the tip now
+::    arrives after the sync (+best-block-cards), so this runs from both
+::    places: the /is-synced transition and the first /best-block fact.
+::
+++  maybe-start-index
+  |=  now=@da
+  ^-  (quip card _state)
+  ::  EPOCH AUTO-BOOTSTRAP.  The first time the client reports
+  ::  synced on a chain that has reached the kelvin-9 epoch, a
+  ::  VIRGIN index (cursor never moved, nothing indexed -- the same
+  ::  evidence the %gw-index-from guard reads, so a bootstrap that
+  ::  already happened, by poke or by this arm, refuses here too)
+  ::  starts itself from +gw-epoch.  Without this every fresh ship
+  ::  held an empty public index until an operator poked it, and
+  ::  could not resolve even the sponsor its own snapshot names.
+  ::
+  =/  virgin=?
+    ?&  synced
+        !indexing
+        =(0 num.block-id.urb-state)
+        =(~ unv-ids.urb-state)
+    ==
+  ?.  ?&(virgin ?=(^ best))
+    `state
+  ::  A virgin index starts only where it was TOLD to (.origin, set by
+  ::  an %index-origin poke).  Nobody decided yet: park, say so, and
+  ::  let the pane ask.  It used to start from the epoch here on its
+  ::  own -- a day of pinned CPU nobody chose (see $index-origin).
+  ::
+  ?.  ?&  ?=(?(%from-spawn %from-height %from-epoch) mode.origin)
+          !=(0 start.origin)
+      ==
+    ?:  ?=(%pending mode.origin)  `state
+    %-  %-  slog  :_  ~
+        leaf+"%gw-btc: public index: synced but no start was chosen; waiting (poke %index-origin, or use the Gevulot pane)"
+    `state(origin [%pending 0 decided-by.origin now])
+  ?.  (gte num.u.best start.origin)
+    `state
+  %-  %-  slog  :_  ~
+      leaf+"%gw-btc: public index: starting from block {<start.origin>} ({<mode.origin>}, decided by {<decided-by.origin>})"
+  :_  %=  state
+        urb-state  (start-index start.origin urb-state)
+        indexing   %.y
+      ==
+  ~[[%pass /timer %arvo %b %wait now]]
+::
+::  +best-block-cards: open /best-block, once, when synced
+::
+::    NOT at boot.  %bitcoin-client gives a /best-block fact for every
+::    header it accepts, so during the initial sync -- ~972,000 headers --
+::    an agent subscribed from boot wakes for each one, and nothing here
+::    reads .best until the light client is synced (writ admission, the
+::    scanner and %anew all wait for .synced).  Measured 2026-10-21 on a
+::    dry comet: the header sync ran ~30x slower with %gw-btc awake than
+::    with it suspended (Mac: ~2,500 vs ~75,000 headers a minute).  A
+::    fresh watch is answered at once with the current tip, so subscribing
+::    on the transition loses nothing.  Once open it stays open: after the
+::    sync the facts arrive one per block.
+::
+++  best-block-cards
+  |=  [our=@p wex=boat:gall]
+  ^-  (list card)
+  ?.  synced  ~
+  ?:  (~(has by wex) [/best-block our light-client-agent:lca])  ~
+  ~[[%pass /best-block %agent [our light-client-agent:lca] %watch /best-block]]
 ::
 ::  +refuse-anew: decline to refresh OUR OWN pass, out loud
 ::
@@ -2772,11 +2817,12 @@
   ::  the genesis block %bitcoin-client answers a fresh subscription with.
   ::  Publishing a pass validated against a chain we have not seen would
   ::  install it in ames for every peer to reject.
+  ::  .synced first, for the reason given at the %jael-writ gate.
   =/  tip  best
+  ?.  synced
+    [(refuse-anew our %unsynced ?~(tip 0 num.u.tip)) state]
   ?~  tip
     [(refuse-anew our %no-tip ~) state]
-  ?.  synced
-    [(refuse-anew our %unsynced num.u.tip) state]
   =/  need=@ud  (log-top-height [our *pass cand])
   ?.  (gte num.u.tip need)
     [(refuse-anew our %tip-below-log num.u.tip need) state]
