@@ -1,5 +1,20 @@
 # Groundwire Onboarding
 
+> **⚠️ This page describes the LEGACY protocol (precommit → commit → reveal,
+> `%escape`/`%adopt`, the sponsor HTTP signature endpoint, the gateway dawn
+> check). None of that is how comets are minted today.** The current path is a
+> single confidential spawn transaction on the **kelvin-9 / OP_RETURN**
+> protocol, minted with Causeway.
+>
+> - **Onboarding a teammate now → [`TEAM-ONBOARDING.md`](TEAM-ONBOARDING.md)** —
+>   the one-command-per-droplet happy path, with the right branch and sponsor.
+> - **Full bring-up reference → [`../ops/doc/OPERATIONS.md`](../ops/doc/OPERATIONS.md).**
+> - **Causeway itself → [`../causeway/desktop/README.md`](../causeway/desktop/README.md).**
+>
+> The rest of this file is kept for historical context only.
+
+---
+
 `%urb-watcher` is Groundwire's equivalent of `%azimuth` and `%eth-watcher`. It regularly polls Bitcoin for comet "attestations" and updates its ship's Jael state accordingly.
 
 Generating and booting a Groundwire ship happens in the following steps:
