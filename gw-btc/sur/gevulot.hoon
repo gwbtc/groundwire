@@ -15,18 +15,19 @@
 ::        This replaces "download the whole public index snapshot".
 ::
 ::    TRUST IS PROVISIONAL.  A trusted install is a head start, not a
-::    verdict.  As soon as %gw-btc's own light client is synced, %gevulot
-::    re-submits every peer it installed on trust through the SAME on-chain
-::    verification a peer's direct packet gets (%jael-writ).  A valid peer
-::    is confirmed idempotently; a stale one is demoted without a snub; a
-::    hand-pasted forgery is caught.  Peers pasted or scanned by the user
-::    are verified on chain immediately whenever the client is already
-::    synced -- they carry no sponsor's word, so they get none of the
-::    trust and all of the check.
+::    verdict.  When the user asks for it from the pane (%recheck), or by
+::    itself once %gw-btc's light client is synced if the auto-verify
+::    toggle is on, %gevulot re-submits every peer it installed on trust
+::    through the SAME on-chain verification a peer's direct packet gets
+::    (%jael-writ).  A valid peer is confirmed idempotently; a stale one
+::    is demoted without a snub; a hand-pasted forgery is caught.  The
+::    verification is one liveness walk over every block's compact filter
+::    from the peers' oldest custody entry to the tip, hours of one core
+::    on a fresh comet, and nothing waits on it -- which is why the pane
+::    explains it and the user starts it (app/gevulot.hoon header).
 ::
 |%
-::  $provenance: how a peer entry was learned.  Drives nothing but the UI
-::  and, for %paste, the "verify now if we can" bias.
+::  $provenance: how a peer entry was learned.  Drives nothing but the UI.
 ::
 ::    %packet and %index are not installs at all: the pane lists every
 ::    identity %gw-btc holds, and those two are how it got the ones
@@ -55,7 +56,8 @@
       [%withdraw ~]              :: sponsee: ask my sponsor to stop broadcasting me
       [%ingest-peer =pass]       :: sponsee: install a hand-pasted attestation
       [%forget-peer who=@p]      :: sponsee: drop a peer we installed
-      [%recheck ~]               :: sponsee: re-verify all installs on chain now
+      [%recheck ~]               :: sponsee: verify every install on chain now (the pane's button)
+      [%set-auto-verify on=?]    :: sponsee: start that by itself once synced, as before? (default no)
       [%set-serving on=?]        :: sponsor: run the distribution service?
       [%set-share-index on=?]    :: sponsor: push my whole public index to a sponsee that announces?
       [%index-start mode=?(%from-spawn %from-epoch)]  :: decide where the public index starts

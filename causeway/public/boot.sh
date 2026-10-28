@@ -846,8 +846,10 @@ boot_ship() {
   # comet cannot announce itself, the sponsor never pushes peers, and
   # every desk sync queues until the light client has verified the
   # sponsor on chain -- hours.  %ingest-peer is %gevulot's trusted
-  # install (re-verified on chain once synced); %distribute then asks
-  # the sponsor to broadcast us.  Measured on the first real mint.
+  # install (verified on chain when the user asks for it in the Gevulot
+  # pane, or by itself once synced if its auto-verify toggle is on);
+  # %distribute then asks the sponsor to broadcast us.  Measured on the
+  # first real mint.
   #
   # On EVERY boot, not just the mint's: both pokes are idempotent (a peer
   # already held is refreshed; the roster is a set), and the mint's

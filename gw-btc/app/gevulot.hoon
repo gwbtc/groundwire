@@ -9,12 +9,13 @@
 ::
 ::    Sponsee side:
 ::      - a receive toggle (default OFF); when on, attestations pushed by
-::        OUR sponsor are installed into jael -- verified on chain if our
-::        light client is already synced, otherwise installed on TRUST and
-::        re-verified on chain the moment it catches up.
+::        OUR sponsor are installed into jael on TRUST, and stay on trust
+::        until the user asks for the on-chain verification from the pane
+::        (or, with the auto-verify toggle on, until our light client is
+::        synced).
 ::      - "distribute my attestation": ask our sponsor to broadcast us.
-::      - paste a peer's pass to install it by hand (verified on chain
-::        whenever we can; a paste carries no sponsor's word).
+::      - paste a peer's pass to install it by hand (on trust as well; a
+::        paste carries no sponsor's word, so verify it soon).
 ::      - a live view of every installed peer and whether it is trusted,
 ::        re-checking, or confirmed on chain, plus the light client's own
 ::        sync status and a debug dump of %gw-btc's state.
@@ -37,6 +38,16 @@
 ::    check without changing %gw-btc's verdict path.  .tries bounds the
 ::    retry so a permanently unconfirmable entry stops re-poking.
 ::
+::    THE SWEEP IS STARTED BY THE USER, not by an install.  Verifying the
+::    peers on trust is one liveness walk over every block's compact
+::    filter from their oldest custody entry to the tip -- 10,490 blocks
+::    and 1 h 52 m with one core pinned on a real comet (2026-10-28, 19
+::    peers) -- and nothing waits on it: the peers are already in Jael.
+::    So +install-peer arms no timer; the pane explains the walk and its
+::    length and offers "Verify on chain now" (%recheck), which runs the
+::    sweep until every peer is confirmed or out of tries.  .auto-verify
+::    restores the old arm-on-install behaviour for ships nobody watches.
+::
 /-  gev=gevulot, urb, ord, sa=self-attestation
 /+  default-agent, dbug, server, schooner, cc=gw-btc-pass, lsa=self-attestation
 /+  mne=mnemonyms
@@ -45,7 +56,7 @@
 /*  english  %txt  /fil/wordlists/english/txt
 ::
 |%
-+$  versioned-state  $%(state-0 state-1 state-2)
++$  versioned-state  $%(state-0 state-1 state-2 state-3)
 +$  state-0
   $:  %0
       receive=?
@@ -82,6 +93,23 @@
       roster=(map @p pass)    :: sponsor: announced sponsees, each with the pass to push
       installed=(map @p peer:gev) :: sponsee: how each peer was learned, and retry counts
   ==
+::  state-3: .auto-verify and .asked.  The on-chain verification of the
+::  peers on trust no longer starts when a peer is installed: the user
+::  starts it from the pane, which explains what it proves and how long
+::  the walk is (see the header).  .auto-verify (default off) restores
+::  the arm-on-install behaviour; .asked is when the button was last
+::  pressed, for the pane's "asked at".
+::
++$  state-3
+  $:  %3
+      receive=?               :: sponsee: accept pushes from our sponsor?  (default no)
+      serving=?               :: sponsor: run the distribution service?    (default yes)
+      share-index=?           :: sponsor: push my whole public index to announcers? (default yes)
+      auto-verify=?           :: sponsee: start verifying trusted installs by itself once synced? (default no)
+      asked=(unit @da)        :: sponsee: when "verify on chain now" was last pressed
+      roster=(map @p pass)    :: sponsor: announced sponsees, each with the pass to push
+      installed=(map @p peer:gev) :: sponsee: how each peer was learned, and retry counts
+  ==
 +$  card  card:agent:gall
 +$  ready  [synced=? tip=(unit @) indexing=?]  :: shape of %gw-btc /x/ready
 +$  scan                                       :: shape of %gw-btc /x/scan
@@ -103,7 +131,7 @@
 +$  walks  (map @p [job=@ud top=@ud])          :: shape of %gw-btc /x/inflight-detail
 --
 ::
-=|  state-2
+=|  state-3
 =*  state  -
 %-  agent:dbug
 ^-  agent:gall
@@ -115,7 +143,8 @@
 ::
 ++  on-init
   ^-  (quip card _this)
-  :_  this(serving %.y)
+  ::  a loobean bunts to %.y, so every "default no" flag is set here
+  :_  this(serving %.y, auto-verify %.n)
   :~  :*  %pass  /eyre/connect  %arvo  %e
           %connect  `/apps/gevulot  dap.bowl
       ==
@@ -127,13 +156,18 @@
   ^-  (quip card _this)
   =/  ver  !<(versioned-state old)
   ?-  -.ver
-    %2  `this(state ver)
-    ::  1 -> 2: share the index by default.
-    %1  `this(state [%2 receive.ver serving.ver %.y roster.ver installed.ver])
-    ::  0 -> 2: the old roster held ships without passes, and there is no
+    %3  `this(state ver)
+    ::  2 -> 3: verification is started from the pane from now on; a
+    ::  sweep timer already armed by the old code still fires and runs
+    ::  (the sweep is the same code the button runs), so a ship upgraded
+    ::  mid-sweep finishes it.
+    %2  `this(state [%3 receive.ver serving.ver share-index.ver %.n ~ roster.ver installed.ver])
+    ::  1 -> 3: share the index by default.
+    %1  `this(state [%3 receive.ver serving.ver %.y %.n ~ roster.ver installed.ver])
+    ::  0 -> 3: the old roster held ships without passes, and there is no
     ::  way to recover them (see state-1).  Start it empty; every sponsee
     ::  re-announces on boot (boot.sh's %distribute) and can from the pane.
-    %0  `this(state [%2 receive.ver serving.ver %.y ~ installed.ver])
+    %0  `this(state [%3 receive.ver serving.ver %.y %.n ~ ~ installed.ver])
   ==
 ::
 ++  on-poke
@@ -505,29 +539,26 @@
   ^-  card
   [%pass /wire %agent [who %gevulot] %poke %noun !>(wire)]
 ::
-::  +install-peer: record a peer and get it into jael.  Verify on chain
-::  right now if we can; otherwise install on trust and arm the sweep that
-::  will verify it once the light client catches up.
+::  +install-peer: record a peer and get it into jael ON TRUST, always --
+::  the peer is reachable at once, whatever the light client is doing.
+::  The on-chain verification is the user's to start (the pane's "Verify
+::  on chain now", %recheck), so this arms nothing.  With .auto-verify on
+::  it arms the recheck sweep instead, which verifies this peer and every
+::  other unconfirmed one once the light client is synced, re-arming
+::  until all are confirmed or out of tries.  (It used to send the
+::  verify writ directly when already synced; the sweep does that within
+::  two minutes now, and the verifier being single-flight per ship often
+::  dropped the direct writ anyway.)  No scry here: nothing about the
+::  install depends on the sync state.
 ::
 ++  install-peer
   |=  [who=@p =pass via=provenance:gev]
   ^-  (quip card _state)
-  =/  rdy  gw-ready
-  =/  entry=peer:gev  [pass via now.bowl ?:(synced.rdy 1 0)]
+  =/  entry=peer:gev  [pass via now.bowl 0]
   :_  state(installed (~(put by installed) who entry))
-  ::  Arm the recheck sweep on BOTH paths.  The on-chain verifier is
-  ::  single-flight per ship (%gw-btc drops a %jael-writ for a ship whose
-  ::  verification is running, with a log line), so the one
-  ::  poke-gw-verify below can be dropped -- most often right after our
-  ::  light client syncs, when the sweep's batch is already walking and a
-  ::  freshly pushed peer lands on the synced branch.  Without a timer
-  ::  that peer sat unconfirmed forever, only cleared by a manual "recheck
-  ::  all".  The sweep is idempotent: it skips confirmed peers and peers
-  ::  in flight, and stops once every peer is confirmed or has spent its
-  ::  tries.
-  ?:  synced.rdy
-    ~[(poke-gw-verify who pass) (recheck-timer ~m2)]
-  ~[(poke-gw-install who pass) (recheck-timer ~m2)]
+  :-  (poke-gw-install who pass)
+  ?.  auto-verify  ~
+  ~[(recheck-timer ~m2)]
 ::
 ::  =====================================================================
 ::  local actions (UI / dojo / Causeway)
@@ -540,6 +571,9 @@
       %set-receive      `state(receive on.act)
       %set-serving      `state(serving on.act)
       %set-share-index  `state(share-index on.act)
+      ::  Turning auto-verify ON does not start anything by itself: the
+      ::  next install arms the sweep, or the user presses the button.
+      %set-auto-verify  `state(auto-verify on.act)
   ::
       %distribute
     ::  ask our sponsor to broadcast us, sending the attestation we want
@@ -576,9 +610,15 @@
     ==
   ::
       %recheck
-    ::  reset the attempt counters and re-verify everything on chain now.
+    ::  THE button: reset the attempt counters and verify everything on
+    ::  chain now.  The sweep re-arms itself until every peer is confirmed
+    ::  or out of tries (and waits for the light client if it is not
+    ::  synced yet), so one press is one complete verification.
     =.  state
-      state(installed (~(run by installed) |=(p=peer:gev p(tries 0))))
+      %=  state
+        asked      `now.bowl
+        installed  (~(run by installed) |=(p=peer:gev p(tries 0)))
+      ==
     recheck-sweep
   ::
       ::  The user decides where the public index starts.  %gw-btc resolves
@@ -615,6 +655,9 @@
 ::
 ++  recheck-sweep
   ^-  (quip card _state)
+  ::  nothing installed, nothing to ask %gw-btc about (and no scry: a
+  ::  %gx scry needs the live case, which a test bowl does not have)
+  ?:  =(~ installed)  `state
   =/  rdy   gw-ready
   =/  conf  gw-confidential
   =/  todo=(list [who=@p p=peer:gev])
@@ -764,6 +807,7 @@
   ?:  =(act 'set-receive')   [%set-receive =('true' (~(gut by (malt q)) 'on' ''))]
   ?:  =(act 'set-serving')   [%set-serving =('true' (~(gut by (malt q)) 'on' ''))]
   ?:  =(act 'set-share-index')  [%set-share-index =('true' (~(gut by (malt q)) 'on' ''))]
+  ?:  =(act 'set-auto-verify')  [%set-auto-verify =('true' (~(gut by (malt q)) 'on' ''))]
   ?:  =(act 'distribute')    [%distribute ~]
   ?:  =(act 'withdraw')      [%withdraw ~]
   ?:  =(act 'recheck')       [%recheck ~]
@@ -805,7 +849,7 @@
         ;+  (status-card rdy spo gw-scan gw-walks)
         ;+  (index-card gw-scan)
         ;*  ?~  spo  ~
-            :~  (sponsee-section u.spo conf synced.rdy gw-inflight)
+            :~  (sponsee-section u.spo conf rdy gw-inflight)
             ==
         ;*  ?.  am-sponsor  ~
             :~  (sponsor-section spees)
@@ -981,12 +1025,13 @@
     ;h2: Public index
     ;p.hint
       ; Two different syncs run on this ship.  The LIGHT CLIENT downloads
-      ; block headers and compact filters; it is what verifies a specific
-      ; identity and it is quick.  The PUBLIC INDEX reads every full block
-      ; from its start height to discover public names nobody told you
-      ; about and to follow known names' moves; it is slow (a few
-      ; seconds per block on a 2-vCPU droplet) and pins the ship while
-      ; it catches up.
+      ; block headers and compact filters (minutes); it is what the
+      ; on-chain verification of your peers reads, and that verification
+      ; is a walk of its own that you start from the "As a sponsee" card.
+      ; The PUBLIC INDEX reads every full block from its start height to
+      ; discover public names nobody told you about and to follow known
+      ; names' moves; it is slow (a few seconds per block on a 2-vCPU
+      ; droplet) and pins the ship while it catches up.
     ==
     ;*  ?.  ?=(%pending mode.org)  ~
         :_  ~
@@ -1052,8 +1097,138 @@
   =/  tiptxt=tape  ?~(tip.rdy "" (weld " — block " (scow %ud u.tip.rdy)))
   ;span(class ?:(synced.rdy "v st st-ok" "v st st-wait")): {(weld txt tiptxt)}
 ::
+::  +walk-rate: blocks a minute the liveness walk manages on a 2-vCPU
+::  droplet with one core pinned, measured 2026-10-28 on a real comet
+::  walking 19 peers in one batch: 10,490 blocks in 1 h 52 m.  The rate
+::  does not depend on how many peers share the walk.
+::
+++  walk-rate  100
+::
+::  +gw-clean: per ship, the custody entry and the height an earlier walk
+::  already found clean.  %gw-btc resumes a walk for the SAME entry from
+::  there (+resume-from in app/gw-btc), so the pane's estimate must too:
+::  re-verifying a peer costs blocks-since-last-check, not the whole log.
+::
+++  gw-clean
+  ^-  (map @p [last=[height=@ud =txid:ord] to=@ud])
+  =/  res
+    %-  mule  |.
+    ;;  (map @p [last=[height=@ud =txid:ord] to=@ud])
+    .^(* %gx /(scot %p our.bowl)/gw-btc/(scot %da now.bowl)/clean/noun)
+  ?:  ?=(%| -.res)  ~
+  p.res
+::
+::  +walk-start: the height the verification of the peers on trust would
+::  walk from -- the LOWEST start among them, where a peer's start is its
+::  last custody entry (decoded from the pass we hold) or, if an earlier
+::  walk of that same entry was clean through some height, the block
+::  after it.  ~ when nothing is on trust or no pass we hold decodes.
+::
+++  walk-start
+  |=  todo=(list @p)
+  ^-  (unit @ud)
+  =/  clean  gw-clean
+  %+  roll  todo
+  |=  [who=@p lo=(unit @ud)]
+  ^-  (unit @ud)
+  ?~  p=(~(get by installed) who)  lo
+  =/  sat  (from-xtr:lsa who pass.u.p)
+  ?~  sat  lo
+  ?~  chain.u.sat  lo
+  =/  last  (rear chain.u.sat)
+  =/  h=@ud
+    ?~  cur=(~(get by clean) who)  height.last
+    ?.  =(last.u.cur [height.last txid.last])  height.last
+    +(to.u.cur)
+  ?~  lo  `h
+  `(min u.lo h)
+::
+::  +walk-eta: the walk's length and wall time at +walk-rate.
+::
+++  walk-eta
+  |=  [from=@ud tip=@ud]
+  ^-  tape
+  ?:  (gth from tip)
+    "already clean through block {(scow %ud tip)}, so only the blocks mined since: seconds"
+  =/  blocks=@ud  (sub tip (min tip from))
+  =/  mins=@ud  (div (add blocks (dec walk-rate)) walk-rate)
+  =/  when=tape
+    ?:  (lth mins 2)  "a minute or two"
+    ?:  (lth mins 90)  "about {(scow %ud mins)} minutes"
+    =/  hrs=@ud  (div mins 60)
+    =/  rem=@ud  (mod mins 60)
+    ?:  (lth rem 5)  "about {(scow %ud hrs)} hours"
+    "about {(scow %ud hrs)} h {(scow %ud rem)} min"
+  :(weld (scow %ud blocks) " blocks, from block " (scow %ud from) " to " (scow %ud tip) ": " when)
+::
+::  +verify-block: the on-chain verification of the peers on trust --
+::  what it proves, what it costs, and the button that starts it.  The
+::  numbers come from the passes we hold and the light client's tip;
+::  the one constant is +walk-rate.
+::
+++  verify-block
+  |=  [conf=(set @p) rdy=ready infl=(set @p)]
+  ^-  manx
+  =/  todo=(list @p)
+    %+  skim  ~(tap in ~(key by gw-trusted))
+    |=(who=@p !(peer-confirmed who conf))
+  =/  n=@ud  (lent todo)
+  =/  running=@ud  ~(wyt in infl)
+  =/  asked-txt=tape  ?~(asked "" " (asked {(when-txt u.asked)})")
+  =/  status=manx
+    ?:  (gth running 0)
+      ;p.warn: Verifying {(scow %ud running)} peer(s) on chain now{asked-txt}.  The walk's range is in the "verifying" row above.
+    ?:  =(0 n)
+      ;p.empty: Nothing to verify: every peer this ship holds is verified on chain.
+    ?.  synced.rdy
+      ;p.warn: {(scow %ud n)} peer(s) on trust.  The light client is not synced yet; a verification you start now begins as soon as it is.
+    =/  cost=tape
+      =/  start  (walk-start todo)
+      ?~  start  "every block from their oldest custody entry to the tip"
+      ?~  tip.rdy  "every block from block {(scow %ud u.start)} to the tip"
+      (walk-eta u.start u.tip.rdy)
+    ;p.warn: {(scow %ud n)} peer(s) on trust.  One walk covers all of them: {cost}, with one core busy the whole time.
+  =/  button=manx
+    ?:  |(=(0 n) (gth running 0))
+      ;button.ghost(type "submit", disabled "disabled"): Verify on chain now
+    ;button(type "submit"): Verify {(scow %ud n)} peer(s) on chain now
+  ;div
+    ;h3: On-chain verification
+    ;p.hint
+      ; A peer installed on trust is in Jael on your sponsor's word: you
+      ; can reach it, but nothing on this ship has checked it.  Verifying
+      ; it means your own light client proves the identity against the
+      ; chain: it fetches the custody transactions, walks every block's
+      ; compact filter from the last custody entry to the tip (resuming
+      ; where an earlier walk of that entry left off) to confirm the sat
+      ; was never spent, and checks the sponsor relation.  A
+      ; verified peer rests on the chain instead of on a sponsor, and only
+      ; verified peers count when this ship judges others.  Nothing else
+      ; waits on it, which is why it does not start by itself.
+    ==
+    ;p.hint
+      ; The walk runs at about {(scow %ud walk-rate)} blocks a minute on a
+      ; 2-vCPU droplet, however many peers share it.  The ship stays
+      ; usable meanwhile but answers slowly in bursts.
+    ==
+    ;+  status
+    ;div.row
+      ;form(method "post", action "/apps/gevulot")
+        ;input(type "hidden", name "act", value "recheck");
+        ;+  button
+      ==
+      ;form(method "post", action "/apps/gevulot")
+        ;input(type "hidden", name "act", value "set-auto-verify");
+        ;input(type "hidden", name "on", value ?:(auto-verify "false" "true"));
+        ;button.ghost.small(type "submit")
+          ; Start it by itself after sync: {?:(auto-verify "ON — turn off" "OFF — turn on")}
+        ==
+      ==
+    ==
+  ==
+::
 ++  sponsee-section
-  |=  [spo=@p conf=(set @p) synced=? infl=(set @p)]
+  |=  [spo=@p conf=(set @p) rdy=ready infl=(set @p)]
   ^-  manx
   ;div.card
     ;h2: As a sponsee
@@ -1071,9 +1246,10 @@
       ==
     ==
     ;p.hint
-      ; When ON, attestations your sponsor pushes are installed so you can
-      ; reach peers without waiting for your own light client to sync. Each
-      ; is re-verified on chain automatically once it does.
+      ; When ON, attestations your sponsor pushes are installed on trust,
+      ; so you can reach peers without waiting for your own light client
+      ; to sync.  They stay on your sponsor's word until you verify them
+      ; on chain below.
     ==
     ;div.row
       ;form(method "post", action "/apps/gevulot")
@@ -1091,13 +1267,8 @@
       ;input(type "text", name "pass", placeholder "0x…", spellcheck "false");
       ;button(type "submit"): Install
     ==
-    ;div.row
-      ;form(method "post", action "/apps/gevulot")
-        ;input(type "hidden", name "act", value "recheck");
-        ;button.ghost.small(type "submit"): Re-check all on chain now
-      ==
-    ==
-    ;+  (installed-list conf synced infl)
+    ;+  (verify-block conf rdy infl)
+    ;+  (installed-list conf synced.rdy infl)
   ==
 ::
 ++  installed-list
@@ -1159,7 +1330,7 @@
     %confirmed  "verified on chain"
     %syncing    "trusted — awaiting sync"
     %checking   "trusted — verifying on chain now"
-    %queued     "trusted — queued for verification"
+    %queued     ?:(auto-verify "trusted — queued for verification" "trusted — not verified yet")
     %failed     "unconfirmed"
   ==
 ::
@@ -1264,8 +1435,12 @@
         ;span.v: {<~(tap in ~(key by roster))>}
       ==
       ;div.statrow
-        ;span.k: receive / serving
-        ;span.v: {<[receive serving]>}
+        ;span.k: receive / serving / auto-verify
+        ;span.v: {<[receive serving auto-verify]>}
+      ==
+      ;div.statrow
+        ;span.k: verification last asked
+        ;span.v: {?~(asked "never" (when-txt u.asked))}
       ==
     ==
   ==

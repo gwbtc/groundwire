@@ -85,6 +85,21 @@ persisted per-ship `liveness-clean-to`: the walk resumes from it, so every
 attempt makes durable progress and a re-check costs blocks-since-last-check.
 The index scanner yields while a verification holds the slot.
 
+**Verification is started by the user, not by an install** (2026-10-28,
+gevulot state-3). Installing a pushed or pasted peer puts it in Jael on
+trust and arms nothing. The "As a sponsee" card explains what the
+verification proves (your own light client checks the custody
+transactions, walks every block's compact filter from the last custody
+entry to the tip, and checks the sponsor relation), what it costs (one walk
+for every peer on trust, N blocks from their oldest custody entry to the
+tip, about N/100 minutes with one core pinned -- 10,490 blocks and 1 h 52 m
+for 19 peers on a real comet), and that nothing waits on it; the button
+("Verify N peer(s) on chain now", `%recheck`) runs the sweep until every
+peer is confirmed or out of tries, waiting for the light client first if
+it is not synced. `.asked` records the last press for the pane. The
+`auto-verify` toggle (`%set-auto-verify`, default off) restores the old
+arm-on-install behaviour for ships nobody watches.
+
 ## 5. Actions — all manual, each with its consequence spelled out
 
 - **Install a peer / the sponsor by hand** (paste) — as today.
