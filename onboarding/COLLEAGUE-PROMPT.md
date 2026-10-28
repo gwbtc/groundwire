@@ -28,15 +28,17 @@ follow "Dry run" in `TEAM-ONBOARDING.md`.
 > it; don't improvise around the money or key steps:
 > https://raw.githubusercontent.com/gwbtc/groundwire/hd/cc-landing/onboarding/TEAM-ONBOARDING.md
 >
-> **The release tag.** The release is **`groundwire-alpha-2026.10.8`**. Use
-> exactly that tag in every `boot.sh --version`: the mint wrapper (guide step
-> 2) and the run command (step 5). If the guide or anything else shows a
-> different tag, this one wins. Never use `latest` (the daily, which cannot
-> mint confidential comets), an `rc` tag, or a tag you looked up yourself; an
+> **The release tag.** Before step 1, look up the newest `groundwire-alpha`
+> release on this machine:
+> `curl -fsSL 'https://api.github.com/repos/gwbtc/urbit/releases?per_page=100' | grep -o '"tag_name": *"groundwire-alpha-[^"]*"' | cut -d'"' -f4 | sort -V | tail -1`.
+> It must print one tag, such as `groundwire-alpha-2026.10.28`; if it prints
+> nothing, stop and ask me. Call that tag `TAG`, and put its literal value
+> wherever the guide says `<TAG>`: the mint wrapper (guide step 2) and the run
+> command (step 5). Look it up once and reuse it, so the mint and the run name
+> the same release. Never use `latest` (GitHub's "latest" is the daily, which
+> cannot mint confidential comets), or an `rc`, `next` or `daily` tag; an
 > older release sends the invite to a retired faucet ("Faucet error: Invalid
-> invite code"). Before step 1, confirm the tag exists:
-> `curl -fsI https://github.com/gwbtc/urbit/releases/tag/groundwire-alpha-2026.10.8`
-> must succeed. If it does not, stop and ask me.
+> invite code").
 >
 > **The person you're helping may not be technical.** Explain each step in
 > plain words before you take it, one step at a time, and do not assume they
@@ -121,9 +123,9 @@ follow "Dry run" in `TEAM-ONBOARDING.md`.
 > - **The mint ends with the ship stopped — that is by design.** It boots once to
 >   set the peer-discovery opt-in, then stops and prints the run command. Start
 >   it with the guide's step-5 command, verbatim — `bash ~/boot.sh --detach
->   --vps --version groundwire-alpha-2026.10.8 --comet
->   '<@p>'` — over plain ssh (no tmux needed), then verify. `--vps` gives the
->   comet a groundwire.me name with HTTPS; from then on the plain
+>   --vps --version TAG --comet '<@p>'` — over plain ssh (no tmux needed),
+>   then verify. `--vps` gives the comet a groundwire.me name with HTTPS;
+>   from then on the plain
 >   `http://<ip>:<port>` address redirects to it, so report the name. Step 5
 >   can take half an hour while the sync keeps the ship busy, so give it a
 >   long timeout or run it in the background.

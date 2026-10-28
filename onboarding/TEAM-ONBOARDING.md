@@ -2,7 +2,7 @@
 
 **Audience: a teammate, or a teammate's Claude, standing up a comet on a fresh
 DigitalOcean droplet.** Follow this top to bottom. It is the supported happy
-path for release `groundwire-alpha-2026.10.8`; the deep reference is
+path for the newest `groundwire-alpha` release; the deep reference is
 [`ops/doc/OPERATIONS.md`](../ops/doc/OPERATIONS.md).
 
 To try the flow first with no sats and no droplet, see "Dry run" below.
@@ -22,15 +22,21 @@ already paid for, handed over as one hex code, so the mint never waits on him.
 |---|---|
 | Desk (`%gw-btc` + `%gevulot`) | `gwbtc/groundwire` @ **`hd/cc-landing`** |
 | Kernel + vere | `gwbtc/urbit` @ **`hd/cc-kernel`** |
-| Release to boot from | **`groundwire-alpha-2026.10.8`**, a prerelease of `gwbtc/urbit` |
+| Release to boot from | the newest **`groundwire-alpha-*`** prerelease of `gwbtc/urbit` |
 
-Use exactly that tag in every `boot.sh --version`. Do not use `latest` (the
-daily, which can't do confidential comets) or a tag you looked up yourself.
-Confirm the tag exists before you start:
+Look up the release tag once, before you start, and use it in every
+`boot.sh --version` below, where the commands say `<TAG>`:
 
 ```bash
-curl -fsI https://github.com/gwbtc/urbit/releases/tag/groundwire-alpha-2026.10.8
+curl -fsSL 'https://api.github.com/repos/gwbtc/urbit/releases?per_page=100' \
+  | grep -o '"tag_name": *"groundwire-alpha-[^"]*"' | cut -d'"' -f4 | sort -V | tail -1
 ```
+
+It must print one tag, such as `groundwire-alpha-2026.10.28`; if it prints
+nothing, stop and ask. Do not use `latest` (GitHub's "latest" is the daily,
+which can't do confidential comets) or an `rc`, `next` or `daily` tag. Look
+the tag up once and reuse it: the mint and the run step must name the same
+release.
 
 ## The sponsor — nothing to memorize
 
@@ -60,12 +66,12 @@ One hard constraint shapes the recipe: `boot.sh --mint` reads its prompts from
 survives your SSH connection, and your Claude drives it with `send-keys` and
 reads it from a log. (This is exactly how the ops campaign drove ships.)
 
-**Mint on `groundwire-alpha-2026.10.8`.** It carries the light client the
-network now runs (gwbtc/node develop, which heals its own peers) and the
-%gw-btc that reads it. 2026.10.1 was the first release whose Causeway
+**Mint on the newest `groundwire-alpha` release.** It carries the light
+client the network now runs (gwbtc/node develop, which heals its own peers)
+and the %gw-btc that reads it. 2026.10.1 was the first release whose Causeway
 accepts invite codes; anything older, 2026.9.16 included, sends `--invite`
 to a retired faucet and stops with "Faucet error: Invalid invite code"
-(nothing is spent; re-run with 2026.10.8).
+(nothing is spent; re-run with the newest alpha).
 
 Older releases and what each fixed: see "Release history" at the end.
 
@@ -100,7 +106,7 @@ S 'apt-get update -qq && apt-get install -y -qq tmux python3-venv
 #      this the mint sits silently waiting for an address nobody can see.
 S 'cat > ~/mint.sh <<'"'"'EOF'"'"'
 PYTHONUNBUFFERED=1 bash ~/boot.sh --mint --headless --detach \
-  --version groundwire-alpha-2026.10.8 \
+  --version <TAG> \
   --sponsor "~barmul-bolmet-ronlus-lighul--rovtun-satryc-moclug-daplyd" 2>&1 | tee ~/mint.log
 EOF
 chmod +x ~/mint.sh'
@@ -138,7 +144,7 @@ S 'tmux send-keys -t mint "<the twelve words>" Enter'
 #    the installed release by itself, but say it anyway -- an older boot.sh
 #    resolved "latest" to the daily and overwrote bin/ under a running pier.
 #    It is done when it prints "==> Running (detached)".
-S "bash ~/boot.sh --detach --vps --version groundwire-alpha-2026.10.8 --comet '<the @p it printed>'"
+S "bash ~/boot.sh --detach --vps --version <TAG> --comet '<the @p it printed>'"
 S "bash ~/boot.sh --status --comet '<@p>'; bash ~/boot.sh --code --comet '<@p>'"
 
 # 6. restarting later: ALWAYS through boot.sh (`--stop`, then `--detach`),
@@ -245,7 +251,8 @@ an empty custody log, so no peer can ever verify it: throw it away afterwards.
 
 The flag implies `--mint` and asks no prompts: no recovery phrase, no funding
 address. Like a real mint, it boots the ship once, stops it, and prints the run
-command. Tested on macOS (Apple Silicon) with 2026.10.8:
+command. Tested on macOS (Apple Silicon) with 2026.10.8. `<TAG>` is the tag
+from "The branches and the release":
 
 ```bash
 # --dir keeps the test out of ~/.groundwire (the default install root)
@@ -254,10 +261,10 @@ curl -fsSL -o $D/boot.sh https://raw.githubusercontent.com/gwbtc/groundwire/hd/c
 
 # mint. Done at "<@p> is ready.  It is NOT running right now."
 bash $D/boot.sh --mint --skip-attestation --headless --detach --dir $D \
-  --version groundwire-alpha-2026.10.8 2>&1 | tee $D/mint.log
+  --version <TAG> 2>&1 | tee $D/mint.log
 
 # run. At a terminal with no --detach, this ends in the ship's dojo.
-bash $D/boot.sh --dir $D --version groundwire-alpha-2026.10.8 --comet '<the @p it printed>'
+bash $D/boot.sh --dir $D --version <TAG> --comet '<the @p it printed>'
 ```
 
 Things to know:
@@ -377,7 +384,7 @@ immediate.
 
 ## Release history
 
-For reference only; mint on the release named above.
+For reference only; mint on the newest `groundwire-alpha` release.
 
 RCs before 2026.9.10_2 have one or both of:
 a `gwlib.sh` whose peer seeding pokes a renamed mark (the light client never
