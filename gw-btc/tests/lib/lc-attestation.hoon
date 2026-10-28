@@ -1442,6 +1442,10 @@
   :~  [[h-start start-id] [778.000 start-tx]]
       [[h-c0 c0-id] [100 c0-tx]]
       [[h-c1 c1-id] [101 c1-tx]]
+      [[h-c0 s0-id] [100 s0-tx]]
+      [[h-c1 s1-id] [101 s1-tx]]
+      [[h-c0 g0-id] [100 g0-tx]]
+      [[h-c1 g1-id] [101 g1-tx]]
   ==
 ::  a log whose tip transaction the light client does not have
 ++  lost-sat
@@ -1477,5 +1481,78 @@
     %+  expect-eq
       !>(~[/block-filter/height/101 /block-filter/height/102])
       !>((skim reqs.out |=(p=path ?=([%block-filter *] p))))
+  ==
+::
+::  +verify-lc-batch judges a sponsor before the peers that name it, so
+::  sponsor-known holds for a peer whose sponsor verifies in the same
+::  batch, whichever way round the batch arrived.  Alone, the same peer
+::  is UNDETERMINED on that one check: here the batch's verdict is
+::  deliberately NOT the lone one.  A peer whose sponsor is in neither
+::  the batch nor the known set stays undetermined, and two peers naming
+::  each other both do, in the order they came, without hanging.
+::
+::  ~bud names +who (good-sat's ship) as sponsor; ~wes names ~bud; and
+::  cyclic-sat is +who naming ~bud back.  Each log is good-sat's on the
+::  same spawn sat, with its own entry 0 (an opening committing the
+::  snapshot that names the sponsor) and its own tip transaction on the
+::  shared tip scriptPubKey.
+::
+++  s0-id  0x4d4d.4d4d
+++  s1-id  0x5e5e.5e5e
+++  g0-id  0x6f6f.6f6f
+++  g1-id  0x7a7a.7a7a
+++  snap-s  ^-(snapshot:sa [life=1 rift=0 key=cry sponsor=[~ who] fief=~])
+++  snap-g  ^-(snapshot:sa [life=1 rift=0 key=cry sponsor=[~ ~bud] fief=~])
+++  open-s  ^-(opening:sa [ikey0 snap-s `spawn-open])
+++  open-g  ^-(opening:sa [ikey0 snap-g `spawn-open])
+++  s0-tx  (mk-tx s0-id ~[(mk-input start-id 0 ~)] ~[(state-out ikey0 snap-s 9.500)])
+++  s1-tx  (mk-tx s1-id ~[(mk-input s0-id 0 keypath-wit)] ~[tip-out])
+++  g0-tx  (mk-tx g0-id ~[(mk-input start-id 0 ~)] ~[(state-out ikey0 snap-g 9.500)])
+++  g1-tx  (mk-tx g1-id ~[(mk-input g0-id 0 keypath-wit)] ~[tip-out])
+++  s-chain  ^-(custody-log:sa ~[[s0-id 100 `open-s] [s1-id 101 ~]])
+++  g-chain  ^-(custody-log:sa ~[[g0-id 100 `open-g] [g1-id 101 ~]])
+++  sponsee-sat  ^-(self-attestation:sa [~bud carried-pass s-chain])
+++  grandee-sat  ^-(self-attestation:sa [~wes carried-pass g-chain])
+++  cyclic-sat   ^-(self-attestation:sa [who carried-pass g-chain])
+::
+++  test-batch-judges-sponsors-first
+  =/  run
+    |=  items=(list batch-item:lca)
+    ^-  (list [who=ship res=result:sa spk=hexb:bitcoin])
+    =/  out
+      %-  drive  :_  [b-chain b-db]
+      (step (verify-lc-batch:lca items no-points 102) ~)
+    ?>  ?=(%done -.halt.pace.out)
+    !<((list [who=ship res=result:sa spk=hexb:bitcoin]) value.halt.pace.out)
+  =/  lone
+    %-  done-result
+    pace:(drive (step (verify-lc:lca sponsee-sat ~ no-points 102 ~) ~) b-chain b-db)
+  =/  failing
+    |=  =verdict:sa
+    ^-  (list cord)
+    (turn (skip checks.verdict |=(c=check:sa ok.c)) |=(c=check:sa name.c))
+  =/  undetermined-on-sponsor
+    |=  r=[who=ship res=result:sa spk=hexb:bitcoin]
+    ?&  !ok.verdict.res.r
+        =(~['sponsor-known'] (failing verdict.res.r))
+        =(%unknown (classify:lsa verdict.res.r))
+    ==
+  =/  fwd  (run ~[[good-sat ~ ~] [sponsee-sat ~ ~] [grandee-sat ~ ~]])
+  =/  rev  (run ~[[grandee-sat ~ ~] [sponsee-sat ~ ~] [good-sat ~ ~]])
+  =/  orphan  (run ~[[sponsee-sat ~ ~]])
+  =/  cycle   (run ~[[sponsee-sat ~ ~] [cyclic-sat ~ ~]])
+  ;:  weld
+    ::  alone, the sponsee fails sponsor-known and nothing else
+    (expect !>((undetermined-on-sponsor [~bud lone])))
+    ::  with its sponsor in the batch, whichever way round: the sponsor,
+    ::  then the sponsee, then the sponsee's own sponsee -- all VALID
+    (expect-eq !>(~[who ~bud ~wes]) !>((turn fwd head)))
+    (expect-eq !>(fwd) !>(rev))
+    (expect !>((levy fwd |=(r=[ship res=result:sa hexb:bitcoin] ok.verdict.res.r))))
+    ::  no sponsor anywhere: undetermined, exactly as alone
+    (expect-eq !>(~[[~bud lone]]) !>(orphan))
+    ::  naming each other: both undetermined, in the order they came
+    (expect-eq !>(~[~bud who]) !>((turn cycle head)))
+    (expect !>((levy cycle undetermined-on-sponsor)))
   ==
 --

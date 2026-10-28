@@ -758,6 +758,19 @@
     $(chain t.chain, idx +(idx))
   [[idx u.opening.i.chain] $(chain t.chain, idx +(idx))]
 ::
+::  +sponsor-of: the sponsor the latest opening names, if any
+::
+::    What ++run-checks's sponsor-known will read from the same log,
+::    for ordering: +verify-lc-batch:lca judges a peer after the sponsor
+::    it names.  Ordering only -- the check itself stays in ++run-checks.
+::
+++  sponsor-of
+  |=  chain=custody-log:sa
+  ^-  (unit @p)
+  =/  ops  (openings-of chain)
+  ?~  ops  ~
+  sponsor.snapshot.opening:(rear ops)
+::
 ++  p2tr-xonly
   |=  spk=hexb:bitcoin
   ^-  (unit @ux)

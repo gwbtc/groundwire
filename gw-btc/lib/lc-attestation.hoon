@@ -227,16 +227,62 @@
 ::
 ::    Each peer's log is fetched in turn, exactly as +verify-lc fetches
 ::    it; then ONE +scan-liveness-many walk answers every peer's liveness
-::    question; then each peer's ++run-checks.  A peer's verdict is the
-::    one +verify-lc would give it alone (tests/lib/lc-attestation checks
-::    that).  The answer is a list of [who result tip-spk], one per peer
-::    whose log could be fetched: a peer whose fetch was refused gets no
-::    verdict, exactly as its lone strand would have died.
+::    question; then each peer's ++run-checks, sponsors first (see
+::    +judge-order).  A peer's verdict is the one +verify-lc would give
+::    it alone (tests/lib/lc-attestation checks that), with one
+::    deliberate exception: sponsor-known may hold here, for a peer whose
+::    sponsor verified earlier in the same batch, where alone it could
+::    not.  The answer is a list of [who result tip-spk] in judgement
+::    order, one per peer whose log could be fetched: a peer whose fetch
+::    was refused gets no verdict, exactly as its lone strand would have
+::    died.
 ::
 +$  batch-item
   $:  sat=self-attestation:sa
       tracked=(unit anchor:sa)
       from=(unit @ud)
+  ==
+::
++$  batch-pre  [item=batch-item pre=verify-pre]
+::
+::  +judge-order: .pres, every sponsor before the peers that name it
+::
+::    ++run-checks's sponsor-known asks whether the sponsor a peer names
+::    is a point we know.  Judged in the order the writs came, a peer
+::    whose sponsor sits in this same batch fails that check on nothing
+::    but the order: UNDETERMINED, no verdict, one of %gevulot's three
+::    tries spent -- and its sponsor verifies a moment later.  Seen on a
+::    fresh comet (2026-10-28): ten of its sponsor's sponsees came before
+::    the sponsor and every one ran out of tries.
+::
+::    Rounds: a peer goes out once the sponsor it names is not still
+::    waiting (none named, itself, not in the batch, or already out),
+::    in the order it came; repeat.  A round that frees nobody is a
+::    cycle, and the rest go out as they came -- sponsor-known fails for
+::    them as it would have, and nothing hangs.
+::
+++  judge-order
+  |=  pres=(list batch-pre)
+  ^-  (list batch-pre)
+  =|  out=(list batch-pre)
+  |-  ^-  (list batch-pre)
+  ?:  =(~ pres)  (flop out)
+  =/  waiting=(set ship)
+    (silt (turn pres |=(p=batch-pre who.sat.item.p)))
+  =/  ready=(list batch-pre)
+    %+  skim  pres
+    |=  p=batch-pre
+    =/  spon  (sponsor-of:lsa chain.sat.item.p)
+    ?|  ?=(~ spon)
+        =(u.spon who.sat.item.p)
+        !(~(has in waiting) u.spon)
+    ==
+  =?  ready  ?=(~ ready)  pres
+  =/  gone=(set ship)
+    (silt (turn ready |=(p=batch-pre who.sat.item.p)))
+  %=  $
+    pres  (skip pres |=(p=batch-pre (~(has in gone) who.sat.item.p)))
+    out   (weld (flop ready) out)
   ==
 ::
 ++  verify-lc-batch
@@ -274,17 +320,29 @@
     ?~  walks  acc
     ?>  ?=(^ lives)
     $(walks t.walks, lives t.lives, acc (~(put by acc) who.sat.item.i.walks i.lives))
-  %-  pure:m
-  !>  ^-  (list [ship result:sa hexb:bc])
-  %+  turn  pres
-  |=  [item=batch-item pre=verify-pre]
-  ?:  ?=(%done -.pre)  [who.sat.item result.pre tip-spk.pre]
-  :+  who.sat.item
+  ::  Sponsors first, and a VALID verdict adds its ship to what the
+  ::  peers judged after it may count as known (+judge-order).
+  ::
+  =/  known=(set ship)  known-public
+  =/  todo=(list batch-pre)  (judge-order pres)
+  =|  outs=(list [ship result:sa hexb:bc])
+  |-  ^-  form:m
+  ?~  todo
+    (pure:m !>(`(list [ship result:sa hexb:bc])`(flop outs)))
+  =/  who=ship  who.sat.item.i.todo
+  =/  [res=result:sa spk=hexb:bc]
+    ?:  ?=(%done -.pre.i.todo)
+      [result.pre.i.todo tip-spk.pre.i.todo]
+    :_  tip-spk.pre.i.todo
     %:  post-checks
-        sat.item  pre  (~(got by live-of) who.sat.item)
-        tracked.item  known-public
+        sat.item.i.todo  pre.i.todo  (~(got by live-of) who)
+        tracked.item.i.todo  known
     ==
-  tip-spk.pre
+  %=  $
+    todo   t.todo
+    known  ?.(ok.verdict.res known (~(put in known) who))
+    outs   [[who res spk] outs]
+  ==
 ::
 ::  +confirmed: a fetched transaction and the block hash it was found in
 ::
