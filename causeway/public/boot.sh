@@ -875,6 +875,7 @@ boot_ship() {
     until its light client has verified it on chain. Paste the sponsor's
     attestation into the Gevulot app to fix that now (TEAM-ONBOARDING.md)."
   fi
+  populate_ship
 }
 
 check_ports() {
@@ -1253,6 +1254,63 @@ ship_agent_running() {
   printf "(pure:m !>((crip ?:(.^(? %%gu /(scot %%p our)/%s/(scot %%da now)/$) \"yes\" \"no\"))))\n" "$1" \
     | gwl_eval 120 | grep -qE "%yes|'yes'"
 }
+
+# Starter content for a new ship: a Nostr relay in %nostrill and the
+# Groundwire Foundation group in %groups.  Each step runs until it
+# succeeds once, then never again, so a relay the user removes or a
+# group they leave stays gone.  A marker file beside the pier records
+# each success; deleting it re-runs that step on the next boot.
+NOSTR_RELAY="wss://nos.lol"
+GW_GROUP_HOST="~hodler-lorfeb"
+GW_GROUP_NAME="v769287"
+
+wait_agent() {
+  local i
+  for i in $(seq 1 18); do
+    ship_agent_running "$1" && return 0
+    sleep 10
+  done
+  return 1
+}
+
+# $1 marker name  $2 agent  $3 mark  $4 vase  $5 what it does
+populate_step() {
+  local marker="$GW_DIR/var/$NAME.$1" reply
+  [ -e "$marker" ] && return 0
+  if ! wait_agent "$2"; then
+    warn "%$2 is not running after 3 minutes; will $5 on the next boot"
+    return 1
+  fi
+  reply="$(gwl_poke "$2" "$3" "$4" 600 2>/dev/null || true)"
+  case "$reply" in
+    *thread-fail*)
+      warn "could not $5: $(thread_error_text "$reply")
+    (will try again on the next boot)"
+      return 1 ;;
+    *%avow*)
+      : > "$marker"
+      return 0 ;;
+    *)
+      warn "no reply from %$2; will $5 on the next boot"
+      return 1 ;;
+  esac
+}
+
+populate_ship() {
+  populate_step nostr-relay nostrill json \
+    "!>((need (de:json:html '{\"rela\":{\"add\":\"$NOSTR_RELAY\"}}')))" \
+    "add the Nostr relay $NOSTR_RELAY" \
+    && info "nostr: added relay $NOSTR_RELAY"
+  # %group-join is the old gang interface, still taken by %groups: it
+  # finds any invite token itself and starts the join.  The host may
+  # answer later; %groups carries on with it in the background.
+  populate_step gw-group groups group-join \
+    "!>([[$GW_GROUP_HOST %$GW_GROUP_NAME] &])" \
+    "join the group $GW_GROUP_HOST/$GW_GROUP_NAME" \
+    && info "groups: joining $GW_GROUP_HOST/$GW_GROUP_NAME"
+  return 0
+}
+
 ensure_dns_desk() {
   local sponsor="${MINT_SPONSOR:-$DEFAULT_SPONSOR}" i
   if ! ship_has_desk dns; then
