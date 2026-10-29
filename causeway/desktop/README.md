@@ -100,10 +100,16 @@ money over. The invitee's Causeway derives the same wallet, spends that UTXO
 as the spawn's input and signs the input with the invite key — but the
 identity sat it creates is tweaked from the **invitee's** own wallet key
 (recorded in the proof as `sat_key`, which the next `rekey` derives), and
-any change goes to the invitee's wallet at `m/86'/0'/0'/1/0`. Import the
-same 12 words into the ship's Wallet app (`%spv-wallet`, a BIP-39 `%t`
-seed) and the change shows up there. The inviter is left with nothing: not
-the identity, not the remainder.
+any change goes to the invitee's wallet at `m/86'/0'/0'/1/0`. Restore the
+same 12 words into the ship's Wallet app (grubbery's wallet, at
+`/groundwire/wallet`: "Restore Wallet", BIP39, then discover the purpose-86
+mainnet account; `onboarding/TEAM-ONBOARDING.md` step 8 has the recipe) and
+the change shows up there. The same holds for a spawn you fund yourself:
+whatever you send above the spawn's cost is change in that wallet. The
+inviter is left with nothing: not the identity, not the remainder. An
+inviter who wants the new ship to start with a balance puts more behind the
+code than `invite create` suggests; the suggestion covers only the spawn and
+a dust-sized change output.
 
 `causeway invite show <CODE>` reports what an invite's address holds.
 `invite create` prints the code *before* it waits for funding, because a run

@@ -98,7 +98,9 @@ follow "Dry run" in `TEAM-ONBOARDING.md`.
 > --mint` line in the guide's wrapper file (step 2), exactly as the guide's
 > note under that step shows. The mint then spends the sats already behind the
 > code and **never prints a funding address** — the "funding address" rule
-> below does not happen, and the leftover lands in the ship's Wallet app. Put
+> below does not happen. The sats the spawn does not use come back as change
+> to the mint wallet (the 12 words), and the guide's step 8 is what puts them
+> in the ship's Wallet app; do that step. Put
 > the code only in that wrapper file: not in chat, not in a log you paste
 > back, not on any other command line. Write the file by piping it to
 > `ssh … 'cat > ~/mint.sh'` on stdin, so the code never rides an ssh argument.
@@ -129,6 +131,17 @@ follow "Dry run" in `TEAM-ONBOARDING.md`.
 >   `http://<ip>:<port>` address redirects to it, so report the name. Step 5
 >   can take half an hour while the sync keeps the ship busy, so give it a
 >   long timeout or run it in the background.
+> - **Then the guide's step 8: the leftover sats into the ship's Wallet.**
+>   The spawn sends what it did not need back to the 12-word wallet, not to
+>   the ship. Restore those words into the Wallet at
+>   `https://<name>/groundwire/wallet` the way step 8 shows (the words go
+>   from your saved file to the ship in one https request body; never on a
+>   command line, never in chat), then discover the purpose-86, coin-type-0
+>   account. Tell the person, in plain words, that their ship's Wallet now
+>   holds the sats left over from the mint and can spend them, and that it
+>   therefore also holds the key that can rekey their comet, which is why the
+>   paper copy of the words still matters. This works before the sync is
+>   done: the Wallet reads balances from mempool.space.
 > - **Expect the mint's stop step to kill vere.** It asks vere to stop, waits
 >   30 s, then kills it and prints `vere did not exit on SIGTERM within 30s;
 >   sending SIGKILL`. On 2026-10-07 vere ignored the request for 900 s,
@@ -184,6 +197,8 @@ follow "Dry run" in `TEAM-ONBOARDING.md`.
 >   then `ssh … 'cat ~/code.txt && rm ~/code.txt'` once it has a line;
 > - confirm `bash ~/boot.sh --status` shows the ship up with `%gw-btc`
 >   syncing;
+> - the Wallet's address (`https://<name>/groundwire/wallet`) and the balance
+>   it shows after step 8, in sats;
 > - where the SSH key and the recovery-phrase file are on this machine, and
 >   that the droplet bills about $24 a month until it is destroyed;
 > - and **tell me plainly that the ship will be slow for the next few hours**

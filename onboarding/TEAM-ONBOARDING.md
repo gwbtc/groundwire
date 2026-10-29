@@ -115,7 +115,9 @@ chmod +x ~/mint.sh'
 #    it as the INVITE field) add `--invite <code>` to the boot.sh line above
 #    the --version line. The mint then spends the sats
 #    he already put behind the code and never prints a funding address: step
-#    4b does not happen, and the leftover lands in your ship's wallet.
+#    4b does not happen. Whatever the spawn does not use comes back as change
+#    to the MINT WALLET (the 12 words), at m/86'/0'/0'/1/0 -- not to the
+#    ship. Step 8 puts it in the ship's Wallet.
 
 # 3. start the mint in tmux (gives it the tty it needs; survives disconnects)
 S 'tmux new -d -s mint && tmux send-keys -t mint "bash ~/mint.sh" Enter'
@@ -127,7 +129,11 @@ S 'tail -40 ~/mint.log'
 S 'tmux send-keys -t mint "<the twelve words>" Enter'
 #   b) it prints a bc1p... FUNDING ADDRESS, then "Polling mempool.space for
 #      confirmation..." -> hand the address to Trent; keep polling the log every
-#      few minutes. Nothing to type: it watches the chain itself.
+#      few minutes. Nothing to type: it watches the chain itself. It asks for
+#      at least 1000 sats; the spawn costs about 1300 at a quiet mempool, and
+#      everything above that comes back as change to the same 12-word wallet,
+#      so sending a few thousand more is how the ship starts with a balance
+#      (step 8).
 #   c) on confirmation it mines (a few minutes), broadcasts the spawn, and asks
 #      you to re-enter the phrase ONCE MORE ("last chance") -> same send-keys.
 #   d) it then waits for the spawn tx to confirm (~10-60 min), bakes the feed,
@@ -173,6 +179,42 @@ S "bash ~/boot.sh --status --comet '<@p>'; bash ~/boot.sh --code --comet '<@p>'"
 #    it (a dev comet, a laptop) nothing is named and the ship works by IP.
 #    The mechanism and the by-hand runbook: gwbtc/urbit-dns README,
 #    "Getting a URL for your comet".
+
+# 8. put the mint's leftover sats in the ship's Wallet. The spawn spends the
+#    funding UTXO (or the invite's) and sends whatever it does not need back
+#    to the mint wallet's change address, m/86'/0'/0'/1/0. That wallet is the
+#    12 words, and the ship knows nothing of it until the same words are
+#    restored into the Wallet the pill ships (grubbery's wallet app, at
+#    https://<name>/groundwire/wallet; it reads balances from mempool.space,
+#    so it works before the light client has synced). This needs no tmux:
+#    a person does it in the browser, a driving Claude posts the words to
+#    the ship over https from the file it saved them in (step 4a), never on
+#    a command line.
+#
+#    In the browser: log in with the +code, open /groundwire/wallet, press
+#    "Restore Wallet" (name it, BIP39 Mnemonic, paste the 12 words), open
+#    the wallet it adds, and under "Discover accounts" choose purpose 86
+#    (taproot) and coin type 0 (mainnet). The account that appears is the
+#    mint's; its change address holds the leftover, and its balance shows
+#    once the scan has asked mempool.space.
+#
+#    From here (the wallet page carries its own poke address as `var BASE`,
+#    so nothing about where the app lives is assumed):
+N=<name>.groundwire.me; J=$(mktemp)
+curl -s -c $J -o /dev/null -X POST -d "password=$(S "bash ~/boot.sh --code --comet '<@p>'" | tail -1)" https://$N/~/login
+BASE=$(curl -s -b $J https://$N/groundwire/wallet/ | grep -o "var BASE = '[^']*'" | cut -d"'" -f2)
+# the words go in the JSON body, read from the local 0600 file
+python3 -c 'import json,sys; print(json.dumps({"action":"add-wallet","wallet-name":"Mint wallet","seed-format":"bip39","seed-phrase":open(sys.argv[1]).read().split("\n")[0].strip()}))' ~/.groundwire-comet.phrase \
+  | curl -s -b $J -H 'content-type: application/json' -X POST --data-binary @- "https://$N/grubbery/api/poke/$BASE/main.sig?blot=/json"
+XPUB=$(curl -s -b $J https://$N/groundwire/wallet/ | grep -o '/groundwire/wallet/w/[^"/]*' | head -1 | sed 's#.*/##')
+curl -s -b $J -H 'content-type: application/json' -X POST "https://$N/grubbery/api/poke/$BASE/main.sig?blot=/json" \
+  -d "{\"action\":\"discover-accounts\",\"wallet-key\":\"$XPUB\",\"purpose-select\":\"86\",\"coin-type-select\":\"0\"}"
+rm -f $J
+#    Then open https://$N/groundwire/wallet/w/$XPUB/ and the account's page:
+#    the leftover is the balance (a fresh scan can take a minute). The ship
+#    now holds the key that spends that wallet, which is also the key that
+#    rekeys the comet; that is the trade for being able to spend from the
+#    ship, and the paper copy of the words is still the backup.
 ```
 
 ### If the mint's one-time boot died
@@ -237,7 +279,9 @@ What happens, in order:
      needed just to run the ship — the boot feed is — but losing it means the
      identity can never be rotated.)
    - **→ Send the funding address to Trent.** He sends the spawn sats. This is
-     the one manual checkpoint.
+     the one manual checkpoint. Anything he sends beyond the spawn's cost
+     comes back to that same wallet as change (flow step 8 puts it in the
+     ship's Wallet).
 3. On confirmation it bakes the custody log into the boot feed, boots the comet
    **once** to set its `%gevulot` peer-discovery opt-in, then **stops it** and
    prints the run command. You start it: `boot.sh --detach --comet '<@p>'`.
@@ -313,6 +357,9 @@ In the dojo (`boot.sh --comet '<@p>'` attaches, or via the control socket):
   Gevulot pane (`/apps/gevulot`) reads "light client synced".
 - Once synced, you and the other team comets should discover each other through
   the sponsor (see the note below).
+- The Wallet is at `https://<name>/groundwire/wallet` (same login). It shows
+  the mint's leftover sats once flow step 8 has restored the 12 words into
+  it; before that it holds only the wallet it made for itself at first load.
 
 ## For a driving Claude
 
@@ -328,6 +375,10 @@ In the dojo (`boot.sh --comet '<@p>'` attaches, or via the control socket):
 - Everything else — install, mine, sign, broadcast, finalize, boot — needs no
   human. Causeway generates and signs the wallet itself; no external wallet is
   involved.
+- Flow step 8 (the leftover into the ship's Wallet) is yours to do too, after
+  step 5. The words travel once, from the local file to the ship over https
+  in a request body; they never go on a command line, into a log, or into
+  the chat. Say what you did and that the Wallet now spends that wallet.
 
 ## How a fresh comet finds its sponsor (and why the pane may say "none")
 
