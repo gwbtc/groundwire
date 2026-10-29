@@ -2,48 +2,60 @@ name: Deploy to distribution ship
 on:
   push:
     branches:
-      - main
+      - hd/cc-landing
 
 env:
-  TMUX_TAB:  sponsor
-  SHIP_HOST: root@143.198.70.9
-  PIER_PATH: /root/.local/share/groundwire-alpha
-  DIST_PIER: watwyd-bannyt-parmep-sivpes--motweb-dovfet-nilrec-daplyd
+  DESK:      gw-btc
+  DIST_PIER: ${{ vars.SPONSOR_URBIT_ID_NO_TILDE }}
+  SCREEN:    sponsor
+  SHIP_IP:   ${{ vars.SPONSOR_IP }}
+  SHIP_HOST: root@${{ vars.SPONSOR_IP }}
+  PIER_PATH: /root
+  PIER:      sponsor
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    name: deploy (sponsor)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build desks
-        run: |
-          make spv
-          make groundwire
+      - name: Build desk
+        run: make ${DESK}
 
       - name: Create desk.ship
         run: |
-          printf '%s\n' "~${DIST_PIER}" > dist-groundwire/desk.ship
-          printf '%s\n' "~${DIST_PIER}" > dist-spv/desk.ship
+          printf '%s\n' "~${DIST_PIER}" > dist-${DESK}/desk.ship
 
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.SPONSOR_VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H 143.198.70.9 >> ~/.ssh/known_hosts
+          ssh-keyscan -H ${SHIP_IP} >> ~/.ssh/known_hosts
 
-      - name: Clear deployed desks
-        run: ssh ${SHIP_HOST} "find ${PIER_PATH}/${DIST_PIER}/groundwire ${PIER_PATH}/${DIST_PIER}/spv-wallet -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
+      # rsync does not create a mount point: the distribution ship must
+      # already have the desk and have it mounted.  Check first and name
+      # the fix, once, in the place someone will be looking.
+      - name: Verify the desk is mounted on the distribution ship
+        run: |
+          if ! ssh ${SHIP_HOST} "test -d ${PIER_PATH}/${PIER}/${DESK}"; then
+            echo "::error::%${DESK} is not mounted on ~${DIST_PIER}."
+            echo "Run this once in the '${SCREEN}' screen session on ${SHIP_HOST}:"
+            echo "    |new-desk %${DESK}"
+            echo "    |mount %${DESK}"
+            exit 1
+          fi
 
-      - name: Deploy Groundwire
-        run: scp -r dist-groundwire/* ${SHIP_HOST}:${PIER_PATH}/${DIST_PIER}/groundwire/
+      - name: Clear deployed desk
+        run: ssh ${SHIP_HOST} "find ${PIER_PATH}/${PIER}/${DESK} -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
 
-      - name: Deploy Wallet
-        run: scp -r dist-spv/* ${SHIP_HOST}:${PIER_PATH}/${DIST_PIER}/spv-wallet/
+      - name: Deploy desk
+        run: |
+          rsync -az --delete --exclude='.git*' \
+            dist-${DESK}/ ${SHIP_HOST}:${PIER_PATH}/${PIER}/${DESK}/
 
       - name: Commit desk on ship
         run: |
-          ssh ${SHIP_HOST} "tmux send-keys -t ${TMUX_TAB} '|commit %groundwire' Enter"
-          ssh ${SHIP_HOST} "tmux send-keys -t ${TMUX_TAB} '|commit %spv-wallet' Enter"
+          ssh ${SHIP_HOST} "screen -S ${SCREEN} -p 0 -X stuff $'|commit %${DESK}\r'"
