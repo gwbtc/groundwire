@@ -601,6 +601,13 @@
           leaf+"  (the stored custody log is UNCHANGED and no pass was published;"
           leaf+"   re-poke %gw-custody-entry or %jael-anew to try again)"
       ==
+    ::
+        %batch
+      :~  leaf+"%gw-btc: batch verification job {<job.strand-death>} DIED; no verdict for any of {<(lent whos.strand-death)>} peers, and no snub"
+          leaf+"  peers: {<whos.strand-death>}"
+          leaf+"  (every slot is released; a dead strand is our infrastructure failing,"
+          leaf+"   never evidence.  The next sweep or retransmission retries them.)"
+      ==
     ==
   =/  why=tang
     ?^  err  [leaf+"  khan reported {<mote>}:" err]
@@ -750,6 +757,19 @@
   ?~  opening.i.chain
     $(chain t.chain, idx +(idx))
   [[idx u.opening.i.chain] $(chain t.chain, idx +(idx))]
+::
+::  +sponsor-of: the sponsor the latest opening names, if any
+::
+::    What ++run-checks's sponsor-known will read from the same log,
+::    for ordering: +verify-lc-batch:lca judges a peer after the sponsor
+::    it names.  Ordering only -- the check itself stays in ++run-checks.
+::
+++  sponsor-of
+  |=  chain=custody-log:sa
+  ^-  (unit @p)
+  =/  ops  (openings-of chain)
+  ?~  ops  ~
+  sponsor.snapshot.opening:(rear ops)
 ::
 ++  p2tr-xonly
   |=  spk=hexb:bitcoin
