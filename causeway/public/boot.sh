@@ -846,10 +846,8 @@ boot_ship() {
   # comet cannot announce itself, the sponsor never pushes peers, and
   # every desk sync queues until the light client has verified the
   # sponsor on chain -- hours.  %ingest-peer is %gevulot's trusted
-  # install (verified on chain when the user asks for it in the Gevulot
-  # pane, or by itself once synced if its auto-verify toggle is on);
-  # %distribute then asks the sponsor to broadcast us.  Measured on the
-  # first real mint.
+  # install (re-verified on chain once synced); %distribute then asks
+  # the sponsor to broadcast us.  Measured on the first real mint.
   #
   # On EVERY boot, not just the mint's: both pokes are idempotent (a peer
   # already held is refreshed; the roster is a set), and the mint's
@@ -877,7 +875,25 @@ boot_ship() {
     until its light client has verified it on chain. Paste the sponsor's
     attestation into the Gevulot app to fix that now (TEAM-ONBOARDING.md)."
   fi
+  hi_ships
   populate_ship
+}
+
+# |hi ~tyr and ~daplyd, as gw-onboard once did for its desk distributor:
+# first contact opens the route, so later desk syncs and pokes do not
+# wait on it.  The poke is to our own
+# %hood (%helm-send-hi, what |hi itself sends), which answers at once;
+# the remote ack lands in the ship's log, not here.
+HI_SHIPS="~tyr ~daplyd"
+hi_ships() {
+  local who
+  for who in $HI_SHIPS; do
+    if gwl_poke hood helm-send-hi "!>([$who ''])" 120 2>/dev/null | grep -q '%avow'; then
+      info "hi: sent to $who"
+    else
+      warn "hi: could not send to $who"
+    fi
+  done
 }
 
 check_ports() {
