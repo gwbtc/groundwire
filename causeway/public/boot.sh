@@ -218,6 +218,11 @@ OPTIONS
   --proof <file>     a comet.proof.json from Desktop Causeway. Saved next to
                      the pier. The runtime does not consume it yet.
   --no-bitcoin       boot the ship only: no sidecar, no peers, no sync
+  --no-armillary     do not install Armillary (the paid-inference app) on the
+                     ship. GW_ARMILLARY_REPO and GW_ARMILLARY_REF pick the
+                     source (default nisfeb/armillary, main).
+                     GW_SWEEP_KEEP is what the mint's leftover sweep leaves
+                     with the recovery phrase (default 5000 sats).
   --no-supervisor    do not start the supervisor (you get no crash recovery)
   --no-wait          set everything running and exit without watching sync
   --vps              this ship lives on a public server: give it a groundwire.me
@@ -287,6 +292,7 @@ while [ $# -gt 0 ]; do
     --sha256)     [ $# -ge 2 ] || usagedie "--sha256 needs a value"; EXPECT_SHA="$2"; shift 2 ;;
     --loom)       [ $# -ge 2 ] || usagedie "--loom needs a value"; LOOM="$2"; shift 2 ;;
     --no-bitcoin) DO_BITCOIN=0; shift ;;
+    --no-armillary) DO_ARMILLARY=0; shift ;;
     --no-supervisor) DO_SUPERVISOR=0; shift ;;
     --no-wait)    DO_WAIT=0; shift ;;
     --vps)        DO_DOMAIN=1; shift ;;
@@ -1416,6 +1422,262 @@ EOF
   return 0
 }
 
+# ------------------------------------------------------------------- http --
+# The ship's web server with the owner's login, for what has no poke mark
+# of its own: the grubbery shell and the Wallet.  The login is +code over
+# the control socket, exchanged for a cookie that lives in var/ (0600).
+# Plain http on the ip:port answers a redirect once --vps has a
+# certificate, so the local https port is tried too, with the certificate
+# unchecked: it is this machine's own ship.
+SHIP_URL=""; SHIP_JAR=""
+ship_login() {
+  [ -n "$SHIP_URL" ] && return 0
+  local code base st jar="$GW_DIR/var/$NAME.cookies"
+  code="$(gwl_code 120)"
+  [ -n "$code" ] || { warn "no +code from the ship; its web steps are skipped this boot"; return 1; }
+  (umask 077; : > "$jar")
+  for base in "http://127.0.0.1:$HTTP_PORT" "https://127.0.0.1:443" "https://127.0.0.1:8443"; do
+    st="$(curl -s -k -o /dev/null -w '%{http_code}' -c "$jar" -X POST --data-urlencode "password=$code" \
+          "$base/~/login" 2>/dev/null || true)"
+    case "$st" in 200|204|302|303) SHIP_URL="$base"; SHIP_JAR="$jar"; return 0 ;; esac
+  done
+  warn "could not log in to the ship's web server (http $HTTP_PORT, https 443/8443); its web steps are skipped this boot"
+  return 1
+}
+# curl with the owner's cookie; arguments as for curl, the URL last
+ship_http() { curl -s -k --max-time 120 -b "$SHIP_JAR" "$@" 2>/dev/null || true; }
+
+# ------------------------------------------------------------------ wallet --
+# The ship's own Wallet (the grubbery wallet app; it arrives with the
+# hatchery the shell pulls from GitHub at first boot) makes itself a
+# wallet with a mainnet account at its first load, and answers its next
+# unused receive address at POST /groundwire/wallet/simple.  That is the
+# address the mint's leftover goes to: a key the ship made for itself,
+# never the recovery phrase.
+wallet_receive_address() {
+  local i st addr
+  for i in $(seq 1 30); do
+    st="$(ship_http -o /dev/null -w '%{http_code}' "$SHIP_URL/groundwire/wallet/simple")"
+    if [ "$st" = 200 ]; then
+      addr="$(ship_http -X POST --data 'action=get-receive-address&net=main' "$SHIP_URL/groundwire/wallet/simple" | tr -d '[:space:]')"
+      case "$addr" in
+        bc1[qp][a-z0-9]*) printf '%s\n' "$addr"; return 0 ;;
+      esac
+    fi
+    sleep 10
+  done
+  return 1
+}
+
+# The spawn's change -- what the funding did not spend -- goes back to the
+# mint wallet, the recovery phrase.  Causeway recorded that ONE output and
+# the one key that spends it (var/mint/<comet>-change.key.json, never the
+# seed); this moves most of it to the ship's Wallet and leaves SWEEP_KEEP
+# sats with the phrase, which later custody moves (a rekey's top-up) are
+# paid from.  Output 0, the identity sat, is never touched: the sweep
+# spends the recorded outpoint and nothing else.  Runs until the sats
+# have moved once; the key file is gone after that.
+SWEEP_KEEP="${GW_SWEEP_KEEP:-5000}"
+sweep_leftover() {
+  local key="$GW_DIR/var/mint/$NAME-change.key.json" addr out rc
+  [ -s "$key" ] || return 0
+  step "The mint's leftover sats, into the ship's Wallet"
+  info "the spawn sent its change back to your recovery phrase's wallet."
+  info "Moving it to the Wallet this ship runs, less $SWEEP_KEEP sats that stay"
+  info "with the phrase for the comet's later custody moves."
+  ensure_shell_desks || { warn "the leftover stays with the phrase; this runs again on the next boot"; return 0; }
+  if ! addr="$(wallet_receive_address)"; then
+    warn "the Wallet gave no address within five minutes (the hatchery may still be
+    arriving); the leftover stays with the phrase and this runs again on the next boot"
+    return 0
+  fi
+  info "Wallet address: $addr"
+  rc=0
+  out="$("$GW_DIR/causeway" sweep --key-file "$key" --to "$addr" --keep "$SWEEP_KEEP" 2>&1)" || rc=$?
+  printf '%s\n' "$out" | sed 's/^/    /' | tee -a "$GW_DIR/var/sweep-$NAME.log"
+  if [ "$rc" = 0 ] && [ ! -e "$key" ]; then
+    good "done; the receipt is var/mint/$NAME-sweep.json"
+  else
+    warn "the sats did not move this time (see above); it runs again on the next boot"
+  fi
+  return 0
+}
+
+# --------------------------------------------------------------- armillary --
+# Armillary (nisfeb/armillary): buy model inference with the Wallet, or
+# sell it.  Not in the pill, and not on the shell's stock list, so the
+# installer puts it on through the shell's forge: a git repo instance that
+# pulls GitHub, a desk that follows the checkout, and the app's permission
+# ask approved, the way the shell approves its own stock apps.  Once per
+# ship (a marker beside the pier); --no-armillary skips it.
+ARMILLARY_REPO="${GW_ARMILLARY_REPO:-https://github.com/nisfeb/armillary}"
+ARMILLARY_REF="${GW_ARMILLARY_REF:-main}"
+DO_ARMILLARY="${DO_ARMILLARY:-1}"
+
+# One MCP tool call into the shell (POST /grubbery/tools, JSON-RPC), relayed
+# with call_tool into another app's tools nexus when $3 names one.  Prints
+# the tool's text, or "error: ..." .
+grub_tool() {
+  local body
+  body="$(python3 - "$1" "$2" "${3:-}" <<'PY'
+import json, sys
+name, args, path = sys.argv[1:4]
+call = {"tool_name": name, "tool_args": json.loads(args)}
+if path:
+    call["path"] = path
+print(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                  "params": {"name": "call_tool", "arguments": call}}))
+PY
+)"
+  ship_http -H 'content-type: application/json' -X POST --data-binary "$body" "$SHIP_URL/grubbery/tools" \
+    | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("error: no answer from the shell"); sys.exit(0)
+err = d.get("error")
+if err:
+    print("error: %s" % (err.get("message") if isinstance(err, dict) else err)); sys.exit(0)
+r = d.get("result") or {}
+text = " ".join(c.get("text", "") for c in r.get("content", []) if c.get("type") == "text")
+print(("error: " if r.get("isError") else "") + text)
+'
+}
+
+# The shell's forge: where it is (the alias directory), and whether it has
+# its name in /sys/link, which is how the shell's own stock sync finds it.
+# On a fresh ship it does not (seen 2026-10-29 on 2026.10.29_2: the forge
+# rose before the shell had granted it its roads, crashed on the fence,
+# was granted and reloaded, and still had no name; every stock sync then
+# printed %shell-pairing-no-forge and the hatchery, the Wallet with it,
+# never arrived).  The shell's registry rebuild (POST /permits/refresh,
+# full) writes the name from the approval record; the stock sync is then
+# asked for again, and the hatchery and grubbery desks follow.
+forge_root() {
+  ship_http "$SHIP_URL/apps/grubbery/aliases.json" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin); print((d.get("@forge") or [{}])[0].get("path", ""))
+except Exception:
+    print("")'
+}
+forge_awake() {
+  ship_http "$SHIP_URL/grubbery/ball/sys/link?raw=1" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    names = [c.get("name") if isinstance(c, dict) else c for c in d.get("children", [])]
+    sys.exit(0 if "forge" in names else 1)
+except Exception:
+    sys.exit(1)'
+}
+wake_forge() {
+  local i
+  forge_awake && return 0
+  info "the shell's forge has no name in /sys/link yet; rebuilding the shell's registry"
+  ship_http -H 'content-type: application/json' -X POST -d '{"full":true}' -o /dev/null \
+    "$SHIP_URL/grubbery/tiles/permits/refresh"
+  for i in $(seq 1 24); do
+    forge_awake && return 0
+    sleep 5
+  done
+  return 1
+}
+# the hatchery (the Wallet is in it) and grubbery's own desk: the shell's
+# stock list, synced by the shell at its rise -- when the forge had a
+# name.  Ask again after the rebuild, and wait for the hatchery to be in.
+stock_synced() {
+  ship_http "$SHIP_URL/grubbery/tiles/desks/stock" | python3 -c '
+import json, sys
+try:
+    sys.exit(0 if any(d.get("name") == sys.argv[1] and d.get("synced") for d in json.load(sys.stdin)) else 1)
+except Exception:
+    sys.exit(1)' "$1"
+}
+ensure_shell_desks() {
+  local forge i
+  ship_login || return 1
+  for i in $(seq 1 30); do
+    forge="$(forge_root)"
+    [ -n "$forge" ] && break
+    sleep 10
+  done
+  [ -n "$forge" ] || { warn "the shell's forge is not up after five minutes"; return 1; }
+  wake_forge || { warn "the shell's forge still has no name after the registry rebuild"; return 1; }
+  stock_synced hatchery && return 0
+  info "asking the shell to sync its stock desks (the hatchery carries the Wallet)"
+  ship_http -X POST -o /dev/null "$SHIP_URL/grubbery/tiles/desks/sync-defaults"
+  for i in $(seq 1 60); do
+    stock_synced hatchery && { good "the hatchery is on the ship"; return 0; }
+    sleep 10
+  done
+  warn "the hatchery has not synced in ten minutes (the clone from GitHub may still be running)"
+  return 1
+}
+
+install_armillary() {
+  local marker="$GW_DIR/var/$NAME.armillary" forge i res app body
+  [ "$DO_ARMILLARY" = 1 ] || return 0
+  [ -e "$marker" ] && return 0
+  step "Armillary"
+  info "the paid-inference app, from $ARMILLARY_REPO ($ARMILLARY_REF), through the"
+  info "shell's forge, its permissions approved so it works at once."
+  ensure_shell_desks || { warn "Armillary installs on the next boot"; return 0; }
+  forge="$(forge_root)"
+  res="$(grub_tool forge_create_repo "{\"name\":\"armillary\",\"remote\":\"$ARMILLARY_REPO\",\"ref\":\"$ARMILLARY_REF\"}" "$forge/tools")"
+  case "$res" in
+    error:*already*) info "repo: already there" ;;
+    error:*) warn "forge_create_repo: $res (Armillary installs on the next boot)"; return 0 ;;
+    *) info "repo: $res" ;;
+  esac
+  # the clone runs in the repo's own command queue; a pull reports the
+  # real outcome once it is through
+  for i in $(seq 1 30); do
+    res="$(grub_tool git_cmd "{\"path\":\"$forge/repos/armillary.git_repo\",\"command\":\"pull\"}" "$forge/tools")"
+    case "$res" in *"up to date"*|*loned*|*"new object"*|*"Fast-forward"*) break ;; esac
+    sleep 10
+  done
+  info "pull: $(printf '%s' "$res" | head -c 120)"
+  res="$(grub_tool create_desk "{\"name\":\"armillary\",\"source\":\"$forge/repos/armillary.git_repo/data/tree/code\"}")"
+  case "$res" in
+    error:*already*) info "desk: already there" ;;
+    error:*) warn "create_desk: $res (Armillary installs on the next boot)"; return 0 ;;
+    *) info "desk: $res" ;;
+  esac
+  # the desk builds the app; its permission ask appears once it has
+  app=""
+  for i in $(seq 1 60); do
+    app="$(ship_http "$SHIP_URL/apps/grubbery/asks.json" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    d = []
+for a in (d if isinstance(d, list) else []):
+    if str(a.get("app", "")).endswith("/armillary.armillary_app"):
+        print(json.dumps(a)); break')"
+    [ -n "$app" ] && break
+    sleep 10
+  done
+  if [ -z "$app" ]; then
+    warn "Armillary is installed but its permission ask has not appeared in ten minutes;
+    approve it from the bell on the shell's home page (https://<name>/apps/grubbery)"
+    : > "$marker"
+    return 0
+  fi
+  body="$(printf '%s' "$app" | python3 -c '
+import json, sys
+a = json.load(sys.stdin)
+print(json.dumps({"action": "approve-weir", "app": a["app"], "picks": {},
+                  "granted": {k: a.get(k, []) for k in ("poke", "peek", "make")}}))')"
+  ship_http -H 'content-type: application/json' -X POST --data-binary "$body" -o /dev/null "$SHIP_URL/apps/grubbery/permits"
+  ship_http -H 'content-type: application/json' -X POST -d '{"full":true}' -o /dev/null "$SHIP_URL/apps/grubbery/permits/refresh"
+  : > "$marker"
+  good "Armillary is on the ship: $SHIP_URL/apps/armillary"
+  return 0
+}
+
 # ---------------------------------------------------------------- progress --
 hms() { printf '%02d:%02d:%02d' $(( $1 / 3600 )) $(( ($1 % 3600) / 60 )) $(( $1 % 60 )); }
 
@@ -2011,6 +2273,12 @@ cmd_install() {
   seed_peers || true
   ensure_domain || true
   export_env
+  # the ship's own money and its first paid app: the mint's leftover into
+  # the Wallet, and Armillary on the shell.  Both wait on the hatchery the
+  # shell pulls at first boot, both are harmless to repeat, and neither
+  # can stop the boot.
+  sweep_leftover || true
+  install_armillary || true
 
   # ---- the ending.  At a terminal the ship IS the product: hand the
   # user their dojo (gw-onboard did exactly this and it was right).
@@ -2115,6 +2383,8 @@ summary_lines() {
   [ -f "$GW_DIR/var/sup-$NAME.log" ] && info "supervisor  $GW_DIR/var/sup-$NAME.log"
   info "http        http://127.0.0.1:$HTTP_PORT"
   [ -n "${GW_DOMAIN:-}" ] && info "https       https://$GW_DOMAIN   (the address to use; the ip:port redirects here once the certificate is in)"
+  info "wallet      <that address>/groundwire/wallet   (the ship's own; the mint's leftover lands here)"
+  [ "$DO_ARMILLARY" = 1 ] && info "armillary   <that address>/apps/armillary   (buy inference with the Wallet)"
   info ""
   info "web login   $GW_DIR/boot.sh --code --comet '$COMET'   (key for the http address above)"
   info "status      $GW_DIR/boot.sh --status --comet '$COMET'"
