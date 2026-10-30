@@ -1510,7 +1510,11 @@ sweep_leftover() {
 # pulls GitHub, a desk that follows the checkout, and the app's permission
 # ask approved, the way the shell approves its own stock apps.  Once per
 # ship (a marker beside the pier); --no-armillary skips it.
-ARMILLARY_REPO="${GW_ARMILLARY_REPO:-https://github.com/nisfeb/armillary}"
+# The forge names a GitHub repo as owner/repo: a full URL is stored as it
+# is and its fetch answers 404 (seen 2026-10-29), so one given here is cut
+# down to that form.
+ARMILLARY_REPO="${GW_ARMILLARY_REPO:-nisfeb/armillary}"
+ARMILLARY_REPO="${ARMILLARY_REPO#https://github.com/}"; ARMILLARY_REPO="${ARMILLARY_REPO%.git}"; ARMILLARY_REPO="${ARMILLARY_REPO%/}"
 ARMILLARY_REF="${GW_ARMILLARY_REF:-main}"
 DO_ARMILLARY="${DO_ARMILLARY:-1}"
 
@@ -1642,7 +1646,14 @@ install_armillary() {
   res="$(grub_tool create_desk "{\"name\":\"armillary\",\"source\":\"$forge/repos/armillary.git_repo/data/tree/code\"}")"
   case "$res" in
     error:*already*) info "desk: already there" ;;
-    error:*) warn "create_desk: $res (Armillary installs on the next boot)"; return 0 ;;
+    error:*)
+      # a busy ship (the light client syncing) answers the shell's tool
+      # calls late; the desk may well be there.  Look before giving up.
+      if ship_http "$SHIP_URL/grubbery/ball/apps/shell/desks?raw=1" | grep -q '"armillary.desk"'; then
+        info "desk: there (the shell answered late)"
+      else
+        warn "create_desk: $res (Armillary installs on the next boot)"; return 0
+      fi ;;
     *) info "desk: $res" ;;
   esac
   # the desk builds the app; its permission ask appears once it has
