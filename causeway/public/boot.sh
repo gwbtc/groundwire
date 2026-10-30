@@ -1635,6 +1635,13 @@ install_armillary() {
     error:*) warn "forge_create_repo: $res (Armillary installs on the next boot)"; return 0 ;;
     *) info "repo: $res" ;;
   esac
+  # the remote as owner/repo and the branch, whatever an earlier run left
+  # (a repo made with a URL pulls a 404 from GitHub's proxy), and the
+  # repo's poll daemon on: it is seeded off, and the desk follows later
+  # pushes to the branch only through it, as the shell's own mirrors do.
+  ship_http -H 'content-type: application/json' -X POST -o /dev/null \
+    -d "{\"repo\":\"armillary.git_repo\",\"origin\":\"$ARMILLARY_REPO\",\"ref\":\"$ARMILLARY_REF\",\"poll\":15}" \
+    "$SHIP_URL/grubbery/forge/api/config"
   # the clone runs in the repo's own command queue; a pull reports the
   # real outcome once it is through
   for i in $(seq 1 30); do
@@ -1656,6 +1663,14 @@ install_armillary() {
       fi ;;
     *) info "desk: $res" ;;
   esac
+  # the desk follows the repo's checkout by the forge's NAME, the way the
+  # shell wires its own stock desks (a poke to the desk's source.json).
+  # create_desk pokes a config.json the desk nexus does not have, which
+  # kills the tool's own answer ("no process at .../config.json") with the
+  # desk made and nothing following; so the source is set here, every run.
+  ship_http -H 'content-type: application/json' -X POST -o /dev/null \
+    --data-binary '{"code":"@forge/repos/armillary.git_repo/data/tree/code"}' \
+    "$SHIP_URL/grubbery/api/poke/apps/shell/desks/armillary.desk/source.json?blot=/json"
   # the desk builds the app; its permission ask appears once it has
   app=""
   for i in $(seq 1 60); do
@@ -1684,8 +1699,24 @@ print(json.dumps({"action": "approve-weir", "app": a["app"], "picks": {},
                   "granted": {k: a.get(k, []) for k in ("poke", "peek", "make")}}))')"
   ship_http -H 'content-type: application/json' -X POST --data-binary "$body" -o /dev/null "$SHIP_URL/apps/grubbery/permits"
   ship_http -H 'content-type: application/json' -X POST -d '{"full":true}' -o /dev/null "$SHIP_URL/apps/grubbery/permits/refresh"
+  # the app rose jailed and its fibers died on the fence before the grant;
+  # the grant alone does not raise them (seen 2026-10-30: approved, roads
+  # sanded, every .sig still parked, /apps/armillary 404). The shell's
+  # reboot-after-grant, what its permissions page calls after an approval,
+  # re-runs the app holding what was granted.
+  ship_http -H 'content-type: application/json' -X POST -o /dev/null \
+    --data-binary "$(printf '%s' "$app" | python3 -c 'import json, sys; print(json.dumps({"app": json.load(sys.stdin)["app"]}))')" \
+    "$SHIP_URL/apps/grubbery/permits/reload"
+  for i in $(seq 1 18); do
+    [ "$(ship_http -o /dev/null -w '%{http_code}' "$SHIP_URL/apps/armillary")" = 200 ] && break
+    sleep 10
+  done
   : > "$marker"
-  good "Armillary is on the ship: $SHIP_URL/apps/armillary"
+  if [ "$i" -ge 18 ]; then
+    warn "Armillary is installed and granted its roads, but /apps/armillary does not answer yet"
+  else
+    good "Armillary is on the ship: $SHIP_URL/apps/armillary"
+  fi
   return 0
 }
 
