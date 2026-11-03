@@ -653,6 +653,7 @@ SPAWN_BASE_VB = 111          # 1 key-path input + sat output + overhead (build_s
 FEE_RATE_FALLBACK = 2        # sat/vB if the estimate is unreachable (the old default)
 FEE_RATE_OVERHEAD = 1        # sat/vB above "next block" so we are not the marginal tx
 IDENTITY_SAT_VALUE = 1_000   # what a spawn puts on the identity sat when there is change
+SWEEP_KEEP = 5_000           # what `causeway sweep` leaves with the recovery phrase (see the sweep section)
 
 
 def recommended_fee_rate(mempool_base: str = MEMPOOL_API_URL) -> tuple[int, str]:
@@ -3723,6 +3724,31 @@ def proof_verify(path, onchain, mempool_base):
         sys.exit(1)
 
 
+@cli.command("sweep")
+@click.option("--key-file", "key_file", required=True, type=click.Path(exists=True, dir_okay=False),
+              help="The <comet>-change.key.json a spawn wrote beside its proof: one change "
+                   "outpoint and the one key that spends it.")
+@click.option("--to", "to_address", required=True, metavar="ADDRESS",
+              help="Where the sats go: an address the ship's Wallet handed out.")
+@click.option("--keep", type=int, default=SWEEP_KEEP, show_default=True, metavar="SATS",
+              help="What stays with the recovery phrase, at the same change address, for "
+                   "later custody moves (a rekey's top-up is paid from there). 0 sends everything.")
+@click.option("--fee-rate", type=int, default=None, metavar="SAT/VB",
+              help="Default: the mempool's next-block estimate plus 1.")
+@click.option("--mempool-base", default=MEMPOOL_API_URL, show_default=True)
+@click.option("--dry-run", is_flag=True, default=False, help="Build and show, broadcast nothing, keep the file.")
+def cmd_sweep(key_file, to_address, keep, fee_rate, mempool_base, dry_run):
+    """Move a spawn's leftover change into the ship's own Wallet.
+
+    Spends the ONE output the spawn recorded (never the identity sat),
+    sends what is above --keep to --to, and the rest back to the seed's
+    change address.  When the change cannot cover the buffer, the fee and
+    dust, nothing moves and it all stays with the seed.  The key file is
+    removed once the outpoint is spent."""
+    sys.exit(run_sweep(key_file, to_address, keep=keep, fee_rate=fee_rate,
+                       mempool_base=mempool_base, dry_run=dry_run))
+
+
 @cli.command("finalize")
 @click.argument("proofs", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False))
 @click.option("--feed", default=None, help="Boot feed (@uw, from the miner) to re-bake with the reveal log")
@@ -4351,6 +4377,207 @@ def tx_hex_if_seen(txid: str, *, mempool_base: str = MEMPOOL_API_URL) -> str | N
     return body
 
 
+# =========================================================================
+#  The spawn's change, moved into the ship's own Wallet
+# =========================================================================
+#
+#  A spawn with enough funding leaves a change output at the owner's
+#  m/<account>/1/0.  That is the mint wallet -- the 12 words -- and the
+#  ship knows nothing of it.  Rather than put the words into the ship
+#  (the ship's Wallet would then custody the key that rekeys the comet),
+#  the spawn records that ONE output and the ONE derived key that spends
+#  it, and `causeway sweep` later pays most of it to an address the ship's
+#  Wallet hands out.  Output 0, the identity sat, is never a candidate:
+#  the sweep spends the recorded outpoint and nothing else.
+#
+#  A buffer stays with the seed.  Every later custody move is paid by the
+#  owner's wallet: a state update takes its fee out of the identity sat,
+#  which only shrinks, and a rekey that tops the sat up draws the sats
+#  from the owner's change addresses.  Sweeping everything would leave
+#  the identity with no way to pay for its next move short of funding the
+#  seed again from outside.  So the sweep sends what is above SWEEP_KEEP
+#  back to the same change address, and when the change cannot cover the
+#  buffer, dust and the fee, nothing moves.
+
+#  SWEEP_KEEP, the buffer, is declared with the fee constants above so the
+#  `sweep` command's option default can name it.
+SWEEP_VB_TWO = P2TR_KEYPATH_INPUT_VB + 2 * P2TR_OUTPUT_VB + 11   # 155: one input, two outputs
+SWEEP_VB_ONE = P2TR_KEYPATH_INPUT_VB + P2TR_OUTPUT_VB + 11       # 112: one input, one output
+CHANGE_KEY_VERSION = 1
+
+
+class NothingToSweep(Exception):
+    """The change cannot pay the buffer, the dust floor and the fee."""
+
+
+def change_key_path(output_dir: str, comet: str) -> str:
+    """Where a spawn records the change output and its key: beside the proof."""
+    return os.path.join(output_dir, f"{comet.lstrip('~')}-change.key.json")
+
+
+def find_change_output(tx_hex: str, change_spk: bytes) -> tuple[int, int] | None:
+    """(vout, value) of the output paying `change_spk` in a serialized tx, or
+    None.  Output 0 is the identity sat and is never a change output, so it
+    is not looked at even when its script matched."""
+    tx = Transaction.parse(bytes.fromhex(tx_hex))
+    for i, out in enumerate(tx.vout):
+        if i == 0:
+            continue
+        if out.script_pubkey.data == change_spk:
+            return i, int(out.value)
+    return None
+
+
+def write_change_key(output_dir: str, comet: str, *, network: str, txid: str, vout: int,
+                     value: int, address: str, path: str, hdkey) -> str:
+    """Record one outpoint and the one key that spends it, 0600, for
+    `causeway sweep`.  `hdkey` is the key at `path` (the change key itself,
+    derived from the root); only its 32 secret bytes are written, never the
+    seed or anything above the change key."""
+    if vout == 0:
+        raise ValueError("output 0 is the identity sat; it is never recorded as change")
+    doc = {
+        "version": CHANGE_KEY_VERSION,
+        "comet": comet,
+        "network": network,
+        "txid": txid,
+        "vout": int(vout),
+        "value": int(value),
+        "address": address,
+        "path": path,
+        "script_pubkey_hex": script.p2tr(hdkey.key.get_public_key()).data.hex(),
+        "privkey_hex": hdkey.secret.hex(),
+        "note": "the key to ONE change output of the spawn, for `causeway sweep`; "
+                "not the seed. boot.sh deletes this once the sats have moved.",
+    }
+    p = change_key_path(output_dir, comet)
+    write_proof_json(doc, p)
+    return p
+
+
+def load_change_key(path: str) -> dict:
+    with open(path) as f:
+        doc = json.load(f)
+    for k in ("txid", "vout", "value", "address", "script_pubkey_hex", "privkey_hex"):
+        if k not in doc:
+            raise ValueError(f"change key file is missing {k!r}")
+    if int(doc["vout"]) == 0:
+        raise ValueError("change key file names output 0, the identity sat; refusing")
+    return doc
+
+
+def build_sweep_tx(*, txid: str, vout: int, value: int, script_pubkey_hex: str, privkey_hex: str,
+                   to_address: str, keep_address: str, fee_rate: int,
+                   keep: int = SWEEP_KEEP) -> dict:
+    """One input (the recorded change outpoint), one output to the ship's
+    Wallet and, when `keep` is above zero, one back to `keep_address` for the
+    seed.  Signed key-path with the change key alone.
+
+    Refuses a key that does not spend the outpoint's script, so a wrong or
+    tampered key file cannot produce a transaction that spends something
+    else.  Raises NothingToSweep when what would reach the ship is under the
+    dust floor: then the whole change stays with the seed, and that is the
+    right answer, not an error."""
+    if vout == 0:
+        raise ValueError("output 0 is the identity sat; refusing to spend it")
+    if fee_rate < 1:
+        raise ValueError("fee rate must be at least 1 sat/vB")
+    if keep < 0:
+        raise ValueError("keep must not be negative")
+    priv = ec.PrivateKey(bytes.fromhex(privkey_hex))
+    spk = bytes.fromhex(script_pubkey_hex)
+    if script.p2tr(priv.get_public_key()).data != spk:
+        raise ValueError("the change key does not spend this outpoint's script; refusing")
+    if keep and keep < P2TR_DUST:
+        keep = P2TR_DUST
+    fee = (SWEEP_VB_TWO if keep else SWEEP_VB_ONE) * fee_rate
+    sent = value - fee - keep
+    if sent < P2TR_DUST:
+        raise NothingToSweep(
+            f"change of {value} sats cannot pay a {keep}-sat buffer, a {fee}-sat fee "
+            f"and {P2TR_DUST} sats of dust; it stays with the seed")
+    outs = [TransactionOutput(sent, script.address_to_scriptpubkey(to_address))]
+    if keep:
+        outs.append(TransactionOutput(keep, script.address_to_scriptpubkey(keep_address)))
+    tx = Transaction(version=2,
+                     vin=[TransactionInput(bytes.fromhex(txid), vout, sequence=0xFFFFFFFF)],
+                     vout=outs, locktime=0)
+    digest = tx.sighash_taproot(0, [script.Script(spk)], [value])
+    sig = priv.taproot_tweak(b"").schnorr_sign(digest)
+    tx.vin[0].witness = Witness([sig.serialize()])
+    return {
+        "tx_hex": tx.serialize().hex(),
+        "txid": tx.txid().hex(),
+        "sent": sent,
+        "kept": keep,
+        "fee": fee,
+    }
+
+
+def run_sweep(key_file: str, to_address: str, *, keep: int = SWEEP_KEEP, fee_rate: int | None = None,
+              mempool_base: str = MEMPOOL_API_URL, dry_run: bool = False) -> int:
+    """Move the recorded change to `to_address`, a buffer back to the seed.
+    0 when the sats moved (or there was nothing to move, and the key file
+    is gone either way); 1 when the outpoint is not spendable yet or the
+    network would not take the transaction, and the file stays for a
+    retry."""
+    doc = load_change_key(key_file)
+    txid, vout, value = doc["txid"], int(doc["vout"]), int(doc["value"])
+    print(f"\n  Change output: {txid}:{vout}, {value} sats at {doc['address']}")
+    try:
+        spent = mempool_get(f"/tx/{txid}/outspend/{vout}", base=mempool_base)
+    except Exception as e:
+        print(f"  The network does not know the spawn yet ({e}); try again later.")
+        return 1
+    if spent.get("spent"):
+        print("  Already spent; nothing to do.  Removing the key file.")
+        os.remove(key_file)
+        return 0
+    if fee_rate is None:
+        fee_rate, how = recommended_fee_rate(mempool_base)
+        print(f"  Fee rate: {fee_rate} sat/vB ({how})")
+    try:
+        built = build_sweep_tx(txid=txid, vout=vout, value=value,
+                               script_pubkey_hex=doc["script_pubkey_hex"],
+                               privkey_hex=doc["privkey_hex"],
+                               to_address=to_address, keep_address=doc["address"],
+                               fee_rate=fee_rate, keep=keep)
+    except NothingToSweep as e:
+        print(f"  {e}.")
+        if not dry_run:
+            os.remove(key_file)
+        return 0
+    print(f"  To the ship's Wallet: {built['sent']} sats -> {to_address}")
+    print(f"  Kept with the seed:   {built['kept']} sats -> {doc['address']}")
+    print(f"  Fee:                  {built['fee']} sats")
+    if dry_run:
+        print(f"  (dry run) txid would be {built['txid']}")
+        return 0
+    try:
+        got = _broadcast_tx(built["tx_hex"], mempool_base=mempool_base)
+    except Exception as e:
+        click.echo(click.style(f"  Broadcast failed: {e}\n  Signed tx hex: {built['tx_hex']}", fg="red"))
+        return 1
+    print(f"  Broadcast: {tx_link(got)}")
+    receipt = {
+        "comet": doc.get("comet", ""),
+        "from": f"{txid}:{vout}",
+        "txid": got,
+        "to": to_address,
+        "sent": built["sent"],
+        "kept": built["kept"],
+        "kept_at": doc["address"],
+        "fee": built["fee"],
+        "fee_rate": fee_rate,
+        "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    out_dir = os.path.dirname(os.path.abspath(key_file))
+    write_proof_json(receipt, os.path.join(out_dir, f"{doc.get('comet', 'comet').lstrip('~')}-sweep.json"))
+    os.remove(key_file)
+    print("  The key file is removed; the buffer is spendable with the recovery phrase only.")
+    return 0
+
+
 def _broadcast_tx(tx_hex: str, *, mempool_base: str = MEMPOOL_API_URL) -> str:
     """Broadcast, and treat "the network already has it" as success.
 
@@ -4871,6 +5098,21 @@ def run_spawn_generate(invite: str | None, fee_rate: int | None, network: str, o
         click.echo(click.style(f"  Broadcast failed: {e}\n  Signed tx hex: {tx_hex}", fg="red"))
         sys.exit(1)
     print(f"  Broadcast: {tx_link(broadcast_id)}")
+
+    # The change output, when the spawn made one, and the one key that
+    # spends it, for boot.sh to move into the ship's Wallet after boot
+    # (`causeway sweep`): never the seed, never output 0.  The change is
+    # the owner's on an invite-funded spawn too.
+    change_addr, change_spk, _change_xonly, change_path = source.derive_address(1, 0)
+    change = find_change_output(tx_hex, change_spk)
+    if change is not None:
+        ck_path = write_change_key(output_dir, comet, network=network, txid=commit_txid,
+                                   vout=change[0], value=change[1], address=change_addr,
+                                   path=change_path, hdkey=root.derive(change_path))
+        print(f"  Change: {change[1]} sats back to your wallet at {change_addr}.")
+        print(f"  boot.sh moves most of it into the ship's Wallet after boot, keeping")
+        print(f"  {SWEEP_KEEP} sats with your phrase for later custody moves; the key")
+        print(f"  to that one output is in {ck_path} until then.")
 
     print("\n  WRITE DOWN YOUR SEED PHRASE AGAIN — last chance.")
     print("  It controls the funds. Your comet's identity is the proof file +")

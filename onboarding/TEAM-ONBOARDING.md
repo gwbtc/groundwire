@@ -115,7 +115,9 @@ chmod +x ~/mint.sh'
 #    it as the INVITE field) add `--invite <code>` to the boot.sh line above
 #    the --version line. The mint then spends the sats
 #    he already put behind the code and never prints a funding address: step
-#    4b does not happen, and the leftover lands in your ship's wallet.
+#    4b does not happen. Whatever the spawn does not use comes back as change
+#    to the MINT WALLET (the 12 words), at m/86'/0'/0'/1/0 -- not to the
+#    ship; the run step moves most of it into the ship's Wallet (step 8).
 
 # 3. start the mint in tmux (gives it the tty it needs; survives disconnects)
 S 'tmux new -d -s mint && tmux send-keys -t mint "bash ~/mint.sh" Enter'
@@ -127,7 +129,11 @@ S 'tail -40 ~/mint.log'
 S 'tmux send-keys -t mint "<the twelve words>" Enter'
 #   b) it prints a bc1p... FUNDING ADDRESS, then "Polling mempool.space for
 #      confirmation..." -> hand the address to Trent; keep polling the log every
-#      few minutes. Nothing to type: it watches the chain itself.
+#      few minutes. Nothing to type: it watches the chain itself. It asks for
+#      at least 1000 sats; the spawn costs about 1300 at a quiet mempool, and
+#      everything above that comes back as change to the same 12-word wallet,
+#      so sending a few thousand more is how the ship starts with a balance
+#      (step 8).
 #   c) on confirmation it mines (a few minutes), broadcasts the spawn, and asks
 #      you to re-enter the phrase ONCE MORE ("last chance") -> same send-keys.
 #   d) it then waits for the spawn tx to confirm (~10-60 min), bakes the feed,
@@ -173,6 +179,37 @@ S "bash ~/boot.sh --status --comet '<@p>'; bash ~/boot.sh --code --comet '<@p>'"
 #    it (a dev comet, a laptop) nothing is named and the ship works by IP.
 #    The mechanism and the by-hand runbook: gwbtc/urbit-dns README,
 #    "Getting a URL for your comet".
+
+# 8. the mint's leftover sats reach the ship's Wallet BY THEMSELVES, in
+#    step 5. The spawn spends the funding UTXO (or the invite's) and sends
+#    whatever it does not need back to the mint wallet, m/86'/0'/0'/1/0 of
+#    the 12 words. The ship never sees those words: Causeway records that
+#    one output and the one key that spends it (var/mint/<comet>-change.key.json,
+#    0600, not the seed), and the run step asks the Wallet the pill ships
+#    (grubbery's wallet app, https://<name>/groundwire/wallet, a wallet the
+#    ship made for itself at first load) for a receive address and runs
+#    `causeway sweep`: one transaction, from that one output, most of it to
+#    the ship, 5000 sats back to the phrase's address (GW_SWEEP_KEEP), the
+#    identity sat untouched. The buffer is what the comet's later custody
+#    moves are paid from (a rekey's top-up comes out of the phrase's
+#    wallet), so a sweep never takes everything; and a change that cannot
+#    cover the buffer, the fee and dust stays with the phrase whole.
+#    The step prints the transaction and leaves var/mint/<comet>-sweep.json;
+#    the key file is gone once the sats have moved. It waits up to five
+#    minutes for the Wallet (the hatchery arrives from GitHub at first boot)
+#    and tries again on the next boot otherwise. Nothing to do by hand;
+#    "where is my leftover" is answered by that receipt and by the Wallet's
+#    page. A spawn funded with only the minimum makes no change output at
+#    all (Causeway makes one only above 2,000 sats), and then there is
+#    nothing to move.
+#
+# 9. Armillary, the paid-inference app (nisfeb/armillary), is put on the
+#    ship in step 5 too, through the shell's forge (a git repo instance that
+#    pulls GitHub, a desk that follows it), and its permission ask is
+#    approved so it works at once. Once per ship; --no-armillary skips it;
+#    GW_ARMILLARY_REPO / GW_ARMILLARY_REF pick another source (a fork, a
+#    branch under review). It is at https://<name>/apps/armillary; set the
+#    vendor and top up by Bitcoin, paid from the Wallet above.
 ```
 
 ### If the mint's one-time boot died
@@ -237,7 +274,9 @@ What happens, in order:
      needed just to run the ship — the boot feed is — but losing it means the
      identity can never be rotated.)
    - **→ Send the funding address to Trent.** He sends the spawn sats. This is
-     the one manual checkpoint.
+     the one manual checkpoint. Anything he sends beyond the spawn's cost
+     comes back to that same wallet as change (flow step 8 puts it in the
+     ship's Wallet).
 3. On confirmation it bakes the custody log into the boot feed, boots the comet
    **once** to set its `%gevulot` peer-discovery opt-in, then **stops it** and
    prints the run command. You start it: `boot.sh --detach --comet '<@p>'`.
@@ -313,6 +352,11 @@ In the dojo (`boot.sh --comet '<@p>'` attaches, or via the control socket):
   Gevulot pane (`/apps/gevulot`) reads "light client synced".
 - Once synced, you and the other team comets should discover each other through
   the sponsor (see the note below).
+- The Wallet is at `https://<name>/groundwire/wallet` (same login): the
+  wallet the ship made for itself at first load. The mint's leftover sats
+  land there by the run step's sweep (flow step 8); the receipt is
+  `var/mint/<comet>-sweep.json`. Armillary is at `https://<name>/apps/armillary`
+  (step 9).
 
 ## For a driving Claude
 
@@ -328,6 +372,11 @@ In the dojo (`boot.sh --comet '<@p>'` attaches, or via the control socket):
 - Everything else — install, mine, sign, broadcast, finalize, boot — needs no
   human. Causeway generates and signs the wallet itself; no external wallet is
   involved.
+- The leftover's move into the ship's Wallet (flow step 8) and Armillary's
+  install (step 9) are part of step 5's run; read their lines in its
+  output and report the sweep's transaction and the Wallet's balance. The
+  recovery phrase stays on the local machine the whole time: nothing of it
+  ever goes to the ship.
 
 ## How a fresh comet finds its sponsor (and why the pane may say "none")
 

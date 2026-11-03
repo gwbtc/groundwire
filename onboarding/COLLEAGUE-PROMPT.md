@@ -98,7 +98,9 @@ follow "Dry run" in `TEAM-ONBOARDING.md`.
 > --mint` line in the guide's wrapper file (step 2), exactly as the guide's
 > note under that step shows. The mint then spends the sats already behind the
 > code and **never prints a funding address** — the "funding address" rule
-> below does not happen, and the leftover lands in the ship's Wallet app. Put
+> below does not happen. The sats the spawn does not use come back as change
+> to the mint wallet (the 12 words); the run step moves most of them into
+> the ship's own Wallet (the guide's step 8). Put
 > the code only in that wrapper file: not in chat, not in a log you paste
 > back, not on any other command line. Write the file by piping it to
 > `ssh … 'cat > ~/mint.sh'` on stdin, so the code never rides an ssh argument.
@@ -129,6 +131,17 @@ follow "Dry run" in `TEAM-ONBOARDING.md`.
 >   `http://<ip>:<port>` address redirects to it, so report the name. Step 5
 >   can take half an hour while the sync keeps the ship busy, so give it a
 >   long timeout or run it in the background.
+> - **The leftover sats and Armillary come with step 5.** The spawn sends
+>   what it did not need back to the 12-word wallet, not to the ship; the
+>   run step moves most of it into the Wallet the ship made for itself
+>   (`https://<name>/groundwire/wallet`), keeping 5,000 sats with the
+>   phrase for the comet's later custody moves, and puts Armillary (the
+>   paid-inference app) on the ship with its permissions approved. Read
+>   those two steps in the run's output (guide steps 8 and 9). **Never**
+>   restore the recovery phrase into the ship's Wallet or anywhere on the
+>   droplet: the phrase is the comet's ownership key, and it stays with the
+>   person. Tell them, in plain words, what moved and that the Wallet's
+>   balance is theirs to spend from the ship.
 > - **Expect the mint's stop step to kill vere.** It asks vere to stop, waits
 >   30 s, then kills it and prints `vere did not exit on SIGTERM within 30s;
 >   sending SIGKILL`. On 2026-10-07 vere ignored the request for 900 s,
@@ -184,6 +197,9 @@ follow "Dry run" in `TEAM-ONBOARDING.md`.
 >   then `ssh … 'cat ~/code.txt && rm ~/code.txt'` once it has a line;
 > - confirm `bash ~/boot.sh --status` shows the ship up with `%gw-btc`
 >   syncing;
+> - the Wallet's address (`https://<name>/groundwire/wallet`), the sweep's
+>   transaction from the run's output (or that there was no leftover to
+>   move), and Armillary's address (`https://<name>/apps/armillary`);
 > - where the SSH key and the recovery-phrase file are on this machine, and
 >   that the droplet bills about $24 a month until it is destroyed;
 > - and **tell me plainly that the ship will be slow for the next few hours**
