@@ -1414,9 +1414,11 @@ wallet_receive_address() {
   # its tools address the wrong path), and each probe can wait a long time on
   # a ship still compiling. The day it answers, the sweep runs on the next boot.
   for i in $(seq 1 3); do
-    st="$(ship_http -o /dev/null -w '%{http_code}' "$SHIP_URL/groundwire/wallet/simple")"
+    # 20 s a probe, not the helper's 120: a ship still compiling its desks
+    # answered each probe in minutes (comet #5: three probes took 4.5 min)
+    st="$(ship_http --max-time 20 -o /dev/null -w '%{http_code}' "$SHIP_URL/groundwire/wallet/simple")"
     if [ "$st" = 200 ]; then
-      addr="$(ship_http -X POST --data 'action=get-receive-address&net=main' "$SHIP_URL/groundwire/wallet/simple" | tr -d '[:space:]')"
+      addr="$(ship_http --max-time 20 -X POST --data 'action=get-receive-address&net=main' "$SHIP_URL/groundwire/wallet/simple" | tr -d '[:space:]')"
       case "$addr" in
         bc1[qp][a-z0-9]*) printf '%s\n' "$addr"; return 0 ;;
       esac
