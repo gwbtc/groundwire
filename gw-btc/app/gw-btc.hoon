@@ -1303,7 +1303,7 @@
         [%khan %arow *]
       ?.  -.p.sign-arvo
         ?>  ?=([%khan %arow %.n *] sign-arvo)
-        %-  %+  plog  3
+        %-  %+  plog  2
             %:  strand-death-report:lsa
                 [%batch job (turn mine head)]
                 -.p.p.sign-arvo
