@@ -1265,7 +1265,7 @@
       ::  Unreachable: +admit-writ held every parked writ to a tip, and
       ::  .best is never unset.  No verdict is safe without one, so
       ::  release the slots and let the peers' retries re-enter.
-      %-  (slog leaf+"%gw-btc: no chain tip at launch; releasing {<(lent mine)>} verification slots (batch job {<job>})" ~)
+      ~>  %slog.[2 leaf+"%gw-btc: no chain tip at launch; releasing {<(lent mine)>} verification slots (batch job {<job>})"]
       `this(inflight +:(split-batch job))
     :_  this
     (verify-batch-cards q.byk.bowl now.bowl job mine num.u.best)
@@ -1281,7 +1281,7 @@
     =/  [mine=(list [who=ship req=inflight-writ]) rest=(map ship inflight-writ)]
       (split-batch job)
     ?~  mine  `this
-    %-  (slog leaf+"%gw-btc: releasing {<(lent mine)>} stuck verification slots (batch job {<job>})" ~)
+    ~>  %slog.[2 leaf+"%gw-btc: releasing {<(lent mine)>} stuck verification slots (batch job {<job>}); if this repeats, check the light client's /is-synced"]
     `this(inflight rest)
   ::
       ::  A batch's shared liveness walk finished (+verify-lc-batch:lca).
@@ -1303,7 +1303,7 @@
         [%khan %arow *]
       ?.  -.p.sign-arvo
         ?>  ?=([%khan %arow %.n *] sign-arvo)
-        %-  %-  slog
+        %-  %+  plog  3
             %:  strand-death-report:lsa
                 [%batch job (turn mine head)]
                 -.p.p.sign-arvo
@@ -1319,7 +1319,7 @@
       ?~  outs  [cards this]
       =/  req  (~(get by held) who.i.outs)
       ?~  req
-        %-  %-  slog
+        %-  %+  plog  0
             :~  leaf+"%gw-btc: discarding a verdict for {(scow %p who.i.outs)} (batch job {<job>}): it holds no verification slot"
                 leaf+"  (released by the ~h2 leak guard, or dropped by the block scanner;"
                 leaf+"   no verdict is emitted, and the peer's next packet re-runs it)"
