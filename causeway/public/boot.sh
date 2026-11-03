@@ -14,7 +14,7 @@
 #      release's SHA256SUMS, and unpack it
 #   3. boot the ship from the pill, with -w and -G given TOGETHER, and
 #      prove afterwards that the @p that came up is the @p you asked for
-#   4. start the tcp-sidecar -- the light client's only Bitcoin transport
+#   4. seed the light client with peers (TCP goes through the %mach vane)
 #   5. put both under a supervisor that also performs the gwbtc/node#1
 #      wedge recovery, which a bare `Restart=always` does not
 #   6. seed NODE_COMPACT_FILTERS-capable peers, in batches
@@ -46,11 +46,11 @@
 #               release-tag resolution; download; sha256; unpack; the boot
 #               invocation (a real comet booted and answered); identity
 #               read-back over the control socket; the desk-list query; the
-#               degradation path when the sidecar and desks are absent;
+#               degradation path when the desks are absent;
 #               process matching, event-log liveness, @ux formatting;
 #               --status end to end.
 #
-#   NOT run     the sidecar fetch, start and supervision -- the artifact does
+#   NOT run     the supervision -- the artifact does
 #               not exist yet, so no part of that path has been executed;
 #               peer seeding against a live %bitcoin-client; the sync
 #               progress loop with real heights; the supervisor's recovery
@@ -122,7 +122,7 @@ DO_DOMAIN=0
 SHIP_RUNS=detached          # how this run leaves the ship; see write_ship_readme
 FORCE_REDOWNLOAD=0
 SEED_BATCHES="${GROUNDWIRE_SEED_BATCHES:-6}"
-SEED_BATCH_SIZE=25          # OPERATIONS.md 5.6: bulk adds SIGSEGV the sidecar
+SEED_BATCH_SIZE=25          # OPERATIONS.md 5.6: bulk adds overwhelmed the old sidecar; batches stay
 MIN_FREE_GB=20              # OPERATIONS.md 2: a synced pier is ~2.2 GB
 
 usage() {
@@ -219,7 +219,7 @@ OPTIONS
   --loom <n>         vere loom exponent (default 32 = 4 GB address space)
   --proof <file>     a comet.proof.json from Desktop Causeway. Saved next to
                      the pier. The runtime does not consume it yet.
-  --no-bitcoin       boot the ship only: no sidecar, no peers, no sync
+  --no-bitcoin       boot the ship only: no peers, no sync
   --no-armillary     do not install Armillary (the paid-inference app) on the
                      ship. GW_ARMILLARY_REPO and GW_ARMILLARY_REF pick the
                      source (default nisfeb/armillary, main).
@@ -616,7 +616,6 @@ verify_release() {
 install_release() {
   VERE="$GW_DIR/bin/gw-vere"
   PILL="$GW_DIR/pills/gw-base.pill"
-  SIDECAR="$GW_DIR/bin/tcp-sidecar"
 
   # Idempotence: an interrupted run re-enters here with the work already done.
   # Re-extracting would also swap the binary under a ship that is still
@@ -632,8 +631,6 @@ install_release() {
      { ! tar tzf "$TARBALL" 2>/dev/null | grep -qx './causeway' ||
        [ -x "$GW_DIR/causeway" ]; }; then
     info "release $TAG is already installed"
-    HAVE_SIDECAR=0
-    [ -x "$SIDECAR" ] && HAVE_SIDECAR=1
     return 0
   fi
 
@@ -655,7 +652,7 @@ install_release() {
 
   mkdir -p "$GW_DIR/bin" "$GW_DIR/pills" "$GW_DIR/piers" "$GW_DIR/var" "$GW_DIR/lib"
   local f
-  for f in gw-vere tcp-sidecar comet_miner gw-onboard; do
+  for f in gw-vere comet_miner gw-onboard; do
     if [ -f "$stage/$f" ]; then
       mv -f "$stage/$f" "$GW_DIR/bin/$f"
       chmod +x "$GW_DIR/bin/$f"
@@ -694,17 +691,11 @@ install_release() {
     > "$GW_DIR/var/release.txt"
 
   good "installed gw-vere and gw-base.pill under $GW_DIR"
-  if [ -x "$SIDECAR" ]; then
-    good "tcp-sidecar is in this release"
-    HAVE_SIDECAR=1
-  else
-    HAVE_SIDECAR=0
-  fi
 }
 
 # ============================================================ ship helpers ==
 # gwlib.sh (the shared helpers) and gwsup.sh (the per-ship supervisor) ride in
-# the release tarball next to gw-vere and tcp-sidecar, and install_release put
+# the release tarball next to gw-vere, and install_release put
 # them on disk a moment ago. Their source is gwbtc/urbit, automation/installer.
 #
 # They used to be heredocs in this script -- 463 of its 1,521 lines, written
@@ -758,7 +749,6 @@ GW_PIER='$GW_PIER'
 GW_VERE='$VERE'
 GW_LOG='$GW_LOG'
 GW_SC_LOG='$GW_SC_LOG'
-GW_SIDECAR='${GW_SIDECAR:-}'
 GW_AMES_PORT='$AMES_PORT'
 GW_HTTP_PORT='$HTTP_PORT'
 GW_LOOM='$LOOM'
@@ -791,9 +781,8 @@ boot_ship() {
   GW_LOG="$GW_DIR/var/$NAME.log"
   GW_SC_LOG="$GW_DIR/var/sc-$NAME.log"
   recall_ports
-  if [ "${HAVE_SIDECAR:-0}" = 1 ]; then GW_SIDECAR="$SIDECAR"; else GW_SIDECAR=""; fi
   export GW_NAME="$NAME" GW_PIER GW_VERE="$VERE" GW_LOG GW_SC_LOG GW_LOOM="$LOOM"
-  export GW_AMES_PORT="$AMES_PORT" GW_HTTP_PORT="$HTTP_PORT" GW_SIDECAR GW_DIR SOCK_TOOL
+  export GW_AMES_PORT="$AMES_PORT" GW_HTTP_PORT="$HTTP_PORT" GW_DIR SOCK_TOOL
 
   if [ -n "$(gwl_king_pid)" ] || [ -n "$(gwl_serf_pid)" ]; then
     info "already running (pid $(gwl_king_pid) $(gwl_serf_pid))"
@@ -1002,63 +991,29 @@ save_proof() {
 bitcoin_preconditions() {
   local desks missing=""
   step "Checking the light-client stack"
-
-  # The binary is a file test, so ask that before bothering the ship. If it is
-  # absent the release predates #67 and the desks cannot be there either.
-  if [ "${HAVE_SIDECAR:-0}" != 1 ]; then
-    missing="tcp-sidecar binary"
-  else
-    desks="$(gwl_desks 180)"
-    case "$desks" in
-      *base*)
-        # A readable desk list. Now the two that matter.
-        case "$desks" in *node*) : ;; *) missing="${missing:+$missing, }%node desk" ;; esac
-        case "$desks" in *tcp-sidecar*) : ;; *) missing="${missing:+$missing, }%tcp-sidecar desk" ;; esac ;;
-      *)
-        # No %base in the answer means we did not get a desk list at all --
-        # say so rather than reporting desks missing on that evidence.
-        warn "could not read the ship's desk list over the control socket.
+  # %node (agent %bitcoin-client) reaches Bitcoin through the kernel's %mach
+  # vane, so the only thing to check is that the desk is in the pill.
+  desks="$(gwl_desks 180)"
+  case "$desks" in
+    *base*)
+      case "$desks" in *node*) : ;; *) missing="%node desk" ;; esac ;;
+    *)
+      warn "could not read the ship's desk list over the control socket.
     Continuing; if %node is not really there, the next step will say so.
     Check by hand with:  $SELF --status --comet '$COMET'" ;;
-    esac
-  fi
-
+  esac
   if [ -n "$missing" ]; then
     printf '\n%s  This release cannot run the Bitcoin light client.%s\n' "$C_Y" "$C_0"
     info ""
     info "  missing: $missing"
     info ""
-    info "  The sidecar binary and the %node / %tcp-sidecar desks in the pill"
-    info "  both land with gwbtc/urbit PR #67, which was open when this script"
-    info "  was written. Release $TAG does not have them."
-    info ""
     info "  Your comet is booted and is a working ship. What it cannot do yet"
     info "  is reach Bitcoin, so it cannot verify any peer and no peer can"
-    info "  verify it."
-    info ""
-    info "  Either:"
-    info "    - re-run this installer when a release newer than #67 exists"
-    info "      (it will restart your existing pier, not re-create it), or"
-    info "    - build the sidecar and install the two desks by hand:"
-    info "      ops/doc/OPERATIONS.md sections 3.3 and 5.4."
+    info "  verify it. Re-run this installer on a release that bakes %node."
     return 1
   fi
-  good "sidecar binary present, %node and %tcp-sidecar are in the pill"
+  good "%node is in the pill"
   return 0
-}
-
-start_sidecar() {
-  step "Starting the tcp-sidecar"
-  if [ -n "$(gwl_sidecar_pids)" ]; then
-    info "already running (pid $(gwl_sidecar_pids))"
-    return 0
-  fi
-  if gwl_start_sidecar; then
-    good "sidecar running (pid $(gwl_sidecar_pids)), log $GW_SC_LOG"
-  else
-    die "the sidecar did not stay up. See $GW_SC_LOG.
-    It is the light client's only transport; nothing syncs without it."
-  fi
 }
 
 # A pill-baked desk activates locally whether or not it carries a desk.ship.
@@ -1079,15 +1034,12 @@ start_sidecar() {
 #
 # So this is not a workaround for desk.ship.  It is a fallback for the plain
 # case where a desk is not in the pill at all, which is every release older
-# than the one that baked in %node and %tcp-sidecar.  A poke is safe where a
+# than the one that baked in %node.  A poke is safe where a
 # scry into a missing agent is not.
 ensure_agents() {
   local a desk
-  for a in bitcoin-client tcp; do
-    case "$a" in
-      bitcoin-client) desk=node ;;
-      tcp)            desk=tcp-sidecar ;;
-    esac
+  for a in bitcoin-client; do
+    desk=node
     if gwl_agent_installed "$a"; then continue; fi
     info "%$a is not installed yet; installing %$desk"
     gwl_poke hood kiln-install "!>([%$desk our %$desk])" 120 >/dev/null || true
@@ -1150,7 +1102,7 @@ seed_peers() {
       *%avow*) printf 'ok\n' ;;
       *)       printf 'no reply (the ship may be busy; continuing)\n' ;;
     esac
-    # Batches of ~25 with a pause. Bulk-adding SIGSEGVs the sidecar.
+    # Batches of ~25 with a pause, a habit from the old sidecar's days.
     [ "$i" -lt "$SEED_BATCHES" ] && sleep 30
   done
   good "seeded $(( i * SEED_BATCH_SIZE )) peer addresses in $i batches"
@@ -1198,9 +1150,8 @@ start_supervisor() {
   sleep 2
   SHIP_RUNS=supervised
   good "supervisor running; log $GW_DIR/var/sup-$NAME.log"
-  info "it restarts vere and the sidecar, and after a sidecar restart it also"
-  info "runs the gwbtc/node#1 recovery -- kill-peer-connections and a re-seed"
-  info "-- which is the part a plain Restart=always unit gets wrong."
+  info "it restarts vere when it dies and re-seeds peers when the event log"
+  info "goes stale, which is the part a plain Restart=always unit gets wrong."
 }
 
 # ------------------------------------------------------------------ domain --
@@ -1796,9 +1747,9 @@ watch_sync() {
     esac
 
     if [ "$el" -gt 300 ] && [ "$peers" = 0 ]; then
-      warn "no live peers after $(hms "$el"). Either the sidecar died -- check
-    $GW_SC_LOG for '--- CRASH: signal 11 ---' -- or every seeded address was
-    unreachable. The supervisor retries both; re-running this script re-seeds."
+      warn "no live peers after $(hms "$el"): every seeded address was unreachable,
+    or the ship cannot open TCP connections from here. The supervisor keeps
+    re-seeding; re-running this script re-seeds at once."
     fi
     sleep 52
   done
@@ -1823,12 +1774,11 @@ attach_ship() {
   fi
   VERE="$GW_DIR/bin/gw-vere"; [ -x "$VERE" ] || VERE="$GW_DIR/gw-vere"
   [ -x "$VERE" ] || die "no gw-vere under $GW_DIR"
-  SIDECAR="$GW_DIR/bin/tcp-sidecar"
   locate_pier
   GW_LOG="$GW_DIR/var/$NAME.log"; GW_SC_LOG="$GW_DIR/var/sc-$NAME.log"
   [ -f "$GW_LOG" ] || GW_LOG="$GW_DIR/$NAME.log"
   export GW_NAME="$NAME" GW_PIER GW_VERE="$VERE" GW_LOG GW_SC_LOG GW_DIR
-  export GW_SIDECAR="$SIDECAR" GW_LOOM="$LOOM" GW_AMES_PORT="$AMES_PORT" GW_HTTP_PORT="$HTTP_PORT"
+  export GW_LOOM="$LOOM" GW_AMES_PORT="$AMES_PORT" GW_HTTP_PORT="$HTTP_PORT"
   pick_sock_tool
   # shellcheck source=/dev/null
   . "$GW_DIR/lib/gwlib.sh" 2>/dev/null || die "no $GW_DIR/lib/gwlib.sh; re-run an install first"
@@ -1853,10 +1803,9 @@ cmd_status() {
   step "Status of ~$NAME"
   [ -f "$GW_DIR/var/release.txt" ] && sed 's/^/    /' "$GW_DIR/var/release.txt"
   info "pier          $GW_PIER"
-  local kp sp scp age sup
-  kp="$(gwl_king_pid)"; sp="$(gwl_serf_pid)"; scp="$(gwl_sidecar_pids)"
+  local kp sp age sup
+  kp="$(gwl_king_pid)"; sp="$(gwl_serf_pid)"
   info "vere          ${kp:-${sp:-not running}}"
-  info "sidecar       ${scp:-not running}"
   age="$(gwl_evt_age)"
   info "event log     ${age}s since the last write (>300s is the wedge threshold)"
   sup="$(cat "$GW_DIR/var/sup-$NAME.lock/pid" 2>/dev/null || echo)"
@@ -1896,15 +1845,15 @@ cmd_status() {
 # Order matters, and it is the order that caused an incident when it was not
 # written down: stopping a supervised ship without stopping its supervisor
 # first is a no-op -- the supervisor notices VERE-DOWN and relaunches within
-# one poll. Supervisor, then runtime, then sidecar (OPERATIONS.md 5.10).
+# one poll. Supervisor, then runtime (OPERATIONS.md 5.10).
 cmd_stop() {
   [ -n "$COMET" ] || die "--stop needs --comet <@p> so it kills exactly one ship"
   validate_comet
-  VERE="$GW_DIR/bin/gw-vere"; SIDECAR="$GW_DIR/bin/tcp-sidecar"
+  VERE="$GW_DIR/bin/gw-vere"
   locate_pier
   GW_LOG="$GW_DIR/var/$NAME.log"; GW_SC_LOG="$GW_DIR/var/sc-$NAME.log"
   export GW_NAME="$NAME" GW_PIER GW_VERE="$VERE" GW_LOG GW_SC_LOG GW_DIR
-  export GW_SIDECAR="$SIDECAR" GW_LOOM="$LOOM" GW_AMES_PORT="$AMES_PORT" GW_HTTP_PORT="$HTTP_PORT"
+  export GW_LOOM="$LOOM" GW_AMES_PORT="$AMES_PORT" GW_HTTP_PORT="$HTTP_PORT"
   pick_sock_tool
   # shellcheck source=/dev/null
   . "$GW_DIR/lib/gwlib.sh" 2>/dev/null || die "no $GW_DIR/lib/gwlib.sh"
@@ -1941,10 +1890,6 @@ cmd_stop() {
   # Stop it and VERIFY the exit (stop_vere_wait: SIGTERM, a grace, SIGKILL).
   local vgone=1
   stop_vere_wait || vgone=0
-  for p in $(gwl_sidecar_pids); do
-    kill "$p" 2>/dev/null || true
-    info "stopped sidecar (pid $p)"
-  done
   if [ "$vgone" = 0 ]; then
     die "vere (pid $(gwl_king_pid)) has not exited after ${VERE_WAITED}s. It still holds the
     pier; do NOT start another ship on it. Check with:  $SELF --status --comet '$COMET'
@@ -2311,7 +2256,6 @@ cmd_install() {
     summary_lines
     exit 0
   fi
-  start_sidecar
   ensure_agents
   # In the dojo ending the supervisor must not exist -- it would see the
   # handoff's stop as VERE-DOWN and relaunch a background ship to fight
@@ -2390,16 +2334,14 @@ stop_vere_wait() {
 # the real terminal: the user lands in their dojo, and quitting it
 # (Ctrl-D) stops the ship -- the same contract gw-onboard had.  The
 # supervisor must not be running here or it would fight the foreground
-# vere; in the dojo path it was never started.  The sidecar start_sidecar
-# made needs no help across the stop: it outlives vere and connects to
-# the next one's Lick socket by itself (gwbtc/tcp-sidecar#4).
+# vere; in the dojo path it was never started.
 handoff_dojo() {
   step "Handing you the dojo"
   info "your ship restarts attached to this terminal (one short replay)."
   info "type +code in the dojo for your web login key."
   info "Ctrl-D quits the dojo and stops the ship; restart with"
   info "  $GW_DIR/boot.sh --comet '$COMET'"
-  info "the tcp-sidecar stays up through the restart, and after you quit:"
+  info "after you quit:"
   info "  $GW_DIR/boot.sh --stop --comet '$COMET'"
   info "ends it. Nothing restarts the ship if it crashes: for that, run it"
   info "with --detach."
@@ -2412,14 +2354,6 @@ handoff_dojo() {
       $GW_DIR/boot.sh --stop --comet '$COMET'
     and run this again when it is gone."
   rm -f "$GW_PIER/.vere.lock"
-  # A sidecar built before the tcp-sidecar#4 fix exits with vere, and one
-  # started now would exit too: the old socket file refuses the connect.
-  if [ -z "$(gwl_sidecar_pids)" ]; then
-    warn "the tcp-sidecar in release $TAG exited with vere, so this dojo's
-    ship has no Bitcoin transport and its light client will not sync. Use
-    a release that carries the gwbtc/tcp-sidecar#4 fix, or run the ship
-    with --detach, where the supervisor restarts the sidecar."
-  fi
   # shellcheck disable=SC2086
   exec "$VERE" --loom "$LOOM" --http-port "$HTTP_PORT" ${AMES_PORT:+-p $AMES_PORT} "$GW_PIER" </dev/tty >/dev/tty 2>&1
 }
@@ -2428,7 +2362,6 @@ summary_lines() {
   step "Where things are"
   info "pier        $GW_PIER"
   info "ship log    $GW_LOG"
-  [ -f "$GW_SC_LOG" ] && info "sidecar log $GW_SC_LOG"
   [ -f "$GW_DIR/var/sup-$NAME.log" ] && info "supervisor  $GW_DIR/var/sup-$NAME.log"
   info "http        http://127.0.0.1:$HTTP_PORT"
   [ -n "${GW_DOMAIN:-}" ] && info "https       https://$GW_DOMAIN   (the address to use; the ip:port redirects here once the certificate is in)"
