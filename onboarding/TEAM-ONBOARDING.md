@@ -20,8 +20,8 @@ already paid for, handed over as one hex code, so the mint never waits on him.
 
 | what | where |
 |---|---|
-| Desk (`%gw-btc` + `%gevulot`) | `gwbtc/groundwire` @ **`hd/cc-landing`** |
-| Kernel + vere | `gwbtc/urbit` @ **`hd/cc-kernel`** |
+| Desk (`%gw-btc` + `%gevulot`) | `gwbtc/groundwire` @ **`gw/release`** |
+| Kernel + vere | `gwbtc/urbit` @ **`gw/release`** |
 | Release to boot from | the newest **`groundwire-alpha-*`** prerelease of `gwbtc/urbit` |
 
 Look up the release tag once, before you start, and use it in every

@@ -26,7 +26,7 @@ follow "Dry run" in `TEAM-ONBOARDING.md`.
 > identity is anchored to a Bitcoin sat. You'll drive the droplet **over SSH
 > from here**: do not run the comet locally. Read the guide first and follow
 > it; don't improvise around the money or key steps:
-> https://raw.githubusercontent.com/gwbtc/groundwire/hd/cc-landing/onboarding/TEAM-ONBOARDING.md
+> https://raw.githubusercontent.com/gwbtc/groundwire/gw/release/onboarding/TEAM-ONBOARDING.md
 >
 > **The release tag.** Before step 1, look up the newest `groundwire-alpha`
 > release on this machine:
