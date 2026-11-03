@@ -217,7 +217,7 @@
   ::  Parsing failed, abort batch
   ::
   ?~  parse-result
-    ~&  >>>  %parse-failed  !!
+    ~|  %parse-failed  !!
   =^  raw-tx  cur  u.parse-result
   $(roll [raw-tx roll], num-msgs +(num-msgs))
 ::
@@ -228,7 +228,7 @@
   ^-  (unit [raw-sotx:urb cur=@ud])
   |^  ^-  (unit [raw-sotx:urb cur=@ud])
   =/  sig  take-sig
-  ?~  sig  ~&  >>>  %no-sig  !!
+  ?~  sig  ~|  %no-sig  !!
   =^  sig  cur  u.sig
   =^  from-ship=ship    cur  (take 0 128)
   =/  res=(unit [tx=skim-sotx:urb cur=@ud])  parse-tx
@@ -243,7 +243,7 @@
   ++  parse-tx
     |-  ^-  res=(unit [tx=skim-sotx:urb cur=@ud])
     =^  op   cur  (take 0 7)
-    ?+    op  ~&  >>>  %strange-opcode  !!
+    ?+    op  ~|  %strange-opcode  !!
       ::  %0
       ::=^  reset=@         cur  (take 0)
       ::=^  =sont:ord        cur  (take 3 20)
@@ -256,7 +256,7 @@
       ::  LLM: added take-fief to decode inline (unit fief) for spawn
       =^  fief=(unit fief:urb)  cur  take-fief
       =/  to            take-to
-      ?~  to  ~&  >>>  %no-to  !!
+      ?~  to  ~|  %no-to  !!
       =^  to        cur  u.to
       `[[%spawn pass fief to] cur]
       ::
@@ -264,7 +264,7 @@
         ^-  (unit [(unit [=vout:ord =off:ord]) cur=@])
         =^  fro-o  cur  (take 0 2)
         ?:  =(fro-o 0)  `[~ cur]
-        ?.  =(fro-o 1)   ~&  >>>  %no-fro  !!
+        ?.  =(fro-o 1)   ~|  %no-fro  !!
         =^  vout    cur   take-atom
         =^  off    cur   take-atom
         `[`[vout off] cur]
@@ -277,7 +277,7 @@
         =^  vout-o  cur  (take 0 2)
         ?:  =(vout-o 0)
           `[[spkh ~ off tej] cur]
-        ?.  =(vout-o 1)  ~&  >>>  %take-to  !!
+        ?.  =(vout-o 1)  ~|  %take-to  !!
         =^  vout    cur   take-atom
         `[[spkh `vout off tej] cur]
       --
@@ -384,7 +384,7 @@
     ^-  (unit [(unit @) @ud])
     =^  typ  cur  (take 0 2)
     ?:  =(typ 0)  `[~ cur]
-    ?.  =(typ 1)  ~&  >>  %take-sig  !!
+    ?.  =(typ 1)  ~|  %take-sig  !!
     =^  sig  cur  (take 0 512)
     `[`sig cur]
   --

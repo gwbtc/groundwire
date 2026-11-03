@@ -2,6 +2,8 @@
 ::
 /+  multipart
 |%
+::  dbg: flip to & for developer debug prints
+++  dbg  ^-(? |)
 +$  metadata  (map @t @t)
 +$  bend  (pair @ud path)      :: relative path
 +$  road  (each path bend)     :: absolute or relative path
@@ -534,9 +536,11 @@
     |=  [fields=(map @t @t) data=(unit octs)]
     ^-  tarball-entry
     =/  tf=@t  (~(got by fields) 'typeflag')
-    ~?  >>>  &(?=(^ data) ?=(?(%'1' %'2' %'3' %'4' %'5' %'6') tf))
+    ::  caller-contract checks: developer diagnostics only
+    ::
+    ~?  &(dbg ?=(^ data) ?=(?(%'1' %'2' %'3' %'4' %'5' %'6') tf))
       `@t`(cat 3 'tarball: unexpected data for header with typeflag ' tf)
-    ~?  >>  (~(has by fields) 'size')  'tarball: ignoring size field'
+    ~?  &(dbg (~(has by fields) 'size'))  'tarball: ignoring size field'
     =.  fields
       %+  ~(put by fields)
         'size'
