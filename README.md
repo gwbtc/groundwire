@@ -1,6 +1,6 @@
 # Groundwire
 
-This repo contains two Urbit desks: `%gw-btc` and `%spv-wallet`.
+This repo contains the `%gw-btc` desk, the Causeway minting tool (`causeway/`), the installer users run (`causeway/public/boot.sh`) and the onboarding guides (`onboarding/`). The `%spv-wallet` desk in `spv-wallet/` is no longer shipped; the Wallet a ship runs comes with grubbery.
 
 The `%gw-btc` desk was called `%groundwire` until it was renamed to match
 the one PKI domain it serves. A ship installed from a release older than
@@ -20,7 +20,12 @@ The `%gw-btc` desk runs two Gall agents (`gw-btc/desk.bill`):
   replaced `%urb-snapshot`, which published a monolithic index snapshot to
   S3: a sponsor now pushes attestations, each carrying its own proof.
 
-The `%spv-wallet` desk contains an SPV Wallet Gall app. We currently use this app for performing post-boot comet attestations, though this may change soon.
+## Branches and releases
+
+- **`gw/release`** is the default and the only development branch: pull requests merge straight into it. `hd/cc-landing` was its name until 2026-11-03.
+- gwbtc/urbit and gwbtc/vere work the same way, each with a `gw/release`, plus a `gw/upstream` that lags it and is what we offer the urbit organization's repos.
+- **Releases are cut from [gwbtc/release](https://github.com/gwbtc/release)**, not from here: that repo's workflow pins every input of a release by commit (this repo's `gw/release` commit among them), builds the pill and the runtime, boots the pill, and publishes a prerelease on every merge. To ship a change from this repo, merge it here, then move the `GROUNDWIRE_BRANCH` pin there (`./bump GROUNDWIRE_BRANCH gw/release`) in a pull request. A merge here also deploys `%gw-btc` to the distribution ship for over-the-air updates.
+- `boot.sh` installs the newest prerelease; a release promoted by clearing its prerelease flag is what the website's installer follows.
 
 ## Installation
 
