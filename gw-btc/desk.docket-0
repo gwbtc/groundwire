@@ -1,0 +1,9 @@
+:~  title+'Gevulot'
+    info+'Identity control pane — sponsor-mediated peer discovery.'
+    color+0xff.6a00
+    base+'gevulot'
+    site+/apps/gevulot
+    version+[0 1 0]
+    website+'https://groundwire.computer'
+    license+'Source-available'
+==

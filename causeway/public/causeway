@@ -1,0 +1,105 @@
+#!/bin/bash
+#
+# causeway -- launcher for the Causeway CLI/TUI shipped inside a Groundwire
+# release tarball.
+#
+# Causeway is Python and has real dependencies (embit, pynacl, textual...), so
+# it cannot just be dropped in beside the binaries the way gw-vere and
+# comet_miner are.  This builds a private virtualenv next to itself on first
+# run and re-execs into it.  Subsequent runs cost one `test -x`.
+#
+# It deliberately does NOT touch the system Python, ~/.local, or any global
+# pip state: everything lives under the release directory, and deleting that
+# directory removes every trace.
+#
+# Usage is exactly the CLI's:
+#     ./causeway --help
+#     ./causeway spawn generate --sponsor ~sampel-palnet
+#     ./causeway tui                      # the Textual interface
+#
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC="$HERE/causeway-src"
+VENV="$HERE/.causeway-venv"
+PY="$VENV/bin/python3"
+STAMP="$VENV/.installed-from"
+
+die() { printf '\n  causeway: %s\n\n' "$*" >&2; exit 1; }
+
+[ -d "$SRC" ] || die "causeway-src/ is missing from this release.
+  This tarball predates Causeway being packaged. Use a release that
+  contains it, or run Causeway from a checkout of gwbtc/groundwire."
+
+# --- find a usable python3 --------------------------------------------------
+# 3.10 is the floor pyproject.toml declares.  Checking the version explicitly
+# beats letting pip fail three minutes into a dependency resolve.
+find_python() {
+  local c v
+  for c in python3.13 python3.12 python3.11 python3.10 python3; do
+    command -v "$c" >/dev/null 2>&1 || continue
+    v=$("$c" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null) || continue
+    case "$v" in
+      3.1[0-9]|3.[2-9][0-9]) echo "$c"; return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# --- build the venv, once ---------------------------------------------------
+# The stamp records which source tree the venv was built from.  A release
+# upgrade replaces causeway-src/ in place, and a venv installed from the old
+# one would keep running the old code with no sign that it had -- so a stamp
+# mismatch rebuilds rather than trusting that the directory looks right.
+# The stamp covers EVERY file in causeway-src, not just causeway.py.  It was
+# sha256(causeway.py) alone, so a release that changed only causeway_tui.py
+# -- which is exactly what removing a TUI screen looks like -- left the stamp
+# unchanged, the venv unrebuilt, and the OLD TUI still running out of
+# site-packages after the new source had landed on disk.  Sort the file
+# list so the stamp is order-independent across filesystems.
+_shatool="$(command -v sha256sum || command -v shasum)"
+_shaflag=""; [ "${_shatool##*/}" = "shasum" ] && _shaflag="-a 256"
+want_stamp="$(cd "$SRC" && (git rev-parse HEAD 2>/dev/null || \
+  { find . -type f \( -name '*.py' -o -name '*.toml' -o -name '*.txt' \) -not -path './tests/*' \
+      | LC_ALL=C sort | xargs $_shatool $_shaflag | $_shatool $_shaflag; }) | awk '{print $1}')"
+
+if [ ! -x "$PY" ] || [ "$(cat "$STAMP" 2>/dev/null || true)" != "$want_stamp" ]; then
+  BOOTPY="$(find_python)" || die "no python3 >= 3.10 found on PATH.
+  macOS:  brew install python@3.12
+  Debian: sudo apt-get install -y python3 python3-venv"
+
+  printf '  causeway: first run -- building a private environment (once, ~30s)\n' >&2
+  rm -rf "$VENV"
+  "$BOOTPY" -m venv "$VENV" >/dev/null 2>&1 \
+    || die "python3 -m venv failed. On Debian/Ubuntu: sudo apt-get install -y python3-venv"
+
+  # Do not trust pip's exit code alone -- a resolver that half-installs still
+  # returns 0 often enough to matter.  The check below is that the console
+  # script actually exists and runs.
+  "$PY" -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
+  if ! "$PY" -m pip install --quiet "$SRC" >&2; then
+    die "installing Causeway and its dependencies failed (see above).
+  This step needs network access the first time."
+  fi
+  printf '%s' "$want_stamp" > "$STAMP"
+fi
+
+[ -x "$VENV/bin/causeway" ] || die "the venv built but produced no 'causeway'
+  entry point. Treat this as a packaging bug, not a local problem."
+
+# The Python side resolves bundled binaries (comet_miner, gw-vere, the pill)
+# through this.  Without it, a venv'd Causeway is neither frozen nor a dev
+# checkout, and its fallback path pointed at a zig build tree relative to the
+# user's CWD -- which is how the first live mint got a funded wallet and then
+# "comet miner not found".  Exported, not passed, so `causeway-src` invoked
+# by hand under this launcher's environment behaves the same way.
+export GROUNDWIRE_HOME="$HERE"
+
+# `causeway tui` is not a click subcommand -- the TUI is its own entry point.
+# Accepting it here means users have one name to remember instead of two.
+if [ "${1:-}" = "tui" ]; then
+  shift
+  exec "$VENV/bin/causeway-tui" "$@"
+fi
+
+exec "$VENV/bin/causeway" "$@"

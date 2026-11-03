@@ -1,4 +1,6 @@
 # build
+dist-gw-btc
+# transitional shim; delete with the Makefile target after gwbtc/urbit#67
 dist-groundwire
 dist-spv
 onboarding/booting/dist
@@ -12,3 +14,15 @@ __pycache__/
 
 # claude
 .claude
+
+# regtest harness runtime state (piers, bitcoind datadir, logs) — never commit
+testnet/run/
+
+# python packaging
+*.egg-info/
+
+# gwmint working state — these hold SIGNED mainnet transactions and the
+# gate_passed flag broadcast keys off.  Never commit one: it is both a
+# private artifact and a loaded gun (`gwmint.py broadcast <label>` will
+# send whatever is in it).
+ops/state-*.json
