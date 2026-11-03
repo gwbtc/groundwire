@@ -131,6 +131,9 @@ follow "Dry run" in `TEAM-ONBOARDING.md`.
 >   `http://<ip>:<port>` address redirects to it, so report the name. Step 5
 >   can take half an hour while the sync keeps the ship busy, so give it a
 >   long timeout or run it in the background.
+> - **Today the ship's Wallet does not come up on a fresh ship** (a known
+>   bug, gwbtc/hatchery#1), so the leftover sats stay with the recovery phrase:
+>   the run step says so and nothing is lost. Say that plainly in the report.
 > - **The leftover sats and Armillary come with step 5.** The spawn sends
 >   what it did not need back to the 12-word wallet, not to the ship; the
 >   run step moves most of it into the Wallet the ship made for itself

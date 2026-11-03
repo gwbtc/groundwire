@@ -1456,7 +1456,11 @@ ship_http() { curl -s -k --max-time 120 -b "$SHIP_JAR" "$@" 2>/dev/null || true;
 # never the recovery phrase.
 wallet_receive_address() {
   local i st addr
-  for i in $(seq 1 30); do
+  # Three probes, not thirty: on a fresh ship today the Wallet never answers
+  # (gwbtc/hatchery#1: its main.sig dies on an undeclared registry road, and
+  # its tools address the wrong path), and each probe can wait a long time on
+  # a ship still compiling. The day it answers, the sweep runs on the next boot.
+  for i in $(seq 1 3); do
     st="$(ship_http -o /dev/null -w '%{http_code}' "$SHIP_URL/groundwire/wallet/simple")"
     if [ "$st" = 200 ]; then
       addr="$(ship_http -X POST --data 'action=get-receive-address&net=main' "$SHIP_URL/groundwire/wallet/simple" | tr -d '[:space:]')"
@@ -1487,8 +1491,9 @@ sweep_leftover() {
   info "with the phrase for the comet's later custody moves."
   ensure_shell_desks || { warn "the leftover stays with the phrase; this runs again on the next boot"; return 0; }
   if ! addr="$(wallet_receive_address)"; then
-    warn "the Wallet gave no address within five minutes (the hatchery may still be
-    arriving); the leftover stays with the phrase and this runs again on the next boot"
+    warn "the Wallet gave no address. On a fresh ship today it does not come up
+    (gwbtc/hatchery#1); the leftover stays with the recovery phrase, nothing is
+    lost, and this runs again on the next boot once the Wallet answers."
     return 0
   fi
   info "Wallet address: $addr"

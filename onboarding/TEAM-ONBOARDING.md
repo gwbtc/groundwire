@@ -180,7 +180,12 @@ S "bash ~/boot.sh --status --comet '<@p>'; bash ~/boot.sh --code --comet '<@p>'"
 #    The mechanism and the by-hand runbook: gwbtc/urbit-dns README,
 #    "Getting a URL for your comet".
 
-# 8. the mint's leftover sats reach the ship's Wallet BY THEMSELVES, in
+# 8. (NOT YET IN PRACTICE: on a fresh ship the Wallet does not come up,
+#    gwbtc/hatchery#1, so this step ends with the leftover staying with the
+#    recovery phrase and a warning saying so. Nothing is lost; it runs again
+#    on a later boot once the Wallet answers. The rest of this entry is what
+#    happens then.)
+#    the mint's leftover sats reach the ship's Wallet BY THEMSELVES, in
 #    step 5. The spawn spends the funding UTXO (or the invite's) and sends
 #    whatever it does not need back to the mint wallet, m/86'/0'/0'/1/0 of
 #    the 12 words. The ship never sees those words: Causeway records that
