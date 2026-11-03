@@ -1,6 +1,10 @@
 ::  sur/light-client.hoon
 ::
-::  Verbatim copy of gwbtc/node sur/bitcoin/client.hoon at develop 39648ac.
+::  Verbatim copy of gwbtc/node sur/bitcoin/client.hoon at 026360c (develop as of
+::  2026-10-25 plus %bitcoin-client on the %mach vane). Moves with NODE_REF in
+::  gwbtc/release: a fact whose case is not in this union fails +!< in the
+::  subscriber, gall kicks, the agent re-watches, and the ship spins (seen in
+::  the pill's validate boot on 2026-11-03, with %config).
 ::  %bitcoin-client gives every fact under ONE mark, %bitcoin-client-update,
 ::  carrying a $bitcoin-client-update: a head tag naming the case and the
 ::  case's update arm as .p.  The whole union has to be here, not just the
@@ -25,17 +29,45 @@
     b-net=bitcoin-network
 |%
 ::
++$  config
+  $:  verb=?
+      target-addresses=@ud
+      target-peers=@ud
+      target-priority-peers=@ud
+      minimum-peer-protocol-version=@ud
+      required-peer-services=services:b-net
+      priority-peer-base-ping-average=@dr
+      priority-peer-minimum-uptime=@dr
+      peer-handshake-timeout=@dr
+      ping-interval=@dr
+      pending-req-retry-interval=@dr
+      header-sync-retry-interval=@dr
+      tx-inv-broadcast-retry-interval=@dr
+      tx-broadcast-cache-expiration=@dr
+      blacklist-cleanup-interval=@dr
+      filter-cache-range=@ud
+      block-cache-range=@ud
+  ==
+::
 +$  bitcoin-client-action
   $%  [%broadcast-transaction p=broadcast-transaction:action]
       [%connect-peer p=connect-peer:action]
       [%disconnect-peer p=disconnect-peer:action]
+      [%ban-peer p=ban-peer:action]
+      [%unban-peer p=unban-peer:action]
+      [%add-address p=add-address:action]
+      [%del-address p=del-address:action]
+      [%configure p=configure:action]
   ==
 ::
 +$  bitcoin-client-update
   $%  [%is-synced p=is-synced:update]
       [%best-block p=best-block:update]
+      [%best-filter-header p=best-filter-header:update]
       [%block-header-by-hash p=block-header-by-hash:update]
       [%block-header-by-height p=block-header-by-height:update]
+      [%filter-header-by-hash p=filter-header-by-hash:update]
+      [%filter-header-by-height p=filter-header-by-height:update]
       [%block-filter-by-hash p=block-filter-by-hash:update]
       [%block-filter-by-height p=block-filter-by-height:update]
       [%block-by-hash p=block-by-hash:update]
@@ -44,6 +76,7 @@
       [%peers p=peers:update]
       [%addresses p=addresses:update]
       [%blacklist p=blacklist:update]
+      [%config p=config:update]
   ==
 ::
 ++  action
@@ -52,11 +85,26 @@
   +$  broadcast-transaction  transaction
   +$  connect-peer           earth-address
   +$  disconnect-peer        earth-address
+  +$  ban-peer               [=earth-address reason=@t expiration=(unit @dr)]
+  +$  unban-peer             earth-address
+  +$  add-address            earth-address
+  +$  del-address            earth-address
+  +$  configure              (list config-action)
   ::
   --
 ::
++$  config-action
+  $%  [%verb p=?]
+      [%target-addresses p=@ud]
+      [%target-peers p=@ud]
+      [%target-priority-peers p=@ud]
+      [%filter-cache-range p=@ud]
+      [%block-cache-range p=@ud]
+  ==
+::
 ++  update
   |%
+  +$  config  ^config
   ::
   +$  is-synced  ?
   ::
@@ -66,6 +114,7 @@
         last-common=[=block-height =block-hash]
         stale-branch=(list [=block-height =block-hash])
     ==  ==
+  +$  best-filter-header  [=block-height =block-hash]
   ::
   +$  block-header-by-hash
     $@  ~
@@ -76,6 +125,12 @@
     $:  block-info
         =block-header
     ==
+  ::
+  +$  filter-header-by-hash
+    $@  ~
+        @ux
+  +$  filter-header-by-height
+    @ux
   ::
   +$  block-filter-by-hash
     $@  ~
