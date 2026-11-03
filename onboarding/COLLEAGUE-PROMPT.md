@@ -30,7 +30,7 @@ follow "Dry run" in `TEAM-ONBOARDING.md`.
 >
 > **The release tag.** Before step 1, look up the newest `groundwire-alpha`
 > release on this machine:
-> `curl -fsSL 'https://api.github.com/repos/gwbtc/urbit/releases?per_page=100' | grep -o '"tag_name": *"groundwire-alpha-[^"]*"' | cut -d'"' -f4 | sort -V | tail -1`.
+> `curl -fsSL 'https://api.github.com/repos/gwbtc/release/releases?per_page=100' | grep -o '"tag_name": *"groundwire-alpha-[^"]*"' | cut -d'"' -f4 | sort -V | tail -1`.
 > It must print one tag, such as `groundwire-alpha-2026.10.28`; if it prints
 > nothing, stop and ask me. Call that tag `TAG`, and put its literal value
 > wherever the guide says `<TAG>`: the mint wrapper (guide step 2) and the run

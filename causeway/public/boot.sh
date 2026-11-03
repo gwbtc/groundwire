@@ -10,7 +10,7 @@
 # This script takes it from there and does the whole bring-up:
 #
 #   1. detect the platform and refuse the ones CI does not build
-#   2. fetch the release tarball from gwbtc/urbit, check it against the
+#   2. fetch the release tarball from gwbtc/release, check it against the
 #      release's SHA256SUMS, and unpack it
 #   3. boot the ship from the pill, with -w and -G given TOGETHER, and
 #      prove afterwards that the @p that came up is the @p you asked for
@@ -74,7 +74,9 @@
 set -euo pipefail
 
 BOOT_SH_VERSION="2026.8.10"
-REPO="${GROUNDWIRE_REPO:-gwbtc/urbit}"
+# Releases are published by gwbtc/release (every input pinned by commit there)
+# since 2026-11-03; older tags stay on gwbtc/urbit, reachable with GROUNDWIRE_REPO.
+REPO="${GROUNDWIRE_REPO:-gwbtc/release}"
 
 # How to tell the user to invoke us again. Under `curl | bash` there is no
 # file to point at, so we quote the pipeline instead of printing "bash".

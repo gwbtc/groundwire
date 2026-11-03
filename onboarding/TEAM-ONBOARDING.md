@@ -22,13 +22,13 @@ already paid for, handed over as one hex code, so the mint never waits on him.
 |---|---|
 | Desk (`%gw-btc` + `%gevulot`) | `gwbtc/groundwire` @ **`gw/release`** |
 | Kernel + vere | `gwbtc/urbit` @ **`gw/release`** |
-| Release to boot from | the newest **`groundwire-alpha-*`** prerelease of `gwbtc/urbit` |
+| Release to boot from | the newest **`groundwire-alpha-*`** prerelease of `gwbtc/release` |
 
 Look up the release tag once, before you start, and use it in every
 `boot.sh --version` below, where the commands say `<TAG>`:
 
 ```bash
-curl -fsSL 'https://api.github.com/repos/gwbtc/urbit/releases?per_page=100' \
+curl -fsSL 'https://api.github.com/repos/gwbtc/release/releases?per_page=100' \
   | grep -o '"tag_name": *"groundwire-alpha-[^"]*"' | cut -d'"' -f4 | sort -V | tail -1
 ```
 
