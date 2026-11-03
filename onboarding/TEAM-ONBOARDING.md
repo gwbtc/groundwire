@@ -94,7 +94,7 @@ S 'apt-get update -qq && apt-get install -y -qq tmux python3-venv
    swapon --show | grep -q swapfile || {
      fallocate -l 8G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
      echo "/swapfile none swap sw 0 0" >> /etc/fstab; }
-   curl -fsSL -o ~/boot.sh https://raw.githubusercontent.com/gwbtc/groundwire/hd/cc-landing/causeway/public/boot.sh
+   curl -fsSL -o ~/boot.sh https://raw.githubusercontent.com/gwbtc/groundwire/gw/release/causeway/public/boot.sh
    free -m | grep Swap'
 
 # 2. a wrapper script. Two things it exists for:
@@ -296,7 +296,7 @@ from "The branches and the release":
 ```bash
 # --dir keeps the test out of ~/.groundwire (the default install root)
 D=~/.groundwire-test; mkdir -p $D
-curl -fsSL -o $D/boot.sh https://raw.githubusercontent.com/gwbtc/groundwire/hd/cc-landing/causeway/public/boot.sh
+curl -fsSL -o $D/boot.sh https://raw.githubusercontent.com/gwbtc/groundwire/gw/release/causeway/public/boot.sh
 
 # mint. Done at "<@p> is ready.  It is NOT running right now."
 bash $D/boot.sh --mint --skip-attestation --headless --detach --dir $D \
