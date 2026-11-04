@@ -930,7 +930,7 @@ check_ports() {
 }
 
 wait_for_ship() {
-  local waited=0 limit=900
+  local waited=0 limit=3600
   printf '    waiting for the ship'
   while [ "$waited" -lt "$limit" ]; do
     if [ -S "$GW_PIER/.urb/conn.sock" ]; then
