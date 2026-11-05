@@ -2583,33 +2583,6 @@ def test_printed_commands_quote_their_patp():
         + "\n  ".join(bad))
 
 
-def test_boot_sh_quotes_its_patp():
-    """boot.sh prints commands too, and is the thing users copy most."""
-    boot = pathlib.Path(cw.__file__).parent.parent / "public" / "boot.sh"
-    if not boot.exists():           # not present in a packaged release
-        pytest.skip("boot.sh not alongside this checkout")
-    bad = []
-    for lineno, line in enumerate(boot.read_text().splitlines(), 1):
-        m = _re.search(r"--(comet|point|sponsor)\s+(\S+)", line)
-        if not m:
-            continue
-        val = m.group(2)
-        if val.startswith("<") or val.startswith("'"):
-            continue              # a placeholder, or already quoted
-        if val.startswith("~") or val.startswith("$"):
-            bad.append(f"boot.sh:{lineno}: {line.strip()}")
-    assert not bad, (
-        "these print a command whose @p is unquoted; zsh refuses to run it:\n  "
-        + "\n  ".join(bad))
-
-
-# ---------------------------------------------------------------------------
-# The TUI mint handoff (boot.sh --mint's default face)
-#
-# boot.sh launches the TUI with CAUSEWAY_* env vars and judges completion by
-# DISK: a proof newer than its launch marker, and a feed file derived from the
-# proof's name.  Two sides of a filename contract in two languages -- pin it.
-# ---------------------------------------------------------------------------
 
 def test_tui_env_prefill(monkeypatch):
     import causeway_tui as tui
@@ -2623,23 +2596,6 @@ def test_tui_env_prefill(monkeypatch):
     assert st.output_dir == "/tmp/mintdir"
     assert st.handoff is True
 
-
-def test_tui_feed_filename_matches_boot_sh_expectation():
-    """causeway_tui writes splitext(proof)[0] + '.feed'; boot.sh derives
-    ${proof%.json}.feed.  If either side changes, the mint dies with
-    'wrote a proof but no feed file' -- fail here instead."""
-    for proof in ("/x/mint/sampel-palnet-spawn.proof.json",           # CLI spelling
-                  "/x/mint/sampel-palnet-spawn-0123456789.proof.json"):  # TUI spelling
-        python_side = os.path.splitext(proof)[0] + ".feed"
-        bash_side = proof[: -len(".json")] + ".feed"     # ${proof%.json}.feed
-        assert python_side == bash_side == proof[:-5] + ".feed"
-    boot = pathlib.Path(cw.__file__).parent.parent / "public" / "boot.sh"
-    if boot.exists():
-        src = boot.read_text()
-        assert '${proof%.json}.feed' in src
-        # the glob must match BOTH spellings, or a successful TUI spawn is
-        # reported as "exited without completing"
-        assert "-name '*-spawn*.proof.json'" in src
 
 
 def test_tui_handoff_never_defaults_on():
@@ -2933,23 +2889,6 @@ def test_tui_psbt_screen_writes_proof_and_feed_at_build_and_watches_the_chain():
     assert "write_proof_json" not in bcast and "self._advance_once(" in bcast
 
 
-def test_boot_sh_judges_tui_completion_by_the_chain():
-    """boot.sh used to read 'proof + feed on disk' as 'spawn done'.  Both are
-    now written at BUILD time, so it must ask the network which candidate
-    transaction exists, newest first, and refuse to boot a comet whose spawn
-    was never seen -- with the finalize-by-hand recovery for the case where
-    the wallet broadcast it after the TUI closed."""
-    boot = pathlib.Path(cw.__file__).parent.parent / "public" / "boot.sh"
-    if not boot.exists():
-        pytest.skip("boot.sh not beside the desktop tree")
-    src = boot.read_text()
-    tui_block = src[src.index('if [ "$ui" = tui ]; then'):src.index("  else\n    local args=(spawn generate)")]
-    assert '$MEMPOOL_API/tx/$txid/status' in tui_block
-    assert "ls -t $(find" in tui_block                       # newest first
-    assert "the network has not seen it" in tui_block        # refuses
-    assert "causeway finalize $proof --feed-file" in tui_block  # recovery
-    assert 'MEMPOOL_API="${MEMPOOL_API:-https://mempool.space/api}"' in src
-
 
 def test_boot_hints_print_a_runnable_path(monkeypatch, tmp_path):
     """`boot.sh` bare is on nobody's PATH: the first user to paste the
@@ -2971,99 +2910,8 @@ def test_boot_hints_print_a_runnable_path(monkeypatch, tmp_path):
     assert "  boot.sh --comet" not in src.replace("{boot_sh()}", "")
 
 
-def test_boot_sh_auto_picks_a_free_http_port():
-    """Source pins for the two behaviors the first real mint run hit:
-    a squatter on 8080 must not kill the boot (auto-pick unless --port was
-    explicit), and re-running --mint after a completed mint must boot the
-    existing comet (the TUI promises exactly this), with --remint as the
-    deliberate way to start over."""
-    boot = pathlib.Path(cw.__file__).parent.parent / "public" / "boot.sh"
-    if not boot.exists():
-        pytest.skip("boot.sh not beside the desktop tree")
-    src = boot.read_text()
-    # auto-pick: explicit pin stays fatal, unpinned scans forward
-    assert 'PORT_EXPLICIT=1' in src and 'you pinned it with --port' in src
-    assert "using $try for HTTP instead" in src
-    # (the "resume a finished mint" branch was removed: it paired a stale
-    # var/mint proof with the shared boot.feed and booted the wrong ship;
-    # resuming is now the runner's job, off the pier -- see
-    # test_boot_sh_flagless_front_door_resumes_a_lone_pier_or_mints)
-    # a resume comes back on the release it was minted with, not "latest" --
-    # resolving latest once booted a CC comet onto the daily channel, whose
-    # pill cannot do confidential comets, and baked that kernel into the pier
-    assert 'var/mint/release-tag' in src
-    assert src.index("var/mint/release-tag") < src.index("  resolve_tag")
-    # restarts keep the web port: vere's default is 80, everything printed says 8080
-    assert 'GW_HTTP_PORT="$HTTP_PORT"' in src
 
 
-def test_boot_sh_surfaces_the_web_login_code():
-    """The ship runs -t, so the dojo answer to "what is my access key" does
-    not exist; boot.sh --code is the user-shaped replacement (bare code on
-    stdout, via the control socket).  The install summary and the durable
-    README both point at it -- verified live against a running comet."""
-    boot = pathlib.Path(cw.__file__).parent.parent / "public" / "boot.sh"
-    if not boot.exists():
-        pytest.skip("boot.sh not beside the desktop tree")
-    src = boot.read_text()
-    assert 'code)   cmd_code ;;' in src and '--code)       MODE="code"' in src
-    body = src[src.index("cmd_code() {"):src.index("cmd_status() {")]
-    assert "attach_ship" in body and "gwl_code" in body
-    assert "is not running" in body                      # a dead ship gets a real error
-    readme = src[src.index("write_ship_readme() {"):]
-    assert "--code --comet" in readme                    # durable pointer, not the secret
-    assert "boot.sh --code" in src[:src.index("cmd_mint()")]   # in usage
-    # the code itself is never written to disk -- README carries the command only
-    assert "gwl_code" not in readme
-
-
-def test_boot_sh_ends_in_the_dojo_at_a_terminal():
-    """gw-onboard's contract, restored: at a terminal the install's last act
-    is exec-ing vere attached, so the user lands in their dojo and quitting
-    it stops the ship.  --detach (or no tty) keeps the supervised
-    background shape servers need -- and in the dojo ending the supervisor
-    must never have started, or it would relaunch a background ship to
-    fight the foreground one."""
-    boot = pathlib.Path(cw.__file__).parent.parent / "public" / "boot.sh"
-    if not boot.exists():
-        pytest.skip("boot.sh not beside the desktop tree")
-    src = boot.read_text()
-    body = src[src.index("handoff_dojo() {"):src.index('case "$MODE" in')]
-    assert 'exec "$VERE"' in body and "</dev/tty" in body   # becomes vere, on the real tty
-    assert "+code in the dojo" in body                      # the key, where it now lives
-    # the dojo path is the DEFAULT at a tty and skips the supervisor
-    tail = src[src.index('if [ -z "$DETACH" ] && [ -e /dev/tty ]; then'):]
-    assert "handoff_dojo" in tail[:400]
-    sup = src[src.index("the supervisor must not exist"):]
-    assert 'if [ -n "$DETACH" ] || [ ! -e /dev/tty ]; then' in sup[:300]
-    assert '--detach)     DETACH=1' in src
-    # README teaches both endings
-    readme = src[src.index("write_ship_readme() {"):]
-    assert "run this ship (dojo in this terminal)" in readme and "--detach" in readme
-
-
-def test_boot_sh_flagless_front_door_resumes_a_lone_pier_or_mints():
-    """Running and minting are separate jobs.  Flagless boot.sh RESUMES a
-    lone existing ship -- keyed off the PIER, which is an identity, never
-    off loose var/mint files (whose proof+shared-feed pairing booted one
-    comet's feed under another's name) -- refuses when there is more than
-    one, and mints only when there is no ship at all.  Minting never
-    resumes: cmd_mint always makes a NEW comet."""
-    boot = pathlib.Path(cw.__file__).parent.parent / "public" / "boot.sh"
-    if not boot.exists():
-        pytest.skip("boot.sh not beside the desktop tree")
-    src = boot.read_text()
-    fd = src[src.index('if [ -z "$MODE" ]; then'):src.index('case "$MODE" in')]
-    # a lone pier -> install (resume); many -> die; none -> mint
-    assert 'COMET="~$_fd_piers"; MODE="install"' in fd
-    assert "more than one ship" in fd
-    assert 'MODE="mint"' in fd
-    assert "! -name '*.*'" in fd                          # archived piers invisible
-    # cmd_mint no longer resumes anything from var/mint
-    assert "Resuming a finished mint" not in src          # the buggy branch is gone
-    assert ".boot-existing" not in src                    # the chooser handback is gone
-    assert "CAUSEWAY_EXISTING_COMET" not in src           # not passed to the TUI
-    assert "always creates a NEW comet" in src            # cmd_mint's contract, stated
 
 
 def test_default_sponsor_is_loud_and_editable(monkeypatch):

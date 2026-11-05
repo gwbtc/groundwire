@@ -2746,9 +2746,9 @@ def resolve_id(entry: str) -> int:
 # =========================================================================
 
 
-def run_comet_miner(tweak_expr: str, miner_bin: str) -> dict:
+def run_comet_miner(tweak_expr: str, miner_bin: str, prefix: str | None = None) -> dict:
     """
-    Invoke comet_miner -c --tweak <hoon-expr> daplyd
+    Invoke comet_miner -c --tweak <hoon-expr> [--prefix <6 letters>] daplyd
     and parse the output for seed, ring, comet, and feed.
     """
     if not os.path.isfile(miner_bin):
@@ -2757,7 +2757,12 @@ def run_comet_miner(tweak_expr: str, miner_bin: str) -> dict:
         print("  Build it with `zig build` in comet-miner/, or pass --miner.")
         sys.exit(1)
 
-    cmd = [miner_bin, "-c", "--tweak", tweak_expr, "daplyd"]
+    cmd = [miner_bin, "-c", "--tweak", tweak_expr]
+    if prefix:
+        #  the miner matches the two leading syllables as a 16-bit value;
+        #  a one-syllable prefix is handled by mine_comet_choice re-running it
+        cmd += ["--prefix", prefix]
+    cmd.append("daplyd")
 
     print("\nMining your comet identity (this may take a few minutes)...")
     print()
@@ -3266,6 +3271,80 @@ def mine_comet_from_utxo(
     return run_comet_miner(tweak_expr, miner_bin)
 
 
+def validate_name_prefix(prefix: str) -> str:
+    """3 letters (one syllable) or 6 (two); lowercase, letters only."""
+    p = prefix.strip().lstrip("~").lower()
+    if len(p) not in (3, 6) or not p.isalpha() or not p.isascii():
+        raise click.UsageError("--prefix is 3 or 6 letters, the start of a comet's name (e.g. los or losref)")
+    if len(p) == 6:
+        try:
+            patp_to_int("~" + p)
+        except Exception:
+            raise click.UsageError(f"--prefix {p} is not a valid syllable pair")
+    return p
+
+
+def write_phrase_file(path: str, mnemonic: str) -> None:
+    """The seed phrase into a fresh 0600 file, for an unattended mint whose
+    operator cannot read it off the terminal."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    try:
+        fd = os.open(path, flags, 0o600)
+    except FileExistsError:
+        raise click.UsageError(f"--phrase-file {path} already exists; refusing to overwrite a phrase")
+    with os.fdopen(fd, "w") as fh:
+        fh.write(mnemonic + "\n")
+    print(f"\n  Seed phrase written to {path} (0600). Keep that file as you would the phrase.")
+
+
+def mine_comet_choice(txid_hex: str, vout: int, off: int, miner_bin: str, *,
+                      prefix: str | None = None, candidates: int = 1, pick: int = 0,
+                      dom: str = PKI_DOM) -> dict:
+    """Mine one or more names against the funding coin and return the one to
+    spawn.  A six-letter prefix goes to the miner; a three-letter one re-runs
+    the miner until the first syllable matches.  With candidates > 1 the
+    names are listed and one is picked (--pick, or the first when there is
+    no terminal)."""
+    tweak_expr = make_dat_expr(txid_hex, vout, off, dom)
+    miner_prefix = prefix if prefix and len(prefix) == 6 else None
+    want_syllable = prefix if prefix and len(prefix) == 3 else None
+    results: list[dict] = []
+    tries = 0
+    while len(results) < candidates:
+        r = run_comet_miner(tweak_expr, miner_bin, prefix=miner_prefix)
+        tries += 1
+        name = r["comet"].lstrip("~")
+        if want_syllable and not name.startswith(want_syllable):
+            print(f"  try {tries}: ~{name[:6]}... (want {want_syllable}...)", end="\r")
+            continue
+        results.append(r)
+        if candidates > 1:
+            print(f"  candidate {len(results)}/{candidates}: {patp_to_mnemonym(r['comet'])}  {r['comet']}")
+    if candidates == 1:
+        return results[0]
+    print("\n  Names mined against this coin (each would be a different comet):")
+    for i, r in enumerate(results, 1):
+        print(f"    {i:>2}. {patp_to_mnemonym(r['comet'])}")
+        print(f"        {r['comet']}")
+    if pick:
+        if not 1 <= pick <= len(results):
+            raise click.UsageError(f"--pick {pick} is out of range 1..{len(results)}")
+        choice = pick
+    elif not sys.stdin.isatty():
+        choice = 1
+        print("  (no terminal: taking the first)")
+    else:
+        while True:
+            entry = prompt("  Pick a name (number): ", what="a name choice", flag="--pick").strip()
+            if entry.isdigit() and 1 <= int(entry) <= len(results):
+                choice = int(entry)
+                break
+            print(f"  A number from 1 to {len(results)}.")
+    r = results[choice - 1]
+    print(f"  Taking {r['comet']}")
+    return r
+
+
 # =========================================================================
 #  Causeway command-line interface (click)
 # =========================================================================
@@ -3685,8 +3764,21 @@ def _run_rekey_op(point: str, prior_proof_path: str, new_key: int, breach: bool,
               help="Skip the seed-phrase read-back prompts. Scripted runs MUST "
                    "capture this command's output — the generated BIP-39 phrase is "
                    "printed nowhere else, and it controls the coins.")
+@click.option("--phrase-file", "phrase_file", default=None, metavar="PATH",
+              help="Also write the generated seed phrase to this file (0600, created "
+                   "fresh). For unattended runs; implies --assume-saved.")
+@click.option("--prefix", default=None, metavar="LETTERS",
+              help="Vanity: the comet's name must start with these 3 or 6 letters "
+                   "(one syllable is ~256 miner runs; two is the miner's own 16-bit "
+                   "match, 65,536 tries on average).")
+@click.option("--candidates", type=int, default=1, show_default=True, metavar="N",
+              help="Mine N names against the funding coin and pick one. Each name "
+                   "costs what one mint's mining costs.")
+@click.option("--pick", type=int, default=0, metavar="I",
+              help="With --candidates: take the I-th name (1-based) without asking.")
 def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish, sponsor, fief_arg,
-                   no_route, resume, mnemonic_file, out_feed, sponsor_pass, assume_saved):
+                   no_route, resume, mnemonic_file, out_feed, sponsor_pass, assume_saved,
+                   phrase_file, prefix, candidates, pick):
     """Generate a fresh BIP-39 wallet, fund it, spawn, and emit a boot one-liner.
 
     The generated seed phrase controls the coins; the comet's identity is the
@@ -3694,8 +3786,9 @@ def spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, p
     run_spawn_generate(invite, fee_rate, network, output_dir, miner, mempool_base, publish,
                        sponsor=sponsor, fief_arg=fief_arg, no_route=no_route,
                        resume=resume, mnemonic_file=mnemonic_file,
-                       out_feed=out_feed, assume_saved=assume_saved,
-                       sponsor_pass=sponsor_pass)
+                       out_feed=out_feed, assume_saved=assume_saved or bool(phrase_file),
+                       sponsor_pass=sponsor_pass, phrase_file=phrase_file,
+                       prefix=prefix, candidates=candidates, pick=pick)
 
 
 @proof.command("show")
@@ -4933,7 +5026,9 @@ def _finish_spawn_proof(
 def run_spawn_generate(invite: str | None, fee_rate: int | None, network: str, output_dir: str, miner: str, mempool_base: str, publish: bool = False,
                        sponsor: str | None = None, fief_arg: str | None = None, no_route: bool = False, out_feed: str | None = None,
                        resume: bool = False, mnemonic_file: str | None = None,
-                       assume_saved: bool = False, sponsor_pass: str | None = None) -> None:
+                       assume_saved: bool = False, sponsor_pass: str | None = None,
+                       phrase_file: str | None = None, prefix: str | None = None,
+                       candidates: int = 1, pick: int = 0) -> None:
     print()
     print("=" * 60)
     print(f"  CAUSEWAY — {'Public' if publish else 'Confidential'} Comet Spawn (Generate New Wallet)")
@@ -4982,7 +5077,13 @@ def run_spawn_generate(invite: str | None, fee_rate: int | None, network: str, o
         mnemonic = prompt_existing_mnemonic()
     else:
         mnemonic = generate_new_mnemonic(strength_bits=128)
+    if prefix is not None:
+        prefix = validate_name_prefix(prefix)
+    if candidates < 1:
+        raise click.UsageError("--candidates must be at least 1")
     if not (resume or mnemonic_file):
+        if phrase_file:
+            write_phrase_file(phrase_file, mnemonic)
         print_seed_box(mnemonic)
         confirm_seed_saved(mnemonic, assume_saved=assume_saved)
 
@@ -5034,7 +5135,8 @@ def run_spawn_generate(invite: str | None, fee_rate: int | None, network: str, o
         time.sleep(POLL_INTERVAL)
 
     print("\n  Mining comet (kelvin-9 dat)...")
-    miner_result = mine_comet_from_utxo(utxo["txid"], utxo["vout"], 0, miner)
+    miner_result = mine_comet_choice(utxo["txid"], utxo["vout"], 0, miner,
+                                     prefix=prefix, candidates=candidates, pick=pick)
     comet = miner_result["comet"]
     feed = miner_result["feed"]
     ring_uw = miner_result.get("ring", "")

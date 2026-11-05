@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "causeway"
-version = "0.1.0"
-description = "Desktop Causeway: CLI and TUI for Groundwire comet spawning and management via confidential commits."
+version = "0.2.0"
+description = "Groundwire: the gw command (mint, run and look after a comet) and Causeway, its wallet and spawn tool."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Groundwire" }]
@@ -27,11 +27,13 @@ dev = [
 ]
 
 [project.scripts]
+gw = "gw.cli:main"
 causeway = "causeway:main"
 causeway-tui = "causeway_tui:main"
 
 [tool.setuptools]
 py-modules = ["causeway", "causeway_tui"]
+packages = ["gw"]
 
 # Vendored mnemonyms reference + wordlist (gwbtc/mnemonyms). Shipped as data
 # files so the installed/ frozen app can render Groundwire IDs as mnemonyms.
