@@ -89,19 +89,37 @@ def test_khan_request_matches_the_gwlib_envelope():
     assert N.newt_encode(req)[0] == 0
 
 
-def test_peek_result_shapes():
-    """is-synced is a loobean (0 = yes); best-block is [hash height chainwork];
-    peers is a treap we count."""
+def _peek_response(agent: str, spur: str, data):
+    """What vere 4.6-828244e answers a conn.sock %peek with, measured on the
+    unattested test comet 2026-11-05: (unit [%omen path cask])."""
+    path = N.path("gx", "~sampel-palnet", agent, "~2026.11.5", spur, "noun")
+    return (0, (N.tas("omen"), (path, (N.tas("noun"), data))))
+
+
+def test_peek_unwrap_and_decoders(monkeypatch):
+    from gw.connsock import _unwrap_cask
+    synced = (N.tas("is-synced"), 1)
+    assert _unwrap_cask(_peek_response("bitcoin-client", "is-synced", synced)) == synced
+    #  older forms: [~ [~ cask]] and a bare [path cask]
+    assert _unwrap_cask((0, (0, (N.tas("noun"), synced)))) == synced
+    assert _unwrap_cask((N.path("gx", "x"), (N.tas("noun"), synced))) == synced
+    assert _unwrap_cask(0) is None
+
     cfg = layout.ShipConfig(name="sampel-palnet-sampel-palnet")
     ship = Ship(cfg)
-    assert ship.peek is not None
-    assert Ship.synced.__doc__ is None or True
-    # the decoding helpers, fed what the ship would answer
-    best = (0xabc, (974_683, 0x155f7))
-    assert best[1][0] == 974_683
-    treap = ((("k1", "v1"), (0, 0)))
-    assert sum(1 for _ in N.map_iter((("k", "v"), (0, 0)))) == 1
-    assert sum(1 for _ in N.map_iter(((("k", "v"), ((("k2", "v2"), (0, 0)), 0))))) == 2
+    answers = {
+        "/is-synced": (N.tas("is-synced"), 0),
+        "/best-block": (N.tas("best-block"), (N.tas("new"), (974_683, 0xabc))),
+        "/peers": (N.tas("peers"), (N.tas("all"), ((("k", "v"), ((("k2", "v2"), (0, 0)), 0))))),
+    }
+    monkeypatch.setattr(ship, "peek", lambda agent, path, timeout=60.0: answers.get(path))
+    assert ship.synced() is True
+    assert ship.best_block() == 974_683
+    assert ship.peer_count() == 2
+    answers["/is-synced"] = (N.tas("is-synced"), 1)
+    assert ship.synced() is False
+    answers["/is-synced"] = None
+    assert ship.synced() is None
 
 
 # ------------------------------------------------------------------- peers --

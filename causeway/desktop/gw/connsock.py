@@ -208,17 +208,27 @@ class ConnSock:
 
 
 def _unwrap_cask(res):
-    """Peel (unit ...) wrappers off a peek result down to the cask's data.
+    """Peel a peek result down to the cask's data.
 
-    A successful gall peek is (unit (cask)) = [~ [mark data]]; some paths add
-    an extra unit. Marks are nonzero @tas atoms, so we peel while the head is
-    0 (the unit `~` tag) and a cell follows, then return the cask's data.
+    The runtime answers a %peek with [path cask] on current vere (the path
+    it resolved, then [mark data]); older forms were (unit (unit cask)),
+    i.e. [~ [~ [mark data]]].  A mark is a nonzero @tas atom, so: drop a
+    leading path (a cell whose head is a cell or a @tas list), peel unit
+    tags (a 0 head with a cell after it), and return what follows the mark.
     """
-    if res == 0:
+    if res == 0 or res is None:
         return None
     cur = res
     while isinstance(cur, tuple) and cur[0] == 0 and isinstance(cur[1], tuple):
+        cur = cur[1]                                   # unit tags
+    #  current vere: [%omen path cask] (measured 2026-11-05 on 4.6-828244e)
+    if isinstance(cur, tuple) and cur[0] == N.tas("omen") and isinstance(cur[1], tuple):
         cur = cur[1]
-    if isinstance(cur, tuple):
+    #  [path cask]: the head is itself a cell (a null-terminated list)
+    if isinstance(cur, tuple) and isinstance(cur[0], tuple) and isinstance(cur[1], tuple):
+        cur = cur[1]
+    while isinstance(cur, tuple) and cur[0] == 0 and isinstance(cur[1], tuple):
+        cur = cur[1]
+    if isinstance(cur, tuple) and isinstance(cur[0], int) and cur[0] != 0:
         return cur[1]          # cask = [mark data] -> data
     return None

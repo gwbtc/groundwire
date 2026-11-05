@@ -286,28 +286,31 @@ class Ship:
             return ""
 
     # ---------------------------------------------------------- the facts --
+    #  %bitcoin-client answers each peek with a bitcoin-client-update:
+    #    [%is-synced ?]   [%best-block %new height hash]   [%peers %all (map ...)]
     def synced(self) -> bool | None:
         r = self.peek("bitcoin-client", "/is-synced")
-        if r is None:
+        if not isinstance(r, tuple) or r[0] != N.tas("is-synced"):
             return None
-        return r == 0        # a loobean: 0 is yes
+        return r[1] == 0        # a loobean: 0 is yes
 
     def best_block(self) -> int | None:
         r = self.peek("bitcoin-client", "/best-block")
-        # [block-hash=@ux block-height=@ud chainwork=@ux]
         try:
-            return int(r[1][0]) if isinstance(r, tuple) and isinstance(r[1], tuple) else None
-        except Exception:
-            return None
+            if r[0] == N.tas("best-block") and r[1][0] == N.tas("new"):
+                return int(r[1][1][0])
+        except (TypeError, IndexError):
+            pass
+        return None
 
     def peer_count(self) -> int | None:
         r = self.peek("bitcoin-client", "/peers")
-        if r is None:
-            return None
         try:
-            return sum(1 for _ in N.map_iter(r))
-        except Exception:
-            return None
+            if r[0] == N.tas("peers") and r[1][0] == N.tas("all"):
+                return sum(1 for _ in N.map_iter(r[1][1]))
+        except (TypeError, IndexError, ValueError):
+            pass
+        return None
 
     def ready(self):
         """%gw-btc /x/ready, or None when the agent is not up."""
