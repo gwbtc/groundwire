@@ -172,11 +172,17 @@ def _after_start(ship: Ship, proof: dict | None, first_boot: bool, wait: bool) -
             warn("this release has no %node desk: the ship is up, but it cannot reach Bitcoin")
         else:
             step("Seeding peers")
-            try:
-                n = peers.seed(ship, log=info)
-                good(f"handed {n} peer addresses to the light client")
-            except Exception as e:                       # noqa: BLE001
-                warn(f"peer seeding: {e}")
+            have = ship.peer_count() if not first_boot else 0
+            if have and have >= 8:
+                # a restart keeps its peers; an address handed over twice is
+                # wasted (the client blacklists a burned seed for days)
+                info(f"the light client already has {have} peers; not re-seeding")
+            else:
+                try:
+                    n = peers.seed(ship, log=info)
+                    good(f"handed {n} peer addresses to the light client")
+                except Exception as e:                       # noqa: BLE001
+                    warn(f"peer seeding: {e}")
     if cfg.vps:
         step(f"A name for {cfg.patp}")
         dom = domain.ensure_domain(ship)
