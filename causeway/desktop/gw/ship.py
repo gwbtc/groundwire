@@ -359,14 +359,23 @@ class Ship:
         return d
 
 
-def _render(n) -> str:
-    """A noun for humans: tas atoms as %words, cells as tuples."""
+def _render(n, depth: int = 0, budget: list | None = None) -> str:
+    """A noun for humans: tas atoms as %words, cells as tuples.  Bounded:
+    a whole agent state is thousands of cells deep and the renderer must
+    not be the thing that crashes."""
+    if budget is None:
+        budget = [4000]
+    budget[0] -= 1
+    if budget[0] < 0:
+        return "..."
     if isinstance(n, int):
         s = N.from_tas(n)
         if n and s.isprintable() and all(32 <= ord(c) < 127 for c in s):
             return "%" + s
         return str(n)
-    return "[" + " ".join(_render(x) for x in _flatten(n)) + "]"
+    if depth > 40:
+        return "[...]"
+    return "[" + " ".join(_render(x, depth + 1, budget) for x in _flatten(n)) + "]"
 
 
 def _flatten(n):
