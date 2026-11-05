@@ -65,6 +65,7 @@ class Step:
     apply: Callable[[Context], str | None]        # returns the line to print, raises to fail
     once: bool = True                             # keep a marker after one success
     first_boot_only: bool = False
+    skip: Callable[[Context], bool] | None = None  # nothing to do: decided BEFORE waiting on the ship
 
 
 def _poke(ctx: Context, agent: str, mark: str, vase: str) -> None:
@@ -213,14 +214,19 @@ def armillary(ctx: Context) -> str | None:
     return "armillary: installed and granted; /apps/armillary does not answer yet"
 
 
+def _no_change_key(ctx: Context) -> bool:
+    key = var_dir() / "mint" / f"{ctx.ship.name}-change.key.json"
+    return not key.exists() or key.stat().st_size == 0
+
+
 STEPS: list[Step] = [
     Step("peer-discovery", "gevulot", peer_discovery, first_boot_only=True),
     Step("sponsor", "gevulot", sponsor_attestation, once=False),
     Step("hi", "hood", hi_ships, once=False),
     Step("nostr-relay", "nostrill", nostr_relay),
     Step("gw-group", "groups", gw_group),
-    Step("wallet-sweep", "gw-btc", wallet_sweep, once=False),
-    Step("armillary", "gw-btc", armillary),
+    Step("wallet-sweep", "gw-btc", wallet_sweep, once=False, skip=_no_change_key),
+    Step("armillary", "gw-btc", armillary, skip=lambda ctx: not ctx.ship.cfg.armillary),
 ]
 
 
@@ -232,6 +238,8 @@ def run(ctx: Context, only: set[str] | None = None) -> None:
             continue
         marker = ctx.ship.marker(s.name)
         if s.once and marker.exists():
+            continue
+        if s.skip and s.skip(ctx):
             continue
         if not ctx.ship.wait_agent(s.agent, tries=18, every=10):
             warn(f"{s.name}: %{s.agent} is not running after 3 minutes; next start")

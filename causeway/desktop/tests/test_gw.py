@@ -162,6 +162,25 @@ def test_populate_steps_are_named_and_ordered():
     assert all(s.agent for s in populate.STEPS)
 
 
+def test_a_step_with_nothing_to_do_never_waits_on_the_ship(tmp_path, monkeypatch):
+    """The real mint of 2026-11-05 spent minutes in wallet-sweep and armillary
+    waiting for %gw-btc on a busy ship, then found no change key and the
+    app switched off.  Decide that first."""
+    monkeypatch.setattr(layout, "GW_DIR", tmp_path)
+    monkeypatch.setattr(populate, "var_dir", lambda: tmp_path / "var")
+    (tmp_path / "var").mkdir()
+    cfg = layout.ShipConfig(name="sampel-palnet-sampel-palnet", armillary=False)
+    ship = Ship(cfg)
+    waited = []
+    monkeypatch.setattr(ship, "wait_agent", lambda dude, tries=18, every=10: waited.append(dude) or False)
+    populate.run(populate.Context(ship=ship), only={"wallet-sweep", "armillary"})
+    assert waited == []
+    (tmp_path / "var" / "mint").mkdir()
+    (tmp_path / "var" / "mint" / f"{cfg.name}-change.key.json").write_text("{}")
+    populate.run(populate.Context(ship=ship), only={"wallet-sweep"})
+    assert waited == ["gw-btc"]
+
+
 # --------------------------------------------------------------------- cli --
 
 @pytest.mark.parametrize("argv", [
