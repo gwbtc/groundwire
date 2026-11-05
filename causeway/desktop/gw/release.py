@@ -185,7 +185,9 @@ def install(tag: str = "latest", expect_sha: str = "", from_file: str = "",
             raise GwError(f"no such file: {tarball}")
         if tag == "latest":
             tag = "local-" + sha256_of(tarball)[:12]
-        sha = verify(tarball, "", plat, expect_sha)
+        # a file handed over with a real tag (the website's installer does
+        # this) is still checked against that release's SHA256SUMS
+        sha = verify(tarball, "" if tag.startswith("local-") else tag, plat, expect_sha)
     else:
         if tag == "latest":
             tag = resolve_latest()
