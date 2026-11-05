@@ -72,13 +72,25 @@ class ConnSock:
         return path
 
     def _roundtrip(self, request) -> object:
+        """Connect from INSIDE the pier by relative path: a unix socket address
+        is capped at 104 bytes on macOS, and <pier>/.urb/conn.sock with a
+        56-character comet name goes through that ceiling for any pier more
+        than a couple of directories deep."""
+        import os
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.settimeout(self.timeout)
+        cwd = os.getcwd()
         try:
-            s.connect(self._connect_path())
+            try:
+                os.chdir(self.sock_path.parent.parent)
+                s.connect(os.path.join(".urb", "conn.sock"))
+            except OSError:
+                os.chdir(cwd)
+                s.connect(self._connect_path())
             s.sendall(N.newt_encode(request))
             payload = self._read_frame(s)
         finally:
+            os.chdir(cwd)
             s.close()
         return N.cue(N.bytes_to_atom(payload))
 
