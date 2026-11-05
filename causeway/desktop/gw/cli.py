@@ -160,6 +160,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    # a line at a time, even into a log file: an agent or a person tailing
+    # the mint must see the funding address the moment it is printed, not
+    # when a 8 KB buffer happens to fill
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(line_buffering=True)
+        except (AttributeError, ValueError):
+            pass
+    os.environ.setdefault("PYTHONUNBUFFERED", "1")
     # `gw causeway ...` and `gw causeway-tui ...` hand the whole tail over.
     if argv and argv[0] in ("causeway", "causeway-tui"):
         from . import commands
