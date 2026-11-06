@@ -22,7 +22,7 @@ already paid for, handed over as one hex code, so the mint never waits on him.
 |---|---|
 | Desk (`%gw-btc` + `%gevulot`) | `gwbtc/groundwire` @ **`gw/release`** |
 | Kernel + vere | `gwbtc/urbit` @ **`gw/release`** |
-| Release to boot from | the newest **`groundwire-alpha-*`** prerelease of `gwbtc/release` |
+| Release to boot from | the newest **`groundwire-alpha-*`** build in `gwbtc/release`, promoted or not (what `--prerelease` gives the installer and `gw`; users get the newest *promoted* one by default) |
 
 Look up the release tag once, before you start, and use it in every
 `boot.sh --version` below, where the commands say `<TAG>`:
