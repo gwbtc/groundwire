@@ -32,22 +32,47 @@ def _get(url: str, timeout: float = 30) -> bytes:
         return r.read()
 
 
-def resolve_latest(repo: str = RELEASE_REPO) -> str:
-    """The newest release tag, prereleases included: the alpha channel is
-    nothing but prereleases, and GitHub's /releases/latest hides them."""
+TAG_PREFIX = "groundwire-alpha-"
+
+
+def tag_version(tag: str, prefix: str = TAG_PREFIX) -> tuple[int, ...]:
+    """``groundwire-alpha-2026.11.4_3`` -> ``(2026, 11, 4, 3)``: the numeric
+    fields of a tag, so 2026.11.10 sorts after 2026.11.9 and ``_3`` after no
+    suffix.  Anything non-numeric counts as 0."""
+    rest = tag[len(prefix):] if tag.startswith(prefix) else tag
+    return tuple(int(f) if f.isdigit() else 0 for f in rest.replace("_", ".").split("."))
+
+
+def pick_latest(releases: list[dict], prerelease: bool = False) -> str:
+    """The one rule every Groundwire installer follows (the website's
+    install.sh implements the same one): the release is the highest-versioned
+    ``groundwire-alpha-*`` release whose pre-release box has been cleared
+    ("promoted").  While none is promoted, the highest-versioned prerelease.
+    ``prerelease=True`` takes the highest version either way.  Drafts never
+    count, and GitHub's list order never counts.  Promoting a release
+    (``gh release edit <tag> --prerelease=false --latest``) is therefore the
+    act that hands it to new users and to ``gw update``."""
+    cands = [r for r in releases
+             if not r.get("draft") and str(r.get("tag_name", "")).startswith(TAG_PREFIX)]
+    if not cands:
+        raise GwError(f"no {TAG_PREFIX}* release to install")
+    if not prerelease:
+        promoted = [r for r in cands if not r.get("prerelease")]
+        if promoted:
+            cands = promoted
+    return max(cands, key=lambda r: tag_version(r["tag_name"]))["tag_name"]
+
+
+def resolve_latest(repo: str = RELEASE_REPO, prerelease: bool = False) -> str:
+    """The tag ``latest`` means today; see ``pick_latest`` for the rule."""
     try:
-        rels = json.loads(_get(f"https://api.github.com/repos/{repo}/releases?per_page=20"))
+        rels = json.loads(_get(f"https://api.github.com/repos/{repo}/releases?per_page=100"))
     except Exception as e:
         raise GwError(f"could not list releases of {repo}: {e}") from e
-    for r in rels:
-        if r.get("draft"):
-            continue
-        if str(r.get("tag_name", "")).startswith("groundwire-alpha-"):
-            return r["tag_name"]
-    for r in rels:
-        if not r.get("draft"):
-            return r["tag_name"]
-    raise GwError(f"{repo} has no releases")
+    try:
+        return pick_latest(rels, prerelease)
+    except GwError as e:
+        raise GwError(f"{e} in {repo} (https://github.com/{repo}/releases)") from e
 
 
 def fetch(tag: str, plat: str, redownload: bool = False, repo: str = RELEASE_REPO) -> Path:
@@ -176,8 +201,10 @@ def switch(dest: Path, tag: str, plat: str, sha: str) -> None:
 
 
 def install(tag: str = "latest", expect_sha: str = "", from_file: str = "",
-            redownload: bool = False) -> str:
-    """Fetch (or take a file), verify, unpack, switch.  Returns the tag."""
+            redownload: bool = False, prerelease: bool = False) -> str:
+    """Fetch (or take a file), verify, unpack, switch.  Returns the tag.
+    ``prerelease`` only matters for ``latest``: take the newest build whether
+    or not it has been promoted."""
     plat = platform_tag()
     if from_file:
         tarball = Path(from_file).expanduser().resolve()
@@ -190,7 +217,7 @@ def install(tag: str = "latest", expect_sha: str = "", from_file: str = "",
         sha = verify(tarball, "" if tag.startswith("local-") else tag, plat, expect_sha)
     else:
         if tag == "latest":
-            tag = resolve_latest()
+            tag = resolve_latest(prerelease=prerelease)
         info(f"release       {tag} ({plat})")
         tarball = fetch(tag, plat, redownload)
         sha = verify(tarball, tag, plat, expect_sha)

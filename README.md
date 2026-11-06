@@ -25,7 +25,7 @@ The `%gw-btc` desk runs two Gall agents (`gw-btc/desk.bill`):
 - **`gw/release`** is the default and the only development branch: pull requests merge straight into it. `hd/cc-landing` was its name until 2026-11-03.
 - gwbtc/urbit and gwbtc/vere work the same way, each with a `gw/release`, plus a `gw/upstream` that lags it and is what we offer the urbit organization's repos.
 - **Releases are cut from [gwbtc/release](https://github.com/gwbtc/release)**, not from here: that repo's workflow pins every input of a release by commit (this repo's `gw/release` commit among them), builds the pill and the runtime, boots the pill, and publishes a prerelease on every merge. To ship a change from this repo, merge it here, then move the `GROUNDWIRE_BRANCH` pin there (`./bump GROUNDWIRE_BRANCH gw/release`) in a pull request. A merge here also deploys `%gw-btc` to the distribution ship for over-the-air updates.
-- `boot.sh` installs the newest prerelease; a release promoted by clearing its prerelease flag is what the website's installer follows.
+- What "latest" means, everywhere (the website's `install.sh`, `gw install`, `gw update`): the highest-versioned `groundwire-alpha-*` release whose pre-release box has been cleared. While none is cleared, the highest-versioned prerelease. Every merge to gwbtc/release publishes a prerelease that nobody is handed by default; promoting one (`gh release edit <tag> -R gwbtc/release --prerelease=false --latest`) is the release. `--prerelease` on any of them takes the newest build regardless; `--version <tag>` pins one. Tags are ordered by their numeric fields, not by GitHub's list order (`2026.11.4_3` > `2026.11.4`, `2026.11.10` > `2026.11.9`).
 
 ## Installation
 

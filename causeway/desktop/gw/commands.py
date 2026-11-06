@@ -27,7 +27,8 @@ def cmd_install(args) -> int:
     ensure_layout()
     step("Installing Groundwire")
     _preflight(new_pier=False)
-    tag = release.install(args.tag, args.sha256, args.from_file, args.redownload)
+    tag = release.install(args.tag, args.sha256, args.from_file, args.redownload,
+                          prerelease=args.prerelease)
     info(release.on_path_hint())
     info("next:  gw mint          (a new comet)")
     info("       gw start ~name   (a ship you already have)")
@@ -62,9 +63,9 @@ def _need_release() -> None:
 
 def cmd_mint(args) -> int:
     ensure_layout()
-    if args.tag or not vere_bin().exists():
+    if args.tag or args.prerelease or not vere_bin().exists():
         step("Installing the release")
-        release.install(args.tag or "latest")
+        release.install(args.tag or "latest", prerelease=args.prerelease)
     _need_release()
     _preflight(new_pier=True)
     from .mint import mint
@@ -462,7 +463,7 @@ def cmd_update(args) -> int:
     cfg = the_ship(validate_patp(args.comet) if args.comet else None)
     ship = Ship(cfg)
     step("Fetching the release")
-    tag = release.install(args.tag, "", args.from_file)
+    tag = release.install(args.tag, "", args.from_file, prerelease=args.prerelease)
     if cfg.release == tag and not args.from_file:
         info("already on it")
     was_running = ship.running()
