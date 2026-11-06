@@ -8,6 +8,7 @@ checked for every flag it translates.
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import stat
@@ -189,6 +190,7 @@ def test_a_step_with_nothing_to_do_never_waits_on_the_ship(tmp_path, monkeypatch
     ["code"], ["logs", "-n", "5"], ["ctl", "-s", "~sampel", "scry", "bitcoin-client", "/is-synced"],
     ["ctl", "poke", "hood", "helm-hi", "!>(~)"], ["name"], ["peers", "--count", "5"],
     ["populate", "--only", "hi"], ["update", "--version", "groundwire-alpha-2026.11.5"],
+    ["install", "--prerelease"], ["update", "--prerelease"], ["mint", "--prerelease"],
     ["invite", "create"], ["invite", "show", "01ab"], ["mine", "--prefix", "los"], ["ships"], ["version"],
 ])
 def test_every_subcommand_parses(argv):
@@ -295,3 +297,61 @@ def test_boot_sh_is_a_shim_that_translates_to_gw():
     assert "gwlib" not in src and "gwsup" not in src
     r = subprocess.run(["bash", "-n", str(shim)], capture_output=True)
     assert r.returncode == 0, r.stderr
+
+
+# ---------------------------------------------------------------- releases --
+# One rule, shared with the website's install.sh: the highest-versioned
+# promoted release; while none is promoted, the highest-versioned prerelease.
+
+def _rel(tag, prerelease=True, draft=False):
+    return {"tag_name": tag, "prerelease": prerelease, "draft": draft}
+
+
+def test_latest_is_the_promoted_release_even_when_newer_prereleases_exist():
+    from gw import release
+    rels = [  # GitHub lists newest-created first; that order must not matter
+        _rel("groundwire-alpha-2026.11.6"),
+        _rel("groundwire-alpha-2026.11.4_3", prerelease=False),
+        _rel("groundwire-alpha-2026.11.5"),
+    ]
+    assert release.pick_latest(rels) == "groundwire-alpha-2026.11.4_3"
+    assert release.pick_latest(list(reversed(rels))) == "groundwire-alpha-2026.11.4_3"
+    assert release.pick_latest(rels, prerelease=True) == "groundwire-alpha-2026.11.6"
+
+
+def test_latest_falls_back_to_the_newest_prerelease_until_one_is_promoted():
+    from gw import release
+    rels = [_rel("groundwire-alpha-2026.11.5"), _rel("groundwire-alpha-2026.11.6"),
+            _rel("groundwire-alpha-2026.11.4_2")]
+    assert release.pick_latest(rels) == "groundwire-alpha-2026.11.6"
+
+
+def test_latest_ignores_drafts_and_other_tag_families():
+    from gw import release
+    rels = [_rel("groundwire-alpha-2026.12.1", prerelease=False, draft=True),
+            _rel("groundwire-daily-2026.12.9", prerelease=False),
+            _rel("groundwire-alpha-2026.11.4_3", prerelease=False)]
+    assert release.pick_latest(rels) == "groundwire-alpha-2026.11.4_3"
+    with pytest.raises(layout.GwError):
+        release.pick_latest([_rel("groundwire-daily-2026.12.9", prerelease=False)])
+
+
+def test_version_order_is_numeric_not_list_order():
+    from gw import release
+    tags = ("groundwire-alpha-2026.11.4", "groundwire-alpha-2026.11.4_3", "groundwire-alpha-2026.11.9",
+            "groundwire-alpha-2026.11.10", "groundwire-alpha-2026.9.30")
+    assert release.pick_latest([_rel(t, prerelease=False) for t in tags]) == "groundwire-alpha-2026.11.10"
+    v = release.tag_version
+    assert v("groundwire-alpha-2026.11.4_3") > v("groundwire-alpha-2026.11.4")
+    assert v("groundwire-alpha-2026.11.10") > v("groundwire-alpha-2026.11.9")
+    assert v("groundwire-alpha-2026.11.4_3") == (2026, 11, 4, 3)
+
+
+def test_resolve_latest_lists_the_release_repo_once(monkeypatch):
+    from gw import release
+    calls = []
+    body = json.dumps([_rel("groundwire-alpha-2026.11.6"), _rel("groundwire-alpha-2026.11.4_3", prerelease=False)])
+    monkeypatch.setattr(release, "_get", lambda url, timeout=30: calls.append(url) or body.encode())
+    assert release.resolve_latest() == "groundwire-alpha-2026.11.4_3"
+    assert release.resolve_latest(prerelease=True) == "groundwire-alpha-2026.11.6"
+    assert calls == ["https://api.github.com/repos/gwbtc/release/releases?per_page=100"] * 2

@@ -48,7 +48,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", metavar="<command>")
 
     s = sub.add_parser("install", help="fetch and verify a release; put gw on the PATH")
-    s.add_argument("--version", dest="tag", default="latest", help="release tag (default: the newest)")
+    s.add_argument("--version", dest="tag", default="latest",
+                   help="release tag (default: the current release, i.e. the newest one promoted out of pre-release)")
+    s.add_argument("--prerelease", action="store_true",
+                   help="take the newest build even if it has not been promoted yet")
     s.add_argument("--sha256", default="", help="require the tarball to have this digest")
     s.add_argument("--from-file", default="", help="install this tarball instead of downloading one")
     s.add_argument("--redownload", action="store_true")
@@ -77,7 +80,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-armillary", action="store_true")
     s.add_argument("--no-bitcoin", action="store_true", help="boot only: no peers, no sync")
     s.add_argument("--no-wait", action="store_true", help="do not watch the sync after booting")
-    s.add_argument("--version", dest="tag", default="", help="release to install first (default: what is installed, else the newest)")
+    s.add_argument("--version", dest="tag", default="",
+                   help="release to install first (default: what is installed, else the current release)")
+    s.add_argument("--prerelease", action="store_true",
+                   help="install the newest build first, promoted or not")
 
     s = sub.add_parser("start", help="start a ship under the service manager")
     s.add_argument("comet", nargs="?")
@@ -134,7 +140,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("update", help="move to a newer release: clean stop, swap, start")
     s.add_argument("comet", nargs="?")
-    s.add_argument("--version", dest="tag", default="latest")
+    s.add_argument("--version", dest="tag", default="latest",
+                   help="release tag (default: the current release, i.e. the newest one promoted out of pre-release)")
+    s.add_argument("--prerelease", action="store_true",
+                   help="take the newest build even if it has not been promoted yet")
     s.add_argument("--from-file", default="")
 
     s = sub.add_parser("invite", help="prepay a comet spawn for someone else")
