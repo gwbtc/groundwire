@@ -2812,7 +2812,7 @@
   |=  [dom=@tas who=ship]
   ^-  card
   :*  %give  %fact  ~[/writs]
-      %stale-notice  !>(`stale-notice:jael`[dom who])
+      %snob-notice  !>(`snob-notice:jael`[dom who])
   ==
 ::
 ::  ----------------------------------------------------------------
