@@ -131,6 +131,68 @@ per-ship expiry timer is durable state an attacker can make us allocate. Nothing
 decays on its own — a wrong snub is undone by one of the two paths above, or not
 at all.
 
+## Contact-bundle export (v1)
+
+`%gw-btc` exposes local-only, read-only contact export scries:
+
+```hoon
+.^(* %gx /=gw-btc=/contact-bundle/v1/noun)
+.^(* %gx /=gw-btc=/contact-bundle/v1/~some-ship/noun)
+```
+
+The first exports the running ship; the second exports a retained peer.
+Both return `result` from `sur/contact-bundle.hoon`:
+
+```hoon
+[%bundle [%contact-bundle-1 target=@p attestations=(list [who=@p pass=@]) public=(unit @p)]]
+[%failed who=@p reason=?(%missing %unverified %invalid %cycle %unroutable)]
+```
+
+The successful value is the portable bundle: `jam` it for binary transport.
+The `%contact-bundle-1` mark converts this value (not the outer `%bundle`
+result) to and from JSON and MIME. JSON has `type: "contact-bundle-1"`,
+`target` as an `@p` string, an `attestations` array of objects with `who`
+(`@p` string) and `pass` (`@uw` string), and `public` as an `@p` string or
+JSON null. MIME is `text/plain`: UTF-8 text containing `(scot %uw (jam bundle))`,
+without a trailing newline. These conversions validate the version and noun
+shape, not the authenticity of the evidence. The MIME decoder requires this
+content type, an accurate byte count, and a valid encoded bundle.
+
+Attestations are full Groundwire passes, ordered sponsor-first, with the target
+last. They carry their own spawn/custody references and networking snapshots;
+the bundle does not duplicate those fields or add another signature. `public`
+names the public identity where collection stopped, or is null when the chain
+ends at a confidential identity with a direct fief and no sponsor. A public
+target yields an empty list and itself as the boundary.
+
+Public means the exporter knows it through its public index. It is **not** an
+instruction for recipients to trust the boundary: they must resolve it through
+their own PKI. A recipient without the relevant public index may still lack a
+dependency. Confidential sponsor attestations come from the verified internal
+index, not the filtered public scries. Trusted-only peer installations yield
+`%unverified`; unknown dependencies yield `%missing`. Failed exports return no
+partial bundle. A fief does not bypass a named sponsor's verification dependency.
+
+Export imposes no byte-size or sponsorship-depth cap; callers decide whether
+the returned bundle is acceptable for their transport or application. Cycles
+are rejected. It checks identity bindings, decodable evidence, key/snapshot agreement,
+cycles and route termination, but does **not** revalidate Bitcoin state, refresh
+evidence, contact anyone, or install peers. Own evidence combines the current
+key with the retained custody log (falling back to the boot pass's log).
+Retained proofs may be stale. Successful export is neither a fresh verification
+verdict nor a connectivity guarantee.
+
+This interface does not yet add a bundle-import command to `%gw-btc` or
+`%gevulot`. An importer must enforce wire bounds before decoding, independently
+validate the target and dependency relationships, verify through Groundwire,
+preserve newer local state, and treat unavailable/stale evidence separately
+from invalid evidence. Never route arbitrary bundles through the trusted-peer
+installation shortcut. Sharing a bundle discloses its confidential identities
+and sponsor relationships; export is deliberately local-only.
+
+Tests: `/tests/lib/contact-bundle` and the contact-export cases in
+`/tests/app/gw-btc`.
+
 ## Running the desk's tests
 
 ```sh

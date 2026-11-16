@@ -39,9 +39,10 @@
 ::
 ::  You may want to change block-confirmations and scan-batch as well.
 ::
-/-  bitcoin, spider, ord, urb, sa=self-attestation, lc=light-client
+/-  bitcoin, spider, ord, urb, sa=self-attestation, lc=light-client, cb=contact-bundle
 /+  bc=bitcoin, dbug, default-agent, uc=urb-core, strandio, verb,
-    ol=ord, cc=gw-btc-pass, lsa=self-attestation, lca=lc-attestation
+    ol=ord, cc=gw-btc-pass, lsa=self-attestation, lca=lc-attestation,
+    bundle=contact-bundle
 ::
 |%
 +$  card  card:agent:gall
@@ -891,6 +892,21 @@
   |=  =(pole knot)
   ^-  (unit (unit cage))
   ?+    pole  (on-peek:def pole)
+    ::  /x/contact-bundle/v1 - export attestation bundle for our
+    ::
+      [%x %contact-bundle %v1 ~]
+    ?>  =(our src):bowl
+    :^  ~  ~  %noun
+    !>  ^-  result:cb
+    (collect:bundle our.bowl |=(who=@p (contact-source our.bowl now.bowl who)))
+    ::  /x/contact-bundle/v1/<ship> - export attestation bundle for a ship
+    ::
+      [%x %contact-bundle %v1 who=@ ~]
+    ?>  =(our src):bowl
+    ?~  ship=(slaw %p who.pole)  ~
+    :^  ~  ~  %noun
+    !>  ^-  result:cb
+    (collect:bundle u.ship |=(who=@p (contact-source our.bowl now.bowl who)))
     ::  /x/block-id — current synced block hash + height
     ::
       [%x %block-id ~]
@@ -2877,6 +2893,31 @@
 ::  ----------------------------------------------------------------
 ::  %anew: extending OUR OWN custody log, in band
 ::  ----------------------------------------------------------------
+::
+::  local export resolution never falls back to provisional trusted installs.
+::
+++  contact-source
+  |=  [our=@p now=@da who=@p]
+  ^-  source:cb
+  ?:  (known-public who)  [%public ~]
+  ?:  =(who our)
+    =/  base  (own-pass our now)
+    ?~  base  [%missing ~]
+    =/  pas  (with-xtr:cc u.base (jam (base-chain our now)))
+    ?~  pas  [%missing ~]
+    =/  sat  (from-xtr:lsa our u.pas)
+    ?~  sat  [%missing ~]
+    =/  openings  (openings-of:lsa chain.u.sat)
+    ?~  openings  [%missing ~]
+    ::  a retained log must describe the current life, not a pre-rekey state.
+    ?.  .=  (life.snapshot.opening:(rear openings)
+        .^(life %j /(scot %p our)/life/(scot %da now)/(scot %p our))
+      [%missing ~]
+    [%attestation u.pas]
+  ?~  point=(~(get by unv-ids.urb-state) who)
+    ?:  (~(has by trusted) who)  [%unverified ~]
+    [%missing ~]
+  [%attestation pass.net.u.point]
 ::
 ::  +own-pass: our own current pass, straight from jael
 ::

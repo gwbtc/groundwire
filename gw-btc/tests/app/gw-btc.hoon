@@ -6,7 +6,7 @@
 ::  a negative Jael verdict -- a valid ship whose sponsorship we refuse
 ::  must not be snubbed.
 ::
-/-  urb, sa=self-attestation, ord, bitcoin, lc=light-client
+/-  urb, sa=self-attestation, ord, bitcoin, lc=light-client, cb=contact-bundle
 /+  *test, cc=gw-btc-pass, lsa=self-attestation, ol=ord, uc=urb-core
 /=  gw-btc  /app/gw-btc
 =>
@@ -2502,4 +2502,28 @@
     ::  ... and a writ parks under a fresh batch 0
     (expect-eq !>(~[(launch-wire 0)]) !>((turn out card-wire)))
   ==
+::
+++  test-contact-export-missing-is-explicit
+  (expect-eq !>(`result:cb`[%failed ~wes %missing]) !>((peek-noun (~(on-peek gw-btc bowl0) /x/contact-bundle/v1/~wes))))
+::
+++  test-contact-export-local-only
+  =/  remote  bowl0
+  =.  src.remote  ~wes
+  ;:  weld
+    (expect-fail |.((~(on-peek gw-btc remote) /x/contact-bundle/v1)))
+    (expect-fail |.((~(on-peek gw-btc remote) /x/contact-bundle/v1/~dev)))
+  ==
+::
+++  test-contact-export-public-boundary
+  =/  agent  gw-btc
+  =^  *  agent
+    (~(on-load agent bowl0) !>((live-state (malt ~[[peer (ok-point-at anew-pass ~)]]) ~ ~ ~)))
+  (expect-eq !>(`result:cb`[%bundle [%contact-bundle-1 peer ~ `peer]]) !>((peek-noun (~(on-peek agent bowl0) /x/contact-bundle/v1/(scot %p peer)))))
+::
+++  test-contact-export-does-not-treat-confidential-as-public
+  =/  agent  gw-btc
+  =^  *  agent
+    (~(on-load agent bowl0) !>((live-state (malt ~[[peer (ok-point-at anew-pass ~)]]) ~ (silt ~[peer]) ~)))
+  ::  this fixture's empty-log pass is not a usable attestation.
+  (expect-eq !>(`result:cb`[%failed peer %invalid]) !>((peek-noun (~(on-peek agent bowl0) /x/contact-bundle/v1/(scot %p peer)))))
 --
