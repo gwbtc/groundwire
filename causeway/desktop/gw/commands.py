@@ -191,7 +191,7 @@ def _after_start(ship: Ship, proof: dict | None, first_boot: bool, wait: bool) -
             cfg.domain = dom
             cfg.save()
             good(f"name: https://{dom}  (the certificate follows within minutes; plain http then redirects)")
-    populate.run(ctx, only={"nostr-relay", "gw-group", "wallet-sweep", "armillary"})
+    populate.run(ctx, only={"nostr-relay", "gw-group", "wallet-sweep", "armillary", "chorus-mcp"})
     _summary(ship)
     if wait and cfg.bitcoin:
         return watch_sync(ship)
