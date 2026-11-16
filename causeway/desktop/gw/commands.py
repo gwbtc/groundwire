@@ -181,7 +181,7 @@ def _after_start(ship: Ship, proof: dict | None, first_boot: bool, wait: bool) -
             else:
                 try:
                     n = peers.seed(ship, log=info)
-                    good(f"handed {n} peer addresses to the light client")
+                    good(f"handed {n} peer addresses to the light client ({peers.CONNECT} dialed now)")
                 except Exception as e:                       # noqa: BLE001
                     warn(f"peer seeding: {e}")
     if cfg.vps:
@@ -435,7 +435,8 @@ def cmd_peers(args) -> int:
     cfg = the_ship(validate_patp(args.comet) if args.comet else None)
     ship = Ship(cfg)
     step("Seeding peers")
-    n = peers.seed(ship, batches=1, size=args.count, log=info)
+    have = ship.peer_count() or 0
+    n = peers.seed(ship, count=args.count, connect=max(0, peers.CONNECT - have), log=info)
     good(f"handed {n} addresses to the light client; `gw status` shows the live count")
     return 0
 

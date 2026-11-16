@@ -125,6 +125,40 @@ def test_peek_unwrap_and_decoders(monkeypatch):
 
 # ------------------------------------------------------------------- peers --
 
+def test_seed_pools_every_address_and_dials_only_the_target(tmp_path, monkeypatch):
+    """150 %connect-peer pokes at boot was 150 TCP sessions from a laptop for a
+    client whose target is ten.  Now every address is %add-address (the pool
+    +connect-to-more-peers draws from) and only CONNECT are dialed; a ship that
+    already has peers gets no dials at all."""
+    import re
+    monkeypatch.setattr(layout, "GW_DIR", tmp_path)
+    monkeypatch.setattr(peers, "var_dir", lambda: tmp_path / "var")
+    (tmp_path / "var").mkdir()
+    ips = [f"10.0.{i // 256}.{i % 256}" for i in range(1, 41)]
+    (tmp_path / "var" / "peerpool.txt").write_text("\n".join(ips) + "\n")
+    ship = Ship(layout.ShipConfig(name="sampel-palnet-sampel-palnet"))
+    bodies: list[str] = []
+    monkeypatch.setattr(ship, "khan", lambda body, timeout=120.0: bodies.append(body) or N.cord("done"))
+
+    assert peers.seed(ship, count=30, log=lambda *_: None) == 30
+    assert len(bodies) == 1                       # one strand, not six batches
+    body = bodies[0]
+    pool = re.search(r"pool=\(list @ux\)  ~\[(.*?)\]\n", body).group(1).split()
+    dial = re.search(r"dial=\(list @ux\)  ~\[(.*?)\]\n", body).group(1).split()
+    assert len(pool) == 30
+    assert len(dial) == peers.CONNECT == 10
+    assert dial == pool[:10]
+    assert pool[0] == ip_hoon("10.0.0.1")
+    assert body.index("%add-address") < body.index("%connect-peer")
+
+    # a restart that still has peers tops the pool up without dialing: `~`, not `~[]`
+    bodies.clear()
+    assert peers.seed(ship, count=5, connect=0, log=lambda *_: None) == 5
+    assert "dial=(list @ux)  ~\n" in bodies[0]
+    assert "%add-address" in bodies[0]
+    assert peers.pool_left(ship.name) == 5        # 40 - 30 - 5
+
+
 def test_peer_pool_hands_each_address_out_once(tmp_path, monkeypatch):
     monkeypatch.setattr(layout, "GW_DIR", tmp_path)
     monkeypatch.setattr(peers, "var_dir", lambda: tmp_path / "var")
