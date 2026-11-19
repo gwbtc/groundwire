@@ -18,9 +18,9 @@ For example, in our main implementation of this protocol, `%gw-btc`, each attest
 
 ## Urbit Kernel Changes
 
-Groundwire Foundation's modifications to Urbit are located in the repo [gwbtc/urbit](https://github.com/gwbtc/urbit), with corresponding runtime changes in [gwbtc/vere](https://github.com/gwbtc/urbit). Each of these repos has a `gw/release` branch which the latest Groundwire release builds from and a `gw/upstream` branch which targets the official Urbit Foundation repo for merging.
+Groundwire Foundation's modifications to Urbit are located in the repo [gwbtc/urbit](https://github.com/gwbtc/urbit), with corresponding runtime changes in [gwbtc/vere](https://github.com/gwbtc/vere). Each of these repos has a `gw/release` branch which the latest Groundwire release builds from and a `gw/upstream` branch which targets the official Urbit Foundation repo for merging.
 
-They key to understanding our changes is this: under the Azimuth PKI, all Urbit ships know the current state of all Urbit identities, because those identities are updated exclusively via Ethereum events that all ships are watching for. Under the Groundwire protocol, *this is not necessarily the case*. An identity may use a PKI that a given ship isn't tracking; a PKI may not allow for or encourage global state updates, instead opting for ships selectively revealing themselves off-chain to other users (we often call these "confidential comets"). All of the machinery we've built into the Urbit kernel facilitates this difference in identity protocol.
+The key to understanding our changes is this: under the Azimuth PKI, all Urbit ships know the current state of all Urbit identities, because those identities are updated exclusively via Ethereum events that all ships are watching for. Under the Groundwire protocol, *this is not necessarily the case*. An identity may use a PKI that a given ship isn't tracking; a PKI may not allow for or encourage global state updates, instead opting for ships selectively revealing themselves off-chain to other users (we often call these "confidential comets"). All of the machinery we've built into the Urbit kernel facilitates this difference in identity protocol.
 
 Our current changes include:
 
@@ -44,9 +44,9 @@ A Suite C comet's signing key is *tweaked* with additional data stored in `dat`.
 
 (Note: Jake's PR #71 to gwbtc/urbit may change this.)
 
-The leading bytes of `dat` are always used to encode the comet's [domain](#jael-domains). (How many bytes?)
+The leading bytes of `dat` are always used to encode the comet's [domain](#jael-domains).
 
-In `%gw-btc`, the remaining bytes of `dat` encode a *satpoint* to permanently tie the comet's identity to a specific "ownership sat" within a transaction. `xtr` contains prehash data used to prove that that transaction did in fact encode this comet's identity. `xtr` must be updated every time the ownership sat is spent, hence splitting `dat` and `xtr` into two fields. More details are provided in the "[Encoding Attestations on Bitcoin](#encoding-attestations-on-bitcoin)" section of this doc.
+In `%gw-btc`, the remaining bytes of `dat` encode a *satpoint* to permanently tie the comet's identity to a specific "ownership sat" within a transaction. `xtr` contains data used to prove that that transaction did in fact encode this comet's identity. `xtr` must be updated every time the ownership sat is spent, hence splitting `dat` and `xtr` into two fields. More details are provided in the "[Encoding Attestations on Bitcoin](#encoding-attestations-on-bitcoin)" section of this doc.
 
 Suite C atoms are operated on using the new `++cric` core that we've introduced in Zuse, based on the `++crub` core used for Suite B atoms.
 
@@ -67,13 +67,13 @@ Each domain is stored in Jael alongside a `+$dom-state`:
 
 The handler Gall agent for a domain sends a `%anex` task to Jael to register itself and prompt Jael to subscribe to the included `pax`. Jael can then send a `%jael-writ` poke to the Gall agent containing a `pass` and later receive a fact on `pax`, in this case a `$verdict` containing a point (identity) if the validation was successful or no point if it failed. 
 
-The subscription path can also send an `$anew-response` indicating that this ship needs to update its own pass (triggered by the user (or more likely, their hosting environment) manually poking the Gall agent after performing an on-chain operation), and a `$snob-notice` indicating that a previously validated point must provide a new attestation packet (in response to e.g. their ownership sat being spent on chain, potentially encoding a key rotation).
+The subscription path can also send Jael an `$anew-response` indicating that this ship needs to update its own pass (triggered by the user (or more likely, their hosting environment) manually poking the Gall agent after performing an on-chain operation), and a `$snob-notice` indicating that a previously validated point must provide a new attestation packet (in response to e.g. their ownership sat being spent on chain, potentially encoding a key rotation).
 
 Ames sends a `%sybl` task to Jael at boot time to subscribe to `$verdict`s for all domains, and a `%writ` task whenever it needs a self-attestation packet validated; this is what triggers Jael sending the `%jael-writ` to the registered Gall agent.
 
-`%anew` can be used in the same way as `$anew-response`. 
+The `%anew` task prompts the handler agent for an `$anew-response`. 
 
-`%gost`, `%ghul` and `%bane` suspend, revive, and destroy a domain. `%gost` snubs (blocks) every peer a domain vouched for, `%ghul` unsnubs them, and `%bane` snubs and deletes.
+`%gost`, `%ghul` and `%bane` suspend, revive, and destroy a domain. `%gost` snubs (blocks) every peer a domain vouched for, `%ghul` unsnubs them, and `%bane` snubs and deletes. `%gost` and `%ghul` are triggered automatically by Clay when the domain's agent gets suspended and revived.
 
 There is also now a `%dome` scry returning the domain for a given ship.
 
@@ -83,14 +83,16 @@ A normal comet's initial self-attestation packet contains its pass and a signatu
 
 If a comet's pass signifies Suite C and we don't know of that identity at its included `life` (or later), Ames marks the sender as an alien and sends a `%writ` to Jael. Ames should eventually receive a `$verdict` from Jael and then handle it as follows:
 
+*(The following is correct as of the yet-unmerged PR #72.)*
+
 - `%full` promotes the peer (and removes a snub or snob if present)
 - `%fail` drops the alien state
 - `%lost` no-ops
-- `%snob` *snobs* the peer (a new soft-block we introduce which keeps the point and messaging state but blocks all non-attestation traffic) and sends it a `%poof` task every 30 seconds soliciting a fresh self-attestation
+- `%snob` *snobs* the peer (a new soft-block we introduce which keeps the point and messaging state but blocks all non-attestation traffic) and begins soliciting a fresh self-attestation every 30 seconds.
 
 Note that nowhere in these four cases is a point ever snubbed. Domain-handling agents should develop their own policies for when to snub a ship (e.g. multiple failed attestations in a row) and do so by sending a `%snub` task to Ames.
   
-There is also a new `%anew` task corresponding to Jael's, which causes Ames to proactively re-attest to all of our peers with our updated `xtr`.
+There is also a new `%anew` task which forwards to Jael, and a `%poof` task which solicits a self-attestation from the specified ship.
 
 
 ## Encoding Attestations on Bitcoin 
@@ -104,7 +106,7 @@ Booting a `%gw-btc` ship, then, involves the following process:
 1. Choose a UTXO in a Bitcoin wallet that you own.
 2. Write down the *satpoint* (a triplet of transaction, output, and sat index) of a sat (almost always the first) within that UTXO.
 3. Generate an identity tweaked with the `%gw-btc` domain and chosen satpoint (plus a protocol kelvin in between).
-4. Broadcast a transaction spending that sat and encoding the name of the identity.
+4. Broadcast a transaction spending that sat and encoding the identity.
 5. Wait for confirmation and boot the ship.
 
 This solves the bidirectionality problem. But how do you encode an identity in a Bitcoin transaction? With Taproot.
@@ -143,7 +145,7 @@ TO-DO
 
   ...in practice, every consumer-facing wallet we tried rejected all of these transactions (as well as some variations on them) for security reasons. Normal wallets don't want their users accidentally spending sats in arbitrarily programmatic ways.
 
-  So we wrote our own program for managing your Groundwire ID: Causeway, a Python script which generates a new Bitcoin wallet, waits for funding, generates an identity with the correct sat tweaked in, broadcasts the transaction, and saves your `xtr` data locally. If you need to rotate your keys or change your sponsor, you use Causeway to broadcast those transactions, and it will poke your updated `xtr` into your ship with an `%anew`.
+  So we wrote our own program for managing your Groundwire ID: Causeway, a Python script which generates a new Bitcoin wallet, waits for funding, generates an identity with the correct sat tweaked in, broadcasts the transaction, and saves your `xtr` data locally. If you need to rotate your keys or change your sponsor, you use Causeway to broadcast those transactions, and it will give you a poke to run on your ship to update `xtr` via the `%gw-btc` Gall agent.
 
 
 TO-DO:
