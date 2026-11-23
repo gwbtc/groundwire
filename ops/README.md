@@ -182,16 +182,76 @@ key with the retained custody log (falling back to the boot pass's log).
 Retained proofs may be stale. Successful export is neither a fresh verification
 verdict nor a connectivity guarantee.
 
-This interface does not yet add a bundle-import command to `%gw-btc` or
-`%gevulot`. An importer must enforce wire bounds before decoding, independently
-validate the target and dependency relationships, verify through Groundwire,
-preserve newer local state, and treat unavailable/stale evidence separately
-from invalid evidence. Never route arbitrary bundles through the trusted-peer
-installation shortcut. Sharing a bundle discloses its confidential identities
-and sponsor relationships; export is deliberately local-only.
+Sharing a bundle discloses its confidential identities and sponsor relationships;
+export is deliberately local-only. Applications should enforce their own transport
+bounds before decoding bundles.
 
 Tests: `/tests/lib/contact-bundle` and the contact-export cases in
 `/tests/app/gw-btc`.
+
+## Contact-bundle import (v1)
+
+Send a local `%contact-import-1` poke to `%gw-btc`:
+
+```hoon
+[id=@uv bundle=bundle:contact-bundle notify=(unit [recipient=@tas reply-path=path])]
+```
+
+For example, with a bundle bound to `b` in the dojo:
+
+```hoon
+:gw-btc &contact-import-1 [0v1 b ~]
+.^(* %gx /=gw-btc=/contact-import/v1/noun)
+```
+
+The scry returns the latest `(unit status:contact-import)`. Local apps can also
+watch `/contact-import/v1` for `%contact-import-status-1` facts, including an
+initial snapshot. With `notify=[~ [%my-app /my/context]]`, the importer sends
+`%contact-import-reply-1` pokes containing `[reply-path status]` on progress and
+completion. Callback nacks do not roll back imports; the latest status remains
+available. Only one import runs at a time; a concurrent request is nacked.
+
+Status contains `id`, `target`, `installed`, `skipped`, verifier `checks`, and:
+
+```hoon
+[%verifying who=@p]
+[%complete ~]
+[%unresolved who=@p reason=@tas]
+[%rejected who=@p reason=@tas]
+```
+
+Import first validates the bundle's identity bindings and exact sponsor-first
+ordering. Any public boundary must already be in the local public index. It
+then verifies confidential sponsors before their children, using the ordinary
+Groundwire chain verifier, and installs each successful result through the
+normal positive Jael notification. Already verified equal or newer histories
+are skipped. Provisional trusted-peer installations are not verification.
+Local identity changes during verification stop the import rather than being
+overwritten. `%complete` means verification/installation succeeded or was
+already satisfied; it does not prove network connectivity or acknowledge Jael's
+subsequent processing of the notifications.
+
+Each attestation has a five-minute deadline. Missing chain state, stale evidence,
+worker failure, timeout, or a busy identity produces `%unresolved`; structurally
+invalid bundles or verifier findings of invalid evidence produce `%rejected`.
+Neither result emits a negative Jael verdict or a stale notice: arbitrary
+third-party evidence must not snub or demote a peer. Successfully installed
+sponsors are retained when a later entry fails. There is no automatic retry:
+submit the bundle again after resolving the cause; existing verified entries
+will be skipped. Late worker replies are ignored. Active imports survive agent
+reloads, and only the latest status is retained, not an unbounded history.
+
+Saved agent state is tagged `%18`, the first member of `versioned-state`.
+Tagged saves are extracted with `!<` and dispatched by version; historical
+untagged saves still use the existing structural migrations. Unknown tags are
+rejected rather than treated as a historical layout.
+Legacy migrations reconstruct `gw-state-17`, then explicitly call `migrate-17`
+to create version 18 with empty importer state. The live state already includes
+its version tag; `on-save` is simply `!>(state)` and performs no conversion.
+The live state uses `gw-state-18`; `versioned-state` is only the loading union.
+
+State-machine tests: `/tests/app/contact-import`. These simulate chain-verifier
+replies; they do not replace the verifier's Bitcoin proof tests.
 
 ## Running the desk's tests
 

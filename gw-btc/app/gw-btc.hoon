@@ -39,7 +39,8 @@
 ::
 ::  You may want to change block-confirmations and scan-batch as well.
 ::
-/-  bitcoin, spider, ord, urb, sa=self-attestation, lc=light-client, cb=contact-bundle
+/-  bitcoin, spider, ord, urb, sa=self-attestation, lc=light-client, cb=contact-bundle,
+    ci=contact-import
 /+  bc=bitcoin, dbug, default-agent, uc=urb-core, strandio, verb,
     ol=ord, cc=gw-btc-pass, lsa=self-attestation, lca=lc-attestation,
     bundle=contact-bundle
@@ -92,7 +93,7 @@
   $:  chain=custody-log:sa
       pending=(unit anew-job)
   ==
-::  $gw-state
+::  $gw-state-17
 ::
 ::    .indexing, .best and .synced are the INDEPENDENT readiness signals,
 ::    and keeping them apart is load-bearing:
@@ -125,7 +126,7 @@
 ::    is %.y, and an agent that came up believing its index was already
 ::    bootstrapped would never scan a block).  That was a silent
 ::    state-corrupter: `_` is $_, the mold that IGNORES its input and
-::    always returns the pinned value, so `;;(gw-state ...)` in +on-load
+::    always returns the pinned value, so `;;(gw-state-17 ...)` in +on-load
 ::    rewrote .indexing to %.n on EVERY upgrade -- verified on a live
 ::    mainnet ship, 2026-08-06: C3 held %.y before a desk redeploy and
 ::    %.n after, with nothing else changed.  It reopened the one-shot
@@ -134,7 +135,14 @@
 ::    reads.  So: an honest ? here, +on-init pinning %.n explicitly, and
 ::    a bootstrap guard that looks at the INDEX rather than at a flag.
 ::
-+$  gw-state
++$  versioned-state
+  $%  gw-state-18
+  ==
+::
++$  gw-state-18
+  [%18 gw-state-17 imports=state:ci]
+::
++$  gw-state-17
   $:  urb-state=state:urb
       indexing=?
       best=(unit id:block:bc)
@@ -263,7 +271,7 @@
 ::    the current $point in them would demand a field those nouns cannot
 ::    have -- and the -12/-11/-10 branches would then never match
 ::    anything with a point in it.  -14 is the exception: it is the
-::    current index shape and differs from $gw-state only in the tail.
+::    current index shape and differs from $gw-state-17 only in the tail.
 ::
 ::    .reorg-halt held a $reorg-stop, a type this agent no longer has:
 ::    the scanner does not halt on a reorg any more, it repairs the index
@@ -271,7 +279,7 @@
 ::    therefore spells the dead field out inline rather than naming a
 ::    type, because it is a fossil in a migration and not something
 ::    anything may construct.  It discriminates by itself: a -14 noun
-::    offered to $gw-state puts [synced reorg-halt] where a bare ? is
+::    offered to $gw-state-17 puts [synced reorg-halt] where a bare ? is
 ::    expected, and a cell does not nest under ?(%.y %.n).
 ::
 ::    .seen is a TAIL field on $point, so it discriminates by itself: a
@@ -401,7 +409,7 @@
 ::
 %-  agent:dbug
 ^-  agent:gall
-=|  gw-state
+=|  gw-state-18
 =*  state  -
 %+  verb  |
 =<
@@ -419,7 +427,7 @@
   ::  bunt (which is %.y for ?): a fresh agent has NOT bootstrapped its
   ::  public index and has NOT heard from its light client.  Both must
   ::  start false or the agent comes up believing things it has no
-  ::  evidence for.  See $gw-state for why neither is declared `_|`.
+  ::  evidence for.  See $gw-state-17 for why neither is declared `_|`.
   ::
   ::  .origin likewise: the bunt of its mode union is its LAST member,
   ::  %from-epoch, with a start of 0 -- which the scanner would crash on
@@ -440,6 +448,20 @@
 ++  on-load
   |=  =vase
   ^-  (quip card _this)
+  ::  tagged saves use vase extraction; only historical untagged saves
+  ::  need the structural migrations below.
+  ::  future state versions must define a new tagged gw-state-N, add it
+  ::  to versioned-state, and migrate explicitly in this tag switch after
+  ::  !< extraction. do not add new mole/;; shape probes: those are only
+  ::  for pre-18 untagged saves. keep +on-save as !>(state).
+  ?:  ?=([@ *] q.vase)
+    =/  saved  !<(versioned-state vase)
+    ?-    -.saved
+        %18
+      =.  state  saved
+      :_  this
+      (own-spon-cards our.bowl now.bowl)
+    ==
   ::  Revisions before the light-client port carried a leading
   ::  `rpc=req-to:btcio` ([url=@t auth]) ahead of urb-state.  Nothing
   ::  reads a Bitcoin Core RPC any more, so drop it.  Discriminate on the
@@ -450,7 +472,7 @@
   =.  nou  ?:(?=([[@ *] *] nou) +.nou nou)
   ::  .own (our own custody log), then .synced and .reorg-halt, were
   ::  appended later, and .reorg-halt has since been removed again.  ;; is
-  ::  strict about arity, so the current mold succeeding IS the
+  ::  strict about arity, so the version-17 mold succeeding IS the
   ::  discriminator; a pre-.own state loads with an empty log and re-seeds
   ::  itself from our pass's xtr on the next %anew.
   ::
@@ -462,39 +484,39 @@
   ::  makes the new readiness gate work on a ship that is upgraded in place
   ::  rather than reinstalled.
   ::
-  =/  cur  (mole |.(;;(gw-state nou)))
-  ?^  cur
+  =/  o17  (mole |.(;;(gw-state-17 nou)))
+  ?^  o17
     ::  A running ship takes this branch when the desk updates; jael is
     ::  already watching /writs, so this is where it first hears our
     ::  sponsor (+own-spon-card).  .state first: +base-chain reads the
     ::  LOADED log, not the bunt.
     ::
-    =.  state  u.cur
+    =.  state  (migrate-17 u.o17)
     :_  this
     (own-spon-cards our.bowl now.bowl)
-  ::  -16 is the current shape minus .batch: no batch is being assembled,
+  ::  -16 is the version-17 shape minus .batch: no batch is being assembled,
   ::  and the jobs in .inflight were launched one thread each by the old
   ::  revision, which answer on /verify as before.
   ::
   =/  o16  (mole |.(;;(gw-state-16 nou)))
   ?^  o16
-    =/  ext=gw-state
+    =/  ext=gw-state-17
       :*  urb-state.u.o16
           indexing.u.o16  best.u.o16  inflight.u.o16
           confidential.u.o16  attested.u.o16
           next-job.u.o16  sponsees.u.o16  declined.u.o16  own.u.o16
           synced.u.o16  clean.u.o16  origin.u.o16  trusted.u.o16  ~
       ==
-    =.  state  ext
+    =.  state  (migrate-17 ext)
     :_  this
     (own-spon-cards our.bowl now.bowl)
-  ::  -15 is the current shape minus .clean and .origin; every walk simply
+  ::  -15 is the version-17 shape minus .clean and .origin; every walk simply
   ::  starts from its custody entry once more, and an index that exists
   ::  is recorded as what every ship so far did: the epoch bootstrap.
   ::
   =/  o15  (mole |.(;;(gw-state-15 nou)))
   ?^  o15
-    =/  ext=gw-state
+    =/  ext=gw-state-17
       :*  urb-state.u.o15
           indexing.u.o15  best.u.o15  inflight.u.o15
           confidential.u.o15  attested.u.o15
@@ -502,7 +524,7 @@
           synced.u.o15  ~
           (migrated-origin num.block-id.urb-state.u.o15 now.bowl)  ~  ~
       ==
-    `this(state ext)
+    `this(state (migrate-17 ext))
   ::  A -14 state carries .reorg-halt, the scanner's reorg STOP flag.  It
   ::  is dropped, not converted: the scanner no longer halts on a reorg,
   ::  it forgets the points the orphaned blocks were evidence for and
@@ -518,7 +540,7 @@
   ::
   =/  o14  (mole |.(;;(gw-state-14 nou)))
   ?^  o14
-    =/  ext=gw-state
+    =/  ext=gw-state-17
       :*  urb-state.u.o14
           indexing.u.o14  best.u.o14  inflight.u.o14
           confidential.u.o14  attested.u.o14
@@ -526,10 +548,10 @@
           synced.u.o14  ~
           (migrated-origin num.block-id.urb-state.u.o14 now.bowl)  ~  ~
       ==
-    ?~  reorg-halt.u.o14  `this(state ext)
+    ?~  reorg-halt.u.o14  `this(state (migrate-17 ext))
     ::  a migration that changes what the scanner does: a Notice, once
     ~>  %slog.[1 leaf+"%gw-btc: cleared the reorg halt from {<since.u.reorg-halt.u.o14>}; the scanner resumes from cursor {<num.block-id.urb-state.u.o14>} (reorgs now forget orphaned points and rewind instead of halting)"]
-    `this(state ext)
+    `this(state (migrate-17 ext))
   ::  A -13 state's points carry no .seen (sur/urb): they were indexed
   ::  before a $point recorded which block it was last observed in.  They
   ::  are lifted with .seen=~, which is not a placeholder -- it is the
@@ -538,7 +560,7 @@
   ::
   =/  o13  (mole |.(;;(gw-state-13 nou)))
   ?^  o13
-    =/  ext=gw-state
+    =/  ext=gw-state-17
       :*  (lift-urb-state urb-state.u.o13)
           indexing.u.o13  best.u.o13  inflight.u.o13
           confidential.u.o13  attested.u.o13
@@ -546,7 +568,7 @@
           synced.u.o13  ~
           (migrated-origin num.block-id.urb-state.u.o13 now.bowl)  ~  ~
       ==
-    `this(state ext)
+    `this(state (migrate-17 ext))
   ::  A -12 state carries .publicizing, which no longer exists: the block
   ::  scanner does not index a publication any more, it hands it to the
   ::  same verifier a packet goes to, so there is no public-spawn replay
@@ -555,7 +577,7 @@
   ::
   =/  o12  (mole |.(;;(gw-state-12 nou)))
   ?^  o12
-    =/  ext=gw-state
+    =/  ext=gw-state-17
       :*  (lift-urb-state urb-state.u.o12)
           indexing.u.o12  best.u.o12  inflight.u.o12
           confidential.u.o12  attested.u.o12
@@ -563,10 +585,10 @@
           synced.u.o12  ~
           (migrated-origin num.block-id.urb-state.u.o12 now.bowl)  ~  ~
       ==
-    `this(state ext)
+    `this(state (migrate-17 ext))
   =/  o11  (mole |.(;;(gw-state-11 nou)))
   ?^  o11
-    =/  ext=gw-state
+    =/  ext=gw-state-17
       :*  (lift-urb-state urb-state.u.o11)
           indexing.u.o11  best.u.o11  inflight.u.o11
           confidential.u.o11  attested.u.o11
@@ -574,23 +596,31 @@
           %.n  ~
           (migrated-origin num.block-id.urb-state.u.o11 now.bowl)  ~  ~
       ==
-    :_  this(state ext)
+    :_  this(state (migrate-17 ext))
     ~[(watch-synced our.bowl)]
   =/  o  ;;(gw-state-10 nou)
-  =/  ext=gw-state
+  =/  ext=gw-state-17
     :*  (lift-urb-state urb-state.o)
         indexing.o  best.o  inflight.o  confidential.o
         attested.o  next-job.o  sponsees.o  declined.o
         *own-custody  %.n  ~
         (migrated-origin num.block-id.urb-state.o now.bowl)  ~  ~
     ==
-  :_  this(state ext)
+  :_  this(state (migrate-17 ext))
   ~[(watch-synced our.bowl)]
 ::
 ++  on-poke
   |=  [=mark =vase]
   ^-  (quip card _this)
   ?+    mark  !!
+      %contact-import-1
+    ?>  =(our src):bowl
+    ?~  active.imports
+      =/  result
+        (import-start our.bowl now.bowl q.byk.bowl ;;(request:ci q.vase))
+      [-.result this(state +.result)]
+    ~|(%contact-import-busy !!)
+  ::
       ::  Jael forwards a comet self-attestation for on-chain
       ::  verification.  The pass's xtr carries a jammed Groundwire
       ::  custody locator log; the verification strand fetches each named
@@ -681,7 +711,7 @@
       ?:  indexing  `this
       :_  this(indexing %.y)
       ~[[%pass /timer %arvo %b %wait now.bowl]]
-    ::  A liveness walk reporting how far it has got (see $gw-state's
+    ::  A liveness walk reporting how far it has got (see $gw-state-17's
     ::  .clean).  Only our own threads send this; the checkpoint only ever
     ::  moves forward, and only for the custody entry it was taken for.
     ::
@@ -850,7 +880,7 @@
     ::  .unv-ids -- so getting the guard wrong destroys the public index
     ::  that `sponsor-known` reads.  .indexing was silently reset to %.n
     ::  by every +on-load for as long as it was declared `_|` (see
-    ::  $gw-state), which left this open on every upgrade.  Refuse
+    ::  $gw-state-17), which left this open on every upgrade.  Refuse
     ::  whenever there is an index to lose, whatever the flag says.
     ::
     ::  NB: `!=(~ ...)` rather than `?=(^ ...)`.  A ?= on a state leg
@@ -892,6 +922,10 @@
   |=  =(pole knot)
   ^-  (unit (unit cage))
   ?+    pole  (on-peek:def pole)
+      [%x %contact-import %v1 ~]
+    ?>  =(our src):bowl
+    ``contact-import-status-1+!>(latest.imports)
+  ::
     ::  /x/contact-bundle/v1 - export attestation bundle for our
     ::
       [%x %contact-bundle %v1 ~]
@@ -987,11 +1021,11 @@
     !>  ^-  (map ship [job=@ud top=@ud])
     %-  ~(run by inflight)
     |=(w=inflight-writ [job.w (log-top-height sat.w)])
-    ::  Liveness-walk checkpoints (see $gw-state's .clean); always answers.
+    ::  Liveness-walk checkpoints (see $gw-state-17's .clean); always answers.
     ::
       [%x %clean ~]
     ``noun+!>(clean)
-    ::  Peers in Jael on trust, not yet verified (see $gw-state's .trusted).
+    ::  Peers in Jael on trust, not yet verified (see $gw-state-17's .trusted).
     ::  Ship -> when.  Always answers.
     ::
       [%x %trusted ~]
@@ -1028,6 +1062,10 @@
   |=  =(pole knot)
   ^-  (quip card _this)
   ?+    pole  (on-watch:def pole)
+      [%contact-import %v1 ~]
+    ?>  =(our src):bowl
+    :_  this
+    ~[[%give %fact ~ %contact-import-status-1 !>(latest.imports)]]
   ::
   ::  Jael's %anex registration watches this path for asynchronous
   ::  %verdict and %anew-response facts.
@@ -1092,6 +1130,35 @@
   |=  [=wire =sign-arvo]
   ^-  (quip card _this)
   ?+    wire  (on-arvo:def wire sign-arvo)
+      [%contact-import-timeout token=@ ~]
+    ?.  ?=([%behn %wake *] sign-arvo)  (on-arvo:def wire sign-arvo)
+    ?~  active.imports  `this
+    ?.  =(token.u.active.imports (slav %ud i.t.wire))  `this
+    =/  result
+      %^  import-report  our.bowl
+        [%unresolved who:(snag 0 remaining.u.active.imports) %timeout]
+      ~
+    [-.result this(state +.result)]
+  ::
+      [%contact-import-verify token=@ ~]
+    ?~  active.imports  `this
+    ?.  =(token.u.active.imports (slav %ud i.t.wire))  `this
+    ?.  ?=([%khan %arow *] sign-arvo)  (on-arvo:def wire sign-arvo)
+    =/  rest=card
+      :*  %pass  /contact-import-timeout/(scot %ud token.u.active.imports)
+          %arvo  %b  %rest  deadline.u.active.imports
+      ==
+    =/  result
+      ?.  -.p.sign-arvo
+        %^  import-report  our.bowl
+          [%unresolved who:(snag 0 remaining.u.active.imports) %verification-unavailable]
+        ~
+      ?>  ?=([%khan %arow %.y %noun *] sign-arvo)
+      =/  [%khan %arow %.y %noun =vase]  sign-arvo
+      =/  answer  !<([res=result:sa spk=hexb:bc] vase)
+      (import-answer our.bowl now.bowl q.byk.bowl res.answer)
+    [[rest -.result] this(state +.result)]
+  ::
   ::
   ::  Run +get-blocks at regular intervals.  The chain tip comes from our
   ::  own persistent /best-block subscription -- the scanner never asks the
@@ -1657,6 +1724,11 @@
   |=  [=wire =sign:agent:gall]
   ^-  (quip card _this)
   ?+    wire  (on-agent:def wire sign)
+      [%contact-import-notify ~]
+    ?.  ?=(%poke-ack -.sign)  (on-agent:def wire sign)
+    ::  callbacks are advisory; the retained status remains available.
+    `this
+  ::
   ::  THE readiness signal for the confidential verifier: %bitcoin-client's
   ::  own answer to "am I caught up".  /is-synced is a PERSISTENT
   ::  subscription like /best-block -- it answers the watch immediately with
@@ -1846,6 +1918,12 @@
 --
 ::
 |%
+::  migrate untagged version 17 to the first tagged state version.
+++  migrate-17
+  |=  old=gw-state-17
+  ^-  gw-state-18
+  [%18 old *state:ci]
+::
 ::  +dbg: debug prints (routine progress, expected drops); flip to & to see them
 ::
 ++  dbg  ^-(? |)
@@ -2048,6 +2126,11 @@
 ++  admit-writ
   |=  [our=@p dom=@tas who=ship =pass]
   ^-  (each self-attestation:sa (list card))
+  ?:  ?&  ?=(^ active.imports)
+          ?=(^ remaining.u.active.imports)
+          =(who who.i.remaining.u.active.imports)
+      ==
+    [%| (drop-writ our dom who %in-flight ~)]
   ::  EVERY drop below is announced, and now that is TRUE.  Phase 5b's
   ::  finding 9 was that %jael-writ has eleven distinct pre-verification
   ::  exits which from outside look identical to "nobody is talking to
@@ -2654,7 +2737,7 @@
 ::  +resume-from: where .who's liveness walk may resume
 ::
 ::    The height an earlier walk for the SAME custody entry already found
-::    clean (see $gw-state's .clean), or ~ to walk from the entry itself.
+::    clean (see $gw-state-17's .clean), or ~ to walk from the entry itself.
 ::
 ++  resume-from
   |=  [who=ship sat=self-attestation:sa]
@@ -2894,7 +2977,142 @@
 ::  %anew: extending OUR OWN custody log, in band
 ::  ----------------------------------------------------------------
 ::
-::  local export resolution never falls back to provisional trusted installs.
+::  contact-bundle import verifies one dependency at a time.
+::
+++  import-timeout  ~m5
+::
+::  one retained status, one active import; no growing completion history.
+::
+++  import-report
+  |=  [our=@p next=phase:ci checks=(list check:sa)]
+  ^-  (quip card gw-state-18)
+  ?>  ?=(^ latest.imports)
+  =.  latest.imports  `u.latest.imports(phase next, checks checks)
+  =/  cards=(list card)
+    =/  =cage  contact-import-status-1+!>(latest.imports)
+    [%give %fact ~[/contact-import/v1] cage]~
+  =?  cards  ?&(?=(^ active.imports) ?=(^ notify.u.active.imports))
+    %+  weld  cards
+    ^-  (list card)
+    :~  :*  %pass  /contact-import-notify  %agent
+            [our recipient.u.notify.u.active.imports]
+            %poke  %contact-import-reply-1
+            !>  ^-  reply:ci
+            [reply-path.u.notify.u.active.imports u.latest.imports]
+    ==  ==
+  =?  active.imports  !?=(%verifying -.next)  ~
+  [cards state]
+::
+++  import-start
+  |=  [our=@p now=@da byk=desk req=request:ci]
+  ^-  (quip card gw-state-18)
+  =.  imports  [`[attestations.bundle.req notify.req 0 now ~] ~]
+  =.  latest.imports
+    %-  some
+    [id.req target.bundle.req 0 0 [%verifying target.bundle.req] ~]
+  ?^  bad=(check:bundle bundle.req)
+    (import-report our [%rejected who.u.bad reason.u.bad] ~)
+  ?^  boundary=public.bundle.req
+    ?.  (known-public u.boundary)
+      (import-report our [%unresolved u.boundary %public-boundary-unknown] ~)
+    (import-next our now byk)
+  (import-next our now byk)
+::
+::  skip only indexed identities, never provisional trusted installations.
+::  a newer indexed history must contain the supplied history as a prefix.
+++  import-next
+  |=  [our=@p now=@da byk=desk]
+  ^-  (quip card gw-state-18)
+  |-
+  ?>  ?=(^ active.imports)
+  ?>  ?=(^ latest.imports)
+  ?:  =(~ remaining.u.active.imports)
+    (import-report our [%complete ~] ~)
+  =/  entry  (snag 0 remaining.u.active.imports)
+  =/  sat  (need (from-xtr:lsa who.entry pass.entry))
+  =/  anchor  (tracked-anchor urb-state who.entry)
+  =/  reusable=?
+    ?:  (known-public who.entry)  %.y
+    ?~  anchor  %.n
+    ?~  old=(from-xtr:lsa who.entry pass.net.point.u.anchor)  %.n
+    =/  relation  (compare-log:lsa chain.sat chain.u.old)
+    ?|  ?=(%same -.relation)
+        ?=(%extends -.relation)
+    ==
+  ?:  reusable
+    =.  active.imports
+      `u.active.imports(remaining (slag 1 remaining.u.active.imports))
+    =.  latest.imports  `u.latest.imports(skipped +(skipped.u.latest.imports))
+    $
+  ?:  =(who.entry our)
+    (import-report our [%unresolved who.entry %own-identity] ~)
+  ?:  (~(has in declined) who.entry)
+    (import-report our [%unresolved who.entry %declined] ~)
+  ?:  (~(has by inflight) who.entry)
+    (import-report our [%unresolved who.entry %busy] ~)
+  ?.  synced
+    (import-report our [%unresolved who.entry %unsynced] ~)
+  ?~  best
+    (import-report our [%unresolved who.entry %no-tip] ~)
+  ?:  (gth (log-top-height sat) num.u.best)
+    (import-report our [%unresolved who.entry %tip-below-log] ~)
+  ?:  (gth (lent chain.sat) max-custody-log)
+    (import-report our [%unresolved who.entry %log-too-long] ~)
+  =/  token  next-job
+  =.  next-job  +(next-job)
+  =.  active.imports
+    :-  ~
+    %=  u.active.imports
+      token     token
+      deadline  (add now import-timeout)
+      anchor    anchor
+    ==
+  =.  latest.imports  `u.latest.imports(phase [%verifying who.entry], checks ~)
+  :_  state
+  %+  weld  -:(import-report our [%verifying who.entry] ~)
+  ^-  (list card)
+  :~  :*  %pass  /contact-import-verify/(scot %ud token)  %arvo  %k
+          %lard  byk
+          %+  (set-timeout:strandio ,vase)  import-timeout
+          (verify-lc:lca sat anchor ~(key by unv-ids.urb-state) num.u.best ~)
+      ==
+  ::
+      :*  %pass  /contact-import-timeout/(scot %ud token)
+          %arvo  %b  %wait  (add now import-timeout)
+      ==
+  ==
+::
+::  imported evidence has no authenticated sender. never issue a negative
+::  jael verdict, or demote an existing peer, because of its contents.
+++  import-answer
+  |=  [our=@p now=@da byk=desk res=result:sa]
+  ^-  (quip card gw-state-18)
+  =/  job  (need active.imports)
+  =/  latest  (need latest.imports)
+  =/  entry  (snag 0 remaining.job)
+  ?.  =(who.entry who.verdict.res)
+    (import-report our [%unresolved who.entry %verification-unavailable] ~)
+  ?.  =(anchor.job (tracked-anchor urb-state who.entry))
+    (import-report our [%unresolved who.entry %local-state-changed] ~)
+  ?.  ok.verdict.res
+    =/  class  (classify:lsa verdict.res)
+    ?:  ?=(%fraud class)
+      (import-report our [%rejected who.entry %invalid] checks.verdict.res)
+    (import-report our [%unresolved who.entry class] checks.verdict.res)
+  =/  req=inflight-writ
+    [domain:cc pass.entry (need (from-xtr:lsa who.entry pass.entry)) token.job]
+  ?^  refusal=(local-refusal who.entry req res)
+    (import-report our [%unresolved who.entry u.refusal] checks.verdict.res)
+  =^  installed  state  (settle-verdict our now who.entry req res)
+  ?~  installed
+    %^  import-report  our
+      [%unresolved who.entry %installation-declined] 
+    checks.verdict.res
+  =.  active.imports
+    `job(remaining (slag 1 remaining.job))
+  =.  latest.imports  `latest(installed +(installed.latest))
+  =/  result  (import-next our now byk)
+  [(weld installed -.result) +.result]
 ::
 ++  contact-source
   |=  [our=@p now=@da who=@p]
@@ -2910,7 +3128,7 @@
     =/  openings  (openings-of:lsa chain.u.sat)
     ?~  openings  [%missing ~]
     ::  a retained log must describe the current life, not a pre-rekey state.
-    ?.  .=  (life.snapshot.opening:(rear openings)
+    ?.  .=  life.snapshot.opening:(rear openings)
         .^(life %j /(scot %p our)/life/(scot %da now)/(scot %p our))
       [%missing ~]
     [%attestation u.pas]
@@ -3082,7 +3300,7 @@
 ::
 ++  begin-anew
   |=  [byk=desk our=@p now=@da cand=custody-log:sa]
-  ^-  (quip card gw-state)
+  ^-  (quip card gw-state-18)
   ::  SEVEN silent refusals used to live here, and Phase 7.2 had to
   ::  eliminate six of them from outside, by re-deriving each precondition
   ::  against the ship's own libraries, before it could conclude the

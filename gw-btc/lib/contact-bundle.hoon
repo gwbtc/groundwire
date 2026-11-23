@@ -41,4 +41,25 @@
       [%bundle [%contact-bundle-1 target attestations ~]]
     $(who u.sponsor.snap, seen (~(put in seen) who))
   ==
+::
+::  require exactly one connected, sponsor-first chain, with no duplicates.
+++  check
+  |=  value=bundle
+  ^-  (unit [who=@p reason=failure])
+  =|  sources=(map @p source)
+  =/  entries  attestations.value
+  |-
+  ?~  entries
+    =?  sources  ?=(^ public.value)
+      (~(put by sources) u.public.value [%public ~])
+    =/  got
+      (collect target.value |=(who=@p (~(gut by sources) who [%missing ~])))
+    ?:  ?=(%failed -.got)  `[who.got reason.got]
+    ?:  =(value value.got)  ~
+    `[target.value %invalid]
+  ?:  (~(has by sources) who.i.entries)  `[who.i.entries %invalid]
+  %=  $
+    entries  t.entries
+    sources  (~(put by sources) who.i.entries [%attestation pass.i.entries])
+  ==
 --
