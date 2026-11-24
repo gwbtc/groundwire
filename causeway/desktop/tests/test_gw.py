@@ -219,6 +219,24 @@ def test_a_ship_that_does_not_answer_is_not_missing_the_desk(tmp_path, monkeypat
     assert waited == ["gw-btc"]
 
 
+def test_chorus_mcp_waits_on_gall_then_imports(tmp_path, monkeypatch):
+    monkeypatch.setattr(layout, "GW_DIR", tmp_path)
+    monkeypatch.setattr(populate.time, "sleep", lambda s: None)
+    (tmp_path / "var").mkdir()
+    ship = Ship(layout.ShipConfig(name="sampel-palnet-sampel-palnet"))
+    pokes = []
+    monkeypatch.setattr(ship, "poke", lambda *a, **k: pokes.append(a))
+    monkeypatch.setattr(ship, "running", lambda: True)
+    ship.log.write_text("gall: installing %mcp-server\n")
+    with pytest.raises(RuntimeError):
+        populate.chorus_mcp(populate.Context(ship=ship))
+    assert pokes == []
+    ship.log.write_text("gall: installing %chorus\n")
+    populate.chorus_mcp(populate.Context(ship=ship))
+    assert [p[1] for p in pokes] == ["import-tools", "import-resources", "import-templates"]
+    assert all(p[0] == "mcp-server" and p[2] == "!>('chorus')" for p in pokes)
+
+
 # --------------------------------------------------------------------- cli --
 
 @pytest.mark.parametrize("argv", [

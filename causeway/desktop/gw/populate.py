@@ -226,6 +226,38 @@ def armillary(ctx: Context) -> str | None:
     return "armillary: installed and granted; /apps/armillary does not answer yet"
 
 
+def _gall_installed(ctx: Context, dude: str, limit: int = 900, every: int = 5) -> bool:
+    """Wait for "gall: installing %<dude>" in the ship's log, as gw-onboard
+    waited on a line in vere's output.  Gall prints it when it first builds
+    the agent from a desk; for a pill desk that is during the bootstrap.
+    The log grows across restarts, so a line from an earlier start counts.
+    False after *limit* seconds or if vere dies."""
+    line = f"gall: installing %{dude}".encode()
+    waited = 0
+    while True:
+        try:
+            if line in ctx.ship.log.read_bytes():
+                return True
+        except OSError:
+            pass
+        if waited >= limit or not ctx.ship.running():
+            return False
+        time.sleep(every)
+        waited += every
+
+
+def chorus_mcp(ctx: Context) -> str:
+    """%chorus's MCP tools, resources and templates into %mcp-server.  Each
+    import scries %chorus at /x/mcp/<kind>, and a scry into an agent that is
+    not running crashes the poke, so wait on %chorus first.  %chorus serves
+    no /x/mcp/prompts, so there is no prompts import."""
+    if not _gall_installed(ctx, "chorus"):
+        raise RuntimeError("gall has not installed %chorus after 15 minutes")
+    for kind in ("tools", "resources", "templates"):
+        _poke(ctx, "mcp-server", f"import-{kind}", "!>('chorus')")
+    return "mcp: %chorus's tools, resources and templates imported into %mcp-server"
+
+
 def _no_change_key(ctx: Context) -> bool:
     key = var_dir() / "mint" / f"{ctx.ship.name}-change.key.json"
     return not key.exists() or key.stat().st_size == 0
@@ -240,6 +272,7 @@ STEPS: list[Step] = [
     Step("wallet-sweep", "gw-btc", wallet_sweep, once=False, skip=_no_change_key, desk="grubbery",
          no_desk="the leftover sats stay with the phrase"),
     Step("armillary", "gw-btc", armillary, skip=lambda ctx: not ctx.ship.cfg.armillary, desk="grubbery"),
+    Step("chorus-mcp", "mcp-server", chorus_mcp),
 ]
 
 
