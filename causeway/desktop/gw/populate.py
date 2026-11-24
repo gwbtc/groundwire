@@ -66,6 +66,18 @@ class Step:
     once: bool = True                             # keep a marker after one success
     first_boot_only: bool = False
     skip: Callable[[Context], bool] | None = None  # nothing to do: decided BEFORE waiting on the ship
+    desk: str | None = None                       # a desk the step needs that the pill may not carry
+    no_desk: str = ""                             # what the skip leaves undone, said when it skips
+
+
+def _missing_desk(ctx: Context, desk: str) -> bool:
+    """True only when the ship answers and the desk is not among its desks.
+    A ship that does not answer yet is not proof of absence: the step runs
+    and fails on its own terms."""
+    try:
+        return desk not in ctx.ship.desks()
+    except Exception:                                # noqa: BLE001
+        return False
 
 
 def _poke(ctx: Context, agent: str, mark: str, vase: str) -> None:
@@ -257,8 +269,9 @@ STEPS: list[Step] = [
     Step("hi", "hood", hi_ships, once=False),
     Step("nostr-relay", "nostrill", nostr_relay),
     Step("gw-group", "groups", gw_group),
-    Step("wallet-sweep", "gw-btc", wallet_sweep, once=False, skip=_no_change_key),
-    Step("armillary", "gw-btc", armillary, skip=lambda ctx: not ctx.ship.cfg.armillary),
+    Step("wallet-sweep", "gw-btc", wallet_sweep, once=False, skip=_no_change_key, desk="grubbery",
+         no_desk="the leftover sats stay with the phrase"),
+    Step("armillary", "gw-btc", armillary, skip=lambda ctx: not ctx.ship.cfg.armillary, desk="grubbery"),
     Step("chorus-mcp", "mcp-server", chorus_mcp),
 ]
 
@@ -273,6 +286,9 @@ def run(ctx: Context, only: set[str] | None = None) -> None:
         if s.once and marker.exists():
             continue
         if s.skip and s.skip(ctx):
+            continue
+        if s.desk and _missing_desk(ctx, s.desk):
+            info(f"{s.name}: skipped; this ship has no %{s.desk} desk" + (f"; {s.no_desk}" if s.no_desk else ""))
             continue
         if not ctx.ship.wait_agent(s.agent, tries=18, every=10):
             warn(f"{s.name}: %{s.agent} is not running after 3 minutes; next start")

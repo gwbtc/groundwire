@@ -182,6 +182,43 @@ def test_a_step_with_nothing_to_do_never_waits_on_the_ship(tmp_path, monkeypatch
     assert waited == ["gw-btc"]
 
 
+def test_a_step_whose_desk_is_absent_is_skipped(tmp_path, monkeypatch, capsys):
+    """A release without %grubbery left armillary waiting five minutes for
+    the shell's forge on every start.  Ask for the desk first."""
+    monkeypatch.setattr(layout, "GW_DIR", tmp_path)
+    monkeypatch.setattr(populate, "var_dir", lambda: tmp_path / "var")
+    (tmp_path / "var" / "mint").mkdir(parents=True)
+    cfg = layout.ShipConfig(name="sampel-palnet-sampel-palnet", armillary=True)
+    (tmp_path / "var" / "mint" / f"{cfg.name}-change.key.json").write_text("{}")
+    ship = Ship(cfg)
+    waited = []
+    monkeypatch.setattr(ship, "wait_agent", lambda dude, tries=18, every=10: waited.append(dude) or False)
+    monkeypatch.setattr(ship, "desks", lambda timeout=120.0: ["base", "groups"])
+    populate.run(populate.Context(ship=ship), only={"wallet-sweep", "armillary"})
+    assert waited == []
+    out = capsys.readouterr()
+    text = out.out + out.err
+    assert "armillary: skipped; this ship has no %grubbery desk" in text
+    assert "the leftover sats stay with the phrase" in text
+    assert not ship.marker("armillary").exists()
+
+
+def test_a_ship_that_does_not_answer_is_not_missing_the_desk(tmp_path, monkeypatch):
+    monkeypatch.setattr(layout, "GW_DIR", tmp_path)
+    monkeypatch.setattr(populate, "var_dir", lambda: tmp_path / "var")
+    (tmp_path / "var").mkdir()
+    cfg = layout.ShipConfig(name="sampel-palnet-sampel-palnet", armillary=True)
+    ship = Ship(cfg)
+    waited = []
+    monkeypatch.setattr(ship, "wait_agent", lambda dude, tries=18, every=10: waited.append(dude) or False)
+
+    def silent(timeout=120.0):
+        raise OSError("no socket")
+    monkeypatch.setattr(ship, "desks", silent)
+    populate.run(populate.Context(ship=ship), only={"armillary"})
+    assert waited == ["gw-btc"]
+
+
 def test_chorus_mcp_waits_on_gall_then_imports(tmp_path, monkeypatch):
     monkeypatch.setattr(layout, "GW_DIR", tmp_path)
     monkeypatch.setattr(populate.time, "sleep", lambda s: None)

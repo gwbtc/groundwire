@@ -962,6 +962,7 @@ All are care `%x`, so `%gx` with a trailing mark. Confirmed against
 | `/x/declined` | `noun` | `(set ship)` |
 | `/x/block-id` | `block-id` | the scanner's cursor `[hax num]` |
 | `/x/points` | `urb-points` | all **public** indexed points |
+| `/x/confidential-points` | `urb-points` | the points `/x/points` withholds: every ship in `/x/confidential` the index holds, with its full point. Operator surface, local to the ship; nothing may re-publish it |
 | `/x/point/<ship>` | `urb-point` | one point; `[~ ~]` if confidential or unindexed |
 | `/x/urb-state` | `noun` | the whole scanner state, confidential points stripped |
 

@@ -1002,6 +1002,29 @@
       [%x %points ~]
     =/  public  (filter-snapshot urb-state confidential)
     ``urb-points+!>(unv-ids.public)
+    ::  /x/confidential-points — the points /x/points withholds
+    ::
+    ::  Every identity in .confidential that the index holds, with its
+    ::  full $point, so an operator can see the sat each confidential
+    ::  comet sits on.  The complement of /x/points: the two together
+    ::  are the whole index.  (/x/confidential lists the ships and
+    ::  /x/attested the tip each one last attested to; this is the rest.)
+    ::
+    ::  An OPERATOR surface, local to this ship.  /x/points feeds
+    ::  %gevulot's share-index and jael's udiffs, which is exactly why
+    ::  confidential points are filtered out of it -- their points
+    ::  propagate only through self-attestation.  Nothing that reads
+    ::  this path may re-publish it.
+    ::
+      [%x %confidential-points ~]
+    :^  ~  ~  %urb-points
+    !>  ^-  unv-ids:urb
+    %-  ~(gas by *unv-ids:urb)
+    %+  murn  ~(tap in confidential)
+    |=  who=ship
+    ^-  (unit [ship point:urb])
+    ?~  pt=(~(get by unv-ids.urb-state) who)  ~
+    `[who u.pt]
     ::  /x/urb-state — entire urb-state for snapshots
     ::
       [%x %urb-state ~]
