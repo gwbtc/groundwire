@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import domain, peers, populate, release, service
 from . import noun as N
-from .cli import die, good, info, step, warn
+from .cli import ACCENT, BOLD, NC, LogWindow, good, info, kv, step, warn
 from .layout import (GW_DIR, GwError, ShipConfig, ensure_layout, list_ships, mint_dir, pill_file,
                      release_info, self_argv, the_ship, validate_patp, var_dir, vere_bin)
 from .ship import GoofError, Ship, strand
@@ -25,23 +25,26 @@ MIN_FREE_GB = 20
 
 def cmd_install(args) -> int:
     ensure_layout()
-    step("Installing Groundwire")
-    _preflight(new_pier=False)
     tag = release.install(args.tag, args.sha256, args.from_file, args.redownload,
                           prerelease=args.prerelease)
-    info(release.on_path_hint())
-    info("next:  gw mint          (a new comet)")
-    info("       gw start ~name   (a ship you already have)")
+    on_path = release.ensure_on_path()
+    # the website's installer says what happens next itself
+    if os.environ.get("GW_INSTALLER"):
+        return 0
+    good(f"Installed {tag}")
+    if not on_path:
+        info("Open a new terminal to use gw")
+    info("Mint a new comet:       gw mint")
+    info("Start a comet you have:  gw start ~name")
     return 0
 
 
 def _preflight(new_pier: bool) -> None:
     free = _free_gb(GW_DIR)
     if free is not None:
-        info(f"free disk     {free} GB")
         if new_pier and free < MIN_FREE_GB:
             raise GwError(f"only {free} GB free where {GW_DIR} lives; {MIN_FREE_GB} GB is the minimum "
-                          "(a synced pier is ~2.2 GB and a full disk wedges the ship mid-write)")
+                          "(a synced pier is ~2.2 GB and a full disk wedges the comet mid-write)")
 
 
 def _free_gb(p: Path) -> int | None:
@@ -65,7 +68,7 @@ def cmd_mint(args) -> int:
     ensure_layout()
     if args.tag or args.prerelease or not vere_bin().exists():
         step("Installing the release")
-        release.install(args.tag or "latest", prerelease=args.prerelease)
+        good(f"Installed {release.install(args.tag or 'latest', prerelease=args.prerelease)}")
     _need_release()
     _preflight(new_pier=True)
     from .mint import mint
@@ -79,30 +82,29 @@ def first_boot(cfg: ShipConfig, feed: str, proof: dict | None, wait: bool) -> in
     ship = Ship(cfg)
     if ship.exists:
         raise GwError(f"{ship.pier} already exists; `gw start {cfg.patp}` restarts it")
-    step(f"Booting {cfg.patp}")
+    step("Booting your comet ")
     cfg.http_port = _free_http_port(cfg.http_port)
     cfg.save()
     ship.log.parent.mkdir(parents=True, exist_ok=True)
     ship.log.write_text("")
-    info(f"gw-vere -t --loom {cfg.loom} -c {ship.pier} -w {cfg.name} -G <feed> -B <pill> "
-         f"--http-port {cfg.http_port} --gateway {cfg.gateway}")
     # the first boot is a plain process: the service unit takes over once the
     # pier exists, with the restart form (no -c/-w/-G/-B)
-    ship.spawn_detached(ship.fresh_argv(feed))
-    _wait_and_check(ship)
     kind = service.kind()
-    if kind != "detached":
-        # hand the running pier to the service manager: stop the bootstrap
-        # process, then let the unit start it (one short replay)
-        info(f"handing the ship to {kind}")
-        if not ship.terminate():
-            raise GwError("the bootstrap vere did not exit; leaving the ship as it is. "
-                          f"Run `gw start {cfg.patp}` later to put it under {kind}.")
-        cfg.supervised = service.start(ship)
-        _wait_and_check(ship)
-    else:
-        cfg.supervised = "detached"
+    with LogWindow(ship.log, from_start=True):
+        ship.spawn_detached(ship.fresh_argv(feed))
+        _wait_and_check(ship, quiet=True)
+        if kind != "detached":
+            # hand the running pier to the service manager: stop the bootstrap
+            # process, then let the unit start it (one short replay)
+            if not ship.terminate():
+                raise GwError("the bootstrap vere did not exit; leaving the comet as it is. "
+                              f"Run `gw start {cfg.patp}` later to put it under {kind}.")
+            cfg.supervised = service.start(ship)
+            _wait_and_check(ship, quiet=True)
+        else:
+            cfg.supervised = "detached"
     cfg.save()
+    good("Your comet is up")
     return _after_start(ship, proof=proof, first_boot=True, wait=wait)
 
 
@@ -144,58 +146,85 @@ def cmd_start(args) -> int:
             cfg.supervised = service.start(ship)
         info(f"under {cfg.supervised}")
     cfg.save()
-    _wait_and_check(ship)
+    with LogWindow(ship.log):
+        _wait_and_check(ship, quiet=True)
+    good(f"{cfg.patp} is up")
     return _after_start(ship, proof=None, first_boot=False, wait=not args.no_wait)
 
 
-def _wait_and_check(ship: Ship) -> None:
-    print("    waiting for the ship", end="", flush=True)
-    ship.wait_up(on_tick=lambda w: print(".", end="", flush=True))
-    print()
+def _wait_and_check(ship: Ship, quiet: bool = False) -> None:
+    """Wait for the comet to answer and check it booted as the identity we
+    asked for.  *quiet* says nothing on success."""
+    ship.wait_up()
     our = ship.our(120)
     if not our:
-        warn("could not read the ship's identity back over the control socket")
+        if not quiet:
+            warn("could not read the comet's identity back over the control socket")
     elif our != ship.cfg.patp:
-        raise GwError(f"THE SHIP THAT CAME UP IS NOT THE ONE YOU ASKED FOR.\n    asked for : {ship.cfg.patp}"
+        raise GwError(f"THE COMET THAT CAME UP IS NOT THE ONE YOU ASKED FOR.\n    asked for : {ship.cfg.patp}"
                       f"\n    booted as : {our}\n    The pier at {ship.pier} holds the wrong identity; "
                       "nothing here will delete it for you.")
-    else:
+    elif not quiet:
         good(f"up as {our}")
 
 
 def _after_start(ship: Ship, proof: dict | None, first_boot: bool, wait: bool) -> int:
     cfg = ship.cfg
-    step("Setting up")
+    # the setup steps write to a log, not the terminal: none of them is
+    # anything the user has to act on now
+    # the ship's own log scrolls by meanwhile, so a long step shows its work
+    step("Setting up your comet")
+    log = _setup_log(ship)
     ctx = populate.Context(ship=ship, proof=proof, first_boot=first_boot)
-    populate.run(ctx, only={"peer-discovery", "sponsor", "hi"})
-    if cfg.bitcoin:
-        if not ship.has_desk("node"):
-            warn("this release has no %node desk: the ship is up, but it cannot reach Bitcoin")
-        else:
-            step("Seeding peers")
-            have = ship.peer_count() if not first_boot else 0
-            if have and have >= 8:
-                # a restart keeps its peers; an address handed over twice is
-                # wasted (the client blacklists a burned seed for days)
-                info(f"the light client already has {have} peers; not re-seeding")
+    with LogWindow(ship.log):
+        populate.run(ctx, only={"peer-discovery", "sponsor", "hi"}, log=log)
+        if cfg.bitcoin:
+            if not ship.has_desk("node"):
+                log("this release has no %node desk: the comet is up, but it cannot reach Bitcoin")
             else:
-                try:
-                    n = peers.seed(ship, log=info)
-                    good(f"handed {n} peer addresses to the light client")
-                except Exception as e:                       # noqa: BLE001
-                    warn(f"peer seeding: {e}")
+                have = ship.peer_count() if not first_boot else 0
+                if have and have >= 8:
+                    # a restart keeps its peers; an address handed over twice
+                    # is wasted (the client blacklists a burned seed for days)
+                    log(f"the light client already has {have} peers; not re-seeding")
+                else:
+                    try:
+                        n = peers.seed(ship, log=log)
+                        log(f"handed {n} peer addresses to the light client")
+                    except Exception as e:                       # noqa: BLE001
+                        log(f"peer seeding: {e}")
+        populate.run(ctx, only={"nostr-relay", "gw-group", "wallet-sweep", "armillary", "chorus-mcp"},
+                     log=log)
+    good("Your comet is set up")
     if cfg.vps:
-        step(f"A name for {cfg.patp}")
+        step("Getting your comet a domain name")
         dom = domain.ensure_domain(ship)
         if dom:
             cfg.domain = dom
             cfg.save()
-            good(f"name: https://{dom}  (the certificate follows within minutes; plain http then redirects)")
-    populate.run(ctx, only={"nostr-relay", "gw-group", "wallet-sweep", "armillary", "chorus-mcp"})
-    _summary(ship)
+            good(f"https://{dom}  (the certificate follows within minutes)")
+    rc = 0
     if wait and cfg.bitcoin:
-        return watch_sync(ship)
-    return 0
+        try:
+            rc = watch_sync(ship)
+        except KeyboardInterrupt:
+            # the ship keeps running under the service manager
+            print()
+    _summary(ship)
+    return rc
+
+
+def _setup_log(ship: Ship):
+    """A logger that appends timestamped lines to var/<name>.setup.log."""
+    path = var_dir() / f"{ship.name}.setup.log"
+
+    def log(msg: str) -> None:
+        try:
+            with open(path, "a") as fh:
+                fh.write(time.strftime("%Y-%m-%dT%H:%M:%S ") + str(msg) + "\n")
+        except OSError:
+            pass
+    return log
 
 
 def _free_http_port(port: int) -> int:
@@ -206,29 +235,75 @@ def _free_http_port(port: int) -> int:
                 s.bind(("127.0.0.1", p))
             except OSError:
                 continue
-            if p != port:
-                info(f"port {port} is in use; using {p} for HTTP")
             return p
-    raise GwError(f"no free TCP port in {port}-{port + 49} for the ship's web server")
+    raise GwError(f"no free TCP port in {port}-{port + 49} for the comet's web server")
+
+
+# what the ship serves, for the summary: (what you can do, url path)
+APPS = [
+    ("Manage your identity and peers", "/apps/gevulot"),
+    ("Group chats and DMs", "/apps/groups"),
+    ("Use Nostr", "/apps/nostrill"),
+    ("Manage your apps", "/apps/landscape"),
+]
 
 
 def _summary(ship: Ship) -> None:
+    """The installer's exit message.
+    """
     cfg = ship.cfg
-    step("Where things are")
-    info(f"pier       {ship.pier}")
-    info(f"ship log   {ship.log}")
-    info(f"settings   {cfg.path}")
-    info(f"runs under {cfg.supervised or service.kind()}")
-    info(f"web        http://127.0.0.1:{cfg.http_port}" + (f"   or  https://{cfg.domain}" if cfg.domain else ""))
-    info(f"login      gw code {cfg.patp}")
-    info(f"status     gw status {cfg.patp}")
-    info(f"stop       gw stop {cfg.patp}")
+    url = _ship_url(ship)
+    on_path = release.ensure_on_path()
+    _write_readme(ship)
+
+    def heading(text: str) -> None:
+        print(f"\n{BOLD}{text}{NC}")
+
+    print()
+    print(f"{ACCENT}{BOLD}Running your comet{NC}")
+
+    heading("Open your comet in a browser")
+    print(url)
+    print("Log in with the code that `gw code` prints")
+
+    heading("Run your comet")
+    if not on_path:
+        print("Open a new terminal first, so your shell can find gw")
+    print("gw status   how your comet is doing")
+    print("gw stop     stop your comet")
+    print("gw start    start it again")
+    print("Your comet restarts by itself after a reboot" if cfg.supervised in ("systemd", "launchd")
+          else "Your comet does not restart by itself after a reboot")
+
+    heading("What you can do")
+    for what, path in APPS:
+        print(f"- {what} at {url}{path}")
+
+    heading("Use your comet with an AI agent")
+    print(f"Connect your agent to {url}/mcp")
+    print()
+
+
+def _ship_url(ship: Ship) -> str:
+    """The comet's groundwire.me name if %gw-dns gave it one, else localhost.
+    Eyre holds the name once it is bound, so ask eyre, not ship.toml."""
+    cfg = ship.cfg
+    dom = next((d for d in ship.domains(20) if d.endswith(".groundwire.me")), "") or cfg.domain
+    if dom and dom != cfg.domain:
+        cfg.domain = dom
+        cfg.save()
+    return f"https://{dom}" if dom else f"http://localhost:{cfg.http_port}"
+
+
+def _write_readme(ship: Ship) -> None:
+    """A note on disk of where everything is."""
+    cfg = ship.cfg
     (GW_DIR / "README").write_text(
-        f"Your Groundwire ship: {cfg.patp}\n\n  pier:      {ship.pier}\n  ship log:  {ship.log}\n"
+        f"Your Groundwire comet: {cfg.patp}\n\n  pier:      {ship.pier}\n  log:  {ship.log}\n"
         f"  settings:  {cfg.path}\n  web:       http://127.0.0.1:{cfg.http_port}\n"
         + (f"  address:   https://{cfg.domain}\n" if cfg.domain else "")
         + f"\n  gw status {cfg.patp}\n  gw code {cfg.patp}\n  gw stop {cfg.patp}\n  gw start {cfg.patp}\n\n"
-        f"The ship runs under {cfg.supervised or service.kind()}"
+        f"The comet runs under {cfg.supervised or service.kind()}"
         + (", which restarts it after a crash or a reboot.\n" if cfg.supervised in ("systemd", "launchd")
            else "; nothing restarts it after a reboot.\n")
         + "Identity custody: the proof and feed files in var/mint. Back those up.\n")
@@ -248,7 +323,7 @@ def cmd_stop(args) -> int:
         good("stopped; the pier is untouched")
         return 0
     raise GwError(f"vere (pid {ship.king_pid()}) is still running and holds the pier; "
-                  "do not start another ship on it")
+                  "do not start another comet on it")
 
 
 def cmd_restart(args) -> int:
@@ -274,37 +349,35 @@ def cmd_status(args) -> int:
         print(json.dumps(d, indent=2))
         return 0
     step(f"Status of {cfg.patp}")
-    info(f"release     {cfg.release or release_info().get('tag', '?')}")
-    info(f"pier        {ship.pier}")
-    info(f"vere        {'pid %s' % (d['king'] or d['serf']) if d['running'] else 'not running'}")
-    info(f"service     {d['service']}")
+    kv("Release", cfg.release or release_info().get('tag', '?'))
+    kv("Pier", ship.pier)
+    kv("Vere", 'pid %s' % (d['king'] or d['serf']) if d['running'] else 'not running')
+    kv("Service", d['service'])
     if d.get("event_log_age_s") is not None:
-        info(f"event log   {d['event_log_age_s']}s since the last write")
+        kv("Event log", f"{d['event_log_age_s']}s since the last write")
     if d["running"] and d.get("answers"):
-        info(f"identity    {d.get('identity') or '?'}")
+        kv("Identity", d.get('identity') or '?')
         s = d.get("synced")
-        info(f"synced      {'yes' if s else 'no' if s is False else 'unknown (no %bitcoin-client answer)'}")
+        kv("Synced", 'yes' if s else 'no' if s is False else 'unknown (no %bitcoin-client answer)')
         if d.get("best_block") is not None:
-            info(f"best block  {d['best_block']}")
+            kv("Best block", d['best_block'])
         if d.get("peers") is not None:
-            info(f"peers       {d['peers']}")
+            kv("Peers", d['peers'])
         if d.get("ready") is not None:
-            info(f"gw-btc      {d['ready']}")
+            kv("%gw-btc", d['ready'])
     elif d["running"]:
-        info("the ship is up but not answering its control socket yet (booting, or very busy)")
-    info(f"web         http://127.0.0.1:{cfg.http_port}" + (f"   https://{cfg.domain}" if cfg.domain else ""))
+        info("the comet is up but not answering its control socket yet (booting, or very busy)")
+    kv("Web", f"http://127.0.0.1:{cfg.http_port}" + (f"   https://{cfg.domain}" if cfg.domain else ""))
     if args.watch and d["running"]:
         return watch_sync(ship)
     return 0
 
 
 def watch_sync(ship: Ship) -> int:
-    step("Syncing the light client")
-    info("block headers first, then filter headers; synced means both are at the tip.")
-    info("Safe to Ctrl-C: the ship keeps running.  gw status --watch picks this up again.")
+    """Print a line a minute until the light client has block headers and
+    filter headers at the tip."""
+    step("Syncing with Bitcoin")
     tip = _chain_tip()
-    if tip:
-        info(f"chain tip is {tip} (mempool.space)")
     start = time.time()
     prev = prev_t = 0
     while True:
@@ -312,22 +385,22 @@ def watch_sync(ship: Ship) -> int:
         height = ship.best_block()
         npeers = ship.peer_count()
         el = int(time.time() - start)
-        rate = ""
+        line = f"[{el // 3600:02d}:{el % 3600 // 60:02d}:{el % 60:02d}] block {height or '?'}"
+        if tip:
+            line += f" of {max(tip, height or 0)}"
+        line += f", {npeers if npeers is not None else '?'} peers"
         if height and prev and height > prev and time.time() > prev_t:
             per_min = (height - prev) * 60 / (time.time() - prev_t)
-            rate = f"  {per_min:.0f}/min"
             if tip and per_min > 0 and tip > height:
-                rate += f"  eta ~{int((tip - height) / per_min)}m"
+                line += f", about {int((tip - height) / per_min)} min left"
         if height:
             prev, prev_t = height, time.time()
-        print(f"    [{el // 3600:02d}:{el % 3600 // 60:02d}:{el % 60:02d}] best block {height or '?'}  "
-              f"peers {npeers if npeers is not None else '?'}  synced {'yes' if synced else 'no'}{rate}",
-              flush=True)
         if synced:
-            good("synced: block headers and filter headers are both at the tip")
+            good("Synced")
             return 0
+        info(line)
         if el > 300 and npeers == 0:
-            warn("no live peers after five minutes; `gw peers` hands the light client more addresses")
+            warn("no peers after five minutes; `gw peers` hands the light client more addresses")
         time.sleep(60)
 
 
@@ -345,10 +418,10 @@ def cmd_code(args) -> int:
     cfg = the_ship(validate_patp(args.comet) if args.comet else None)
     ship = Ship(cfg)
     if not ship.running():
-        raise GwError(f"the ship is not running; start it first:  gw start {cfg.patp}")
+        raise GwError(f"the comet is not running; start it first:  gw start {cfg.patp}")
     code = ship.code(90)
     if not code:
-        raise GwError("could not read the code from the ship (it may still be booting); try again in a minute")
+        raise GwError("could not read the code from the comet (it may still be booting); try again in a minute")
     print(code)
     return 0
 
@@ -419,7 +492,7 @@ def cmd_name(args) -> int:
     cfg = the_ship(validate_patp(args.comet) if args.comet else None)
     ship = Ship(cfg)
     if not ship.running():
-        raise GwError(f"the ship is not running; start it first:  gw start {cfg.patp}")
+        raise GwError(f"the comet is not running; start it first:  gw start {cfg.patp}")
     step(f"A name for {cfg.patp}")
     dom = domain.ensure_domain(ship)
     if dom:
@@ -444,7 +517,7 @@ def cmd_populate(args) -> int:
     cfg = the_ship(validate_patp(args.comet) if args.comet else None)
     ship = Ship(cfg)
     if not ship.running():
-        raise GwError(f"the ship is not running; start it first:  gw start {cfg.patp}")
+        raise GwError(f"the comet is not running; start it first:  gw start {cfg.patp}")
     only = {s.strip() for s in args.only.split(",") if s.strip()} or None
     step("Setup steps")
     for s in populate.STEPS:
@@ -470,9 +543,10 @@ def cmd_update(args) -> int:
     if was_running:
         step(f"Restarting {cfg.patp} on {tag}")
         if not service.stop(ship):
-            raise GwError("the ship did not stop; not swapping the runtime under it")
+            raise GwError("the comet did not stop; not swapping the runtime under it")
         cfg.supervised = service.start(ship)
-        _wait_and_check(ship)
+        with LogWindow(ship.log):
+            _wait_and_check(ship, quiet=True)
     cfg.release = tag
     cfg.save()
     good(f"{cfg.patp} is on {tag}; its desks follow the sponsor by OTA")

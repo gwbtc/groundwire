@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 import tarfile
 import tempfile
 import urllib.error
@@ -20,7 +21,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .cli import good, info, warn
+from .cli import info, warn
 from .layout import GW_DIR, RELEASE_REPO, GwError, platform_tag, write_release_info
 
 WANT = ("gw-vere", "gw-base.pill", "comet_miner", "gw")
@@ -81,10 +82,9 @@ def fetch(tag: str, plat: str, redownload: bool = False, repo: str = RELEASE_REP
     dl.mkdir(parents=True, exist_ok=True)
     out = dl / f"{tag}-{asset}"
     if out.exists() and not redownload:
-        info(f"already downloaded: {out}")
         return out
     url = f"https://github.com/{repo}/releases/download/{tag}/{asset}"
-    info(url)
+    info(f"Downloading {tag}")
     part = out.with_suffix(".part")
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "gw"})
@@ -111,17 +111,14 @@ def sha256_of(p: Path) -> str:
 
 def verify(tarball: Path, tag: str, plat: str, expect: str = "", repo: str = RELEASE_REPO) -> str:
     got = sha256_of(tarball)
-    info(f"sha256        {got}")
     if expect:
         if got != expect.lower():
             tarball.unlink(missing_ok=True)
             raise GwError(f"sha256 mismatch: expected {expect}, got {got}. Download deleted.")
-        good("sha256 matches the digest you supplied")
     elif tag:
         try:
             sums = _get(f"https://github.com/{repo}/releases/download/{tag}/SHA256SUMS").decode()
         except Exception:
-            warn("this release publishes no SHA256SUMS; only GitHub's TLS authenticates the download")
             sums = ""
         want = ""
         for line in sums.splitlines():
@@ -134,8 +131,6 @@ def verify(tarball: Path, tag: str, plat: str, expect: str = "", repo: str = REL
             tarball.unlink(missing_ok=True)
             raise GwError("sha256 does NOT match the release's SHA256SUMS.\n"
                           f"    expected  {want}\n    got       {got}\n    The download has been deleted.")
-        elif want:
-            good("sha256 matches the release's SHA256SUMS")
     if not tarfile.is_tarfile(tarball):
         raise GwError("the downloaded tarball is not readable as tar")
     return got
@@ -218,29 +213,61 @@ def install(tag: str = "latest", expect_sha: str = "", from_file: str = "",
     else:
         if tag == "latest":
             tag = resolve_latest(prerelease=prerelease)
-        info(f"release       {tag} ({plat})")
         tarball = fetch(tag, plat, redownload)
         sha = verify(tarball, tag, plat, expect_sha)
     dest = unpack(tarball, tag)
     switch(dest, tag, plat, sha)
-    good(f"installed {tag} under {GW_DIR}")
     return tag
 
 
-def on_path_hint() -> str:
-    """Where `gw` is reachable, and the line to add if it is not."""
+def ensure_on_path() -> bool:
+    """Make `gw` reachable from the user's shell, without a word.  True when
+    the current PATH already finds it; False when only a new shell will,
+    because the PATH line went into the shell's startup file."""
     bindir = GW_DIR / "bin"
+    path = os.environ.get("PATH", "").split(os.pathsep)
+    if str(bindir) in path:
+        return True
+    # a symlink in a writable directory already on the PATH
     for cand in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
-        d = Path(cand)
+        if cand not in path:
+            continue
+        d, link = Path(cand), Path(cand) / "gw"
         try:
-            if os.access(d, os.W_OK) or (not d.exists() and os.access(d.parent, os.W_OK)):
-                d.mkdir(parents=True, exist_ok=True)
-                link = d / "gw"
-                if link.is_symlink() or link.exists():
-                    link.unlink()
-                os.symlink(bindir / "gw", link)
-                if cand in os.environ.get("PATH", "").split(os.pathsep):
-                    return f"gw is on your PATH ({link})"
+            if not (d.is_dir() and os.access(d, os.W_OK)):
+                continue
+            if link.is_symlink():
+                link.unlink()
+            elif link.exists():
+                continue                    # someone else's gw; leave it be
+            os.symlink(bindir / "gw", link)
+            return True
         except OSError:
             continue
-    return f'add it to your PATH:  export PATH="{bindir}:$PATH"'
+    _add_to_shell_rc(bindir)
+    return False
+
+
+def _add_to_shell_rc(bindir: Path) -> None:
+    """Append a PATH line to the startup file of the user's login shell."""
+    shell = Path(os.environ.get("SHELL", "")).name
+    home = Path.home()
+    if shell == "fish":
+        rc = home / ".config" / "fish" / "conf.d" / "groundwire.fish"
+        line = f"fish_add_path {bindir}"
+    else:
+        if shell == "zsh":
+            rc = home / ".zshrc"
+        elif shell == "bash":
+            rc = home / (".bash_profile" if sys.platform == "darwin" else ".bashrc")
+        else:
+            rc = home / ".profile"
+        line = f'export PATH="{bindir}:$PATH"'
+    try:
+        if rc.exists() and str(bindir) in rc.read_text(errors="replace"):
+            return
+        rc.parent.mkdir(parents=True, exist_ok=True)
+        with open(rc, "a") as fh:
+            fh.write(f"\n# added by the groundwire installer\n{line}\n")
+    except OSError:
+        pass

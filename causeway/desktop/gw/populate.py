@@ -17,9 +17,9 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
-from .cli import good, info, warn
+from .cli import info, warn
 from .layout import GwError, self_argv, var_dir
-from .ship import GoofError, Ship, hoon_hex
+from .ship import Ship, hoon_hex
 from .web import ShipWeb
 
 HI_SHIPS = ("~tyr", "~daplyd")
@@ -263,7 +263,11 @@ STEPS: list[Step] = [
 ]
 
 
-def run(ctx: Context, only: set[str] | None = None) -> None:
+def run(ctx: Context, only: set[str] | None = None, log: Callable[[str], None] | None = None) -> None:
+    """Run the steps.  Each prints one line; with *log*, the lines go there
+    instead (the mint keeps them out of the terminal)."""
+    say = log or info
+    fail = log or warn
     for s in STEPS:
         if only and s.name not in only:
             continue
@@ -275,17 +279,14 @@ def run(ctx: Context, only: set[str] | None = None) -> None:
         if s.skip and s.skip(ctx):
             continue
         if not ctx.ship.wait_agent(s.agent, tries=18, every=10):
-            warn(f"{s.name}: %{s.agent} is not running after 3 minutes; next start")
+            fail(f"{s.name}: %{s.agent} is not running after 3 minutes; next start")
             continue
         try:
             line = s.apply(ctx)
-        except GoofError as e:
-            warn(f"{s.name}: {e}; next start")
-            continue
         except Exception as e:                       # noqa: BLE001 - every step is optional
-            warn(f"{s.name}: {e}; next start")
+            fail(f"{s.name}: {e}; next start")
             continue
         if line:
-            info(line)
+            say(line)
         if s.once:
             marker.touch()

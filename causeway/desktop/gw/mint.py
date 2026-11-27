@@ -46,9 +46,8 @@ def mint(args) -> int:
         proof_path = _spawn(args, md, raw)
         proof = json.loads(Path(proof_path).read_text())
         name = validate_patp(proof.get("patp", ""))
-        good(f"minted ~{name}")
-        step("Baking the custody log into the boot feed")
-        info("instant if Causeway already saw the confirmation; otherwise this waits for it.")
+        good("Minted your comet")
+        step("Waiting for Bitcoin to confirm your comet")
         r = subprocess.run(self_argv() + ["causeway", "finalize", str(proof_path),
                                           "--feed-file", str(raw), "--out-feed", str(baked)],
                            stdin=None if _tty() else subprocess.DEVNULL)
@@ -56,7 +55,7 @@ def mint(args) -> int:
             raise GwError("causeway finalize failed. Your comet is minted and on chain; nothing is lost. "
                           f"Re-run:\n      gw causeway finalize {proof_path} --feed-file {raw} --out-feed {baked}\n"
                           f"    then  gw start ~{name} --feed-file {baked} --proof {proof_path}")
-        good("custody log baked")
+        good("Confirmed")
         feed = baked.read_text().strip()
         # keep the proof beside the pier: every start reads the sponsor's attestation from it
         (var_dir() / f"{name}.proof.json").write_text(json.dumps(proof))
@@ -96,8 +95,7 @@ def _spawn(args, md: Path, raw: Path) -> Path:
     ui = "cli" if (args.headless or args.invite or args.resume or args.assume_saved
                    or args.phrase_file or not _tty()) else "tui"
     if ui == "tui":
-        step("Minting a confidential comet (Causeway)")
-        info("complete the spawn in the interface; gw resumes when you quit.")
+        step("Minting your comet")
         marker = md / ".mint-start"
         marker.touch()
         time.sleep(1)
@@ -130,7 +128,7 @@ def _spawn(args, md: Path, raw: Path) -> Path:
         os.chmod(raw, 0o600)
         return proof
 
-    step("Minting a confidential comet with Causeway")
+    step("Minting your comet")
     cmd = self_argv() + ["causeway", "spawn", "generate", "--output-dir", str(md), "--out-feed", str(raw),
                          "--miner", str(miner_bin())]
     if args.invite:
@@ -151,7 +149,6 @@ def _spawn(args, md: Path, raw: Path) -> Path:
         cmd += ["--candidates", str(args.candidates)]
         if args.pick:
             cmd += ["--pick", str(args.pick)]
-    info("this asks you to fund an address and to write down a recovery phrase. Do not skip the phrase.")
     r = subprocess.run(cmd, stdin=None if _tty() else subprocess.DEVNULL)
     if r.returncode != 0:
         raise GwError("causeway spawn failed or was cancelled")
@@ -187,9 +184,8 @@ def _mine_unattested(out: Path) -> tuple[str, str]:
     miner = miner_bin()
     if not miner.exists():
         raise GwError(f"no comet_miner at {miner}; run `gw install` first")
-    step("Mining an unattested comet (--skip-attestation)")
-    info("no funding and no spawn transaction: this comet commits to a zeroed satpoint")
-    info("and no peer can ever verify it. For testing only. Mining takes a few minutes...")
+    step("Minting a test comet")
+    info("This takes a few minutes")
     tweak = "(can 0 (mat %gw-btc) (mat 9) (mat (jam [txid=0x0 vout=0 off=0])) ~)"
     r = subprocess.run([str(miner), "-c", "--tweak", tweak, "daplyd"], capture_output=True, text=True)
     if r.returncode != 0:
@@ -204,5 +200,5 @@ def _mine_unattested(out: Path) -> tuple[str, str]:
         raise GwError("could not read a comet and a feed out of comet_miner's output")
     with open(out, "w", opener=lambda p, f: os.open(p, f, 0o600)) as fh:
         fh.write(feed + "\n")
-    good(f"mined {comet}")
+    good("Minted")
     return validate_patp(comet), feed
