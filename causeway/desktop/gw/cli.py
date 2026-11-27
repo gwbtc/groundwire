@@ -8,34 +8,129 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
+import shutil
 import sys
+import threading
+from collections import deque
+from pathlib import Path
 
 from .layout import GW_DIR, GwError
 
+# the website's install.sh hands over to gw mid-run, so gw prints in the
+# installer's style: the same colors, section headers and line markers
 _TTY = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
-_B, _R, _Y, _G, _0 = (("\033[1m", "\033[31m", "\033[33m", "\033[32m", "\033[0m") if _TTY
-                      else ("", "", "", "", ""))
+
+
+def _rgb(r: int, g: int, b: int) -> str:
+    return f"\033[38;2;{r};{g};{b}m" if _TTY else ""
+
+
+BOLD = "\033[1m" if _TTY else ""
+ACCENT = _rgb(72, 199, 142)
+SUCCESS = _rgb(0, 229, 204)
+WARN = _rgb(255, 176, 32)
+ERROR = _rgb(230, 57, 70)
+MUTED = _rgb(90, 100, 128)
+NC = "\033[0m" if _TTY else ""
 
 
 def step(msg: str) -> None:
-    print(f"\n{_B}==>{_0} {msg}", flush=True)
+    print(f"\n{ACCENT}{BOLD}{msg}{NC}", flush=True)
 
 
 def info(msg: str = "") -> None:
     for line in str(msg).splitlines() or [""]:
-        print(f"    {line}", flush=True)
+        print(f"{MUTED}·{NC} {line}" if line else "", flush=True)
 
 
 def good(msg: str) -> None:
-    print(f"    {_G}{msg}{_0}", flush=True)
+    print(f"{SUCCESS}✓{NC} {msg}", flush=True)
+
+
+def kv(key: str, value: str) -> None:
+    print(f"{MUTED}{key}:{NC} {value}", flush=True)
 
 
 def warn(msg: str) -> None:
-    print(f"{_Y}warning:{_0} {msg}", file=sys.stderr, flush=True)
+    print(f"{WARN}!{NC} {msg}", file=sys.stderr, flush=True)
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|[\x00-\x08\x0b-\x1f\x7f]")
+
+
+class LogWindow:
+    """The last few lines of the ship's log, redrawn in place under the
+    cursor while a slow step runs, and erased when it ends.  Nothing else
+    may print while the window is open.  Without a terminal it shows
+    nothing."""
+
+    def __init__(self, path: Path, lines: int = 5, from_start: bool = False):
+        self.path = Path(path)
+        self.lines: deque[str] = deque(maxlen=lines)
+        self.from_start = from_start
+        self.drawn = 0
+        self.stop = threading.Event()
+        self.thread: threading.Thread | None = None
+
+    def __enter__(self) -> "LogWindow":
+        if _TTY:
+            self.thread = threading.Thread(target=self._follow, daemon=True)
+            self.thread.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self.thread:
+            self.stop.set()
+            self.thread.join()
+            self._move_up()
+            sys.stdout.write("\033[J")
+            sys.stdout.flush()
+
+    # read what the ship appends, a fifth of a second at a time
+    def _follow(self) -> None:
+        try:
+            pos = 0 if self.from_start else self.path.stat().st_size
+        except OSError:
+            pos = 0
+        part = b""
+        while not self.stop.wait(0.2):
+            try:
+                with open(self.path, "rb") as fh:
+                    if fh.seek(0, 2) < pos:          # truncated: start over
+                        pos = 0
+                    fh.seek(pos)
+                    data = fh.read()
+            except OSError:
+                continue
+            if not data:
+                continue
+            pos += len(data)
+            *done, part = (part + data).split(b"\n")
+            for raw in done:
+                # vere redraws its prompt with \r; keep what is left showing
+                line = _ANSI.sub("", raw.decode("utf-8", "replace").rstrip("\r").split("\r")[-1]).rstrip()
+                if line:
+                    self.lines.append(line)
+            if done:
+                self._draw()
+
+    def _move_up(self) -> None:
+        if self.drawn:
+            sys.stdout.write(f"\033[{self.drawn}F")
+
+    # one terminal row per line, so the cursor math holds
+    def _draw(self) -> None:
+        width = max(shutil.get_terminal_size().columns - 3, 10)
+        self._move_up()
+        for line in self.lines:
+            sys.stdout.write(f"\033[2K  {MUTED}{line[:width]}{NC}\n")
+        self.drawn = len(self.lines)
+        sys.stdout.flush()
 
 
 def die(msg: str, code: int = 1) -> "NoReturn":  # noqa: F821
-    print(f"\n{_R}error:{_0} {msg}", file=sys.stderr, flush=True)
+    print(f"\n{ERROR}✗{NC} {msg}", file=sys.stderr, flush=True)
     sys.exit(code)
 
 
