@@ -2526,4 +2526,32 @@
     (~(on-load agent bowl0) !>((live-state (malt ~[[peer (ok-point-at anew-pass ~)]]) ~ (silt ~[peer]) ~)))
   ::  this fixture's empty-log pass is not a usable attestation.
   (expect-eq !>(`result:cb`[%failed peer %invalid]) !>((peek-noun (~(on-peek agent bowl0) /x/contact-bundle/v1/(scot %p peer)))))
+::
+::  ---------------------------------------------------------------------
+::  /x/confidential-points -- the operator's view of what /x/points hides
+::  ---------------------------------------------------------------------
+::
+::  Two indexed identities, one of them confidential.  /x/points must
+::  carry only the public one (it feeds %gevulot's share-index and jael's
+::  udiffs); /x/confidential-points must carry only the other, with its
+::  full point.  Complementary, so no indexed identity is simply
+::  invisible to the operator.
+::
+++  test-confidential-points-is-the-complement-of-points
+  =/  pub-point   (ok-point-at anew-pass `0xb.10c9)
+  =/  conf-point  (ok-point-at anew-pass `0xb.10c1)
+  =/  ids=unv-ids:urb  (malt ~[[~nec pub-point] [peer conf-point]])
+  =/  agent  gw-btc
+  =^  *  agent
+    %-  ~(on-load agent bowl0)
+    !>  %^  live-state  ids  *sont-map:ord
+        [(silt ~[peer]) (malt ~[[peer tip-sont]])]
+  ;:  weld
+    %+  expect-eq
+      !>  `unv-ids:urb`(malt ~[[~nec pub-point]])
+      !>  ;;(unv-ids:urb (peek-noun (~(on-peek agent bowl0) /x/points)))
+    %+  expect-eq
+      !>  `unv-ids:urb`(malt ~[[peer conf-point]])
+      !>  ;;(unv-ids:urb (peek-noun (~(on-peek agent bowl0) /x/confidential-points)))
+  ==
 --
